@@ -1,0 +1,65 @@
+[package]
+name = "yard"
+version = "0.1.0"
+description = "Orquestrador de agentes de codigo para Windows"
+authors = ["Yard"]
+edition = "2021"
+
+[lib]
+# The `_lib` suffix avoids a name clash with the Windows binary.
+name = "yard_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["unstable"] }
+tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+portable-pty = "0.9"
+rusqlite = { version = "0.32", features = ["bundled"] }
+which = "7"
+sysinfo = "0.32"
+notify = "7"
+notify-debouncer-mini = "0.5"
+dirs = "5"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+anyhow = "1"
+parking_lot = "0.12"
+# Agent<->app bridge: named-pipe server (bridge.rs). Tauri already brings
+# tokio; here we only enable the features the pipe needs.
+tokio = { version = "1", features = ["net", "io-util", "time", "sync", "rt"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  # CreateJobObjectW takes *const SECURITY_ATTRIBUTES: without this feature
+  # the function does not even exist in the crate.
+  "Win32_Security",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Gdi",
+] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
+
+[profile.dev]
+# a panic in a command becomes Err instead of taking the app down during HMR
+panic = "unwind"
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+opt-level = "s"
+strip = true

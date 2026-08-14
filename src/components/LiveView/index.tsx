@@ -1,0 +1,588 @@
+/**
+ * "Ao Vivo" — mission control for an agent session.
+ *
+ * Glass overlay above the workspace (holds no xterm — vibrancy allowed)
+ * with three regions: the timeline of what the agent is doing right now,
+ * the aggregate of touched files (click opens the real diff) and the board
+ * with the agent's plan + sub-agents as a kanban.
+ *
+ * The source of everything is the tap on the `.jsonl` in the backend
+ * (`agents/tail.rs`); this component only draws what `liveStore` has
+ * already reduced.
+ */
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertCircle,
+  BellRing,
+  Bot,
+  Check,
+  ChevronDown,
+  Eye,
+  FileClock,
+  ListChecks,
+  Loader2,
+  MessageSquare,
+  Puzzle,
+  Search,
+  Sparkles,
+  SquareTerminal,
+  User,
+  Wand2,
+  X,
+} from "lucide-react";
+
+import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
+import { clock as fmtClock, elapsed as fmtElapsed } from "../../lib/format";
+import { splitPath } from "../../lib/paths";
+import { useNow } from "../../hooks/useNow";
+import { useChanges } from "../../stores/changesStore";
+import {
+  useLive,
+  type AgentCard,
+  type LiveEntry,
+  type PlanCard,
+} from "../../stores/liveStore";
+import { useProjects } from "../../stores/projectsStore";
+
+const compact = new Intl.NumberFormat("pt-BR", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+const LANES: { id: PlanCard["status"]; label: string }[] = [
+  { id: "pending", label: "A fazer" },
+  { id: "in_progress", label: "Fazendo" },
+  { id: "completed", label: "Feito" },
+];
+
+/** Left-side icon/badge of a timeline row. */
+function RowMark({ e }: { e: LiveEntry }) {
+  if (e.kind === "prompt") return <User size={12} aria-hidden="true" />;
+  if (e.kind === "say") return <MessageSquare size={12} aria-hidden="true" />;
+  if (e.kind === "think") return <Sparkles size={12} aria-hidden="true" />;
+  if (e.kind === "notify") return <BellRing size={12} aria-hidden="true" />;
+  switch (e.op) {
+    case "edit":
+      return <span className="live-mark-badge live-mark-badge--m">M</span>;
+    case "write":
+      return <span className="live-mark-badge live-mark-badge--a">A</span>;
+    case "read":
+      return <Eye size={12} aria-hidden="true" />;
+    case "run":
+      return <SquareTerminal size={12} aria-hidden="true" />;
+    case "search":
+      return <Search size={12} aria-hidden="true" />;
+    case "agent":
+      return <Bot size={12} aria-hidden="true" />;
+    case "plan":
+    case "todo":
+      return <ListChecks size={12} aria-hidden="true" />;
+    case "skill":
+      return <Wand2 size={12} aria-hidden="true" />;
+    default:
+      return <Puzzle size={12} aria-hidden="true" />;
+  }
+}
+
+function RowBody({ e }: { e: LiveEntry }) {
+  if (e.kind !== "tool") {
+    return <span className="live-row-text">{e.text}</span>;
+  }
+  const path = e.path ? splitPath(e.path) : null;
+  return (
+    <span className="live-row-main">
+      {path && (
+        <span className="live-path" title={e.path}>
+          <span className="live-path-dir">{path.dir}</span>
+          <span className="live-path-base">{path.base}</span>
+        </span>
+      )}
+      {(e.added ?? 0) > 0 && <em className="live-add">+{e.added}</em>}
+      {(e.removed ?? 0) > 0 && <em className="live-del">−{e.removed}</em>}
+      {e.op === "agent" && (
+        <>
+          {e.agentType && <span className="live-chip">{e.agentType}</span>}
+          {e.detail && <span className="live-row-text">{e.detail}</span>}
+        </>
+      )}
+      {e.op !== "agent" && !path && e.detail && (
+        <span className={`live-row-text ${e.op === "run" || e.op === "search" ? "live-row-text--mono" : ""}`}>
+          {e.detail}
+        </span>
+      )}
+      {e.side && <span className="live-side" data-tip="Feito por um sub-agent">sub</span>}
+    </span>
+  );
+}
+
+/**
+ * The timeline, memoized and deliberately blind to the clock.
+ *
+ * It is the tallest list on screen (up to 400 rows) and the one that changes
+ * least: an entry is written once and then only its `pending` flag flips. The
+ * overlay's 1 s tick used to re-render all of it to move a "há 4s" elsewhere.
+ */
+const Timeline = memo(function Timeline({ entries }: { entries: LiveEntry[] }) {
+  return (
+    <>
+      {entries.length === 0 && (
+        <div className="live-feed-empty">ainda nada por aqui…</div>
+      )}
+      {entries.map((e) => (
+        <TimelineRow key={e.id} e={e} />
+      ))}
+    </>
+  );
+});
+
+const TimelineRow = memo(function TimelineRow({ e }: { e: LiveEntry }) {
+  return (
+    <div
+      className={`live-row live-row--${e.kind === "tool" ? (e.op ?? "other") : e.kind} ${e.failed ? "live-row--failed" : ""}`}
+    >
+      <span className="live-row-mark">
+        <RowMark e={e} />
+      </span>
+      <RowBody e={e} />
+      <span className="live-row-end">
+        {e.pending ? (
+          <Loader2 size={11} className="spin" aria-hidden="true" />
+        ) : e.failed ? (
+          <AlertCircle size={11} aria-hidden="true" />
+        ) : (
+          <time>{fmtClock(e.at)}</time>
+        )}
+      </span>
+    </div>
+  );
+});
+
+export function LiveView() {
+  const phase = useLive((s) => s.phase);
+  const terminalTitle = useLive((s) => s.terminalTitle);
+  const session = useLive((s) => s.session);
+  const sessions = useLive((s) => s.sessions);
+  const timeline = useLive((s) => s.timeline);
+  const files = useLive((s) => s.files);
+  const plan = useLive((s) => s.plan);
+  const todos = useLive((s) => s.todos);
+  const agents = useLive((s) => s.agents);
+  const usage = useLive((s) => s.usage);
+  const pendingTools = useLive((s) => s.pendingTools);
+  const lastEventAt = useLive((s) => s.lastEventAt);
+  const lastNote = useLive((s) => s.lastNote);
+  const lastNoteKind = useLive((s) => s.lastNoteKind);
+  const counts = useLive((s) => s.counts);
+  const close = useLive((s) => s.close);
+  const switchSession = useLive((s) => s.switchSession);
+
+  const activeProjectId = useProjects((s) => s.activeProjectId);
+  const openViewer = useChanges((s) => s.openViewer);
+  // Without a git repo there is no diff to open — file clicks are disabled.
+  const isRepo = useChanges((s) =>
+    activeProjectId ? (s.gitByProject[activeProjectId]?.isRepo ?? false) : false,
+  );
+
+  const [sessMenu, setSessMenu] = useState<MenuAnchor | null>(null);
+  const [stuck, setStuck] = useState(true);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+
+  const open = phase !== "closed";
+
+  // Shared 1 s clock: status decay, elapsed times.
+  // The timeline does not depend on it (see `<Timeline>` above).
+  const now = useNow(1_000);
+
+  // Esc closes — but if the diff viewer is open on top, Esc belongs to it.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (useChanges.getState().viewer) return;
+      e.preventDefault();
+      close();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, close]);
+
+  // Auto-follow: stick to the end until the user scrolls up.
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (el && stuck) el.scrollTop = el.scrollHeight;
+  }, [timeline, stuck, phase]);
+
+  const working = pendingTools > 0 || (lastEventAt > 0 && now - lastEventAt < 4000);
+
+  const fileList = useMemo(
+    () => Object.values(files).sort((a, b) => b.lastAt - a.lastAt),
+    [files],
+  );
+
+  const planCards: PlanCard[] = useMemo(() => {
+    const cards = Object.values(plan);
+    if (cards.length > 0) {
+      return cards.sort((a, b) => {
+        const na = Number(a.key);
+        const nb = Number(b.key);
+        if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+        return a.at - b.at;
+      });
+    }
+    return todos.map((t, i) => ({
+      key: String(i),
+      subject: t.content,
+      status: (t.status === "in_progress" || t.status === "completed"
+        ? t.status
+        : "pending") as PlanCard["status"],
+      at: i,
+    }));
+  }, [plan, todos]);
+
+  // Grouped once instead of a `filter` per lane plus one for the counter —
+  // this whole block re-ran four times per render, every second.
+  const byLane = useMemo(() => {
+    const m: Record<PlanCard["status"], PlanCard[]> = {
+      pending: [],
+      in_progress: [],
+      completed: [],
+    };
+    for (const c of planCards) m[c.status].push(c);
+    return m;
+  }, [planCards]);
+
+  const { runningAgents, doneAgents } = useMemo(() => {
+    const running: AgentCard[] = [];
+    const done: AgentCard[] = [];
+    for (const a of agents) (a.done ? done : running).push(a);
+    return { runningAgents: running, doneAgents: done };
+  }, [agents]);
+  const doneShown = doneAgents.slice(-30).reverse();
+
+  if (!open) return null;
+
+  const sessionItems: MenuEntry[] = sessions.slice(0, 12).map((s) => ({
+    id: s.externalId,
+    label: `${s.title ?? s.externalId.slice(0, 8)} · ${fmtClock(s.updatedAt)}`,
+    icon: <FileClock size={13} />,
+    disabled: s.externalId === session?.externalId,
+    onSelect: () => void switchSession(s),
+  }));
+
+  const openFileDiff = (path: string) => {
+    if (activeProjectId && isRepo) openViewer(activeProjectId, path);
+  };
+
+  const statusLabel = !working
+    ? "ocioso"
+    : lastNoteKind === "think" && pendingTools === 0
+      ? "pensando"
+      : "trabalhando";
+
+  return (
+    <div className="live-backdrop" onClick={close}>
+      <div
+        className="live"
+        role="dialog"
+        aria-label={`Ao vivo: ${terminalTitle}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="live-head">
+          <span className={`live-eq ${working ? "is-on" : ""}`} aria-hidden="true">
+            <i /><i /><i />
+          </span>
+          <div className="live-titles">
+            <strong>{terminalTitle}</strong>
+            <span className="live-sub">
+              {phase === "finding"
+                ? "procurando a sessão…"
+                : phase === "none"
+                  ? "esperando a primeira sessão…"
+                  : (session?.title ?? session?.externalId ?? "")}
+            </span>
+          </div>
+          <span className={`live-status ${working ? "live-status--on" : ""}`}>
+            {phase === "backfill" ? (
+              <>
+                <Loader2 size={11} className="spin" aria-hidden="true" /> carregando
+                histórico…
+              </>
+            ) : (
+              statusLabel
+            )}
+          </span>
+
+          <div className="live-stats">
+            {usage.model && (
+              <span className="live-stat" data-tip="Modelo da sessão">
+                {usage.model.replace(/^claude-/, "")}
+              </span>
+            )}
+            {usage.outTokens > 0 && (
+              <span
+                className="live-stat"
+                data-tip-wrap=""
+                data-tip={`Tokens — entrada ${usage.inTokens.toLocaleString("pt-BR")} · saída ${usage.outTokens.toLocaleString("pt-BR")} · cache ${usage.cacheRead.toLocaleString("pt-BR")}`}
+              >
+                ↑{compact.format(usage.inTokens + usage.cacheWrite)} ↓
+                {compact.format(usage.outTokens)}
+              </span>
+            )}
+            {usage.costUsd != null && (
+              <span className="live-stat" data-tip="Custo estimado (tabela pública)">
+                US$ {usage.costUsd.toFixed(usage.costUsd < 1 ? 3 : 2)}
+              </span>
+            )}
+          </div>
+
+          {sessions.length > 1 && (
+            <button
+              className="icon-btn"
+              aria-label="Trocar de sessão"
+              aria-haspopup="menu"
+              data-tip="Trocar de sessão"
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                setSessMenu({ x: r.right - 260, y: r.bottom + 4 });
+              }}
+            >
+              <ChevronDown size={13} />
+            </button>
+          )}
+          <button
+            className="icon-btn"
+            aria-label="Fechar o Ao Vivo (Esc)"
+            data-tip-at="left"
+            data-tip="Fechar (Esc)"
+            onClick={close}
+          >
+            <X size={13} />
+          </button>
+        </header>
+
+        {lastNote && phase !== "none" && (
+          <div className="live-note" key={lastNote}>
+            {lastNoteKind === "think" ? (
+              <Sparkles size={11} aria-hidden="true" />
+            ) : (
+              <MessageSquare size={11} aria-hidden="true" />
+            )}
+            <span className={lastNoteKind === "think" ? "live-note--think" : ""}>
+              {lastNote}
+            </span>
+          </div>
+        )}
+
+        {phase === "finding" && (
+          <div className="live-empty">
+            <Loader2 size={20} className="spin" aria-hidden="true" />
+            <span>procurando a sessão do agente…</span>
+          </div>
+        )}
+
+        {phase === "none" && (
+          <div className="live-empty">
+            <Bot size={22} aria-hidden="true" />
+            <span>Esperando o primeiro turno do agente…</span>
+            <small>
+              O rastro nasce quando a conversa começa. Assim que a CLI
+              escrever qualquer coisa, ele aparece aqui sozinho.
+            </small>
+            <Loader2 size={14} className="spin" aria-hidden="true" />
+          </div>
+        )}
+
+        {(phase === "backfill" || phase === "live") && (
+          <div className="live-body">
+            {/* ---- timeline ---- */}
+            <section className="live-col live-col--feed" aria-label="Linha do tempo">
+              <header className="live-col-head">
+                <span>Linha do tempo</span>
+                <span className="live-col-meta">
+                  {counts.edits > 0 && `${counts.edits} ed`}
+                  {counts.runs > 0 && ` · ${counts.runs} cmd`}
+                  {counts.reads > 0 && ` · ${counts.reads} leit`}
+                </span>
+              </header>
+              <div
+                className="live-feed"
+                ref={scrollerRef}
+                onScroll={(e) => {
+                  const el = e.currentTarget;
+                  setStuck(el.scrollHeight - el.scrollTop - el.clientHeight < 48);
+                }}
+              >
+                <Timeline entries={timeline} />
+              </div>
+              {!stuck && (
+                <button
+                  className="live-follow"
+                  onClick={() => {
+                    setStuck(true);
+                    const el = scrollerRef.current;
+                    if (el) el.scrollTop = el.scrollHeight;
+                  }}
+                >
+                  seguir ao vivo ↓
+                </button>
+              )}
+            </section>
+
+            {/* ---- touched files ---- */}
+            <section className="live-col live-col--files" aria-label="Arquivos tocados">
+              <header className="live-col-head">
+                <span>Arquivos tocados</span>
+                <span className="live-col-meta">{fileList.length}</span>
+              </header>
+              <div className="live-files">
+                {fileList.length === 0 && (
+                  <div className="live-feed-empty">nenhum arquivo tocado ainda</div>
+                )}
+                {fileList.map((f) => {
+                  const p = splitPath(f.path);
+                  const fresh = now - f.lastAt < 2500;
+                  return (
+                    <button
+                      key={f.path}
+                      className="live-file"
+                      data-fresh={fresh || undefined}
+                      disabled={!isRepo}
+                      onClick={() => openFileDiff(f.path)}
+                      data-tip-wrap=""
+                      data-tip={isRepo ? `${f.path}\nAbrir o diff` : f.path}
+                    >
+                      <span
+                        className={`live-mark-badge ${
+                          f.lastOp === "write"
+                            ? "live-mark-badge--a"
+                            : f.lastOp === "edit"
+                              ? "live-mark-badge--m"
+                              : "live-mark-badge--r"
+                        }`}
+                      >
+                        {f.lastOp === "write" ? "A" : f.lastOp === "edit" ? "M" : "L"}
+                      </span>
+                      <span className="live-path">
+                        <span className="live-path-dir">{p.dir}</span>
+                        <span className="live-path-base">{p.base}</span>
+                      </span>
+                      <span className="live-file-stats">
+                        {f.added > 0 && <em className="live-add">+{f.added}</em>}
+                        {f.removed > 0 && <em className="live-del">−{f.removed}</em>}
+                        {f.edits + f.writes > 1 && (
+                          <span className="live-file-count">
+                            {f.edits + f.writes}×
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* ---- board: plan + sub-agents ---- */}
+            <section className="live-col live-col--board" aria-label="Plano e sub-agents">
+              <header className="live-col-head">
+                <span>Plano do agente</span>
+                <span className="live-col-meta">
+                  {byLane.completed.length}/{planCards.length}
+                </span>
+              </header>
+              {planCards.length === 0 ? (
+                <div className="live-feed-empty">o agente ainda não montou um plano</div>
+              ) : (
+                <div className="live-kanban">
+                  {LANES.map((lane) => (
+                    <div className="live-lane" key={lane.id}>
+                      <span className="live-lane-head">
+                        {lane.label}
+                        <em>{byLane[lane.id].length}</em>
+                      </span>
+                      {byLane[lane.id].map((c) => (
+                          <div
+                            className={`live-card live-card--${c.status}`}
+                            key={c.key}
+                          >
+                            {c.status === "in_progress" && (
+                              <span className="live-card-pulse" aria-hidden="true" />
+                            )}
+                            {c.status === "completed" && (
+                              <Check size={11} aria-hidden="true" />
+                            )}
+                            <span>{c.subject}</span>
+                          </div>
+                        ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <header className="live-col-head live-col-head--gap">
+                <span>Sub-agents</span>
+                <span className="live-col-meta">
+                  {runningAgents.length > 0 && `${runningAgents.length} rodando`}
+                </span>
+              </header>
+              {agents.length === 0 ? (
+                <div className="live-feed-empty">nenhum sub-agent nesta sessão</div>
+              ) : (
+                <div className="live-kanban live-kanban--two">
+                  <div className="live-lane">
+                    <span className="live-lane-head">
+                      Rodando <em>{runningAgents.length}</em>
+                    </span>
+                    {runningAgents.map((a: AgentCard) => (
+                      <div className="live-card live-card--agent" key={a.toolId}>
+                        <span className="live-agent-top">
+                          <Bot size={11} aria-hidden="true" />
+                          {a.agentType && <span className="live-chip">{a.agentType}</span>}
+                          {a.bg && <span className="live-chip live-chip--dim">fundo</span>}
+                          <Loader2 size={11} className="spin" aria-hidden="true" />
+                        </span>
+                        {a.detail && <span>{a.detail}</span>}
+                        <time>{fmtElapsed(now - a.startedAt)}</time>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="live-lane">
+                    <span className="live-lane-head">
+                      Concluídos <em>{doneAgents.length}</em>
+                    </span>
+                    {doneShown.map((a) => (
+                      <div
+                        className={`live-card live-card--agent live-card--completed ${a.ok === false ? "live-card--failed" : ""}`}
+                        key={a.toolId}
+                      >
+                        <span className="live-agent-top">
+                          {a.ok === false ? (
+                            <AlertCircle size={11} aria-hidden="true" />
+                          ) : (
+                            <Check size={11} aria-hidden="true" />
+                          )}
+                          {a.agentType && <span className="live-chip">{a.agentType}</span>}
+                        </span>
+                        {a.detail && <span>{a.detail}</span>}
+                        {a.endedAt && (
+                          <time>{fmtElapsed(a.endedAt - a.startedAt)}</time>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+
+        {sessMenu && (
+          <ContextMenu
+            anchor={sessMenu}
+            items={sessionItems}
+            onClose={() => setSessMenu(null)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
