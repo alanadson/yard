@@ -1,0 +1,3241 @@
+/* Yard — "glass" refresh (moderately translucent materials), 2026-08-20.
+   Action and semantic colors UNTOUCHED (#0a84ff, green/yellow/red, graphites).
+   What changed is material and shape only:
+   - radii one step up: 5/7/10/14 -> 6/9/14/20; micro-controls 6 -> 8px;
+     tabs 8 -> 10px; the segmented control is now a capsule (track and segments 999px).
+   - thinner, deeper glass: less paint, more blur/saturate in the three materials.
+   - thread of light (--hairline) from 6% -> 12%; inner light of the primary button 28% -> 42%.
+   Per-component sheets (bench.css, canvas*.css, notes.css, live.css, modal.css,
+   changes.css, composer.css, palette.css) inherit almost everything via tokens; three
+   optional literals to follow up by hand:
+   - bench.css .bench-glass: blur(60px) -> blur(72px) saturate(185%);
+   - notes.css .notes: rgb(28 28 34 / 94%) -> rgb(26 26 33 / 86%);
+   - canvas-tail.css .cv-mdbar: already follows --r-xl (becomes 20px on its own).
+   The canvas went one step further on 2026-08-21 (mockup "Canvas — glass"): the
+   board declares its own materials and elevations in `.cv` (--cv-glass,
+   --cv-float, --cv-lift, --cv-edge, --cv-grip). See canvas.css and the
+   "Infinite canvas" section of docs/DESIGN.md.
+
+/* Yard — "premium, dark" visual world.
+   Direction contract: see the comment in the <body> of index.html.
+
+   A single sheet: the app is small enough that hunting a selector here is
+   faster than hunting a file.
+
+   The world in one sentence: instrument windows over a deep ambient
+   background — translucent blurred materials on floating surfaces, light
+   hairlines on top of raised surfaces, system blue as the only action
+   color, and semantic chroma (green/yellow/red) reserved for process state
+   and diffs. The chrome never competes with the terminal: surfaces that
+   cover terminals are transient; permanent ones are solid. */
+
+:root {
+  /* The app's floor: the gradient the `body` paints and that any opaque
+     surface covering the whole window has to repeat, so it does not open a
+     flat slab in the middle of the ambient (the Settings screen is the case).
+     Became a token when it got its second owner. */
+  --ambient:
+    radial-gradient(1100px 640px at 10% -12%, rgb(10 132 255 / 14%), transparent 62%),
+    radial-gradient(700px 480px at -8% 84%, rgb(10 132 255 / 6%), transparent 60%),
+    radial-gradient(900px 560px at 106% 112%, rgb(191 90 242 / 9%), transparent 60%),
+    linear-gradient(178deg, #1b1b21 0%, #121216 58%, #141419 100%);
+
+  /* ambient floor and surfaces, from deepest to highest */
+  --bg: #131316;
+  --bg-panel: #1a1a1e;
+  --bg-raised: #202025;
+  --bg-overlay: #26262c;
+  --bg-hover: rgb(255 255 255 / 6.5%);
+  --bg-active: rgb(255 255 255 / 11%);
+
+  /* translucent materials (vibrancy) — only on floating or side surfaces;
+     the content behind them is static or transient */
+  --material-thin: rgb(20 20 27 / 36%);
+  --material-menu: rgb(38 38 47 / 62%);
+  --material-sheet: rgb(28 28 36 / 68%);
+  --blur-thin: blur(30px) saturate(180%);
+  --blur-menu: blur(40px) saturate(180%);
+  --blur-sheet: blur(64px) saturate(180%);
+
+  /* lines: translucent white hairlines, never opaque gray */
+  --border-soft: rgb(255 255 255 / 4%);
+  --border: rgb(255 255 255 / 8%);
+  --border-strong: rgb(255 255 255 / 16%);
+
+  /* thread of light on top of raised surfaces — relief without color */
+  --hairline: inset 0 1px 0 rgb(255 255 255 / 12%);
+
+  /* text (all ≥ 4.5:1 over --bg and --bg-raised) */
+  --text: #e2e2e6;
+  --text-dim: #9e9ea6;
+  --text-bright: #f7f7f9;
+
+  /* action: system blue, the chrome's only non-semantic color */
+  --accent: #0a84ff;
+  --accent-bright: #409cff;
+  --accent-text: #7ab8ff;
+  --accent-dim: rgb(10 132 255 / 20%);
+  --accent-border: rgb(94 160 255 / 55%);
+  --accent-soft: rgb(10 132 255 / 18%);
+  --on-accent: #ffffff;
+  /* Fills that carry white text. The system blue is a *surface* color: white
+     on `--accent` measures 3.65:1, below the 4.5:1 this product commits to
+     (PRODUCT.md). Same hue, one step deeper, so the command vocabulary —
+     primary button, menu highlight, count badges — reads at AA. */
+  --accent-fill: #0f6fd6; /* 4.92:1 with white */
+  --accent-grad: linear-gradient(180deg, #1a6fd6, #0a5fc4); /* 4.90 → 6.09:1 */
+  --accent-grad-hover: linear-gradient(180deg, #1f72db, #0f66cc); /* 4.68 → 5.54:1 */
+  --accent-grad-active: linear-gradient(180deg, #1565c8, #0a5299); /* 5.63 → 7.84:1 */
+  --red-fill: #d13b32; /* 4.79:1 with white — `--red` alone is 2.82:1 */
+
+  /* semantics — the only place with chroma besides blue */
+  --green: #40d16e;
+  --green-bg: rgb(64 209 110 / 13%);
+  --yellow: #f0c33c;
+  --yellow-bg: rgb(240 195 60 / 12%);
+  --red: #ff6961;
+  --red-bg: rgb(255 105 97 / 13%);
+
+  /* radius: shape language — generous, continuous */
+  --r-sm: 6px;
+  --r-md: 9px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  /* The two steps of the bench's "floating glass" redesign (2026-08-20).
+     They were loose literals in `bench.css`; they became tokens so the
+     DESIGN.md scale can register them — `src/styles.test.ts` checks both sides. */
+  /* The tab — the step between the control and the panel. The header of this
+     file already recorded the change ("tabs 8 -> 10px") in the "glass" refresh,
+     but the value never became a token and was repeated in seven places. */
+  --r-tab: 10px;
+  --r-2xl: 24px;
+  --r-card: 18px;
+  /* Inner corners: the inside loses the thickness of the parent's border. */
+  --r-2xl-in: 23px;
+  --r-card-in: 17px;
+
+  /* elevation — always offset + soft blur, never a halo */
+  --shadow-1:
+    0 1px 2px rgb(0 0 0 / 28%),
+    0 3px 10px rgb(0 0 0 / 22%);
+  --shadow-2:
+    0 12px 32px rgb(0 0 0 / 42%),
+    0 2px 8px rgb(0 0 0 / 30%);
+  --shadow-3:
+    0 32px 80px rgb(0 0 0 / 55%),
+    0 8px 24px rgb(0 0 0 / 35%);
+
+  /* typography */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 14px;
+  /* Screen or panel title. The ramp stopped at 14px and this role lived on
+     loose literals — 15px on the crash screen, 16px on the boot-failure one,
+     17px on the welcome screen, the bench and the notebook: three sizes for the
+     same thing. `src/styles.test.ts` checks the ramp against docs/DESIGN.md. */
+  --fs-xl: 17px;
+  --mono: "SF Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+  /* Both overridable from Preferences (lib/fonts.ts sets them inline on
+     <html>); these are the Yard defaults that show through when unset. */
+  --ui-font:
+    "Inter Variable", "SF Pro Text", -apple-system, "Segoe UI Variable Text",
+    "Segoe UI", system-ui, sans-serif;
+
+  /* motion */
+  --dur-1: 130ms;
+  --dur-2: 200ms;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-pop: cubic-bezier(0.2, 1, 0.3, 1);
+
+  /* The bar carries the group's mode switch, which is a *destination* and not
+     a decoration — at 40px the segmented control had to be squeezed to 3px of
+     vertical padding to fit, and read as a strip of text rather than a control
+     you press. The extra 4px are what let it be a real one. */
+  --titlebar-h: 44px;
+
+  color-scheme: dark;
+  font-family: var(--ui-font);
+  font-size: var(--fs-md);
+  letter-spacing: 0.005em;
+}
+
+/* Ligatures of the code font, one switch for the surfaces that show code.
+   `normal` is what CSS does on its own (calt/liga on when the font has them);
+   the preference writes `--code-liga: none` to turn them off. The terminal is
+   canvas-drawn and gets its ligatures from xterm's character joiner instead.
+
+   `letter-spacing: normal` is load-bearing: the root tracks the UI at
+   0.005em, and Chromium drops optional ligatures from any text with non-zero
+   letter-spacing — inherited here, it silently vetoed the whole feature. */
+code,
+pre,
+kbd,
+textarea,
+.cm-scroller,
+.dgrid {
+  font-variant-ligatures: var(--code-liga, normal);
+  letter-spacing: normal;
+}
+
+/* Sample line in Preferences: the chosen code font, obeying the ligature
+   checkbox, so "what is a ligature?" is answered by looking at it. */
+.font-preview {
+  margin-top: 10px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: rgb(0 0 0 / 25%);
+  color: var(--text);
+  font-size: 14px;
+  letter-spacing: normal;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+/* The ambient floor: a darkened "desktop" behind the translucent materials.
+   Two nearly subliminal cool glows bring the glass to life without ever
+   competing with terminal content. */
+body {
+  background: var(--ambient);
+  background-attachment: fixed;
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgb(10 132 255 / 35%);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+/* Immediate feedback on everything clickable; nothing beyond
+   color/border/shadow so as not to compete with terminal content. */
+button,
+input,
+select,
+.tree-row,
+.pane-tab,
+.session,
+.option {
+  transition:
+    background-color var(--dur-1) ease,
+    color var(--dur-1) ease,
+    border-color var(--dur-1) ease,
+    opacity var(--dur-1) ease,
+    box-shadow var(--dur-1) ease;
+}
+
+/* Busy button: spins and refuses clicks. It lived in the files panel's sheet,
+   and the other three screens that use the class (floors, CLI detection) only
+   saw it by accident — whenever that panel happened to be loaded. */
+.icon-btn.is-busy {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.icon-btn.is-busy svg {
+  animation: spin 900ms linear infinite;
+}
+
+/* General-purpose spinner. Lives here, and not in the Live view's CSS, because
+   `App` itself draws it while waiting for a lazy chunk to arrive. */
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --- waiting for a lazy surface ------------------------------------------
+   Three shapes, because there are three ways of waiting: the central area, the
+   side column (born at the width already stored, otherwise the layout jumps
+   when the real panel arrives) and the overlay that covers everything. See the
+   `Suspense` boundaries in `App`. */
+.surface-loading {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.panel-loading {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  margin: 10px 10px 10px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  box-shadow: var(--shadow-1), var(--hairline);
+}
+
+.overlay-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  /* No dark veil: the wait usually lasts one frame, and darkening the whole
+     screen only to lighten it again would be louder than the arrival. */
+  pointer-events: none;
+}
+
+/* Focus ring: system blue halo, visible over any surface. */
+:focus-visible {
+  outline: 3px solid rgb(10 132 255 / 55%);
+  outline-offset: 1px;
+  border-radius: var(--r-sm);
+}
+
+/* Screen-reader-only text — for state whose visual channel is a dot or a
+   badge. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Numbers that change on their own (RAM, counts, diffs) must not dance. */
+.hud-row strong,
+.pane-stat,
+.file-stats,
+.changes-count,
+.review-chip,
+.pill,
+.feed-meta {
+  font-variant-numeric: tabular-nums;
+}
+
+input,
+select {
+  font: inherit;
+  color: var(--text-bright);
+  background: rgb(0 0 0 / 26%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 6px 9px;
+  outline: none;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 18%);
+}
+
+input::placeholder {
+  color: var(--text-dim);
+}
+
+input:hover:not(:focus),
+select:hover:not(:focus) {
+  border-color: var(--border-strong);
+}
+
+/* `textarea` too: without it, the four long fields that drop the outline on
+   purpose (the note and the text on the board, the composer, the review
+   annotation) had no focus signal at all beyond the blinking cursor. The rule
+   beats their `outline: none` by specificity, so being here is enough.
+   `src/styles.test.ts` locks the list. */
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: rgb(10 132 255 / 60%);
+  box-shadow: 0 0 0 3.5px rgb(10 132 255 / 22%);
+}
+
+/* The blue of the app on the boxes the platform draws for us. */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+/* Popups the WebView draws in a window of its own — the `<select>` list, the
+   `<datalist>` suggestions — are painted from the control's computed
+   `background-color`, and a translucent one gets composited over that
+   window's white base: the list comes out light in a dark app, and
+   `color-scheme` never reaches there. Opaque, therefore. For a `<select>`
+   the real answer is `components/Select`, which drops the native popup
+   altogether; this is only the floor under a stray one. */
+select,
+input[list] {
+  background-color: #17171b;
+}
+
+select option,
+select optgroup {
+  background-color: var(--bg-overlay);
+  color: var(--text-bright);
+}
+
+/* --- select: our own pop-up button ------------------------------------------
+   The trigger is the same recessed well as a text field, with the caret
+   pinned to the right; the list is the `.menu` material (see
+   `components/Select`). */
+.select-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  text-align: left;
+  color: var(--text-bright);
+  background: rgb(0 0 0 / 26%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 6px 9px;
+  outline: none;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 18%);
+}
+
+.select-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-ph {
+  color: var(--text-dim);
+}
+
+.select-caret {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  transition: color var(--dur-1) ease;
+}
+
+.select-trigger:hover:not(:disabled):not(.is-open) {
+  border-color: var(--border-strong);
+}
+
+.select-trigger:hover .select-caret {
+  color: var(--text);
+}
+
+/* Open counts as focused: the ring is what ties the list to its field. */
+.select-trigger:focus-visible,
+.select-trigger.is-open {
+  border-color: rgb(10 132 255 / 60%);
+  box-shadow: 0 0 0 3.5px rgb(10 132 255 / 22%);
+}
+
+.select-trigger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* The balloon hangs exactly where the list opens — one or the other. */
+.select-trigger.is-open::after {
+  display: none;
+}
+
+.menu--select {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.menu--select.is-up {
+  animation: menu-in-up var(--dur-1) var(--ease);
+}
+
+/* A list that opens upward has to grow upward too: the downward `menu-in`
+   would make it slide out from under its own trigger. */
+@keyframes menu-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+
+.select-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.select-group + .select-group {
+  margin-top: 3px;
+  padding-top: 3px;
+  border-top: 1px solid rgb(255 255 255 / 8%);
+}
+
+/* The row is a checkmark column plus the label — a native pop-up menu
+   aligns the labels whether or not the item is the chosen one. */
+.menu--select .menu-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+kbd {
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--text-bright);
+  background: rgb(255 255 255 / 8%);
+  border: 1px solid rgb(255 255 255 / 13%);
+  border-bottom-width: 2px;
+  border-radius: var(--r-sm);
+  padding: 1px 5px;
+  white-space: nowrap;
+  box-shadow: var(--hairline);
+}
+
+/* --- brand marks -------------------------------------------------------------
+
+   The product logos (`components/BrandIcon`) — the one family beside Lucide in
+   the chrome, and only where a mark answers "which CLI is this?". They carry
+   the product's own color, painted on the element in `marks.ts`, so the row
+   they sit in no longer tints them (a `fill` here would still win, if one of
+   them ever has to go monochrome again). */
+
+.brand-icon {
+  flex: none;
+}
+
+/* Heads that align on the baseline would hang the logo below the text. */
+.usage-prov-head .brand-icon {
+  align-self: center;
+}
+
+/* --- chassis --- */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.workspace {
+  position: relative; /* anchor for the Floors control (bottom-right corner) */
+  flex: 1;
+  /* Canvas floor. It used to be `0`: with sidebar + changes + bench open at
+     their maximum (1640 px of chrome) in a 900 px window, the three panels
+     were rigid and the terminal canvas literally went to zero, with no
+     warning. Now the panels give way first (down to each one's minimum) and,
+     if it still does not fit, `App` collapses the lowest-priority one. */
+  min-width: 320px;
+  background: transparent;
+  padding: 10px;
+}
+
+/* With the sidebar open the divider already provides the left breathing room. */
+.app-body[data-sidebar="open"] .workspace {
+  padding-left: 0;
+}
+
+.app-body[data-changes="open"] .workspace,
+.app-body[data-bench="open"] .workspace {
+  padding-right: 0;
+}
+
+.boot {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  background: transparent;
+}
+
+.boot-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  color: var(--text-dim);
+}
+
+/* Yard's app icon: the same black-and-white mark used by the native bundle. */
+.boot-mark,
+.welcome-mark {
+  display: block;
+  border-radius: 27%;
+  box-shadow:
+    0 8px 24px rgb(0 0 0 / 35%),
+    0 2px 6px rgb(0 0 0 / 40%);
+}
+
+.boot-mark {
+  width: 48px;
+  height: 48px;
+  animation: mark-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes mark-breathe {
+  50% {
+    opacity: 0.6;
+  }
+}
+
+/* The workspace could not be read: a wall, not a welcome screen. Everything
+   the user could build from here would be dropped by an autosave that refuses
+   to run, so the app deliberately offers nothing but "try again". */
+.boot--failed {
+  padding: 24px;
+}
+
+.boot-fail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 560px;
+  padding: 26px 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-2, 0 12px 32px rgb(0 0 0 / 35%));
+}
+
+.boot-fail-icon {
+  color: var(--red);
+}
+
+.boot-fail h2 {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 600;
+}
+
+.boot-fail p {
+  margin: 0;
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+
+.boot-fail code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+
+.boot-fail-detail {
+  margin: 0;
+  align-self: stretch;
+  max-height: 140px;
+  overflow: auto;
+  padding: 9px 11px;
+  border-radius: var(--r-sm);
+  background: rgb(0 0 0 / 22%);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.boot-fail-hint {
+  font-size: 12.5px;
+}
+
+.boot-fail-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+/* Autosave is failing while the app looks healthy — the one case where a
+   toast is not enough, because the loss is continuous and silent. */
+.save-warn {
+  /* A row of `.app`'s column: never shrink, the workspace below absorbs it. */
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  background: var(--red-bg);
+  border-bottom: 1px solid rgb(255 105 97 / 30%);
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.save-warn svg {
+  flex: none;
+  color: var(--red);
+}
+
+.save-warn span {
+  flex: 1;
+}
+
+/* --- title bar --- */
+
+/* Thin material over the ambient floor, like a window toolbar. */
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--titlebar-h);
+  padding-left: 10px;
+  background: var(--material-thin);
+  backdrop-filter: var(--blur-thin);
+  border-bottom: 1px solid rgb(0 0 0 / 35%);
+  box-shadow: var(--hairline);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.titlebar-left,
+.titlebar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.titlebar-left {
+  flex: 1 1 0;
+}
+
+.titlebar-center {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+}
+
+.titlebar-right {
+  flex: 1 1 0;
+  justify-content: flex-end;
+  gap: 4px;
+  padding-right: 10px;
+}
+
+.titlebar-right .btn {
+  margin-right: 4px;
+}
+
+/* Count over the icon (changes, bench). Lives here, and not in the panel's
+   CSS: the bar mounts on boot and the panel is lazy — when the rule travelled
+   along with `ChangesPanel/changes.css`, the app opened with the number loose
+   under the icon, and it only became a pill after someone opened the changes
+   panel. */
+.changes-toggle {
+  position: relative;
+}
+
+.changes-toggle-badge {
+  position: absolute;
+  top: -3px;
+  right: -5px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 40%);
+}
+
+/* Windows window controls: minimize, maximize/restore, close — on the right,
+   at the system's metrics (46px wide, full bar height, 10px glyph) so they
+   land where the hand already goes. Flush to the corner, square, with no
+   radius: this is the only place in the app that obeys the OS instead of the
+   style, and half-obeying would read as a bug. */
+.win-controls {
+  display: flex;
+  align-items: stretch;
+  height: var(--titlebar-h);
+  flex-shrink: 0;
+}
+
+.win-btn {
+  width: 46px;
+  padding: 0;
+  border-radius: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text);
+}
+
+.win-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+.win-btn:active {
+  background: var(--bg-active);
+}
+
+/* The system red, not `--red-fill`: this button belongs to Windows. */
+.win-btn--close:hover {
+  background: #c42b1c;
+  color: #ffffff;
+}
+
+.win-btn--close:active {
+  background: #b0271a;
+  color: #ffffff;
+}
+
+/* Inset ring — the button touches the window edge, so an outset one would be
+   clipped by the corner. */
+.win-btn:focus-visible {
+  outline-offset: -3px;
+  border-radius: 0;
+}
+
+/* In-world tooltip (replaces the native `title` in the chrome): a dark
+   balloon that appears below the control after a short pause. The
+   native `title` is a white Windows box — foreign material amid the glass.
+   `aria-label` remains the one that speaks to the screen reader. */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  /* The 8px offset is a **transparent border**, not a loose `top`. A real gap
+     there drops the `:hover` on the way to the balloon, and it vanishes before
+     it can be reached — which is what WCAG 1.4.13 ("hoverable") forbids. This
+     way the sensitive area touches the control and the balloon is still drawn
+     8px below. The thread of light on top still comes from `--hairline` (an
+     `inset` shadow, drawn at the edge of the padding box), so the look does
+     not change.
+
+     Why not a `::before` as the bridge: `data-tip` sits on 101 classes, and
+     `.crumb::before` is already a separator — the bridge would have knocked it
+     out of place. A border collides with nobody. */
+  top: 100%;
+  border-top: 8px solid transparent;
+  background-clip: padding-box;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgb(46 46 52 / 96%);
+  border: 1px solid rgb(255 255 255 / 10%);
+  box-shadow:
+    0 6px 18px rgb(0 0 0 / 45%),
+    var(--hairline);
+  color: var(--text-bright);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+  /* Invisible intercepts nothing: a balloon of up to 240px hanging over the
+     screen would eat the click of whoever sat underneath. */
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease 0s;
+}
+
+[data-tip]:hover::after {
+  opacity: 1;
+  /* Open, the balloon accepts the pointer — WCAG 1.4.13's "hoverable", for
+     whoever uses magnification and drags the pointer to the text to read it. */
+  pointer-events: auto;
+  transition-delay: 500ms;
+}
+
+/* Keyboard reaches the same balloon — without this, every icon-only control
+   is anonymous to whoever tabs through the chrome. */
+[data-tip]:focus-visible::after {
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: 500ms;
+}
+
+/* Esc dismisses an open balloon (WCAG 1.4.13); App sets `tips-off` on the
+   body and clears it on the next focus or pointer move. */
+body.tips-off [data-tip]:hover::after,
+body.tips-off [data-tip]:focus-visible::after {
+  opacity: 0;
+  /* Dismissed, it goes back to being transparent to the pointer. Without this
+     line the balloon would be invisible **and** clickable, eating the click of
+     whoever is underneath. */
+  pointer-events: none;
+  transition-delay: 0s;
+}
+
+/* Near window edges the balloon anchors to the control's own side,
+   otherwise half of it dies off-screen. */
+[data-tip][data-tip-at="left"]::after {
+  left: 0;
+  transform: none;
+}
+
+[data-tip][data-tip-at="right"]::after {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+/* Controls at the window footer: the balloon goes up. The transparent bridge
+   switches sides with it — it has to sit between the control and the balloon. */
+[data-tip][data-tip-side="top"]::after {
+  top: auto;
+  bottom: 100%;
+  border-top: 0;
+  border-bottom: 8px solid transparent;
+}
+
+/* Canvas vertical palette: the balloon exits to the right, at button height.
+   Same bridge, now horizontal. */
+[data-tip][data-tip-side="right"]::after {
+  top: 50%;
+  left: 100%;
+  right: auto;
+  border-top: 0;
+  border-left: 10px solid transparent;
+  transform: translateY(-50%);
+}
+
+/* Long texts (paths, explanations): wrap at up to ~240px instead of
+   crossing the screen in a single line. */
+[data-tip][data-tip-wrap]::after {
+  white-space: normal;
+  width: max-content;
+  max-width: 240px;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  color: var(--text-bright);
+  letter-spacing: 0.1px;
+  flex-shrink: 0;
+}
+
+.brand-mark {
+  width: 18px;
+  height: 18px;
+  display: block;
+  object-fit: contain;
+  border-radius: 27%;
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 35%);
+}
+
+/* Breadcrumb: the group is "where I am"; the project is context. */
+.crumb {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.crumb::before {
+  content: "";
+  width: 1px;
+  height: 14px;
+  background: var(--border-strong);
+  flex-shrink: 0;
+  margin-right: 3px;
+}
+
+.crumb-icon {
+  flex-shrink: 0;
+}
+
+.crumb-project {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.crumb-sep {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+/* Branch badge when the active group is a floor (isolated worktree). */
+.crumb-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: rgb(255 255 255 / 4%);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.crumb-group {
+  color: var(--text-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 2 auto;
+  min-width: 0;
+}
+
+/* Agent usage limits + Energético (TitleBar/StatusChip.tsx): chips with a
+   meter in the bar + a detail popover with the keep-awake radio group at the
+   bottom. The meters inherit the memory HUD's recipe — blue at rest, yellow
+   on warning (≥75%), red near the ceiling (≥90%): the same "this needs
+   attention" reading as everywhere else. */
+.usage-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 25px;
+  padding: 0 9px;
+  border-radius: 8px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  transition:
+    background var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+
+.usage-strip:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.usage-strip[aria-expanded="true"] {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.usage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* The bar is three groups: title on the left, view tabs centered, actions on
+   the right. Only the sides flex, so in a narrow window the right group runs
+   out of room and — being a flex item, which overflows without clipping —
+   paints its first chip *under* the centered tabs. The window goes down to
+   900px, so this is not a hypothetical.
+
+   What goes first is what is least needed to read a meter: the agent's name
+   (the color and the number still say everything), then the whole strip,
+   which is glanceable information and not an action. */
+@media (max-width: 1440px) {
+  .usage-chip-name {
+    display: none;
+  }
+
+  .usage-strip {
+    gap: 9px;
+  }
+}
+
+/* Below 1180px only the meters leave; the chip (and with it the popover and
+   the Energético state) stays reachable — before, the whole meter vanished. */
+@media (max-width: 1180px) {
+  .usage-strip .usage-chip {
+    display: none;
+  }
+
+  /* With no meters beside it the divider has nothing to divide. */
+  .usage-strip .usage-strip-energy {
+    border-left: none;
+    padding-left: 0;
+  }
+}
+
+.usage-chip-name {
+  font-size: var(--fs-xs);
+}
+
+.usage-chip-pct {
+  font-size: var(--fs-xs);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-chip-pct.is-stale {
+  color: var(--text-dim);
+}
+
+/* Account in trouble (expired session, error): the same language as the
+   process dots, shrunk to the bar's density. */
+.usage-chip-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.usage-chip-dot--warn {
+  background: var(--yellow);
+}
+
+.usage-chip-dot--crit {
+  background: var(--red);
+}
+
+.usage-meter {
+  display: inline-block;
+  width: 30px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 9%);
+  overflow: hidden;
+}
+
+.usage-meter-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transform-origin: left;
+  transition:
+    transform 400ms ease,
+    background-color 400ms ease;
+}
+
+.usage-meter-fill--warn {
+  background: var(--yellow);
+}
+
+.usage-meter-fill--crit {
+  background: var(--red);
+}
+
+.usage-pop {
+  position: fixed;
+  z-index: 10000;
+  width: 308px;
+  padding: 9px 12px 7px;
+  background: var(--material-menu);
+  backdrop-filter: var(--blur-menu);
+  border: 1px solid rgb(255 255 255 / 11%);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2), var(--hairline);
+  animation: menu-in var(--dur-1) var(--ease);
+}
+
+.usage-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.usage-pop-title {
+  flex: 1;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.65px;
+  color: var(--text-dim);
+}
+
+.usage-updated {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-refresh {
+  width: 20px;
+  height: 20px;
+}
+
+.usage-refresh.is-spinning svg {
+  animation: usage-spin 900ms linear infinite;
+}
+
+@keyframes usage-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.usage-prov {
+  padding: 7px 0 5px;
+}
+
+.usage-prov + .usage-prov {
+  border-top: 1px solid var(--border-soft);
+}
+
+.usage-prov-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 4px;
+  min-width: 0;
+}
+
+.usage-prov-name {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.usage-plan {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 20px;
+  background: rgb(255 255 255 / 7.5%);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.usage-account {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.usage-row {
+  display: grid;
+  grid-template-columns: 52px 1fr 34px 62px;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.usage-row .usage-meter {
+  display: block;
+  width: auto;
+  height: 4px;
+}
+
+.usage-row-label {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.usage-row-pct {
+  font-size: var(--fs-xs);
+  color: var(--text);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-reset {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.usage-note {
+  margin: 3px 0 1px;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.usage-note--bad {
+  color: #ffb4ae;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usage-meter-fill {
+    transition: none;
+  }
+
+  .usage-pop {
+    animation: none;
+  }
+
+}
+
+/* Energético — the keep-awake half of the status chip. The can tints when a
+   mode is armed; the dot means the block is applied *right now* (in the
+   agents mode it comes and goes with the turns). */
+.usage-strip-energy {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding-left: 9px;
+  border-left: 1px solid var(--border-soft);
+  color: var(--text-dim);
+}
+
+.usage-strip-energy.is-active {
+  color: var(--accent-text);
+}
+
+.energy-dot {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-bright);
+  box-shadow: 0 0 6px rgb(64 156 255 / 70%);
+}
+
+/* The radio group at the bottom of the usage popover. */
+.energy-sect {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.energy-pop-title {
+  padding: 3px 8px 5px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.65px;
+  color: var(--text-dim);
+}
+
+.energy-opt {
+  display: grid;
+  grid-template-columns: 16px 1fr 16px;
+  align-items: start;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: var(--r-md);
+  text-align: left;
+}
+
+.energy-opt:hover {
+  background: var(--bg-hover);
+}
+
+.energy-opt-icon {
+  margin-top: 1px;
+  color: var(--text-dim);
+}
+
+.energy-opt[aria-checked="true"] .energy-opt-icon {
+  color: var(--accent-text);
+}
+
+.energy-opt-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.energy-opt-label {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-bright);
+}
+
+.energy-opt-desc {
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.energy-opt-check {
+  margin-top: 2px;
+  color: var(--accent-text);
+}
+
+.energy-status {
+  margin: 5px 2px 2px;
+  padding: 6px 8px 2px;
+  border-top: 1px solid var(--border-soft);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+/* Segmented control: recessed track, raised active segment. */
+.layout-switch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: rgb(0 0 0 / 28%);
+  border: 1px solid rgb(255 255 255 / 6%);
+  border-radius: 999px;
+  color: var(--text-dim);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 20%);
+}
+
+.layout-switch button {
+  padding: 5px 14px;
+  border-radius: 999px;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.layout-switch button:hover {
+  color: var(--text);
+}
+
+.layout-switch button.is-active {
+  background: rgb(255 255 255 / 14%);
+  color: var(--text-bright);
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 35%),
+    inset 0 1px 0 rgb(255 255 255 / 9%);
+}
+
+/* Inside the segmented control the pop-up button is one more segment: no
+   well of its own, only the label and the caret. */
+.layout-switch .select-trigger {
+  width: auto;
+  gap: 4px;
+  margin-left: 2px;
+  padding: 5px 11px;
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+  border-radius: 999px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.layout-switch .select-trigger:hover:not(.is-open) {
+  color: var(--text);
+  border-color: transparent;
+}
+
+.layout-switch .select-trigger.is-open {
+  color: var(--text-bright);
+  background: rgb(255 255 255 / 14%);
+}
+
+/* --- buttons --- */
+
+/* `padding: 0` is load-bearing: the UA's own `1px 6px` shrinks the grid area
+   below the glyph and shoves it off-centre inside the square. */
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  border-radius: 8px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+.icon-btn:active {
+  background: var(--bg-active);
+}
+
+.icon-btn[aria-expanded="true"],
+.icon-btn.is-active {
+  background: var(--bg-active);
+  color: var(--text-bright);
+}
+
+.icon-btn--danger:hover {
+  background: var(--red-bg);
+  color: var(--red);
+}
+
+.icon-btn--go:hover {
+  background: var(--green-bg);
+  color: var(--green);
+}
+
+/* "This process is serving something": tinted at rest, because the button
+   only exists while there is an address — its presence *is* the news. */
+.icon-btn--served {
+  color: var(--accent-text);
+}
+
+.icon-btn--served:hover {
+  background: var(--accent-dim);
+  color: var(--accent-bright);
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.icon-btn:disabled:hover {
+  background: none;
+  color: var(--text-dim);
+}
+
+/* Button: slightly raised surface with a thread of light on top. */
+/* An action written mid-sentence — "try again" inside the error notice, and
+   nothing beyond that. Uses `--accent-text` because those sentences live over
+   `--red-bg`/`--yellow-bg`, where the raw `--accent` falls below 4.5:1 (it is
+   the contract of `styles.test.ts`). */
+.linkish {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--r-md);
+  background: rgb(255 255 255 / 7.5%);
+  border: 1px solid rgb(255 255 255 / 9%);
+  color: var(--text);
+  white-space: nowrap;
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 25%),
+    inset 0 1px 0 rgb(255 255 255 / 7%);
+}
+
+.btn:hover {
+  background: rgb(255 255 255 / 11%);
+  color: var(--text-bright);
+  border-color: rgb(255 255 255 / 13%);
+}
+
+.btn:active {
+  background: rgb(255 255 255 / 15%);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: rgb(255 255 255 / 5%);
+}
+
+/* Primary: system blue, with the inner light of a push button. */
+.btn--primary {
+  background: var(--accent-grad);
+  border-color: rgb(10 100 220 / 80%);
+  color: var(--on-accent);
+  font-weight: 600;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 42%),
+    0 1px 3px rgb(9 90 200 / 45%);
+}
+
+.btn--primary:hover {
+  background: var(--accent-grad-hover);
+  border-color: rgb(10 110 230 / 90%);
+  color: var(--on-accent);
+}
+
+.btn--primary:active {
+  background: var(--accent-grad-active);
+}
+
+/* A disabled primary was the gradient at 0.4 — which dropped the white text
+   far below any threshold. It steps out of the blue instead. */
+.btn--primary:disabled {
+  background: rgb(255 255 255 / 9%);
+  border-color: var(--border);
+  color: var(--text-dim);
+  box-shadow: none;
+  opacity: 1;
+}
+
+/* Destructive: solid red, the same weight as the primary.
+   Three screens already asked for this class (`btn btn--danger`) and it never
+   existed — the button that deletes a floor, a branch or a stash came out
+   looking like an ordinary button, next to an identical "Cancel". The red is
+   `--red-fill` (4.79:1 with white), and not the `--red` of text, which does
+   not pass as a background. */
+.btn--danger {
+  background: var(--red-fill);
+  border-color: rgb(180 45 38 / 85%);
+  color: #fff;
+  font-weight: 600;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 30%),
+    0 1px 3px rgb(140 30 25 / 45%);
+}
+
+/* Hover **darkens**, unlike the primary, which lightens: lightening the red
+   drops the contrast with white (the `#db463c` that was here gave 4.24:1, and
+   the repository's contrast test caught it). Darkening goes up to 5.13:1 and
+   still reads as "pressable". */
+.btn--danger:hover {
+  background: #c9382f;
+  border-color: rgb(200 55 46 / 90%);
+  color: #fff;
+}
+
+.btn--danger:active {
+  background: #b9302a;
+}
+
+.btn--danger:disabled {
+  background: rgb(255 255 255 / 9%);
+  border-color: var(--border);
+  color: var(--text-dim);
+  box-shadow: none;
+  opacity: 1;
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+.btn--sm {
+  padding: 3px 9px;
+  font-size: var(--fs-sm);
+}
+
+/* --- draggable side divider --- */
+
+.resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  z-index: 6;
+  cursor: col-resize;
+  background: transparent;
+  padding: 0;
+}
+
+.resizer--right {
+  right: -4px;
+}
+
+.resizer--left {
+  left: -4px;
+}
+
+/* The track only appears when useful: hover, drag, or keyboard focus. */
+.resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--dur-1) ease;
+}
+
+.resizer:hover::after,
+.resizer:focus-visible::after,
+.resizer.is-dragging::after {
+  opacity: 0.6;
+}
+
+.resizer:focus-visible {
+  outline: none;
+}
+
+/* --- sidebar --- */
+
+/* Sidebar vibrancy: thin material over the ambient floor. */
+.sidebar {
+  position: relative;
+  /* Gives way before the canvas: the inline width is the target, the minimum
+     is the floor. */
+  flex-shrink: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px; /* SIDEBAR_MIN */
+  background: var(--material-thin);
+  backdrop-filter: var(--blur-thin);
+  border-right: 1px solid rgb(0 0 0 / 32%);
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 8px 6px 14px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.sidebar-tree {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 6px 10px;
+}
+
+.sidebar-empty {
+  padding: 18px 14px;
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  line-height: 1.5;
+}
+
+.sidebar-empty p {
+  margin: 0;
+}
+
+.tree-project + .tree-project {
+  margin-top: 3px;
+}
+
+/* Source list: rounded rows with pill selection, not full-width bands. */
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 8px;
+  min-height: 27px;
+  position: relative;
+  cursor: default;
+  user-select: none;
+  border-radius: var(--r-md);
+}
+
+.tree-row .icon-btn {
+  opacity: 0;
+  width: 20px;
+  height: 20px;
+}
+
+.tree-row:hover .icon-btn,
+.tree-row .icon-btn:focus-visible,
+.tree-row.is-menu-open .icon-btn {
+  opacity: 1;
+}
+
+.tree-row:hover,
+.tree-row.is-menu-open {
+  background: var(--bg-hover);
+}
+
+.tree-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tree-row--project {
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.tree-toggle {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+}
+
+.tree-toggle:hover {
+  color: var(--text-bright);
+}
+
+.tree-row--group {
+  padding-left: 20px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+/* Active group: the blue pill of the sidebar. */
+.tree-row--group.is-active {
+  background: rgb(10 132 255 / 26%);
+  color: var(--text-bright);
+  box-shadow: inset 0 0 0 1px rgb(10 132 255 / 18%);
+}
+
+.tree-row--terminal {
+  padding-left: 38px;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.tree-row--terminal:hover {
+  color: var(--text);
+}
+
+/* The focused CLI: whoever receives the keys also announces itself in the
+   tree; otherwise with 4 panes open only the pane knows. */
+.tree-row--terminal.is-focused {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+  box-shadow: inset 0 0 0 1px rgb(10 132 255 / 30%);
+}
+
+.tree-icon {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.tree-empty {
+  padding: 3px 8px 5px 38px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.tree-empty button {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+.tree-empty button:hover {
+  color: var(--text-bright);
+}
+
+.pill {
+  font-size: 10px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 20px;
+  background: var(--accent-dim);
+  color: var(--accent-text);
+  flex-shrink: 0;
+}
+
+/* Menu: blurred material, pill items, full blue highlight. */
+.menu {
+  position: absolute;
+  right: 6px;
+  top: 24px;
+  z-index: 40;
+  min-width: 200px;
+  padding: 5px;
+  background: var(--material-menu);
+  backdrop-filter: var(--blur-menu);
+  border: 1px solid rgb(255 255 255 / 11%);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2), var(--hairline);
+  display: flex;
+  flex-direction: column;
+  animation: menu-in var(--dur-1) var(--ease);
+}
+
+.menu--popup {
+  position: fixed;
+  right: auto;
+  top: auto;
+  z-index: 10000;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+.menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  text-align: left;
+  font-size: var(--fs-sm);
+  width: 100%;
+}
+
+.menu button:hover,
+.menu button.is-active {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+}
+
+.menu button:hover .menu-icon,
+.menu button:hover .menu-shortcut,
+.menu button:hover .menu-chevron,
+.menu button.is-active .menu-icon {
+  color: var(--on-accent);
+}
+
+.menu button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.menu button:disabled:hover,
+.menu button:disabled.is-active {
+  background: transparent;
+  color: inherit;
+}
+
+.menu-icon {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  transition: color var(--dur-1) ease;
+}
+
+.menu-danger .menu-icon {
+  color: inherit;
+}
+
+.menu-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.menu-shortcut {
+  margin-left: 12px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  transition: color var(--dur-1) ease;
+}
+
+.menu-chevron {
+  display: grid;
+  place-items: center;
+  margin-left: 8px;
+  color: var(--text-dim);
+  transition: color var(--dur-1) ease;
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 5px 9px;
+  background: rgb(255 255 255 / 9%);
+}
+
+/* Customization rows (color/size) inside the menu: buttons leave the
+   default layout (full width) — they are side-by-side chips. */
+.menu-swatches {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 10px;
+}
+
+/* Caption above the chips, not beside: eight circles already fill the menu
+   width, and an inline label would push the row into a second wrap. */
+.menu-swatches-label {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.menu-swatches-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.menu .menu-swatches button {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  padding: 0;
+  border-radius: 50%;
+}
+
+/* "No color": the default-background chip with the usual diagonal slash.
+   Without it there is no way back after picking a tone. */
+.menu .menu-swatches button.cv-swatch--none {
+  background:
+    linear-gradient(
+      135deg,
+      transparent 44%,
+      var(--red) 44%,
+      var(--red) 56%,
+      transparent 56%
+    ),
+    var(--bg-overlay);
+}
+
+.menu-sizes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+}
+
+.menu .menu-sizes button {
+  width: 30px;
+  flex: none;
+  justify-content: center;
+  padding: 6px 0;
+  color: var(--text-dim);
+}
+
+.menu .menu-sizes button.is-active {
+  background: var(--bg-active);
+  color: var(--text-bright);
+}
+
+/* `−  value  +  ↺` in a single row: the label keeps the row readable next
+   to the regular items above and below. */
+.menu-stepper {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px 2px 10px;
+}
+
+.menu-stepper .menu-label {
+  font-size: var(--fs-sm);
+  color: var(--text);
+  margin-right: 4px;
+}
+
+.menu .menu-stepper button {
+  width: 24px;
+  flex: none;
+  justify-content: center;
+  padding: 5px 0;
+  color: var(--text-dim);
+}
+
+.menu-stepper-value {
+  min-width: 30px;
+  text-align: center;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-bright);
+}
+
+/* Inherited from preferences rather than set on this card — dimmed so the
+   number does not pretend to be an override it is not. */
+.menu-stepper-value.is-muted {
+  color: var(--text-dim);
+}
+
+.menu .menu-stepper-reset {
+  width: 22px;
+  margin-left: 2px;
+}
+
+.menu-danger {
+  color: var(--red);
+}
+
+.menu-danger:hover,
+.menu-danger.is-active {
+  background: var(--red-fill);
+  color: var(--on-accent);
+}
+
+.tree-rename {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 6px;
+  font-size: var(--fs-sm);
+  border-radius: var(--r-sm);
+}
+
+.sidebar-hud {
+  border-top: 1px solid var(--border);
+  padding: 10px 14px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.hud-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1px 0;
+}
+
+.hud-row strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.hud-bar {
+  margin-top: 6px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 9%);
+  overflow: hidden;
+}
+
+.hud-bar-fill {
+  height: 100%;
+  width: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transform-origin: left;
+  transition:
+    transform 400ms ease,
+    background-color 400ms ease;
+}
+
+/* Memory pressure is the only HUD reading that demands action — and the
+   only one that gets chroma. */
+.hud-bar-fill--warn {
+  background: var(--yellow);
+}
+
+.hud-bar-fill--crit {
+  background: var(--red);
+}
+
+/* --- grid and panes --- */
+
+.grid {
+  height: 100%;
+}
+
+.grid-empty {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 24px;
+}
+
+.welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  max-width: 420px;
+}
+
+.welcome-mark {
+  width: 44px;
+  height: 44px;
+}
+
+.welcome h2 {
+  margin: 0;
+  font-size: var(--fs-xl);
+  line-height: 1.3;
+  color: var(--text-bright);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.welcome p {
+  margin: -6px 0 2px;
+  line-height: 1.55;
+}
+
+.welcome-hints {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: var(--fs-sm);
+}
+
+.welcome-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.resize-handle {
+  background: transparent;
+  position: relative;
+  transition: background var(--dur-1) ease;
+}
+
+.resize-handle--v {
+  width: 7px;
+}
+
+.resize-handle--h {
+  height: 7px;
+}
+
+/* Thin track in the middle of the gap, hover/drag only. */
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--dur-1) ease;
+}
+
+.resize-handle--v::after {
+  inset: 8px 2px;
+}
+
+.resize-handle--h::after {
+  inset: 2px 8px;
+}
+
+.resize-handle:hover::after,
+.resize-handle[data-resize-handle-active]::after {
+  opacity: 0.6;
+}
+
+/* Pane = mini window: solid (it holds a terminal), generous radius,
+   soft shadow and hairline on top. */
+.pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  /* Anchor for the tab balloon and the "new pane" strip — both need to leave
+     the scrolling strip without escaping the pane. */
+  position: relative;
+  box-shadow:
+    0 4px 16px rgb(0 0 0 / 25%),
+    var(--hairline);
+  transition:
+    border-color var(--dur-2) ease,
+    box-shadow var(--dur-2) ease;
+}
+
+/* Focus must be obvious with 4+ panes open: blue border + soft halo,
+   not a gray one shade lighter. */
+.pane--focused {
+  border-color: rgb(10 132 255 / 55%);
+  box-shadow:
+    0 0 0 3px rgb(10 132 255 / 14%),
+    0 4px 16px rgb(0 0 0 / 25%),
+    var(--hairline);
+}
+
+.pane--focused .pane-header {
+  background: #24242b;
+}
+
+.pane--dragover {
+  border-color: var(--accent);
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    0 0 0 3px var(--accent-soft);
+}
+
+.pane--empty {
+  display: grid;
+  place-items: center;
+  border-style: dashed;
+  background: rgb(26 26 30 / 55%);
+  box-shadow: none;
+}
+
+.pane-empty-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.pane-empty-inner small {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  max-width: 220px;
+  line-height: 1.5;
+}
+
+/* --- pane body and non-CLI tabs ------------------------------------------
+   The rules below paint elements that `TerminalPane` and `WorkspaceGrid` draw
+   **always** — the empty pane's action row, the file tab, a document's body,
+   the editor surface while its chunk is still on its way. They lived in
+   `CodeEditor/editor.css` and `LiveView/live.css`, which only arrive with the
+   editor's and the Live view's `lazy()`: until someone opened one of them,
+   these elements showed up raw and fixed themselves later. This is the only
+   CSS the boot guarantees. `src/styles.test.ts` locks the problem from coming
+   back. */
+
+/* "New CLI here" got a sister ("Browser here"): a row, not a stack. */
+.pane-empty-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+/* The body of a tab that is not a CLI (file, browser, notebook). Opaque: the
+   terminals stay mounted underneath — it is what keeps their attach alive —
+   and must not show through behind the text. */
+.pane-doc {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  background: var(--bg-panel);
+}
+
+/* A file among the CLIs: same pill, different signal — cooler icon and label,
+   so the eye separates "process" from "document" without reading. */
+.pane-tab-file {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--accent-text);
+  opacity: 0.85;
+}
+
+.pane-tab-warn {
+  flex-shrink: 0;
+  color: var(--yellow);
+}
+
+/* The "has unsaved changes" dot. */
+.editor-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text);
+}
+
+.pane-tab-slot--doc .editor-dot {
+  width: 7px;
+  height: 7px;
+}
+
+/* The frame of the editing surface. The inside (`.cm-editor`) stays in
+   `editor.css`, because it only exists with CodeMirror loaded — but the frame
+   is the `Suspense` `fallback` itself while it has not arrived. */
+.editor-surface {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Button that opens the Live view in the pane header: while the agent is
+   alive, the glyph breathes green — process semantics, not decoration. */
+.live-launch[data-working] svg {
+  color: var(--green);
+  filter: drop-shadow(0 0 3px rgb(64 209 110 / 45%));
+}
+
+/* 40px, not 33px: this bar is where the CLIs and the open files live side by
+   side, and it is clicked more than anything else in the app. At the old
+   height the tabs were 22px chips — legible, but a target you aim at. */
+.pane-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 8px 0 6px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid rgb(0 0 0 / 28%);
+  box-shadow: var(--hairline);
+  flex-shrink: 0;
+  transition: background-color var(--dur-2) ease;
+}
+
+/* Shrinks when the tabs do not fit, but never *grows*: the row ends where the
+   last tab ends, so the "+" right after it stays next to the tabs instead of
+   being pushed to the far edge of the pane. `.pane-gap` takes the leftover. */
+.pane-tabs {
+  display: flex;
+  gap: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  /* Explicit, because CSS would not leave it `visible`: with one axis
+     scrolling, the other becomes `auto` on its own — and a one-row strip that
+     can scroll vertically is a row that can leave. See the rule below for what
+     was filling that axis. */
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+/* The tabs' tooltip, inside a strip that scrolls.
+   The balloon is an absolute box hanging 8px *below* the tab and up to 240px
+   wide. In a 28px-tall strip that is 32px of scrollable overflow in the block
+   axis and ~30px in the inline one: one wheel notch over the bar scrolled
+   every tab out of view — the strip kept its width and painted nothing, which
+   reads as "the tabs vanished" — and the "there's more" fade stayed on for
+   good, because `scrollWidth` was never equal to `clientWidth`.
+   The balloon could not show from in here anyway: the strip clips it (proven
+   against the same balloon one level up, which shows fine). So the box goes;
+   the `data-tip` stays on the tab for the day the balloon is raised out of
+   the strip. */
+.pane-tabs [data-tip]::after,
+.editor-tabs [data-tip]::after {
+  content: none;
+}
+
+.pane-gap {
+  flex: 1;
+  min-width: 0;
+}
+
+.pane-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* The tabs' balloon, drawn by React (see `.pane-tabs [data-tip]::after`
+   above): lives in the pane, not in the strip, which is what makes it show.
+   Same material as the global balloon — only the position is computed in JS. */
+.pane-tabtip {
+  position: absolute;
+  top: 42px;
+  transform: translateX(-50%);
+  z-index: 300;
+  max-width: min(420px, 90%);
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: rgb(46 46 52 / 96%);
+  border: 1px solid rgb(255 255 255 / 10%);
+  box-shadow:
+    0 6px 18px rgb(0 0 0 / 45%),
+    var(--hairline);
+  color: var(--text-bright);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+/* "New pane" strip: only exists while a tab is being dragged. It is the target
+   that was missing to split the screen without going through the title bar. */
+.pane-dropnew {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  bottom: 0;
+  width: 22%;
+  min-width: 96px;
+  display: none;
+  place-items: center;
+  z-index: 60;
+  border-left: 1px dashed var(--border-strong);
+  background: linear-gradient(
+    90deg,
+    rgb(10 132 255 / 0%),
+    rgb(10 132 255 / 10%)
+  );
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.02em;
+}
+
+body.is-tab-drag .pane-dropnew {
+  display: grid;
+}
+
+.pane-dropnew.pane--dragover {
+  background: linear-gradient(
+    90deg,
+    rgb(10 132 255 / 6%),
+    rgb(10 132 255 / 26%)
+  );
+  color: var(--text-bright);
+}
+
+/* When there are more tabs than fit, the edge fades to say "there's more". */
+.pane-tabs[data-overflow="true"] {
+  mask-image: linear-gradient(
+    90deg,
+    #000 0,
+    #000 calc(100% - 24px),
+    transparent 100%
+  );
+}
+
+/* Tab and its close button are siblings inside the slot, like the editor's
+   tabs. The close control used to be a `role="button"` span *inside* the tab
+   — a nested interactive role, unreachable from the keyboard. The slot is
+   what carries the hover/active surface, so the two read as one chip. */
+.pane-tab-slot {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding-right: 5px;
+  border-radius: var(--r-tab);
+}
+
+.pane-tab-slot:hover {
+  background: var(--bg-hover);
+}
+
+.pane-tab-slot:hover .pane-tab {
+  color: var(--text);
+}
+
+.pane-tab-slot.is-active {
+  background: rgb(255 255 255 / 12%);
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 30%),
+    inset 0 1px 0 rgb(255 255 255 / 8%);
+}
+
+.pane-tab-slot.is-active .pane-tab {
+  color: var(--text-bright);
+}
+
+/* Insertion caret while a tab is dragged over another: a bar on the edge
+   where the drop would land. Box-shadow, not border — the row must not
+   shift while the drag is in flight. Placed after `.is-active` on purpose:
+   during the drag the caret wins over the active tab's relief. */
+.pane-tab-slot.drop-before {
+  box-shadow: -2px 0 0 0 var(--accent);
+}
+
+.pane-tab-slot.drop-after {
+  box-shadow: 2px 0 0 0 var(--accent);
+}
+
+/* The dragged tab's double, riding under the pointer (cloned into <body> by
+   `lib/tabDrag.ts`). It floats over arbitrary content, so unlike the real
+   slot — transparent over the bar — it needs its own opaque chip. Above the
+   tooltips (10000): nothing may cover the thing in the user's hand. */
+.tab-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  padding-right: 5px;
+  border-radius: var(--r-tab);
+  background: #303038;
+  box-shadow:
+    0 10px 28px rgb(0 0 0 / 45%),
+    inset 0 1px 0 rgb(255 255 255 / 8%),
+    var(--hairline);
+  opacity: 0.92;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.tab-drag-ghost .pane-tab {
+  color: var(--text-bright);
+}
+
+.tab-drag-ghost .pane-tab-close {
+  opacity: 0;
+}
+
+/* The original stays in place while its double travels — dimmed, so the bar
+   shows both where the tab came from and that it has not left yet. */
+.pane-tab-slot.is-drag-source {
+  opacity: 0.35;
+}
+
+/* While a tab is in hand: no text selection under the path, and the cursor
+   says "holding" everywhere — the ghost itself lets clicks through. */
+body.is-tab-drag {
+  cursor: grabbing;
+  user-select: none;
+}
+
+body.is-tab-drag * {
+  cursor: grabbing !important;
+}
+
+.pane-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 210px;
+  padding: 6px 5px 6px 10px;
+  border: 0;
+  background: none;
+  border-radius: var(--r-tab);
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.pane-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The role, on the tab, in the same pill the canvas card uses — the two are
+   views of one terminal and must not disagree about what it is responsible
+   for. It shrinks before the name does: the name is the address. */
+/* Flow seal on the tab: armed (icon only) or running (step/total). It is what
+   says, outside the canvas, that this CLI's Enter feeds a pipeline. */
+.pane-tab-flow {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 20px;
+  background: rgb(255 255 255 / 8%);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pane-tab-flow.is-working,
+.pane-tab-flow.is-waiting {
+  background: var(--accent-dim);
+  color: var(--accent-text);
+}
+
+.pane-tab-flow.is-blocked {
+  background: var(--yellow-bg);
+  color: var(--yellow);
+}
+
+.pane-tab-flow.is-error {
+  background: var(--red-bg);
+  color: var(--red);
+}
+
+.pane-tab-flow.is-done {
+  background: var(--green-bg);
+  color: var(--green);
+}
+
+.pane-tab-role {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 7px;
+  border-radius: 20px;
+  background: var(--accent-dim);
+  color: var(--accent-text);
+  font-size: var(--fs-xs);
+  line-height: 17px;
+}
+
+.pane-tab .tree-rename {
+  width: 116px;
+  height: 21px;
+  font-size: var(--fs-sm);
+}
+
+.pane-tab-close {
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 19px;
+  flex-shrink: 0;
+  border: 0;
+  background: none;
+  border-radius: 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--dur-1) ease,
+    background-color var(--dur-1) ease;
+}
+
+/* The active tab always shows the close button: it is the one the user is
+   about to close, and a hover-only target costs a mouse trip. Keyboard focus
+   has to reveal it too, or tabbing to it lands on something invisible. */
+.pane-tab-slot.is-active .pane-tab-close,
+.pane-tab-slot:hover .pane-tab-close,
+.pane-tab-close:focus-visible {
+  opacity: 0.75;
+}
+
+.pane-tab-close:hover {
+  background: rgb(255 255 255 / 18%);
+  color: var(--text-bright);
+  opacity: 1;
+}
+
+.pane-tab-add {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: var(--r-tab);
+  color: var(--text-dim);
+}
+
+.pane-tab-add:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+.pane-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
+.pane-stat {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-right: 4px;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.dot--running {
+  background: var(--green);
+  box-shadow: 0 0 6px rgb(64 209 110 / 60%);
+}
+
+.dot--starting {
+  background: var(--yellow);
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.dot--exited,
+.dot--idle {
+  background: var(--text-dim);
+  opacity: 0.5;
+}
+
+.dot--error {
+  background: var(--red);
+  box-shadow: 0 0 6px rgb(255 105 97 / 60%);
+}
+
+.badge-unread {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-bright);
+  flex-shrink: 0;
+}
+
+.badge-finished {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px rgb(64 209 110 / 60%);
+  flex-shrink: 0;
+}
+
+/**
+ * "It is waiting on *you*." The only badge that moves, and the biggest of the
+ * three on purpose: an agent that finished costs nothing to leave alone, an
+ * agent stopped at a question is dead time, and on a board of six cards the
+ * second one has to win the eye against the first.
+ *
+ * Yellow because it is already the app's colour for "in between" (`.dot--starting`),
+ * and this is exactly that: it has not finished and it is not working.
+ */
+.badge-blocked {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--yellow);
+  box-shadow: 0 0 7px rgb(240 195 60 / 70%);
+  flex-shrink: 0;
+  animation: dot-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .badge-blocked {
+    animation: none;
+  }
+}
+
+.pane-search {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 5px 6px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.pane-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 8px;
+  font-size: var(--fs-sm);
+}
+
+.pane-search-count {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Nothing found is information, not a user error: amber, not red. */
+.pane-search-count.is-empty {
+  color: var(--yellow);
+}
+
+.pane-search-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.pane-term {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pane-exit-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+/* A process that never started is a failure, not a state: it says so in the
+   same strip, tinted. Before, this case drew nothing at all and the reason
+   lived only in a red line inside the terminal. */
+.pane-exit-banner--error {
+  background: var(--red-bg);
+  border-bottom-color: rgb(255 105 97 / 30%);
+}
+
+.pane-exit-banner span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* With both exits in the strip, the one that preserves the conversation is
+   the highlighted one and "start from scratch" sits quiet beside it — the
+   hierarchy is the advice. */
+.pane-exit-continue ~ button {
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.pane-exit-continue ~ button:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+.pane-exit-banner button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: 8px;
+  background: var(--accent-dim);
+  color: var(--accent-text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.pane-exit-banner button:hover {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+}
+
+/* The terminal well: one step deeper than the pane chrome, so the content
+   settles like paper in a frame. Matches the xterm theme bg. */
+.xterm-host {
+  flex: 1;
+  min-height: 0;
+  padding: 6px 0 3px 8px;
+  background: #121215;
+}
+
+.xterm .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 14%) transparent;
+}
+
+/* Inside the terminal the scrollbar is a true overlay: thinner and more
+   discreet than the chrome's, so it doesn't weigh on the card frame. */
+.xterm .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 12%);
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  border-radius: 8px;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 24%);
+  background-clip: padding-box;
+}
+
+/* --- toast --- */
+
+/* Notices stack (a burst of failures used to show only the last one), so the
+   fixed position lives on the column and each capsule is a flex item in it.
+   The column itself is click-through: its gaps sit over the canvas. */
+.toast-stack {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+/* Notice: blurred material, capsule, enters from below with a short
+   spring. */
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px 9px 15px;
+  border-radius: 16px;
+  background: var(--material-menu);
+  backdrop-filter: var(--blur-menu);
+  border: 1px solid rgb(255 255 255 / 11%);
+  box-shadow: var(--shadow-2), var(--hairline);
+  font-size: var(--fs-sm);
+  max-width: 70vw;
+  animation: toast-in 240ms var(--ease-pop);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+}
+
+.toast span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toast--error {
+  border-color: rgb(255 105 97 / 40%);
+  color: #ffb4ae;
+}
+
+/* An error's tail (paths, hook output) is the diagnostic: give it lines
+   instead of one ellipsis. Three is the cap before the capsule stops
+   reading as a notice. */
+.toast--error span {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  text-align: left;
+}
+
+/* The cap's ledger: how many notices were pushed out before anyone read
+   them. Anchored to the stack — it leaves with the last toast. */
+.toast-overflow {
+  pointer-events: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  background: var(--material-menu);
+  backdrop-filter: var(--blur-menu);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 2px 11px;
+}
+
+.toast .icon-btn {
+  width: 20px;
+  height: 20px;
+  color: inherit;
+  opacity: 0.6;
+}
+
+.toast .icon-btn:hover {
+  opacity: 1;
+  background: rgb(255 255 255 / 10%);
+}
+
+/* --- scrollbars --- */
+
+/* Overlay scrollbar: thin, rounded, no track. */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 18%);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: var(--r-tab);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 32%);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* --- portal (native browser on the canvas) --- */
+
+.cv-portal {
+  z-index: 2;
+  overflow: visible;
+}
+
+.cv-portal .cv-resize {
+  z-index: 30;
+}
+
+.cv-portal.is-focused,
+.cv-portal.is-connect-source,
+.cv-portal.is-connect-target {
+  outline: 1.5px dashed var(--accent-border);
+  outline-offset: 4px;
+}
+
+.cv-portal-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  padding: 0 4px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid rgb(0 0 0 / 28%);
+  box-shadow: var(--hairline);
+  flex-shrink: 0;
+}
+
+.cv-portal-url {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.cv-portal-url input {
+  width: 100%;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: rgb(0 0 0 / 26%);
+  color: var(--text);
+  font-size: 11px;
+  font-family: inherit;
+  box-shadow: none;
+}
+
+.cv-portal-url input:focus {
+  outline: none;
+  border-color: rgb(10 132 255 / 60%);
+  box-shadow: 0 0 0 3px rgb(10 132 255 / 20%);
+}
+
+.cv-portal-body {
+  position: relative;
+  background: #1c1c21;
+}
+
+.cv-portal-ph {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 16px;
+  pointer-events: none;
+}
+
+.cv-portal-ph strong {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.cv-portal-ph small {
+  font-size: var(--fs-xs);
+  max-width: 22em;
+}
+
+/* --- reduced motion --- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+
+  /* The exception: what **only** communicates by spinning.
+     `prefers-reduced-motion` asks for reduced motion, not removed — and a
+     spinner frozen on its first frame does not read as "loading", it reads as
+     "hung". So they keep spinning, three times slower: still saying "I am
+     working" without the whirl the preference refuses.
+
+     Whatever has a real static alternative stays still on purpose and does
+     not come in here: the blocked agent's dot stays yellow and glowing
+     (`.badge-blocked`), the skeleton is still a gray block in the content's
+     place, the running card gets a fixed halo (`canvas.css`).
+     `src/styles.test.ts` locks this split. */
+  .spin,
+  .usage-refresh.is-spinning svg {
+    animation-duration: 2700ms !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
+/* --- error boundary ---
+   Takes the whole place of whatever broke (a pane, the grid, the app), so the
+   failure stays visibly contained in that rectangle and does not look like all
+   of Yard went down — which is exactly what the black window used to say. */
+
+.crash {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--red-bg);
+  color: var(--text-dim);
+  text-align: center;
+  overflow: auto;
+}
+
+.crash-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 460px;
+}
+
+.crash-inner > svg {
+  color: var(--red);
+}
+
+.crash-inner h2 {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  color: var(--text-bright);
+  letter-spacing: -0.01em;
+}
+
+.crash-inner p {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+
+.crash-msg {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--red);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.crash-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}

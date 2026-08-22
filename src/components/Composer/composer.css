@@ -1,0 +1,184 @@
+/* --- prompt composer --- */
+
+/* Floats over the workspace, anchored bottom right: it covers neither the
+   sidebar nor the focused card's header, which is where the eye is. */
+/* In the middle of the window, like every other dialog. It sat in the
+   bottom-right corner for a while on the theory that you write a prompt while
+   watching the workspace; what actually happened is that it read as a widget
+   you could ignore, and 560px in a corner is a mean place to write the thing
+   the whole session hangs on. Under the modal backdrop's z-index (130) on
+   purpose: a dialog opened from here paints above it, and `lib/layers.ts`
+   orders `Escape` to match. */
+.composer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 126;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 45%);
+  backdrop-filter: blur(6px);
+  animation: fade-in 140ms ease-out;
+}
+
+.composer {
+  width: min(720px, 94vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--material-sheet);
+  backdrop-filter: var(--blur-sheet);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-3), var(--hairline);
+  animation: modal-in var(--dur-2) var(--ease-pop);
+}
+
+.composer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 9px 9px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.composer-head strong {
+  font-size: var(--fs-sm);
+  color: var(--text-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-head .icon-btn {
+  margin-left: auto;
+}
+
+/* The destination belongs to the head, not to a form: the same select as
+   everywhere else, shrunk to a chip so it reads as a label you can change. */
+.composer-target {
+  width: auto;
+  min-width: 128px;
+  max-width: 210px;
+  padding: 3px 8px;
+  font-size: var(--fs-sm);
+  background: rgb(255 255 255 / 5%);
+  box-shadow: none;
+}
+
+.composer-nodest {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.composer-chip {
+  font-size: 10px;
+  line-height: 17px;
+  padding: 0 8px;
+  border-radius: 20px;
+  background: var(--accent-dim);
+  color: var(--accent-text);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-empty {
+  margin: 0;
+  padding: 16px 14px;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.composer-area {
+  position: relative;
+}
+
+.composer-input {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  min-height: 200px;
+  max-height: 56vh;
+  border: none;
+  background: transparent;
+  color: var(--text-bright);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  padding: 11px 14px;
+  outline: none;
+  box-shadow: none;
+}
+
+.composer-input::placeholder {
+  color: var(--text-dim);
+  font-family:
+    "Inter Variable",
+    "SF Pro Text",
+    -apple-system,
+    "Segoe UI Variable Text",
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+}
+
+/* The menu goes up: the box is already glued to the window footer. */
+.composer-mentions {
+  position: absolute;
+  left: 11px;
+  bottom: 8px;
+  z-index: 2;
+  margin: 0;
+  padding: 5px;
+  list-style: none;
+  min-width: 190px;
+  max-height: 210px;
+  overflow-y: auto;
+  background: var(--material-menu);
+  backdrop-filter: var(--blur-menu);
+  border: 1px solid rgb(255 255 255 / 11%);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2), var(--hairline);
+}
+
+.composer-mentions button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 5px 9px;
+  border-radius: 8px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.composer-mentions button:hover,
+.composer-mentions button.is-active {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+}
+
+.composer-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* The hint takes the slack, so the three controls stay together on the right
+   as one group — an `auto` margin per button would have spread them across the
+   footer once there was more than one. */
+.composer-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+.composer-foot .btn,
+.composer-foot .composer-save {
+  flex-shrink: 0;
+}

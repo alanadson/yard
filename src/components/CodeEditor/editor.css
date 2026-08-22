@@ -1,0 +1,1904 @@
+/* Extracted from the global stylesheet so Vite can load it with this lazy feature. */
+
+/* --- file tree (Files tab + editor rail) --- */
+
+/* The search stays pinned at the top and only the tree scrolls — a project
+   tree is far too long to carry the filter away with it. */
+.bench-body--files {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 10px 4px 0;
+}
+
+.bench-body--files > .bench-bar,
+.bench-body--files > .bench-note {
+  flex-shrink: 0;
+  margin-left: 4px;
+  margin-right: 4px;
+}
+
+.ftree-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 12px;
+}
+
+.ftree-tools {
+  display: flex;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
+.ftree,
+.ftree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ftree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding-right: 6px;
+  border-radius: var(--r-md);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  cursor: default;
+  user-select: none;
+}
+
+.ftree-row:hover {
+  background: var(--bg-hover);
+}
+
+.ftree-row:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: -2px;
+}
+
+/* File open in the editor: the same blue selection as the rest of the app. */
+.ftree-row.is-active {
+  background: var(--accent-dim);
+  color: var(--text-bright);
+}
+
+.ftree-twist {
+  display: grid;
+  place-items: center;
+  width: 13px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.ftree-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.ftree-row.is-active .ftree-icon {
+  color: var(--accent-text);
+}
+
+.ftree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Git state — the tree's only color (the rest is grey on purpose). */
+.ftree-row.is-modified .ftree-name,
+.ftree-row.is-renamed .ftree-name {
+  color: var(--yellow);
+}
+
+.ftree-row.is-untracked .ftree-name,
+.ftree-row.is-added .ftree-name {
+  color: var(--green);
+}
+
+.ftree-row.is-conflicted .ftree-name {
+  color: var(--red);
+}
+
+.ftree-row.is-deleted .ftree-name {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+
+.ftree-mark {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  color: inherit;
+  opacity: 0.85;
+}
+
+.ftree-row.is-modified .ftree-mark,
+.ftree-row.is-renamed .ftree-mark {
+  color: var(--yellow);
+}
+
+.ftree-row.is-untracked .ftree-mark,
+.ftree-row.is-added .ftree-mark {
+  color: var(--green);
+}
+
+.ftree-row.is-conflicted .ftree-mark,
+.ftree-row.is-deleted .ftree-mark {
+  color: var(--red);
+}
+
+/* Closed directory with a change inside: a dot, not a number. */
+.ftree-dot {
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--yellow);
+}
+
+.ftree-row.is-draft {
+  background: rgb(255 255 255 / 4%);
+}
+
+.ftree-note {
+  padding: 2px 6px 2px 22px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.ftree-error {
+  margin: 6px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  background: var(--red-bg);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+/* A directory that would not open. It stays on its own line, at its own
+   depth, so the rest of the tree keeps working — a read failure at the root
+   used to replace the whole tree with a sentence. */
+.ftree-fail {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 6px 3px 22px;
+  font-size: var(--fs-xs);
+  color: var(--red);
+}
+
+.ftree-fail-msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* `--accent-text`, not `--accent`: the background here is the parent's
+   `--red-bg`, where the system blue drops to 3.97:1. It is the recovery button
+   for a directory that would not open — the control needed most at the worst
+   moment. */
+.ftree-fail button {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* --- code editor ---
+
+   Two hosts, one body. In the tab grid the editor is the content of a pane
+   (`.pane-doc`), the same size as the CLI in the tab next to it; on the
+   canvas, which has no tab bar, the overlay below wraps the same
+   `.editor-body`.
+
+   `.pane-doc`, `.pane-empty-actions`, `.pane-tab-file`, `.pane-tab-warn`,
+   `.editor-dot` and `.editor-surface` used to live here. `TerminalPane` draws
+   all of them while this stylesheet is still a lazy chunk, so they moved to
+   `src/styles.css` — see the "pane body and non-CLI tabs" block there. */
+
+/* A browser tab's body (BrowserPane): the host reuses `.pane-doc`, the
+   toolbar reuses the canvas card's `.cv-portal-bar` — only the column and
+   the growing body are new, because the pane sizes by flex where the card
+   sizes by hand. */
+.pane-browser {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pane-browser-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The path bar: where the file is on disk, and what can be done to it. */
+/* Follows the tab bar above it: a 40px row of tabs over a 26px hairline read
+   as a bar with a crack under it. */
+.editor-pathbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 14px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-fullpath {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.editor-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 125;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 45%);
+  backdrop-filter: blur(6px);
+  animation: fade-in 140ms ease-out;
+}
+
+/* The same window as the diff viewer: nearly opaque material (it has to hold
+   code), radius 14, deep shadow. */
+.editor {
+  width: min(1360px, 96vw);
+  height: min(900px, 93vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgb(28 28 34 / 94%);
+  backdrop-filter: var(--blur-sheet);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-3), var(--hairline);
+  animation: modal-in var(--dur-2) var(--ease-pop);
+}
+
+.editor-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.editor-tabs {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+  /* Same trap as `.pane-tabs`, same answer — the rule that empties the
+     tooltip box inside a scrolling strip lives up there, with the story. */
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.editor-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* The tab is a pair: the label (`role="tab"`) and the close button, siblings.
+   The close button used to be a `<span role="button">` *inside* the tab
+   button — nested interactive content, which a screen reader announces as a
+   single control. The pill look now lives on the `<li>` wrapping both. */
+.editor-tab-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  max-width: 220px;
+  padding-right: 4px;
+  border-radius: var(--r-tab);
+}
+
+.editor-tab-slot:hover {
+  background: var(--bg-hover);
+}
+
+.editor-tab-slot.is-active {
+  background: rgb(255 255 255 / 12%);
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 30%),
+    inset 0 1px 0 rgb(255 255 255 / 8%);
+}
+
+.editor-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 2px 4px 10px;
+  border-radius: var(--r-tab) 0 0 var(--r-tab);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.editor-tab-slot:hover .editor-tab {
+  color: var(--text);
+}
+
+.editor-tab-slot.is-active .editor-tab {
+  color: var(--text-bright);
+}
+
+.editor-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-tab-warn {
+  flex-shrink: 0;
+  color: var(--yellow);
+}
+
+/* The close button occupies the same place as the "unsaved" dot — as in every
+   editor: the dot becomes an × when the mouse arrives. */
+.editor-tab-close {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  color: var(--text-dim);
+}
+
+.editor-tab-close:hover {
+  background: rgb(255 255 255 / 12%);
+  color: var(--text-bright);
+}
+
+.editor-tab-close:hover .editor-dot {
+  background: var(--text-bright);
+}
+
+.editor-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Inside the body: the stage and, when markdown asks for it, the outline. */
+.editor-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Inside the overlay: the project tree beside the body. */
+.editor-overlay-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-rail {
+  width: 246px;
+  flex-shrink: 0;
+  overflow: auto;
+  padding: 6px 4px;
+  border-right: 1px solid var(--border);
+  background: rgb(0 0 0 / 14%);
+}
+
+.editor-stage {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.editor-surface.is-readonly {
+  opacity: 0.88;
+}
+
+.editor-surface .cm-editor {
+  height: 100%;
+}
+
+.editor-surface .cm-editor.cm-focused {
+  outline: none;
+}
+
+/* Warning band: the disk changed underneath, or the write stopped. */
+.editor-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  background: rgb(255 255 255 / 4%);
+}
+
+.editor-banner--warn {
+  background: var(--yellow-bg);
+}
+
+.editor-banner--warn > svg {
+  color: var(--yellow);
+  flex-shrink: 0;
+}
+
+.editor-banner--error {
+  background: var(--red-bg);
+}
+
+.editor-banner--error > svg {
+  color: var(--red);
+  flex-shrink: 0;
+}
+
+.editor-banner span {
+  flex: 1;
+  min-width: 0;
+}
+
+.editor-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 16px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.editor-status-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
+.editor-status-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.editor-chip {
+  padding: 0 7px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: rgb(255 255 255 / 6%);
+}
+
+.editor-chip--dirty {
+  border-color: rgb(240 195 60 / 35%);
+  background: var(--yellow-bg);
+  color: var(--yellow);
+}
+
+/* The search-mode magnifier in the Files tab: lit, it is an active *tool*
+   (you are in search, not the tree), so it speaks full blue like the canvas
+   capsule — not the white veil the Aa/ab option toggles beside it use. */
+.bench-lens.is-active {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+}
+
+/* Unsaved-files badge: the same solid pill as the pending count, in the
+   warning's own colour. It has to be a fill, not yellow-on-dark — the badge
+   sits inside the tab capsule, and a translucent veil dies over the glass. */
+.bench-count--warn {
+  background: var(--yellow);
+  color: var(--bg);
+}
+
+/* --- viewer: image, video, audio, PDF ---
+
+   The editor's other face. The stage is dark and neutral on purpose: an image
+   with transparency or a light border needs a background that does not lie
+   about it, and the checkerboard is the convention every image editor uses to
+   say "there is no pixel here". */
+
+.media-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Thin strip with what is known about the file and, on images, the zoom. */
+.media-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 14px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.media-facts {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.media-zoom {
+  min-width: 62px;
+  text-align: center;
+  color: var(--text);
+}
+
+.media-stage {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: 14px;
+  background: #0f0f12;
+}
+
+/* The checkerboard is the "there is no pixel here" convention: it belongs
+   behind an image, which may have transparency, and not behind a video or a
+   card — there it would be pure noise. */
+.media-view--image .media-stage {
+  background:
+    repeating-conic-gradient(rgb(255 255 255 / 3%) 0% 25%, transparent 0% 50%)
+      50% / 22px 22px,
+    #0f0f12;
+}
+
+.media-stage--center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Zoomed in, the image is larger than the stage: it scrolls, and is pinned to
+   the top-left corner so scrolling does not fight the centering. */
+.media-stage.is-zoomed {
+  display: block;
+}
+
+.media-img {
+  display: block;
+  /* Checkerboard behind, shadow underneath: the image sits *on top of* the
+     background, not glued to it — that is what separates a white PNG from an
+     empty screen. */
+  box-shadow: var(--shadow-1);
+  cursor: zoom-in;
+}
+
+.media-img.is-fit {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  margin: auto;
+  cursor: zoom-out;
+}
+
+.media-video {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-2);
+  background: #000;
+}
+
+.media-audio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 26px 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-1);
+}
+
+.media-audio strong {
+  color: var(--text-bright);
+  font-size: var(--fs-sm);
+  font-family: var(--mono);
+}
+
+.media-audio audio {
+  width: min(420px, 60vw);
+}
+
+.media-pdf {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: var(--r-md);
+  background: #fff;
+}
+
+/* The card for what cannot be drawn: a .zip, a .docx, a codec WebView2 will
+   not play. It says what the file is and offers the two ways out that exist. */
+.media-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 420px;
+  padding: 28px 32px;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-1);
+}
+
+.media-card strong {
+  color: var(--text-bright);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.media-card-icon {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--r-md);
+  background: var(--bg-hover);
+  color: var(--text-dim);
+}
+
+.media-card-meta {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.media-card-why {
+  margin: 2px 0 4px;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.media-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* --- markdown: bar, panes, page, outline ---
+
+   A `.md` file is a document, not code, and gets a face of its own inside the
+   same window: the bar under the header, the rendered page, the heading rail.
+   Everything below sizes off `--md-fs` so the whole document scales as one. */
+
+.editor-panes {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.editor-panes > .editor-surface {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Side by side: the writing surface keeps its own scroll, the page keeps
+   another, and the divider is a hairline — two panes, one window. */
+.editor-panes.is-split > .editor-surface {
+  border-right: 1px solid var(--border);
+}
+
+.editor-preview {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: rgb(0 0 0 / 8%);
+}
+
+.editor-preview:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: -2px;
+}
+
+/* The mode switcher: a segmented control, as in the toolbar of a Mac app. */
+.md-modes {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 24%);
+  box-shadow: inset 0 0 0 1px var(--border-soft);
+}
+
+/* The formatting bar — the note's bar (`.cv-mdbar`) laid across the editor:
+   same slots, same dividers, same pressed state. */
+.md-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 8px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: rgb(255 255 255 / 2.5%);
+}
+
+.md-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.md-bar-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.md-bar-extra {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.md-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: rgb(255 255 255 / 4%);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.md-chip:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.md-chip.is-active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--text-bright);
+}
+
+.md-chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* --- the rendered page --- */
+
+.md-doc {
+  --md-fs: 14px;
+  max-width: 78ch;
+  margin: 0 auto;
+  padding: 26px 34px 40vh;
+  font-size: var(--md-fs);
+  line-height: 1.62;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.md-empty {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.md-doc h1,
+.md-doc h2,
+.md-doc h3,
+.md-doc h4,
+.md-doc h5,
+.md-doc h6 {
+  margin: 1.6em 0 0.5em;
+  line-height: 1.25;
+  color: var(--text-bright);
+  letter-spacing: -0.01em;
+}
+
+.md-doc > :first-child {
+  margin-top: 0;
+}
+
+.md-doc h1 {
+  font-size: 1.85em;
+  font-weight: 650;
+}
+
+.md-doc h2 {
+  font-size: 1.42em;
+  font-weight: 620;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--border);
+}
+
+.md-doc h3 {
+  font-size: 1.18em;
+}
+
+.md-doc h4 {
+  font-size: 1.05em;
+}
+
+.md-doc h5,
+.md-doc h6 {
+  font-size: 1em;
+  color: var(--text);
+}
+
+.md-doc h6 {
+  color: var(--text-dim);
+}
+
+.md-doc p {
+  margin: 0 0 0.9em;
+}
+
+.md-doc .md-list {
+  margin: 0 0 0.9em;
+  padding-left: 1.5em;
+}
+
+.md-doc .md-list.is-tight li > p {
+  margin: 0;
+}
+
+.md-doc .md-list li {
+  margin: 0.15em 0;
+}
+
+.md-doc .md-list li::marker {
+  color: var(--text-dim);
+}
+
+/* A task list drops the bullet — the box is the marker. */
+.md-doc .md-list.is-tasks {
+  list-style: none;
+  padding-left: 0.35em;
+}
+
+/* The line crosses the text, not the box: a struck-through checkbox reads as
+   a disabled control instead of a finished task. */
+.md-doc .md-list li.is-done > p {
+  color: var(--text-dim);
+  text-decoration: line-through;
+  text-decoration-color: rgb(255 255 255 / 25%);
+}
+
+/* Same checkbox as the note's, in the document's proportions: ticking a task
+   is not writing, so it works in the reading view too. */
+.md-check {
+  position: relative;
+  float: left;
+  width: 0.92em;
+  height: 0.92em;
+  margin: 0.32em 0.5em 0 0;
+  padding: 0;
+  border: 1.5px solid var(--text-dim);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background var(--dur-1) ease,
+    border-color var(--dur-1) ease;
+}
+
+.md-check:hover {
+  border-color: var(--text);
+}
+
+.md-check[aria-checked="true"] {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+}
+
+.md-check[aria-checked="true"]::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 0.26em;
+  height: 0.52em;
+  border: solid var(--on-accent);
+  border-width: 0 1.6px 1.6px 0;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.md-doc blockquote {
+  margin: 0 0 0.9em;
+  padding: 0.1em 0 0.1em 0.95em;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-dim);
+}
+
+.md-doc blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.md-doc hr {
+  margin: 1.6em 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.md-doc code {
+  padding: 0.12em 0.36em;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 8%);
+  font-family: var(--mono);
+  font-size: 0.88em;
+}
+
+.md-link {
+  color: var(--accent-text);
+  cursor: pointer;
+  text-decoration: none;
+  border-bottom: 1px solid rgb(122 184 255 / 35%);
+}
+
+.md-link:hover {
+  border-bottom-color: var(--accent-text);
+}
+
+.md-link-out {
+  margin: 0 0 0.1em 0.25em;
+  opacity: 0.65;
+  vertical-align: middle;
+}
+
+.md-doc mark {
+  padding: 0.05em 0.2em;
+  border-radius: 3px;
+  background: var(--yellow-bg);
+  color: var(--text-bright);
+}
+
+.md-doc s {
+  color: var(--text-dim);
+}
+
+.md-img {
+  display: block;
+  max-width: 100%;
+  margin: 0.4em 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: rgb(0 0 0 / 20%);
+}
+
+/* A picture that could not be drawn says which one it was. */
+.md-img-miss {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 20px;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.md-img-miss[role="button"] {
+  cursor: pointer;
+}
+
+.md-img-miss[role="button"]:hover {
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+}
+
+/* Code block: a card with the language on the left and "copy" on the right —
+   the two things anyone wants from a snippet in a document. */
+.md-pre {
+  margin: 0 0 1em;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: rgb(0 0 0 / 26%);
+  overflow: hidden;
+}
+
+.md-pre-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 2px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-family: var(--mono);
+}
+
+.md-pre pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.md-pre pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+}
+
+/* Syntax colors outside the editor — the classes `@lezer/highlight` emits
+   (`classHighlighter`), painted with the same palette `yardHighlight` gives
+   the editor. Two homes share them: the preview's fenced blocks (`.md-pre`)
+   and the diff viewer's lines (`.dgrid`), so a line of Rust reads the same
+   in the editor, in a README and in a review. */
+:is(.md-pre, .dgrid) .tok-comment {
+  color: #7b8494;
+  font-style: italic;
+}
+
+:is(.md-pre, .dgrid) .tok-keyword {
+  color: #c792ea;
+}
+
+:is(.md-pre, .dgrid) .tok-string,
+:is(.md-pre, .dgrid) .tok-string2 {
+  color: #8fd694;
+}
+
+:is(.md-pre, .dgrid) .tok-number,
+:is(.md-pre, .dgrid) .tok-bool,
+:is(.md-pre, .dgrid) .tok-atom,
+:is(.md-pre, .dgrid) .tok-literal {
+  color: #e3b341;
+}
+
+:is(.md-pre, .dgrid) .tok-typeName,
+:is(.md-pre, .dgrid) .tok-className,
+:is(.md-pre, .dgrid) .tok-namespace {
+  color: #5ecfbb;
+}
+
+:is(.md-pre, .dgrid) .tok-propertyName {
+  color: #a9c7ff;
+}
+
+:is(.md-pre, .dgrid) .tok-variableName {
+  color: var(--text);
+}
+
+:is(.md-pre, .dgrid) .tok-definition {
+  color: #e2e2e6;
+}
+
+:is(.md-pre, .dgrid) .tok-operator,
+:is(.md-pre, .dgrid) .tok-punctuation,
+:is(.md-pre, .dgrid) .tok-meta,
+:is(.md-pre, .dgrid) .tok-macroName {
+  color: #9e9ea6;
+}
+
+:is(.md-pre, .dgrid) .tok-link,
+:is(.md-pre, .dgrid) .tok-url {
+  color: var(--accent-text);
+}
+
+:is(.md-pre, .dgrid) .tok-heading,
+:is(.md-pre, .dgrid) .tok-strong {
+  color: var(--text-bright);
+  font-weight: 600;
+}
+
+:is(.md-pre, .dgrid) .tok-emphasis {
+  font-style: italic;
+}
+
+:is(.md-pre, .dgrid) .tok-invalid {
+  color: var(--red);
+}
+
+.md-html {
+  position: relative;
+  margin: 0 0 1em;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-md);
+  background: rgb(0 0 0 / 18%);
+}
+
+/* HTML shows as source, never rendered: this preview does not run what an
+   agent wrote into a file. The tag says so out loud. */
+.md-html-tag {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  color: var(--text-dim);
+  /* 10px is the floor of the type scale (the "micro" tier) — 9px was below
+     the world's own minimum. */
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.md-html pre {
+  margin: 0;
+  padding: 9px 12px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.md-table-wrap {
+  margin: 0 0 1em;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+
+.md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.94em;
+}
+
+.md-table th,
+.md-table td {
+  padding: 7px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.md-table th {
+  background: rgb(255 255 255 / 4%);
+  color: var(--text-bright);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.md-table tr:last-child td {
+  border-bottom: none;
+}
+
+.md-table tbody tr:hover {
+  background: rgb(255 255 255 / 2.5%);
+}
+
+.md-noteref {
+  padding: 0 0.2em;
+  color: var(--accent-text);
+  cursor: pointer;
+  font-size: 0.75em;
+  vertical-align: super;
+}
+
+.md-note {
+  display: flex;
+  gap: 8px;
+  margin: 0.4em 0;
+  padding: 4px 0;
+  border-top: 1px solid var(--border-soft);
+  color: var(--text-dim);
+  font-size: 0.92em;
+}
+
+.md-note-id {
+  flex-shrink: 0;
+  color: var(--accent-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.md-note p {
+  margin: 0;
+}
+
+/* --- outline (heading rail) --- */
+
+.md-outline {
+  width: 210px;
+  flex-shrink: 0;
+  overflow: auto;
+  padding: 8px 6px;
+  border-left: 1px solid var(--border);
+  background: rgb(0 0 0 / 14%);
+}
+
+.md-outline ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-outline-empty {
+  margin: 6px 8px;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.md-outline-item {
+  display: block;
+  width: 100%;
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.md-outline-item[data-level="1"] {
+  color: var(--text);
+  font-weight: 560;
+}
+
+.md-outline-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* Where the caret is: a marked row, not a selected one — nothing was chosen,
+   this is a position report. */
+.md-outline-item.is-active {
+  background: var(--accent-soft);
+  color: var(--text-bright);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* --- live preview (CodeMirror decorations) ---
+
+   The buffer stays the file; only the drawing changes. Markers come back on
+   the line the caret is on, which is why nothing here may change a line's
+   height — text that jumps under the cursor is worse than a visible `*`. */
+
+.cm-md-h {
+  color: var(--text-bright);
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.cm-md-h1 {
+  font-size: 1.65em;
+}
+
+.cm-md-h2 {
+  font-size: 1.38em;
+}
+
+.cm-md-h3 {
+  font-size: 1.2em;
+}
+
+.cm-md-h4 {
+  font-size: 1.08em;
+}
+
+.cm-md-h5,
+.cm-md-h6 {
+  font-size: 1em;
+}
+
+.cm-md-quote {
+  background: rgb(255 255 255 / 3%);
+  box-shadow: inset 2px 0 0 var(--border-strong);
+  color: var(--text-dim);
+}
+
+.cm-md-fence {
+  background: rgb(0 0 0 / 22%);
+}
+
+.cm-md-strong {
+  color: var(--text-bright);
+  font-weight: 700;
+}
+
+.cm-md-em {
+  font-style: italic;
+}
+
+.cm-md-strike {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+
+.cm-md-code {
+  border-radius: 3px;
+  background: rgb(255 255 255 / 8%);
+  color: #8fd694;
+}
+
+.cm-md-highlight {
+  border-radius: 3px;
+  background: rgb(240 195 60 / 22%);
+  color: var(--text-bright);
+}
+
+.cm-md-link {
+  color: var(--accent-text);
+}
+
+.cm-md-url {
+  color: var(--text-dim);
+}
+
+.cm-md-sub,
+.cm-md-sup {
+  color: var(--text-dim);
+}
+
+.cm-md-bullet {
+  color: var(--accent-text);
+}
+
+.cm-md-quotemark {
+  color: rgb(255 255 255 / 22%);
+}
+
+.cm-md-hr {
+  color: var(--text-dim);
+}
+
+/* The `- [ ]` drawn as the box it means; clicking writes the character back
+   into the file, so an agent reading it a second later sees the same thing. */
+.cm-md-task {
+  position: relative;
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin: 0 0.15em -0.12em;
+  border: 1.5px solid var(--text-dim);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.cm-md-task:hover {
+  border-color: var(--text);
+}
+
+.cm-md-task[aria-checked="true"] {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+}
+
+.cm-md-task[aria-checked="true"]::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 0.24em;
+  height: 0.48em;
+  border: solid var(--on-accent);
+  border-width: 0 1.5px 1.5px 0;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.cm-md-rule {
+  display: inline-block;
+  width: 100%;
+  height: 0;
+  vertical-align: middle;
+  border-top: 1px solid var(--border-strong);
+}
+
+/* --- project search (bench > Files > search) --- */
+
+.bench-body--search {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.bench-note--error {
+  color: var(--red, #f85149);
+}
+
+.psearch-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0 12px;
+}
+
+.psearch-file {
+  margin-bottom: 2px;
+}
+
+/* File header: the row that groups the hits, in the tree's own voice. */
+.psearch-file-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 3px 6px;
+  border: none;
+  background: transparent;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.psearch-file-head:hover {
+  background: rgb(255 255 255 / 5%);
+}
+
+.psearch-file-head > svg {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.psearch-file-name {
+  flex-shrink: 0;
+  font-weight: 500;
+}
+
+.psearch-file-dir {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-family: var(--mono);
+}
+
+.psearch-count {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 20px;
+  background: rgb(255 255 255 / 8%);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* One hit: line number in the gutter's voice, the text in mono. */
+.psearch-hit {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 6px 2px 22px;
+  border: none;
+  background: transparent;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.psearch-hit:hover {
+  background: rgb(255 255 255 / 5%);
+}
+
+.psearch-line {
+  flex-shrink: 0;
+  min-width: 3ch;
+  text-align: right;
+  color: rgb(255 255 255 / 32%);
+  font-size: var(--fs-xs);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.psearch-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.psearch-text mark {
+  background: rgb(240 195 60 / 30%);
+  color: var(--text-bright);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* --- editor: the clickable "Ln, Col" in the footer --- */
+
+.editor-lncol {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  border-radius: var(--r-sm);
+}
+
+.editor-lncol:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+/* --- conflict: both sides before choosing which one survives ------------- */
+.editor-conflict {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  max-height: 42vh;
+  overflow: hidden;
+  background: var(--border);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.editor-conflict--note {
+  display: block;
+  padding: 8px 12px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.editor-conflict-side {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-panel);
+}
+
+.editor-conflict-side h4 {
+  margin: 0;
+  padding: 5px 10px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
+
+.editor-conflict-side pre {
+  margin: 0;
+  overflow: auto;
+  padding: 4px 0 10px;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+.editor-conflict-line {
+  display: block;
+  padding: 0 10px 0 0;
+  white-space: pre;
+}
+
+/* One color per kind of difference, the same as the git diff's. */
+.editor-conflict-line.is-add {
+  background: rgb(64 209 110 / 12%);
+}
+
+.editor-conflict-line.is-mod {
+  background: rgb(240 195 60 / 12%);
+}
+
+.editor-conflict-n {
+  display: inline-block;
+  width: 44px;
+  padding-right: 10px;
+  text-align: right;
+  color: var(--text-dim);
+  opacity: 0.65;
+  user-select: none;
+}
+
+/* --- the editor's find bar (Ctrl+F) --- */
+
+/* CodeMirror hangs the panel in a strip glued to the top of the scroller; the
+   bar floats inside it, inset, like the find bar of a Mac app — and the code
+   keeps breathing underneath. The material is the menus'. */
+.ysearch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 10px;
+  padding: 7px 8px;
+  border-radius: var(--r-lg);
+  background: var(--material-menu);
+  backdrop-filter: var(--blur-menu);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-2), var(--hairline);
+  animation: ysearch-in var(--dur-2) var(--ease-pop);
+}
+
+@keyframes ysearch-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ysearch {
+    animation: none;
+  }
+}
+
+.ysearch-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* The replace line starts where the field above starts — the disclosure
+   triangle (20px) plus the gap. Two fields, one column. */
+.ysearch-row--replace {
+  padding-left: 26px;
+}
+
+/* `hidden` alone does not beat `display: flex`. */
+.ysearch-row[hidden] {
+  display: none;
+}
+
+.ysearch-gap {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The field is the whole piece: magnifier inside, text in the middle, counter
+   at the end. */
+.ysearch-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 340px;
+  min-width: 130px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--r-md);
+  background: rgb(0 0 0 / 26%);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 18%);
+  color: var(--text-dim);
+}
+
+.ysearch-field:focus-within {
+  border-color: rgb(10 132 255 / 60%);
+  box-shadow: 0 0 0 3.5px rgb(10 132 255 / 22%);
+}
+
+/* A half-written regex is the writer's error: red. */
+.ysearch-field.is-bad {
+  border-color: rgb(255 105 97 / 55%);
+}
+
+.ysearch-field > svg {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+/* No frame of its own: the field around it draws the box. */
+.ysearch .ysearch-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--text-bright);
+  font-size: var(--fs-sm);
+}
+
+.ysearch .ysearch-input:focus,
+.ysearch .ysearch-input:focus-visible {
+  border: none;
+  outline: none;
+  box-shadow: none;
+}
+
+.ysearch-count {
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Finding nothing is information, not an error — amber, as in the terminal
+   search. */
+.ysearch-field.is-dry .ysearch-count {
+  color: var(--yellow);
+}
+
+.ysearch-field.is-bad .ysearch-count {
+  color: var(--red);
+}
+
+/* The three modifiers in a segmented control, as in Xcode's bar. */
+.ysearch-seg {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 24%);
+  box-shadow: inset 0 0 0 1px var(--border-soft);
+}
+
+.ysearch-tog {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ysearch-tog:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.ysearch-tog.is-on {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+/* Underlined "ab": the "whole word" drawing every editor uses. */
+.ysearch-word {
+  line-height: 1;
+  padding-bottom: 1px;
+  border-bottom: 1px solid currentColor;
+}
+
+.ysearch-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ysearch-step,
+.ysearch-x,
+.ysearch-twist {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 8px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.ysearch-twist {
+  width: 20px;
+}
+
+.ysearch-step:hover:not(:disabled),
+.ysearch-x:hover,
+.ysearch-twist:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+.ysearch-twist > svg {
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.ysearch-twist.is-open > svg {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ysearch-twist > svg {
+    transition: none;
+  }
+}
+
+/* Text button in the app's shape: a slightly raised surface with a thread of
+   light on top — the same `.btn` as the rest of the app, at bar scale. */
+.ysearch-text {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 7.5%);
+  border: 1px solid rgb(255 255 255 / 9%);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 22%),
+    inset 0 1px 0 rgb(255 255 255 / 7%);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.ysearch-text:hover:not(:disabled) {
+  background: rgb(255 255 255 / 11%);
+  border-color: rgb(255 255 255 / 13%);
+  color: var(--text-bright);
+}
+
+.ysearch-text:active:not(:disabled) {
+  background: rgb(255 255 255 / 15%);
+}
+
+/* With no match there is nowhere to go and nothing to replace: the buttons
+   say so instead of answering the click with silence. */
+.ysearch-text:disabled,
+.ysearch-step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}

@@ -1,0 +1,587 @@
+/* Source control tab — version control inside the bench.
+   Same language as the rest of the panel: capsules for controls, inset
+   rounded cards for lists. What is specific here is the density: the column
+   is narrow and the tab shows path, count and action on the same line. */
+
+.bench-body--scm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 8px 12px;
+}
+
+/* --- top bar: branch, remote, tools --- */
+
+.scm-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.scm-branch,
+.scm-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: rgb(255 255 255 / 4%);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  transition:
+    background var(--dur-1) ease,
+    color var(--dur-1) ease;
+}
+
+.scm-branch {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The name yields, the rest does not: a branch called `feature/ABC-123-refactor…`
+   must not push the remote button out of the panel. */
+.scm-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scm-branch:hover,
+.scm-sync:not(:disabled):hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+.scm-sync {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* There is something to pull or to push: the button speaks blue, like every pending thing. */
+.scm-sync.is-behind {
+  background: var(--accent-dim);
+  border-color: rgb(94 160 255 / 35%);
+  color: var(--accent-text);
+}
+
+.scm-sync:disabled {
+  opacity: 0.45;
+}
+
+.scm-bar-tools {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* --- state banner (stalled merge/rebase, detached HEAD) --- */
+
+.scm-banner {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.scm-banner--danger {
+  background: var(--red-bg);
+  border-color: rgb(255 105 97 / 30%);
+  color: var(--red);
+}
+
+.scm-banner--warn {
+  background: var(--yellow-bg);
+  border-color: rgb(240 195 60 / 28%);
+  color: var(--yellow);
+}
+
+.scm-banner > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.scm-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.scm-banner-text span {
+  color: var(--text-dim);
+}
+
+.scm-banner-acts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.scm-error {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  background: var(--red-bg);
+  color: var(--red);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  /* Git's refusal usually comes with line breaks of its own and can be long;
+     wrapping beats truncating the only explanation there is. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The four sections' segmented bar reuses `.task-seg`; only the spacing
+   changes, because here it splits the column across four labels. */
+.scm-seg {
+  margin: 0;
+}
+
+.scm-seg button {
+  padding-inline: 6px;
+}
+
+/* --- commit box --- */
+
+.scm-commit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scm-message {
+  width: 100%;
+  min-height: 58px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: rgb(255 255 255 / 4%);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.scm-message:focus {
+  outline: none;
+  border-color: var(--accent-border);
+  background: rgb(255 255 255 / 6%);
+}
+
+.scm-message::placeholder {
+  color: var(--text-dim);
+}
+
+.scm-commit-row {
+  display: flex;
+  gap: 6px;
+}
+
+.scm-commit-btn {
+  flex: 1;
+  justify-content: center;
+}
+
+.scm-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+.scm-hint--warn {
+  color: var(--yellow);
+}
+
+.scm-quick {
+  display: flex;
+  gap: 6px;
+}
+
+.scm-quick .btn {
+  flex: 1;
+  justify-content: center;
+}
+
+/* --- one-line question --- */
+
+.scm-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-dim);
+}
+
+.scm-ask-label {
+  font-size: var(--fs-xs);
+  color: var(--accent-text);
+}
+
+.scm-ask-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.scm-ask-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: rgb(0 0 0 / 25%);
+  color: var(--text-bright);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+.scm-ask-row input:focus {
+  outline: none;
+  border-color: var(--accent-border);
+}
+
+/* --- groups and rows --- */
+
+.scm-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.scm-group-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 2px;
+}
+
+.scm-group-count {
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 20px;
+  background: rgb(255 255 255 / 8%);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.scm-group-tools {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity var(--dur-1) ease;
+}
+
+/* The bulk actions only show while the hand is on the group: they erase
+   work, and an always-visible discard button becomes a button that is always
+   near the cursor. The keyboard reveals them through focus. */
+.scm-group:hover .scm-group-tools,
+.scm-group:focus-within .scm-group-tools {
+  opacity: 1;
+}
+
+.scm-rows {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: rgb(255 255 255 / 3%);
+}
+
+.scm-row-wrap {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-soft);
+
+  /* A row outside the scrollport is neither measured nor painted. That is
+     four buttons, three SVGs and four `data-tip` balloons per row — each
+     balloon an absolute `::after` with a shadow and `border-radius`, drawn
+     even at `opacity: 0`. The declared size is the collapsed row's, so the
+     scrollbar does not dance while scrolling. Collapsed it is 29px; an open
+     diff exceeds that and the browser measures for real, which is what
+     `auto` does. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 29px;
+}
+
+.scm-row-wrap:last-child {
+  border-bottom: none;
+}
+
+.scm-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding-right: 4px;
+}
+
+.scm-row:hover {
+  background: var(--bg-hover);
+}
+
+.scm-row.is-current {
+  background: var(--accent-dim);
+}
+
+.scm-row-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 4px 6px 6px;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  text-align: left;
+}
+
+.scm-row-main:disabled {
+  opacity: 1; /* the current branch is not a dimmed control: it is the state */
+  cursor: default;
+}
+
+.scm-row-static {
+  cursor: default;
+}
+
+.scm-row-main > svg {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.scm-row-stat {
+  margin-left: auto;
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.scm-add {
+  color: var(--green);
+  font-style: normal;
+}
+
+.scm-del {
+  color: var(--red);
+  font-style: normal;
+}
+
+.scm-row-acts {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--dur-1) ease;
+}
+
+.scm-row:hover .scm-row-acts,
+.scm-row:focus-within .scm-row-acts {
+  opacity: 1;
+}
+
+.scm-tagline {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 20px;
+  background: rgb(255 255 255 / 8%);
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.scm-tagline--warn {
+  background: var(--yellow-bg);
+  color: var(--yellow);
+}
+
+/* --- history --- */
+
+.scm-row--commit .scm-row-main {
+  align-items: flex-start;
+}
+
+.scm-commit-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.scm-commit-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-bright);
+}
+
+/* Allowed to wrap, unlike the subject: the refs (`origin/main`,
+   `tag: v0.4.0`) are wide and unpredictable, and truncating the line because
+   of them ate precisely the date — which is how the history gets read. */
+.scm-commit-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.scm-commit-meta code {
+  font-family: var(--mono);
+}
+
+.scm-ref {
+  padding: 0 6px;
+  border-radius: 20px;
+  background: var(--accent-dim);
+  color: var(--accent-text);
+  font-size: 10px;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scm-commit-detail {
+  padding: 2px 4px 6px 14px;
+}
+
+.scm-commit-body {
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  background: rgb(0 0 0 / 22%);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.scm-row--sub .scm-row-main {
+  padding-left: 2px;
+  font-size: var(--fs-xs);
+}
+
+.scm-more {
+  align-self: center;
+}
+
+.scm-foot {
+  margin: 0;
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.scm-filter {
+  margin: 0;
+}
+
+/* --- diff with hunks --- */
+
+.scm-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 4px 8px 12px;
+}
+
+.scm-diff > pre,
+.scm-hunk > pre {
+  margin: 0;
+  padding: 4px 0;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+.scm-diff > pre {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: #121215;
+}
+
+.scm-diff span {
+  display: block;
+  padding: 0 8px;
+  white-space: pre;
+}
+
+.scm-hunk {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: #121215;
+  overflow: hidden;
+}
+
+.scm-hunk-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: rgb(255 255 255 / 4%);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: var(--fs-xs);
+}
+
+.scm-hunk-head code {
+  font-family: var(--mono);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scm-hunk-stat {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Not hidden until hover, unlike the row and group actions: these are the
+   reason the row was opened. */
+.scm-hunk-acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* Changed lines are clickable: that is line-level selection. Context lines
+   are not — marking context means nothing and the cursor has to say so. */
+.scm-hunk .is-pickable {
+  cursor: pointer;
+}
+
+.scm-hunk .is-pickable:hover {
+  background: rgb(255 255 255 / 8%);
+}
+
+.scm-hunk .is-picked {
+  box-shadow: inset 2px 0 0 var(--accent-bright);
+  background: var(--accent-soft);
+}

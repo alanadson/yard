@@ -1,0 +1,34 @@
+name: release
+
+# Tag a commit (`git tag v0.1.0 && git push origin v0.1.0`) and this builds the
+# NSIS installer and attaches it to a draft GitHub release for review.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Yard ${{ github.ref_name }}"
+          releaseBody: "See the assets below. Windows 10/11, x64."
+          releaseDraft: true
+          prerelease: false

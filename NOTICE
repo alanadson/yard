@@ -1,0 +1,20 @@
+Yard
+Copyright 2026 alanadson and the Yard contributors
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this software except in compliance with the License. You may obtain a
+copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+This product bundles third-party assets under their own licenses:
+
+  * Material Icon Theme (file and folder icons) — MIT License, Philipp Kief.
+    src/components/FileGlyph/material/LICENSE, public/material-icons/
+  * vscode-symbols (file icons) — MIT License, Miguel Solorio.
+    src/components/FileGlyph/symbols/LICENSE
+  * Bundled fonts (src/lib/bundledFonts.ts) — SIL Open Font License 1.1,
+    each under its own copyright; see the license text shipped with each face.
+
+Runtime dependencies are listed in package.json and src-tauri/Cargo.toml with
+their respective licenses.

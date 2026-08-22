@@ -1,0 +1,90 @@
+[package]
+name = "yard"
+version = "0.1.0"
+description = "Code agent orchestrator for Windows"
+authors = ["Yard"]
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+# The `_lib` suffix avoids a name clash with the Windows binary.
+name = "yard_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["unstable"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+portable-pty = "0.9"
+rusqlite = { version = "0.32", features = ["bundled"] }
+which = "7"
+sysinfo = "0.32"
+notify = "7"
+notify-debouncer-mini = "0.5"
+dirs = "5"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+anyhow = "1"
+parking_lot = "0.12"
+# Agent<->app bridge: named-pipe server (bridge.rs). Tauri already brings
+# tokio; here we only enable the features the pipe needs.
+tokio = { version = "1", features = ["net", "io-util", "time", "sync", "rt"] }
+# Agent usage limits (usage.rs): three GETs a minute on a background thread —
+# a small blocking client does the job without dragging in reqwest.
+ureq = "2"
+# Installed-font scan (fonts.rs): family name, monospaced flag and whether the
+# GSUB table carries ligatures — the preferences panel offers real choices
+# instead of a free-text field.
+ttf-parser = "0.25"
+# Portal screenshots (portal.rs): the files exist to be opened by agents, and
+# PNG is what agent APIs accept — the old BMPs could not be attached at all.
+png = "0.17"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  # CreateJobObjectW takes *const SECURITY_ATTRIBUTES: without this feature
+  # the function does not even exist in the crate.
+  "Win32_Security",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Gdi",
+  # Keep-awake (power.rs): SetThreadExecutionState lives here.
+  "Win32_System_Power",
+] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
+
+[profile.dev]
+# a panic in a command becomes Err instead of taking the app down during HMR
+panic = "unwind"
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+opt-level = "s"
+strip = true
+
+# Launcher profile (scripts/yard.ps1). The same release build, only without LTO
+# and without codegen-units=1: the binary is a few MB larger, and recompiling
+# after touching the front end drops from minutes to seconds — which is what
+# counts when you rebuild on every app launch. The installer still comes from
+# `release`.
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+opt-level = 2
+strip = false
+incremental = true

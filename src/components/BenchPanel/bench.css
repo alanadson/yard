@@ -1,0 +1,1192 @@
+/* Extracted from the global stylesheet so Vite can load it with this lazy feature. */
+
+/* --- bench (tasks & prompts) --- */
+
+/* The bench is a pane of glass that *floats*: the `<aside>` is only the slot
+   in the row — it reserves the column, stays transparent, and anchors the
+   resizer, which has to live outside the rounded box to stay grabbable. The
+   inline `width` is still the whole footprint, so the resize math keeps
+   telling the truth; the 10px of padding is the gap the terminals show
+   through. */
+.bench {
+  position: relative;
+  flex-shrink: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 268px; /* BENCH_MIN — 248 of glass + the 20px of gutter */
+  padding: 10px;
+}
+
+/* The handle straddles the glass's left edge instead of floating loose in the
+   gap, and stops where the card stops. */
+.bench > .resizer--left {
+  left: 6px;
+  top: 10px;
+  bottom: 10px;
+}
+
+/* The material itself: thicker and blurrier than the side panels' vibrancy,
+   because it is over live terminals rather than over the static ground.
+
+   Deliberately *not* `overflow: hidden` — the panel is driven by `data-tip`
+   balloons, which are `::after` boxes on the controls themselves and would be
+   clipped away by it. Children round their own corners instead (see the tab
+   strip, the body and `.task-list`). */
+.bench-glass {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-2xl);
+  background: rgb(22 22 27 / 60%);
+  backdrop-filter: blur(72px) saturate(185%);
+  border: 1px solid rgb(255 255 255 / 10%);
+  box-shadow:
+    0 24px 60px rgb(0 0 0 / 50%),
+    0 2px 8px rgb(0 0 0 / 30%),
+    inset 0 1px 0 rgb(255 255 255 / 14%);
+}
+
+/* Title block + the round close button, sheet header. The title names
+   the open tab and the line under it is the tab's one fact — `heading.ts`. */
+.bench-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 16px 14px 10px 18px;
+}
+
+.bench-heading {
+  min-width: 0;
+}
+
+.bench-title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  line-height: 1.2;
+  color: var(--text-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bench-subtitle {
+  margin: 2px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bench-close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  /* The UA's `padding: 1px 6px` would push the ✕ off-centre in a 28px
+     border-box grid — the same trap `.task-check` documents below. */
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgb(255 255 255 / 12%);
+  background: rgb(255 255 255 / 9%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 14%);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-1) ease,
+    color var(--dur-1) ease;
+}
+
+.bench-close:hover {
+  background: rgb(255 255 255 / 16%);
+  color: var(--text-bright);
+}
+
+/* Icon-only tabs that name themselves by tooltip, now as a capsule segmented
+   control on a recessed track — the same instrument as the scope filter under
+   it, so the panel has one shape language from top to bottom. */
+.bench-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 0 16px 12px;
+  padding: 3px;
+  background: rgb(0 0 0 / 28%);
+  border-radius: 999px;
+  box-shadow:
+    inset 0 1px 3px rgb(0 0 0 / 30%),
+    inset 0 -0.5px 0 rgb(255 255 255 / 6%);
+}
+
+.bench-tabs button {
+  position: relative;
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 25px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--text-dim);
+  transition:
+    background-color var(--dur-1) ease,
+    color var(--dur-1) ease;
+}
+
+.bench-tabs button:hover {
+  color: var(--text-bright);
+}
+
+.bench-tabs button.is-active {
+  background: rgb(255 255 255 / 16%);
+  color: var(--text-bright);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 20%),
+    0 1px 4px rgb(0 0 0 / 35%);
+}
+
+/* The count rides *beside* the icon now, not on its corner: on a capsule
+   there is no corner to hang from, and the pill widens the segment instead of
+   overhanging the track. Solid blue — `--accent-fill`, not `--accent`, is the
+   one that carries white text at AA. */
+.bench-count {
+  min-width: 15px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 700;
+  text-align: center;
+  border-radius: 999px;
+  color: var(--on-accent);
+  background: var(--accent-fill);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The body is the bottom of the glass: it rounds its own scrollport so the
+   scrollbar cannot run past the card's curve. */
+.bench-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Explicit, and not the `auto` that `overflow-y` alone would compute: the
+     `data-tip` balloons are absolute boxes wider than the column, so the
+     scrollport counted them as content and grew a horizontal scrollbar that
+     scrolled nothing. They are clipped by the scrollport either way. */
+  overflow-x: hidden;
+  padding: 10px 8px 12px;
+  border-radius: 0 0 var(--r-2xl-in) var(--r-2xl-in);
+}
+
+.bench-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px 20px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.bench-empty svg {
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+
+.bench-empty small {
+  color: var(--text-dim);
+  max-width: 240px;
+  line-height: 1.55;
+}
+
+.bench-empty .btn {
+  margin-top: 4px;
+}
+
+.bench-note {
+  margin: 4px 0 0;
+  padding: 6px;
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+/* Section micro-label (the world's only uppercase), clickable to collapse.
+   Bare text, no chip: it labels a group of cards, and a hover plate around it
+   would read as one more control competing with them. */
+.bench-subhead {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px;
+  margin-left: -4px;
+  border-radius: 8px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-dim);
+  transition: color var(--dur-1) ease;
+}
+
+.bench-subhead:hover {
+  color: var(--text-bright);
+}
+
+.bench-hint {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+/* Tag chips: neutral capsules; the active one speaks blue, like every selection. */
+.bench-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 2px 10px;
+}
+
+.bench-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 9px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: rgb(255 255 255 / 4%);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+/* A project name can be long; the chip yields the name, never the count. */
+.bench-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-chip-count {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.bench-chip:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+.bench-chip.is-active {
+  background: var(--accent-dim);
+  border-color: rgb(94 160 255 / 35%);
+  color: var(--accent-text);
+}
+
+/* Field with an icon inside (prompt search, new task): the wrapper is the
+   "input"; the real input sits bare within it. */
+.bench-search,
+.task-add {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 4px 0 9px;
+  background: rgb(0 0 0 / 26%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 18%);
+  transition:
+    border-color var(--dur-1) ease,
+    box-shadow var(--dur-1) ease;
+}
+
+.bench-search > svg,
+.task-add > svg {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.bench-search input,
+.task-add input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 6px 0;
+  border-radius: 0;
+}
+
+.bench-search input:focus,
+.task-add input:focus {
+  border: none;
+  box-shadow: none;
+}
+
+.bench-search:hover:not(:focus-within),
+.task-add:hover:not(:focus-within) {
+  border-color: var(--border-strong);
+}
+
+.bench-search:focus-within,
+.task-add:focus-within {
+  border-color: rgb(10 132 255 / 60%);
+  box-shadow: 0 0 0 3.5px rgb(10 132 255 / 22%);
+}
+
+.bench-search .icon-btn {
+  width: 20px;
+  height: 20px;
+}
+
+/* --- tasks --- */
+
+/* The tab has no padding of its own: every block inside sets its own inset,
+   so the cards can sit 14px from the glass while the section labels sit at
+   20px, where the text under them starts. */
+.bench-body--tasks {
+  padding: 0 0 16px;
+}
+
+/* The new-task field is a capsule floating *on* the glass, not a well cut
+   into it: raised material, light rim, thread of light on top. */
+.task-add {
+  gap: 8px;
+  height: 34px;
+  margin: 0 14px 10px;
+  padding: 0 5px 0 12px;
+  background: rgb(255 255 255 / 8.5%);
+  border-color: rgb(255 255 255 / 10%);
+  border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%);
+}
+
+.task-add input {
+  padding: 0;
+}
+
+/* Where the next task lands, inside the field that creates it: the project's
+   own icon, or the globe for the list that follows the user everywhere. */
+.task-scope {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  flex-shrink: 0;
+  border-radius: 50%;
+  color: var(--accent-text);
+  background: rgb(10 132 255 / 28%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%);
+}
+
+.task-scope:hover {
+  background: rgb(10 132 255 / 50%);
+  color: var(--on-accent);
+}
+
+.task-scope.is-global {
+  color: var(--text-dim);
+  background: rgb(255 255 255 / 10%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%);
+}
+
+.task-scope.is-global:hover {
+  color: var(--text-bright);
+  background: rgb(255 255 255 / 18%);
+}
+
+/* Scope filter as a compact segmented control — the same recessed-track /
+   raised-segment instrument as the title bar's layout switch, sized for the
+   248px column. Loose chips read as tags; a filter is a switch. */
+.task-seg {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  margin: 0 14px 12px;
+  padding: 3px;
+  background: rgb(0 0 0 / 28%);
+  border: none;
+  border-radius: 999px;
+  box-shadow: inset 0 1px 3px rgb(0 0 0 / 30%);
+}
+
+.task-seg button {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 25px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  transition:
+    background-color var(--dur-1) ease,
+    color var(--dur-1) ease;
+}
+
+.task-seg button:hover {
+  color: var(--text-bright);
+}
+
+.task-seg button.is-active {
+  background: rgb(255 255 255 / 16%);
+  color: var(--text-bright);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 18%),
+    0 1px 4px rgb(0 0 0 / 30%);
+}
+
+/* A project name can be long; the segment yields the name, never the count. */
+.task-seg-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-seg-count {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.65;
+}
+
+.task-search {
+  height: 30px;
+  margin: 0 14px 10px;
+  padding: 0 4px 0 12px;
+  background: rgb(255 255 255 / 8.5%);
+  border-color: rgb(255 255 255 / 10%);
+  border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%);
+}
+
+.task-search input {
+  padding: 0;
+}
+
+/* The list is one inset card, grouped-list style: the rows share a
+   surface and are told apart by hairlines, instead of each floating alone on
+   the glass. No `overflow: hidden` — it would clip the rows' `data-tip`
+   balloons — so the first and last child round themselves, below. */
+.task-list {
+  list-style: none;
+  margin: 0 14px;
+  padding: 0;
+  min-width: 0;
+  background: rgb(255 255 255 / 6%);
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: var(--r-card);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 7%);
+}
+
+/* "Concluídas" (done): the same card, one step quieter — it is a record, not a queue. */
+.task-list--done {
+  background: rgb(255 255 255 / 4.5%);
+  border-color: rgb(255 255 255 / 7%);
+  box-shadow: none;
+}
+
+/* "Tudo concluído." lives inside the card: an empty card with a note floating
+   under it would read as two separate things. */
+.task-list-note {
+  padding: 14px;
+  text-align: center;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.task-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border-bottom: 1px solid rgb(255 255 255 / 6%);
+  min-width: 0;
+  transition: background-color var(--dur-1) ease;
+}
+
+.task-list--done .task-row {
+  border-bottom-color: rgb(255 255 255 / 5.5%);
+}
+
+/* The card's own corners, carried by the rows so the hover plate follows
+   them. 17px = the card's 18px minus its 1px rim. */
+.task-list > :first-child {
+  border-radius: var(--r-card-in) var(--r-card-in) 0 0;
+}
+
+.task-list > :last-child {
+  border-bottom: none;
+  border-radius: 0 0 var(--r-card-in) var(--r-card-in);
+}
+
+.task-list > :only-child {
+  border-radius: var(--r-card-in);
+}
+
+.task-row:hover {
+  background: rgb(255 255 255 / 5%);
+}
+
+.task-list--done .task-row:hover {
+  background: rgb(255 255 255 / 4%);
+}
+
+.task-row.is-fresh {
+  animation: task-in var(--dur-2) var(--ease-pop);
+}
+
+@keyframes task-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+/* While dragging: the row becomes a draft — dashed is the language of the provisional. */
+.task-row.is-drag {
+  opacity: 0.45;
+  outline: 1.5px dashed var(--accent-border);
+  outline-offset: -1px;
+}
+
+/* The handle lives *in* the row's left padding, on hover only: the grouped
+   card wants a clean left edge at rest, and a permanently reserved column for
+   an invisible control was what pushed every task 14px to the right. */
+.task-grip {
+  position: absolute;
+  left: 0;
+  /* Lined up with the checkbox, not centred on the row: on a task that wraps
+     to three lines a centred handle floats loose beside the middle of a
+     sentence, instead of reading as the row's own left edge. */
+  top: 11px;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 20px;
+  color: var(--text-dim);
+  opacity: 0;
+  cursor: grab;
+  transition: opacity var(--dur-1) ease;
+}
+
+.task-row:hover .task-grip {
+  opacity: 0.65;
+}
+
+.task-grip:active {
+  cursor: grabbing;
+}
+
+/* Reminders-style circle: empty → ring; done → solid blue with a check.
+   The ring is the tab's primary control — lighter than the usual hairline. */
+.task-check {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  /* The UA gives every button `padding: 1px 6px`; on an 18px border-box that
+     leaves a 3px grid area, so the check overflowed to the right and hung out
+     of the circle. The ring only reads centred with the padding cleared. */
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid rgb(255 255 255 / 35%);
+  color: var(--on-accent);
+  transition:
+    border-color var(--dur-1) ease,
+    box-shadow var(--dur-1) ease,
+    background-color var(--dur-1) ease;
+}
+
+.task-check:hover {
+  border-color: var(--accent-bright);
+  box-shadow: 0 0 0 3px rgb(10 132 255 / 18%);
+}
+
+/* Hover previews the fill — the Reminders dot — so the click has a promise. */
+.task-check::after {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+  transform: scale(0.4);
+  transition:
+    opacity var(--dur-1) ease,
+    transform var(--dur-1) var(--ease-pop);
+}
+
+.task-check:hover::after {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.task-check.is-done::after {
+  display: none;
+}
+
+.task-check.is-done {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.task-check.is-done svg {
+  animation: check-pop var(--dur-2) var(--ease-pop);
+}
+
+@keyframes check-pop {
+  0% {
+    transform: scale(0.4);
+  }
+
+  60% {
+    transform: scale(1.25);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+.task-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  padding: 0;
+  font-size: var(--fs-md);
+  line-height: 1.4;
+  color: var(--text-bright);
+  /* UA buttons are nowrap — a 248px column must wrap the title instead. */
+  white-space: normal;
+}
+
+.task-text-line {
+  display: block;
+  width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* The metadata line under the text — badges never fight the words for width. */
+.task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.task-text--done {
+  color: var(--text-dim);
+}
+
+/* Only the words get struck — a struck-through pill would read as deleted. */
+.task-text--done .task-text-line {
+  text-decoration: line-through;
+  text-decoration-color: rgb(158 158 166 / 55%);
+}
+
+.task-row--done .task-check {
+  opacity: 0.8;
+}
+
+/* Not `--mono` any more: on the card the bangs sit inside a sentence, and a
+   second typeface for two characters read as a glitch. Weight carries it. */
+.task-prio {
+  margin-right: 6px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--accent-text);
+}
+
+/* Deadline and scope capsules, living on the task's metadata line. Glyphless:
+   at 9px the little clock was a smudge next to a word that already says
+   "date", and the pill's own shape is the badge. */
+.task-due,
+.task-scope-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  background: rgb(255 255 255 / 8%);
+  font-size: var(--fs-xs);
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.task-due--today {
+  color: var(--accent-text);
+  border-color: rgb(94 160 255 / 35%);
+  background: var(--accent-dim);
+}
+
+.task-due--soon {
+  color: var(--text);
+}
+
+/* Overdue is the only red in the list — it has to win over everything else. */
+.task-due--late {
+  color: var(--red);
+  border-color: rgb(255 105 97 / 38%);
+  background: var(--red-bg);
+}
+
+.task-scope-tag {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-editing {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.task-edit {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 7px;
+  font-size: var(--fs-sm);
+}
+
+/* The native date field, shrunk to fit the row and stripped of its chrome. */
+.task-date {
+  width: 112px;
+  flex-shrink: 0;
+  padding: 2px 4px;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color-scheme: dark;
+}
+
+.task-date::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.6;
+  filter: invert(1);
+}
+
+.task-date::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
+/* Row actions only on hover/focus, as in the sidebar tree; the priority flag
+   is state and stays lit at all times. Round, like everything else the panel
+   presses. */
+.task-row .icon-btn {
+  width: 22px;
+  height: 22px;
+  margin-top: 0;
+  border-radius: 999px;
+  opacity: 0;
+}
+
+.task-row:hover .icon-btn,
+.task-row .icon-btn:focus-visible {
+  opacity: 1;
+}
+
+.task-row .icon-btn:hover {
+  background: rgb(255 255 255 / 12%);
+}
+
+.task-row .icon-btn.is-flagged {
+  opacity: 1;
+  color: var(--accent-text);
+}
+
+/* Kebab overlays the trailing edge so a long title keeps the full column —
+   the done row has nothing else on its right, and the design's resting state
+   is exactly this: checkbox, words, nothing. */
+.task-row--done > .icon-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  margin-top: 0;
+  z-index: 1;
+}
+
+.task-done {
+  min-width: 0;
+}
+
+/* Label at 20px, where the text inside the cards starts — the cards sit at
+   14px, and lining the label up with the rim instead of the words made it
+   look like a caption to the border. */
+.task-done-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 16px 20px 6px;
+}
+
+/* One chevron that turns, not two that swap. */
+.task-done-chev {
+  display: grid;
+  transition: transform var(--dur-1) ease;
+}
+
+.task-done-chev.is-closed {
+  transform: rotate(-90deg);
+}
+
+/* Inline count — never `.bench-count`, whose solid pill is for the tabs. */
+.task-done-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Plain blue text: it is the one destructive-ish action in a section made of
+   quiet material, and a filled button here would out-shout the tasks. The
+   negative margin buys a real hit area without moving the word. */
+.task-done-clear {
+  flex-shrink: 0;
+  padding: 3px 6px;
+  margin: -3px -6px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  font-size: var(--fs-xs);
+  color: var(--accent-text);
+  cursor: pointer;
+  transition: color var(--dur-1) ease;
+}
+
+.task-done-clear:hover {
+  color: #cfe4ff;
+}
+
+/* --- prompts --- */
+
+/* Search row + actions at the top of a bench tab (prompts, files). */
+.bench-bar,
+.prompt-bar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.bench-bar .bench-search,
+.prompt-bar .bench-search {
+  flex: 1;
+  min-width: 0;
+}
+
+.prompt-bar .btn {
+  flex-shrink: 0;
+}
+
+.prompt-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prompt-card {
+  padding: 6px 8px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: rgb(255 255 255 / 3.5%);
+  transition:
+    background-color var(--dur-1) ease,
+    border-color var(--dur-1) ease;
+}
+
+.prompt-card:hover,
+.prompt-card:focus-within {
+  background: rgb(255 255 255 / 6%);
+  border-color: var(--border-strong);
+}
+
+.prompt-card-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.prompt-card-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px;
+  text-align: left;
+  border-radius: var(--r-sm);
+}
+
+.prompt-card-open strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.prompt-card:hover .prompt-card-open strong {
+  color: var(--text-bright);
+}
+
+.prompt-pin {
+  flex-shrink: 0;
+  color: var(--accent-text);
+}
+
+.prompt-card-actions {
+  display: flex;
+  gap: 1px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--dur-1) ease;
+}
+
+.prompt-card:hover .prompt-card-actions,
+.prompt-card:focus-within .prompt-card-actions {
+  opacity: 1;
+}
+
+.prompt-card-actions .icon-btn {
+  width: 21px;
+  height: 21px;
+}
+
+/* Copy success is state, not hover: it stays lit on its own. */
+.prompt-card-actions .icon-btn.is-copied {
+  opacity: 1;
+  color: var(--green);
+  background: var(--green-bg);
+}
+
+.prompt-preview {
+  margin: 2px 0 0;
+  padding: 0 2px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.prompt-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 0 2px;
+}
+
+.prompt-tag {
+  padding: 0 7px;
+  line-height: 15px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: rgb(255 255 255 / 4%);
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.prompt-var {
+  padding: 0 6px;
+  line-height: 15px;
+  border-radius: 20px;
+  background: var(--accent-dim);
+  color: var(--accent-text);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.prompt-uses {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Variable filling: one step further into the card. */
+.prompt-fill {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 20%);
+  animation: menu-in var(--dur-1) var(--ease);
+}
+
+.prompt-fill-title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+}
+
+.prompt-fill-row {
+  display: flex;
+  /* the forms' global `label` is a column; here the label sits alongside */
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.prompt-fill-row span {
+  flex-shrink: 0;
+  min-width: 64px;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--text);
+}
+
+.prompt-fill-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: var(--fs-sm);
+}
+
+.prompt-fill-row input::placeholder {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+.prompt-fill-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+/* Inline editor: editing is focus — the card speaks blue while it is open. */
+.prompt-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 6px;
+  padding: 8px;
+  border: 1px solid rgb(94 160 255 / 45%);
+  border-radius: var(--r-md);
+  background: rgb(255 255 255 / 3%);
+  box-shadow: 0 0 0 3px rgb(10 132 255 / 10%);
+  animation: menu-in var(--dur-1) var(--ease);
+}
+
+.prompt-editor input,
+.prompt-editor textarea {
+  width: 100%;
+}
+
+.prompt-editor textarea {
+  resize: vertical;
+  min-height: 92px;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  color: var(--text-bright);
+  background: rgb(0 0 0 / 26%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 7px 9px;
+  outline: none;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 18%);
+}
+
+.prompt-editor textarea::placeholder {
+  color: var(--text-dim);
+  font-family:
+    "Inter Variable",
+    "SF Pro Text",
+    -apple-system,
+    "Segoe UI Variable Text",
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+}
+
+.prompt-editor textarea:hover:not(:focus) {
+  border-color: var(--border-strong);
+}
+
+.prompt-editor textarea:focus {
+  border-color: rgb(10 132 255 / 60%);
+  box-shadow: 0 0 0 3.5px rgb(10 132 255 / 22%);
+}
+
+.prompt-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Section micro-label, same voice as "Preencha as variáveis" on the cards. */
+.prompt-editor-title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+}
+
+/* Live echo of the {{variables}} found in the body. */
+.prompt-editor-vars {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.prompt-editor-vars-label {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.prompt-editor-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Cancelar/Salvar sit at the right edge; the delete icon keeps the left. */
+.prompt-editor-cancel {
+  margin-left: auto;
+}
