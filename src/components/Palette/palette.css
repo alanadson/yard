@@ -1,0 +1,235 @@
+/* --- busca (Ctrl+P) ----------------------------------------------------------
+   Spotlight, not a modal: it lands high on the screen (a list grows downward
+   and the eye should not have to travel to follow it) and sits above every
+   other surface — z 140 clears the modal at 130 and stays under the toast. */
+
+.busca-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: min(14vh, 130px);
+  background: rgb(0 0 0 / 34%);
+  backdrop-filter: blur(5px);
+  animation: fade-in 120ms ease-out;
+}
+
+.busca {
+  width: min(680px, 92vw);
+  max-height: min(66vh, 620px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--material-sheet);
+  backdrop-filter: var(--blur-sheet);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-3), var(--hairline);
+  animation: modal-in var(--dur-2) var(--ease-pop);
+}
+
+.busca-field {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 14px;
+  height: 50px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.busca-glass {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+/* The scope prefix becomes a chip: the `>` is still in the box, but what it
+   *means* has to be readable without knowing the legend by heart. */
+.busca-scope {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 18px;
+  padding: 0 8px;
+  border-radius: 20px;
+  background: var(--accent-dim);
+  color: var(--accent-text);
+}
+
+.busca-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-bright);
+  font-size: var(--fs-lg);
+  padding: 0;
+}
+
+.busca-input::placeholder {
+  color: var(--text-dim);
+}
+
+.busca-list {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+}
+
+.busca-empty {
+  margin: 0;
+  padding: 22px 14px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+/* Says what the file search can and cannot see — "nada encontrado" on its own
+   reads as "esse arquivo não existe". */
+.busca-empty-hint {
+  display: block;
+  max-width: 46ch;
+  margin: 8px auto 0;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+
+.busca-section + .busca-section {
+  margin-top: 6px;
+}
+
+.busca-section-head {
+  padding: 6px 10px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.busca-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--r-md);
+  text-align: left;
+  color: var(--text);
+}
+
+/* No `:hover` rule on purpose: the cursor follows the pointer through
+   `onMouseMove`, so a hover style would light up two rows at once. */
+.busca-row.is-active {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+  color: var(--text-bright);
+}
+
+.busca-icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.busca-row.is-active .busca-icon {
+  color: var(--accent-text);
+}
+
+.busca-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 1px;
+}
+
+.busca-title {
+  font-size: var(--fs-md);
+  color: var(--text-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.busca-sub {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.busca-hint {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 1px 6px;
+}
+
+/* Process state, same semantics as the card dots. */
+.busca-dot {
+  color: var(--text-dim);
+  opacity: 0.5;
+}
+
+.busca-dot--live {
+  color: var(--green);
+  opacity: 1;
+}
+
+.busca-dot--waiting {
+  color: var(--yellow);
+  opacity: 1;
+}
+
+.busca-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 7px 14px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.busca-legend {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.busca-legend span {
+  white-space: nowrap;
+}
+
+.busca-keys {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.busca-foot kbd {
+  font-size: 10px;
+}
+
+/* Narrow window: the legend is the first thing to go — the shortcuts on the
+   right are the ones someone actually reads mid-search. */
+@media (max-width: 620px) {
+  .busca-legend {
+    display: none;
+  }
+}

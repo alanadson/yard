@@ -1,0 +1,1450 @@
+/**
+ * Code editor — a file is **a tab beside the CLIs**, not a window over them.
+ *
+ * Opening something from the tree adds a tab to the pane's own bar, right
+ * next to the agent that is editing it, at exactly the pane's size: two tabs
+ * in one bar, one click apart. That is the whole point of this app — the file
+ * and the agent working on it belong on the same surface — and it is why the
+ * editor is not a modal.
+ *
+ * `EditorBody` is that surface and knows nothing about where it hangs.
+ * `CodeEditor` (further down) is the same body raised as an overlay, used
+ * only on the canvas, which has no tab bar to land in; there `Esc` pushes it
+ * aside without closing anything — the documents and the drafts live in the
+ * store, not in the window.
+ *
+ * What it does that an ordinary editor would not: **here the disk belongs to
+ * someone else**. The agents rewrite the same files all the time, so:
+ * - an open, untouched file follows the agent on its own (it reloads);
+ * - a file with a draft turns into a "changed on disk" warning with both ways
+ *   out (reload or carry on), never a silent overwrite;
+ * - saving checks the timestamp: if the disk moved, the write stops and the
+ *   user chooses to keep theirs.
+ *
+ * **Markdown gets a second face.** Half the files anyone opens here are
+ * documents, not code — READMEs, specs, plans agents write and people read —
+ * and raw markers are the wrong way to read a document. So a `.md` file
+ * arrives with a formatting bar, an outline of its headings, and four ways to
+ * look at it (`MdMode`): drawn while you write, raw, side by side, or read.
+ * The buffer is always the file, character for character: the modes change
+ * how it is painted, never what gets saved.
+ */
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import "./editor.css";
+import { basicSetup } from "codemirror";
+import { completeAnyWord } from "@codemirror/autocomplete";
+import { Compartment, EditorSelection, EditorState, Prec } from "@codemirror/state";
+import { EditorView, highlightTrailingWhitespace, keymap } from "@codemirror/view";
+import { indentWithTab } from "@codemirror/commands";
+import { gotoLine, openSearchPanel } from "@codemirror/search";
+import {
+  AlertTriangle,
+  BookOpen,
+  Code2,
+  Columns2,
+  ExternalLink,
+  FolderOpen,
+  Image as ImageIcon,
+  ListTree,
+  PanelLeft,
+  Pencil,
+  RotateCw,
+  Save,
+  Search,
+  WrapText,
+  X,
+} from "lucide-react";
+
+import { FileTree } from "../FileTree";
+import { diffLines } from "../../lib/lineDiff";
+import { isMarkdown, languageLabel, loadLanguage } from "./cm";
+import { editorExtras } from "./extras";
+import { codeMetrics } from "./metrics";
+import { formatBeforeSave } from "./format";
+import { syntaxFor } from "./schemeSyntax";
+import {
+  applyGitChanges,
+  cachedHeadText,
+  dropHeadText,
+  gitGutterExt,
+  headTextFor,
+} from "./gitGutter";
+import { MarkdownPreview } from "./MarkdownPreview";
+import { MediaView } from "./MediaView";
+import { MarkdownToolbar } from "./MarkdownToolbar";
+import { mdKeymap, runMd } from "./mdCommands";
+import { mdLive } from "./mdLive";
+import { openReplacePanel, yardSearch } from "./searchPanel";
+import { Outline } from "./Outline";
+import { observeVisibleLine } from "./surfaceCore";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
+import { useMarkdownNavigation } from "../../hooks/useMarkdownNavigation";
+import { isTopLayer } from "../../lib/layers";
+import { LruCache } from "../../lib/lru";
+import { outline as outlineOf, parseDoc, stats } from "../../lib/mddoc";
+import { blockOf, type BlockKind } from "../../lib/mdedit";
+import { openWebAddress } from "../../lib/openLink";
+import { fileSize, mediaKind } from "../../lib/media";
+import { closeDocTab, docTabMenu } from "../../lib/editorActions";
+import { captureTextTarget, textMenuEntries } from "../../lib/textMenu";
+import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
+import { fileName, toOsPath } from "../../lib/paths";
+import { hasSymbolSupport, symbolsOf } from "../../lib/symbols";
+import { ipc } from "../../lib/ipc";
+import {
+  isDirty,
+  isReadOnly,
+  tabLabel,
+  useEditor,
+  type MdMode,
+  type OpenDoc,
+} from "../../stores/editorStore";
+import { useProjects } from "../../stores/projectsStore";
+import { SCHEME_IDS } from "../../lib/colorSchemes";
+import { useExtensions } from "../../stores/extensionsStore";
+import { useUI } from "../../stores/uiStore";
+import type { ExtensionId } from "../../lib/extensions";
+
+/**
+ * The four ways to look at a markdown file, in the order of how much of the
+ * source they show — from "drawn like the page" to "read only the page".
+ */
+const MODES: { mode: MdMode; icon: React.ReactNode; label: string; hint: string }[] = [
+  {
+    mode: "live",
+    icon: <Pencil size={14} />,
+    label: "Editar",
+    hint: "escreve markdown já desenhado",
+  },
+  {
+    mode: "source",
+    icon: <Code2 size={14} />,
+    label: "Fonte",
+    hint: "o texto cru, como o agente lê",
+  },
+  {
+    mode: "split",
+    icon: <Columns2 size={14} />,
+    label: "Dividido",
+    hint: "fonte de um lado, página do outro",
+  },
+  {
+    mode: "read",
+    icon: <BookOpen size={14} />,
+    label: "Ler",
+    hint: "só a página, largura toda",
+  },
+];
+
+/**
+ * The editing surface of **one** document: path bar with the tools, the
+ * markdown chrome, the text (or the page), and the status line.
+ *
+ * Deliberately unaware of where it is hanging. In the tab grid it is the body
+ * of a pane, exactly the size the CLI next to it has; on the canvas — which
+ * has no tab bar to land in — the overlay below wraps it. Everything it needs
+ * comes from the store by `docId`, so both hosts show the same buffer, the
+ * same draft and the same mode.
+ */
+export function EditorBody({ docId: id }: { docId: string }) {
+  // The text buffer changes on every key, while the surrounding chrome only
+  // changes on lifecycle/dirtiness transitions. Subscribe to that compact
+  // projection so the bars do not reconcile per keystroke.
+  const chromeKey = useEditor((s) => {
+    const d = s.docs.find((x) => x.id === id);
+    return JSON.stringify([
+      s.wrap,
+      s.mdMode,
+      s.outline,
+      s.docs.filter((x) => isDirty(x) && !isReadOnly(x)).length,
+      d && [
+        d.id,
+        d.path,
+        d.root,
+        d.diskVersion,
+        isDirty(d),
+        d.modifiedAt,
+        d.crlf,
+        d.binary,
+        d.media,
+        d.size,
+        d.truncated,
+        d.lossy,
+        d.stale,
+        d.missing,
+        d.error,
+        d.saving,
+      ],
+    ]);
+  });
+  const { doc, sujos: dirtyDocs, wrap, mdMode, showOutline } = useMemo(() => {
+    const state = useEditor.getState();
+    return {
+      doc: state.docs.find((d) => d.id === id) ?? null,
+      sujos: state.docs.filter((d) => isDirty(d) && !isReadOnly(d)).length,
+      wrap: state.wrap,
+      mdMode: state.mdMode,
+      showOutline: state.outline,
+    };
+  }, [chromeKey, id]);
+  const showToast = useUI((s) => s.showToast);
+
+  const cursorEl = useRef<HTMLButtonElement>(null);
+  /** The live `EditorView`, for the buttons that need to talk to it (search). */
+  const viewHolder = useRef<EditorView | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  /** The reading pane, so the outline and the split view can scroll it. */
+  const previewRef = useRef<HTMLDivElement>(null);
+  /**
+   * Where the caret is, in the two terms the markdown chrome needs: the line
+   * (outline, scroll sync) and the block marker (which bar button is
+   * pressed). Kept here and not in the store — it moves with every arrow key,
+   * and the canvas has no business re-rendering for that.
+   */
+  const [caret, setCaret] = useState<{ line: number; block: BlockKind }>({
+    line: 0,
+    block: "paragraph",
+  });
+  /**
+   * An `.svg` is image *and* text: it opens rendered (which is what you want to
+   * see when clicking an icon) with a button for the code. Local rather than in
+   * the store because it is about this tab, right now — the next one opens
+   * rendered again.
+   */
+  const [showSource, setShowSource] = useState(false);
+  useEffect(() => setShowSource(false), [id]);
+
+  const save = useCallback(async () => {
+    // Prettier first, in the buffer (see `format.ts`): both ways in — Ctrl+S
+    // and the toolbar button — funnel through here, so the store then saves
+    // exactly what is on screen. No-op with the extension off.
+    const target = useEditor.getState().docs.find((d) => d.id === id);
+    if (viewHolder.current && target && !isReadOnly(target)) {
+      await formatBeforeSave(viewHolder.current, target.path);
+    }
+    const ok = await useEditor.getState().save(id);
+    if (!ok) {
+      const err = useEditor.getState().docs.find((d) => d.id === id)?.error;
+      if (err && !err.includes("CONFLITO")) showToast(err, "error");
+    }
+  }, [id, showToast]);
+
+  // --- markdown ------------------------------------------------------------
+
+  const md = doc ? isMarkdown(doc.path) && !doc.binary : false;
+  const docRoot = doc?.root ?? "";
+  const docPath = doc?.path ?? "";
+  const docText = doc?.text ?? "";
+
+  /**
+   * The text the *rendered* side reads, one beat behind the buffer.
+   *
+   * Parsing a 30 KB README costs a few milliseconds, and paying it on every
+   * keystroke of the split view is exactly how a preview turns into a
+   * stutter. `useDeferredValue` lets the letters land first and the page
+   * catch up, which is the order a person perceives anyway.
+   */
+  const previewText = useDeferredValue(docText);
+  const headings = useMemo(
+    () => (md && showOutline ? outlineOf(parseDoc(previewText)) : []),
+    [md, showOutline, previewText],
+  );
+  // Off the deferred text as well: the counters are for the eye, and nobody
+  // reads "1 217 palavras" tick over on every letter.
+  const counts = useMemo(() => (md ? stats(previewText) : null), [md, previewText]);
+
+  // --- code symbols ---------------------------------------------------------
+  //
+  // The same rail a markdown file gets, for code: functions, classes, types
+  // (`lib/symbols.ts`). Markdown reads its outline from the parsed document;
+  // code reads its own buffer — through a dedicated subscription that only
+  // wakes while the rail is showing, so a closed outline costs nothing.
+  const codeSymbolsOn = !md && !!doc && !doc.binary && hasSymbolSupport(docPath);
+  const symbolText = useEditor((s) => {
+    if (!s.outline) return "";
+    const d = s.docs.find((x) => x.id === id);
+    return d && !d.binary && !isMarkdown(d.path) ? d.text : "";
+  });
+  const deferredSymbolText = useDeferredValue(symbolText);
+  const symbols = useMemo(
+    () => (codeSymbolsOn && showOutline ? symbolsOf(docPath, deferredSymbolText) : []),
+    [codeSymbolsOn, showOutline, docPath, deferredSymbolText],
+  );
+
+  // Read the mode late so these callbacks stay stable while the surface is
+  // mounted. Notes use the same source/preview navigation contract.
+  const isSplit = useCallback(() => useEditor.getState().mdMode === "split", []);
+  const { goToLine, onCaret, onScrollLine } = useMarkdownNavigation({
+    previewRef,
+    viewRef: viewHolder,
+    isSplit,
+    setCaret,
+  });
+
+  const runCommand = useCallback((cmd: Parameters<typeof runMd>[1]) => {
+    runMd(viewHolder.current, cmd);
+  }, []);
+
+  const toggleTask = useCallback(
+    (line: number) => useEditor.getState().toggleTask(id, line),
+    [id],
+  );
+
+  /** A relative link in the preview opens the file it points at, as a tab. */
+  const openPath = useCallback(
+    (path: string) => {
+      void useEditor
+        .getState()
+        .openFile(path)
+        .catch(() => showToast(`Não achei “${path}” no projeto.`, "error"));
+    },
+    [showToast],
+  );
+
+  /**
+   * An address for the web. It becomes a portal on the canvas — the only
+   * place a page runs in this app — with the overlay (when it is the one
+   * showing) stepping aside so the user sees where it landed.
+   */
+  const openUrl = useCallback((href: string) => {
+    useEditor.getState().closeEditor();
+    // `openWebAddress` is the one place that decides web-vs-path — the
+    // notebook goes through it too, after sending its links to the
+    // open-a-file command by mistake.
+    if (!openWebAddress(href)) showToast(`Não sei abrir “${href}”.`, "error");
+  }, [showToast]);
+
+  /**
+   * Ctrl+S from anywhere **inside this editor**, not only with the cursor in
+   * the text: CodeMirror's keymap covers the surface, but clicking a toolbar
+   * button takes focus away from it and the shortcut advertised in "Keyboard
+   * shortcuts" became a silent nothing. Scoped to this body's DOM, because
+   * there can be one per pane and each saves its own file.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.key.toLowerCase() !== "s") return;
+      const target = e.target as Node | null;
+      if (!target || !rootRef.current?.contains(target)) return;
+      e.preventDefault();
+      void save();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [save]);
+
+  if (!doc) return null;
+
+  const lang = languageLabel(doc.path);
+  const osPath = toOsPath(doc.root, doc.path);
+  const reveal = () => {
+    void ipc.revealPath(osPath).catch((e) => showToast(String(e), "error"));
+  };
+  /** Image, video, audio or PDF — whatever the webview draws on its own. */
+  const kind = mediaKind(doc.media);
+  /**
+   * When the surface is the viewer's and not the text's. It holds for every
+   * file without text (where the card explains what it is), and for anything
+   * that has a better face than its code — unless the code is asked for.
+   */
+  const viewing = doc.binary || (kind !== null && !showSource);
+  /**
+   * The bar has two groups: what acts on the file and what points outside it.
+   * The rule that separates them only appears when there is something before it
+   * — on an image there is nothing to save, and the rule would open the bar by
+   * itself.
+   */
+  const hasEditGroup = md || (kind !== null && !doc.binary) || !isReadOnly(doc) || dirtyDocs > 1;
+
+  return (
+    <div className="editor-body" ref={rootRef}>
+      {/* The path bar: where the file is, and everything you can do to it —
+          under the tabs, above the formatting. */}
+      <div className="editor-pathbar">
+        <span className="editor-fullpath" data-tip-wrap="" data-tip={osPath}>
+          {osPath}
+        </span>
+
+        <div className="editor-tools">
+            {md && (
+              <div
+                className="md-modes"
+                role="group"
+                aria-label="Como mostrar o markdown"
+              >
+                {MODES.map((m) => (
+                  <button
+                    key={m.mode}
+                    className={`icon-btn ${mdMode === m.mode ? "is-active" : ""}`}
+                    data-tip={`${m.label} — ${m.hint}`}
+                    aria-label={m.label}
+                    aria-pressed={mdMode === m.mode}
+                    onClick={() => useEditor.getState().setMdMode(m.mode)}
+                  >
+                    {m.icon}
+                  </button>
+                ))}
+              </div>
+            )}
+            {(md || codeSymbolsOn) && (
+              <>
+                <button
+                  className={`icon-btn ${showOutline ? "is-active" : ""}`}
+                  data-tip={md ? "Sumário dos títulos" : "Símbolos do arquivo"}
+                  aria-label={
+                    md
+                      ? "Mostrar ou esconder o sumário"
+                      : "Mostrar ou esconder os símbolos do arquivo"
+                  }
+                  aria-pressed={showOutline}
+                  onClick={() => useEditor.getState().setOutline(!showOutline)}
+                >
+                  <ListTree size={14} />
+                </button>
+                <span className="viewer-sep" />
+              </>
+            )}
+            {kind && !doc.binary && (
+              <>
+                {/* Only `.svg` reaches here — an image that is also text. */}
+                <button
+                  className={`icon-btn ${showSource ? "is-active" : ""}`}
+                  data-tip={showSource ? "Ver desenhado" : "Ver o código"}
+                  aria-label={showSource ? "Ver desenhado" : "Ver o código"}
+                  aria-pressed={showSource}
+                  onClick={() => setShowSource(!showSource)}
+                >
+                  {showSource ? <ImageIcon size={14} /> : <Code2 size={14} />}
+                </button>
+                <span className="viewer-sep" />
+              </>
+            )}
+            {!isReadOnly(doc) && (
+              <button
+                className="btn btn--primary btn--sm"
+                disabled={!isDirty(doc) || doc.saving}
+                data-tip="Salvar (Ctrl+S)"
+                onClick={() => void save()}
+              >
+                <Save size={12} aria-hidden="true" />
+                {doc.saving ? "salvando…" : "Salvar"}
+              </button>
+            )}
+            {dirtyDocs > 1 && (
+              <button
+                className="btn btn--ghost btn--sm"
+                data-tip={`Salvar os ${dirtyDocs} arquivos com alterações`}
+                onClick={() => void useEditor.getState().saveAll()}
+              >
+                Salvar tudo
+              </button>
+            )}
+            {hasEditGroup && <span className="viewer-sep" />}
+            {/* Search and wrap are about text: out of place on a PNG's screen. */}
+            {!viewing && (
+              <>
+                <button
+                  className="icon-btn"
+                  data-tip="Buscar no arquivo (Ctrl+F)"
+                  aria-label="Buscar no arquivo"
+                  onClick={() => {
+                    const view = viewHolder.current;
+                    if (view) {
+                      // Focus first, open second: `openSearchPanel` puts the
+                      // caret in the field, and focusing after would take it
+                      // straight back out.
+                      view.focus();
+                      openSearchPanel(view);
+                    }
+                  }}
+                >
+                  <Search size={14} />
+                </button>
+                <button
+                  className={`icon-btn ${wrap ? "is-active" : ""}`}
+                  data-tip="Quebra de linha"
+                  aria-label="Quebra de linha"
+                  aria-pressed={wrap}
+                  onClick={() => useEditor.getState().setWrap(!wrap)}
+                >
+                  <WrapText size={14} />
+                </button>
+              </>
+            )}
+            {viewing && (
+              <button
+                className="icon-btn"
+                data-tip="Abrir no aplicativo padrão"
+                aria-label="Abrir no aplicativo padrão"
+                onClick={() => {
+                  void ipc.openExternal(osPath).catch((e) => showToast(String(e), "error"));
+                }}
+              >
+                <ExternalLink size={14} />
+              </button>
+            )}
+            <button
+              className="icon-btn"
+              data-tip="Reler do disco"
+              aria-label="Reler o arquivo do disco"
+              onClick={() => void useEditor.getState().reload(doc.id)}
+            >
+              <RotateCw size={14} />
+            </button>
+            <button
+              className="icon-btn"
+              data-tip-at="right"
+              data-tip="Mostrar no Explorer"
+              aria-label="Mostrar no Explorer"
+              onClick={reveal}
+            >
+              <FolderOpen size={14} />
+            </button>
+          </div>
+        </div>
+
+        <div className="editor-main">
+          <div className="editor-stage">
+            <DocBanner doc={doc} />
+            {md && mdMode !== "read" && (
+              <MarkdownToolbar
+                block={caret.block}
+                run={runCommand}
+                disabled={isReadOnly(doc)}
+              />
+            )}
+            {viewing ? (
+              <MediaView doc={doc} />
+            ) : (
+              <div className={`editor-panes ${md ? `is-md is-${mdMode}` : ""}`}>
+                {(!md || mdMode !== "read") && (
+                  <CmSurface
+                    doc={doc}
+                    wrap={wrap || (md && mdMode !== "source")}
+                    live={md && (mdMode === "live" || mdMode === "split")}
+                    onSave={() => void save()}
+                    // Code too, not only markdown: the symbols rail follows
+                    // the caret the same way the heading outline does.
+                    onCaret={onCaret}
+                    onScrollLine={md ? onScrollLine : undefined}
+                    cursorEl={cursorEl}
+                    viewHolder={viewHolder}
+                  />
+                )}
+                {md && (mdMode === "split" || mdMode === "read") && (
+                  <div
+                    className="editor-preview"
+                    ref={previewRef}
+                    // The reading pane is a document: it scrolls, it can be
+                    // tabbed into, and a screen reader announces it as one.
+                    tabIndex={0}
+                  >
+                    <MarkdownPreview
+                      text={previewText}
+                      root={docRoot}
+                      path={docPath}
+                      onTask={toggleTask}
+                      onOpenPath={openPath}
+                      onOpenUrl={openUrl}
+                      onGoToLine={mdMode === "split" ? goToLine : undefined}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {md && showOutline && (
+            <Outline entries={headings} line={caret.line} onGo={goToLine} />
+          )}
+          {codeSymbolsOn && showOutline && (
+            <Outline
+              entries={symbols}
+              line={caret.line}
+              onGo={goToLine}
+              empty="Sem símbolos ainda — funções e classes do arquivo aparecem aqui."
+            />
+          )}
+        </div>
+
+        <footer className="editor-status">
+          <span className="editor-status-path" data-tip={doc.path}>
+            {doc.path}
+          </span>
+          <span className="editor-status-right">
+            {/* On an image "read-only" says nothing: nobody expects to type into
+                a PNG. The notice is for text that opened locked. */}
+            {isReadOnly(doc) && !viewing && (
+              <span className="editor-chip">somente leitura</span>
+            )}
+            {isDirty(doc) && !isReadOnly(doc) && (
+              <span className="editor-chip editor-chip--dirty">não salvo</span>
+            )}
+            {counts && (
+              <>
+                {counts.tasks.total > 0 && (
+                  <span data-tip="Tarefas concluídas neste arquivo">
+                    {counts.tasks.done}/{counts.tasks.total} tarefas
+                  </span>
+                )}
+                <span data-tip={`${counts.chars} caracteres`}>
+                  {counts.words} palavras
+                </span>
+                <span data-tip="Tempo de leitura, a 200 palavras por minuto">
+                  {counts.minutes} min
+                </span>
+              </>
+            )}
+            {viewing ? (
+              <>
+                <span>{fileSize(doc.size)}</span>
+                <span>{doc.media ?? "binário"}</span>
+              </>
+            ) : (
+              <>
+                {/* A button, like VS Code's: clicking it asks for a line. */}
+                <button
+                  ref={cursorEl}
+                  className="editor-lncol"
+                  data-tip="Ir para a linha (Ctrl+G)"
+                  onClick={() => {
+                    const view = viewHolder.current;
+                    if (view) gotoLine(view);
+                  }}
+                >
+                  Ln 1, Col 1
+                </button>
+                <span>{doc.crlf ? "CRLF" : "LF"}</span>
+                <span>{lang}</span>
+              </>
+            )}
+          </span>
+      </footer>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// the overlay — canvas only, since it has no tab bar
+// ---------------------------------------------------------------------------
+
+/**
+ * The editor as a window over the canvas.
+ *
+ * In the tab grid a file is a tab in the pane's own bar (`TerminalPane`), the
+ * same size as the CLI beside it — that is where a document belongs, and it
+ * is what the app does everywhere it can. The canvas has no tab bar to land
+ * in: there the same body is raised as this overlay, with a strip of the open
+ * files on top and the project tree on the side.
+ */
+export function CodeEditor() {
+  const open = useEditor((s) => s.open);
+  const activeId = useEditor((s) => s.activeId);
+  const rail = useEditor((s) => s.rail);
+  // The gate, checked here and not only where files are opened: a session
+  // restored with `open` from a canvas would otherwise throw this window over
+  // a tab grid that has a perfectly good bar to show the file in.
+  const noTabs = useProjects((s) =>
+    s.activeGroupId ? s.layoutOf(s.activeGroupId).mode === "canvas" : true,
+  );
+  const tabsKey = useEditor((s) =>
+    s.docs.map((d) => `${d.id}:${isDirty(d)}:${d.stale}:${d.missing}`).join("|"),
+  );
+  const docs = useMemo(() => useEditor.getState().docs, [tabsKey]);
+  const showToast = useUI((s) => s.showToast);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [fileMenu, setFileMenu] = useState<
+    { anchor: MenuAnchor; entries: MenuEntry[] } | null
+  >(null);
+
+  useDialogFocus(dialogRef, open, "editor");
+
+  const close = useCallback(() => useEditor.getState().closeEditor(), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      // Only the top surface handles the key (a modal may be above).
+      if (!isTopLayer("editor")) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        close();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, close]);
+
+  const doc = docs.find((d) => d.id === activeId) ?? null;
+  if (!open || !doc || !noTabs) return null;
+
+  /**
+   * Right-click inside the editor: the text first (it is a writing surface —
+   * opening a menu that takes "paste" away from someone would be a bad deal),
+   * then what can be done with the file. The target has to be read now,
+   * before the menu opens and takes the focus away.
+   */
+  const openFileMenu = (e: React.MouseEvent, withText: boolean) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const ofFile = docTabMenu(doc, docs);
+    const theText = withText ? textMenuEntries(captureTextTarget(e.nativeEvent), { app: false }) : [];
+    setFileMenu({
+      anchor: { x: e.clientX, y: e.clientY },
+      entries: theText.length > 0 ? [...theText, { kind: "sep" }, ...ofFile] : ofFile,
+    });
+  };
+
+  return (
+    // Only the main button closes: with the right one the gesture is "open
+    // the menu", and closing the editor underneath it would be the wrong answer.
+    <div className="editor-backdrop" onMouseDown={(e) => e.button === 0 && close()}>
+      <div
+        ref={dialogRef}
+        className="editor"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Editor — ${doc.path}`}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <header className="editor-head">
+          <button
+            className={`icon-btn ${rail ? "is-active" : ""}`}
+            data-tip="Mostrar ou esconder a árvore"
+            aria-pressed={rail}
+            aria-label="Mostrar ou esconder a árvore de arquivos"
+            onClick={() => useEditor.getState().setRail(!rail)}
+          >
+            <PanelLeft size={14} />
+          </button>
+
+          <ul className="editor-tabs" role="tablist" aria-label="Arquivos abertos">
+            {docs.map((d) => (
+              // `role="presentation"` on the `li`: a `tablist` may only
+              // contain tabs, and the list-item semantics sat between the two.
+              <li
+                key={d.id}
+                role="presentation"
+                className={`editor-tab-slot ${d.id === doc.id ? "is-active" : ""}`}
+                onContextMenu={(e) => {
+                  useEditor.getState().setActive(d.id);
+                  // The clicked tab is the target; the editor body has a menu of its own.
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setFileMenu({
+                    anchor: { x: e.clientX, y: e.clientY },
+                    entries: docTabMenu(d, docs),
+                  });
+                }}
+              >
+                <button
+                  role="tab"
+                  aria-selected={d.id === doc.id}
+                  tabIndex={d.id === doc.id ? 0 : -1}
+                  className="editor-tab"
+                  data-tip-wrap=""
+                  data-tip={`${d.path}\n${d.root}`}
+                  onClick={() => useEditor.getState().setActive(d.id)}
+                  onAuxClick={(e) => {
+                    // Middle button closes, as in any editor with tabs.
+                    if (e.button === 1) void closeDocTab(d.id);
+                  }}
+                >
+                  <span className="editor-tab-name">{tabLabel(d, docs)}</span>
+                  {(d.stale || d.missing) && (
+                    <AlertTriangle size={11} className="editor-tab-warn" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="editor-tab-close"
+                  aria-label={
+                    isDirty(d) && !isReadOnly(d)
+                      ? `Fechar ${fileName(d.path)} (não salvo)`
+                      : `Fechar ${fileName(d.path)}`
+                  }
+                  onClick={() => void closeDocTab(d.id)}
+                >
+                  {isDirty(d) && !isReadOnly(d) ? (
+                    <span className="editor-dot" aria-hidden="true" />
+                  ) : (
+                    <X size={11} aria-hidden="true" />
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+
+          <button
+            className="icon-btn"
+            data-tip-at="right"
+            data-tip="Fechar o editor (Esc)"
+            aria-label="Fechar o editor"
+            onClick={close}
+          >
+            <X size={15} />
+          </button>
+        </header>
+
+        {fileMenu && (
+          <ContextMenu
+            anchor={fileMenu.anchor}
+            items={fileMenu.entries}
+            onClose={() => setFileMenu(null)}
+          />
+        )}
+
+        <div
+          className="editor-overlay-main"
+          onContextMenu={(e) => openFileMenu(e, true)}
+        >
+          {rail && (
+            <nav className="editor-rail" aria-label="Arquivos do projeto">
+              <FileTree
+                activePath={doc.path}
+                onOpen={(p) =>
+                  void useEditor
+                    .getState()
+                    .openFile(p)
+                    .catch((e) => showToast(`Não consegui abrir: ${e}`, "error"))
+                }
+              />
+            </nav>
+          )}
+          <EditorBody docId={doc.id} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// notices about the disk
+// ---------------------------------------------------------------------------
+
+function DocBanner({ doc }: { doc: OpenDoc }) {
+  const conflict = doc.error?.includes("CONFLITO") ?? false;
+
+  if (doc.missing) {
+    return (
+      <div className="editor-banner editor-banner--warn">
+        <AlertTriangle size={13} aria-hidden="true" />
+        <span>Esse arquivo não está mais no disco — alguém apagou ou moveu.</span>
+        <button
+          className="btn btn--sm"
+          onClick={() => void useEditor.getState().save(doc.id)}
+        >
+          Gravar de volta
+        </button>
+        {/* `closeDocTab`, not `closeDoc`: the file is gone from disk, so the
+            draft in this tab is the only copy of the text left — closing
+            without the question would throw away exactly what the button
+            beside it is offering to save. */}
+        <button
+          className="btn btn--ghost btn--sm"
+          onClick={() => void closeDocTab(doc.id)}
+        >
+          Fechar a aba
+        </button>
+      </div>
+    );
+  }
+
+  if (conflict || doc.stale) {
+    return <ConflictBanner doc={doc} conflict={conflict} />;
+  }
+
+  if (doc.error) {
+    return (
+      <div className="editor-banner editor-banner--error">
+        <AlertTriangle size={13} aria-hidden="true" />
+        <span>{doc.error}</span>
+      </div>
+    );
+  }
+
+  if (doc.truncated) {
+    return (
+      <div className="editor-banner">
+        Arquivo grande demais: só o começo foi carregado, e por isso ele abre em
+        somente leitura.
+      </div>
+    );
+  }
+
+  // The buffer is a lossy decode: every byte that is not UTF-8 is showing as
+  // U+FFFD. Saving would write those diamonds over the real bytes, in the whole
+  // file — including the lines nobody touched. Read-only is the only honest
+  // answer until the editor knows how to decode (and write back) the original
+  // encoding.
+  if (doc.lossy) {
+    return (
+      <div className="editor-banner editor-banner--warn">
+        <AlertTriangle size={13} aria-hidden="true" />
+        <span>
+          Este arquivo não está em UTF-8 (provavelmente cp1252/latin-1). O que
+          aparece como <code>�</code> é byte que não deu para ler, então ele abre
+          em somente leitura — gravar trocaria os acentos originais por esse
+          símbolo no arquivo inteiro. Converta o arquivo para UTF-8 para editá-lo
+          aqui.
+        </span>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+/**
+ * The conflict, with the information that was missing to decide.
+ *
+ * Both ways out destroy one of the sides — reloading throws your text away,
+ * overwriting throws the agent's away — and the choice used to be made blind
+ * in an app whose premise is "agents edit your files while you work". "Ver a
+ * diferença" reads the disk on the spot and shows both sides with the
+ * diverging lines marked.
+ */
+function ConflictBanner({ doc, conflict }: { doc: OpenDoc; conflict: boolean }) {
+  const [disk, setDisk] = useState<string | null>(null);
+  const [diskError, setDiskError] = useState<string | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+
+  const showDiff = () => {
+    if (isOpen) {
+      setIsOpen(false);
+      return;
+    }
+    setIsOpen(true);
+    setDiskError(null);
+    void ipc
+      .fsReadText(doc.root, doc.path)
+      .then((f) => setDisk(f.text))
+      .catch((e) => setDiskError(String(e)));
+  };
+
+  // A failed overwrite keeps `stale` (the disk is still ahead) *and* sets
+  // `error`. Without showing it here the user would see the same warning
+  // twice in a row with no hint that the second attempt failed, and why.
+  const writeFailure = doc.error && !conflict ? doc.error : null;
+  return (
+    <>
+    <div className="editor-banner editor-banner--warn">
+      <AlertTriangle size={13} aria-hidden="true" />
+      <span>
+        {writeFailure
+          ? `Não consegui gravar: ${writeFailure}`
+          : conflict
+            ? "O arquivo mudou no disco desde que você o abriu — nada foi gravado."
+            : "Um agente mexeu neste arquivo enquanto você editava."}
+      </span>
+      <button
+        className="btn btn--sm"
+        aria-expanded={isOpen}
+        data-tip="Compara o que está no disco com o seu texto, antes de escolher"
+        onClick={showDiff}
+      >
+        <Columns2 size={12} aria-hidden="true" />
+        {isOpen ? "Esconder a diferença" : "Ver a diferença"}
+      </button>
+      <button
+        className="btn btn--sm"
+        data-tip="Joga fora o seu rascunho e traz a versão do disco"
+        onClick={() => void useEditor.getState().reload(doc.id)}
+      >
+        Recarregar
+      </button>
+      <button
+        className="btn btn--sm"
+        disabled={doc.saving}
+        data-tip="Grava o seu texto por cima do que está no disco"
+        onClick={() => void useEditor.getState().overwrite(doc.id)}
+      >
+        {doc.saving ? "gravando…" : "Salvar por cima"}
+      </button>
+    </div>
+    {isOpen && (
+      <ConflictDiff disk={disk} errorText={diskError} mine={doc.text} />
+    )}
+    </>
+  );
+}
+
+/**
+ * The two sides, side by side, with the diverging lines marked. Not the git
+ * diff viewer (that one compares against HEAD): here the comparison is
+ * disk × draft, a pair git never sees.
+ */
+function ConflictDiff({
+  disk,
+  errorText: error,
+  mine,
+}: {
+  disk: string | null;
+  errorText: string | null;
+  mine: string;
+}) {
+  const sides = useMemo(() => {
+    if (disk === null) return null;
+    const onDisk = disk.split("\n");
+    const mineLines = mine.split("\n");
+    // One pass in each direction: each side marks what it has that differs
+    // from the other. The diff budget is the gutter's; once blown, nobody
+    // marks anything and both columns stay readable.
+    return {
+      disk: { lines: onDisk, marks: diffLines(mine, disk)?.marks },
+      mine: { lines: mineLines, marks: diffLines(disk, mine)?.marks },
+    };
+  }, [disk, mine]);
+
+  if (error) {
+    return <div className="editor-conflict editor-conflict--note">Não consegui ler o arquivo no disco: {error}</div>;
+  }
+  if (!sides) {
+    return <div className="editor-conflict editor-conflict--note">lendo o disco…</div>;
+  }
+  return (
+    <div className="editor-conflict">
+      {(["disk", "mine"] as const).map((side) => (
+        <section key={side} className="editor-conflict-side">
+          <h4>{side === "disk" ? "No disco (agora)" : "No seu editor"}</h4>
+          <pre>
+            {sides[side].lines.map((row, i) => {
+              const mark = sides[side].marks?.get(i + 1);
+              return (
+                <span
+                  key={i}
+                  className={`editor-conflict-line ${mark ? `is-${mark}` : ""}`}
+                >
+                  <span className="editor-conflict-n">{i + 1}</span>
+                  {row || " "}
+                  {"\n"}
+                </span>
+              );
+            })}
+          </pre>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CodeMirror
+// ---------------------------------------------------------------------------
+
+/** Extensions that lock editing — empty when the file is writable. */
+function readOnlyExtension(readOnly: boolean) {
+  return readOnly
+    ? [EditorState.readOnly.of(true), EditorView.editable.of(false)]
+    : [];
+}
+
+interface SurfaceProps {
+  doc: OpenDoc;
+  wrap: boolean;
+  /** Markdown drawn as it is written — see `mdLive`. */
+  live: boolean;
+  onSave: () => void;
+  /** Set for markdown only: the bar and the outline follow the caret. */
+  onCaret?: (at: { line: number; block: BlockKind }) => void;
+  /** First line on screen, as the surface is scrolled — the split view's sync. */
+  onScrollLine?: (line: number) => void;
+  cursorEl: { current: HTMLElement | null };
+  viewHolder: { current: EditorView | null };
+}
+
+function CmSurface({
+  doc,
+  wrap,
+  live,
+  onSave,
+  onCaret,
+  onScrollLine,
+  cursorEl,
+  viewHolder,
+}: SurfaceProps) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  /** State per file: switching tabs preserves history, cursor and scroll. */
+  const statesRef = useRef(new LruCache<string, EditorState>(40));
+  const wrapComp = useRef(new Compartment()).current;
+  const languageComp = useRef(new Compartment()).current;
+  // Read-only has to be reconfigurable, not baked into the `EditorState`: a
+  // file that goes past the read cap (or turns binary) after a "Reload from
+  // disk" lit the warning and disabled Save, but the surface kept accepting
+  // typing that had nowhere to go.
+  const readOnlyComp = useRef(new Compartment()).current;
+  // The live-preview decorations come and go with the markdown mode, and the
+  // markdown keymap only exists for markdown files: both are per-state
+  // decisions the user can flip without losing the buffer.
+  const liveComp = useRef(new Compartment()).current;
+  // Store-driven extras (rainbow brackets, TODO highlight, minimap, guides,
+  // CSS colors) and the active color scheme: the switch in the Extensões
+  // modal has to reach a file that is already open.
+  const extrasComp = useRef(new Compartment()).current;
+  const syntaxComp = useRef(new Compartment()).current;
+  // Font size, line height, tab width and line-number column: Preferences
+  // have to reach the file that is already on screen.
+  const metricsComp = useRef(new Compartment()).current;
+  const rainbow = useExtensions((s) => s.enabled["rainbow-brackets"] === true);
+  const all = useExtensions((s) => s.enabled["todo-highlight"] === true);
+  const minimap = useExtensions((s) => s.enabled.minimap === true);
+  const indent = useExtensions((s) => s.enabled["indent-guides"] === true);
+  const cssColors = useExtensions((s) => s.enabled["css-colors"] === true);
+  const schemeId = useExtensions((s) =>
+    SCHEME_IDS.find((id) => s.enabled[id as ExtensionId] === true),
+  );
+  const flags = useMemo(
+    () => ({ rainbow, todos: all, minimap, indent, cssColors }),
+    [rainbow, all, minimap, indent, cssColors],
+  );
+  // One scalar per subscription, as the rest of the app does with `prefs`:
+  // the whole object is rebuilt on every splitter drag, and the surface must
+  // not reconfigure itself because of that.
+  const fontSize = useUI((s) => s.prefs.codeFontSize);
+  const lineHeight = useUI((s) => s.prefs.codeLineHeight);
+  const tabSize = useUI((s) => s.prefs.codeTabSize);
+  const hardTabs = useUI((s) => s.prefs.codeHardTabs);
+  const lineNumbers = useUI((s) => s.prefs.codeLineNumbers);
+  const metrics = useMemo(
+    () => ({ fontSize, lineHeight, tabSize, hardTabs, lineNumbers }),
+    [fontSize, lineHeight, tabSize, hardTabs, lineNumbers],
+  );
+  const idRef = useRef(doc.id);
+  const languageRequest = useRef(0);
+  const lastPublished = useRef<{ id: string; text: string } | null>(null);
+  // The handlers go into the `EditorState`, created once per file: without
+  // the refs, an old tab would keep calling their stale version.
+  const saveRef = useRef(onSave);
+  saveRef.current = onSave;
+  const caretRef = useRef(onCaret);
+  caretRef.current = onCaret;
+  const scrollRef = useRef(onScrollLine);
+  scrollRef.current = onScrollLine;
+  /** Last position published upward — the parent only hears about changes. */
+  const lastCaret = useRef<{ line: number; block: BlockKind } | null>(null);
+  /** Debounce of the git gutter while typing — cache only, no IPC on a key. */
+  const gitTimer = useRef(0);
+  const gitRef = useRef<(view: EditorView, id: string) => void>(() => {});
+  gitRef.current = (view, id) => {
+    if (gitTimer.current) clearTimeout(gitTimer.current);
+    gitTimer.current = window.setTimeout(() => {
+      gitTimer.current = 0;
+      if (viewRef.current !== view || idRef.current !== id) return;
+      const head = cachedHeadText(id);
+      // Never fetched yet: the effect below owns the first (async) answer.
+      if (head === undefined) return;
+      applyGitChanges(view, head);
+    }, 500);
+  };
+
+  const configureLanguage = useCallback(
+    (d: OpenDoc) => {
+      const request = ++languageRequest.current;
+      void loadLanguage(d.path)
+        .then((extension) => {
+          const view = viewRef.current;
+          if (request !== languageRequest.current || idRef.current !== d.id || !view) return;
+          view.dispatch({
+            effects: languageComp.reconfigure(extension ? [extension] : []),
+          });
+        })
+        .catch((error) => {
+          console.warn(`[yard] falha ao carregar linguagem de ${d.path}`, error);
+        });
+    },
+    [languageComp],
+  );
+
+  const makeState = useCallback(
+    (d: OpenDoc) => {
+      return EditorState.create({
+        doc: d.text,
+        extensions: [
+          basicSetup,
+          // The app's find bar, above the text (`searchPanel.ts`) — in place of
+          // CodeMirror's default form at the bottom.
+          yardSearch,
+          // Size, line height, tabs and numbering from Preferences. It beats
+          // `yardTheme`'s factory size by precedence, not by sitting here —
+          // see `metrics.ts`.
+          metricsComp.of(codeMetrics(metrics)),
+          syntaxComp.of(syntaxFor(schemeId)),
+          // How each line stands against HEAD — green born, blue changed,
+          // red wedge where lines died. The marks arrive by effect
+          // (`applyGitChanges`); with none, the strip is invisible.
+          gitGutterExt,
+          wrapComp.of(wrap ? EditorView.lineWrapping : []),
+          languageComp.of([]),
+          readOnlyComp.of(readOnlyExtension(isReadOnly(d))),
+          liveComp.of(live ? mdLive : []),
+          extrasComp.of(editorExtras(flags)),
+          // The formatting shortcuts belong to markdown files only: in a
+          // `.ts`, Ctrl+B has to stay CodeMirror's.
+          isMarkdown(d.path) ? mdKeymap : [],
+          // Words already in the buffer complete as you type — the floor an
+          // IDE gives every language, under whatever the grammar adds (HTML
+          // tags, CSS properties, SQL keywords). Code only: markdown is
+          // prose, and prose suggesting its own words back is noise. The
+          // trailing-whitespace tint is code-only for the same reason: in
+          // markdown two trailing spaces are a hard line break, not dirt.
+          isMarkdown(d.path)
+            ? []
+            : [
+                EditorState.languageData.of(() => [{ autocomplete: completeAnyWord }]),
+                highlightTrailingWhitespace(),
+              ],
+          // `Prec.high`: `basicSetup`'s search keymap owns Mod-g (find next),
+          // but every IDE the user comes from spells "go to line" this way.
+          Prec.high(
+            keymap.of([
+              indentWithTab,
+              { key: "Mod-g", run: gotoLine, preventDefault: true },
+              { key: "Mod-h", run: openReplacePanel, preventDefault: true },
+              {
+                key: "Mod-s",
+                preventDefault: true,
+                run: () => {
+                  saveRef.current();
+                  return true;
+                },
+              },
+            ]),
+          ),
+          EditorView.updateListener.of((u) => {
+            if (u.docChanged) {
+              const text = u.state.doc.toString();
+              lastPublished.current = { id: d.id, text };
+              useEditor.getState().setText(d.id, text);
+              // The git gutter follows the typing on a debounce — from the
+              // cached HEAD text only, never IPC on a keystroke.
+              gitRef.current(u.view, d.id);
+            }
+            if (u.docChanged || u.selectionSet) {
+              const sel = u.state.selection.main;
+              const line = u.state.doc.lineAt(sel.head);
+              const selected = sel.to - sel.from;
+              if (cursorEl.current) {
+                cursorEl.current.textContent =
+                  `Ln ${line.number}, Col ${sel.head - line.from + 1}` +
+                  (selected > 0 ? ` (${selected} sel.)` : "");
+              }
+              // Upward only when it *means* something different: typing along
+              // a line changes neither the outline's section nor which bar
+              // button is pressed, and re-rendering for it would put a React
+              // pass on every keystroke.
+              const publish = caretRef.current;
+              if (publish) {
+                const at = {
+                  line: line.number - 1,
+                  // `blockOf` reads the whole text to name the markdown block
+                  // under the caret — a cost only the markdown bar needs. In
+                  // code the caret feeds the symbols rail, which is per-line.
+                  block: isMarkdown(d.path)
+                    ? blockOf(u.state.doc.toString(), sel.head)
+                    : ("paragraph" as BlockKind),
+                };
+                const before = lastCaret.current;
+                if (!before || before.line !== at.line || before.block !== at.block) {
+                  lastCaret.current = at;
+                  publish(at);
+                }
+              }
+            }
+          }),
+        ],
+      });
+    },
+    [cursorEl, extrasComp, flags, languageComp, live, liveComp, metrics, metricsComp, readOnlyComp, schemeId, syntaxComp, wrap, wrapComp],
+  );
+
+  // Mounts once; switching files is `setState`, not a remount.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const view = new EditorView({ state: makeState(doc), parent: host });
+    viewRef.current = view;
+    viewHolder.current = view;
+    statesRef.current.set(doc.id, view.state);
+    configureLanguage(doc);
+    view.focus();
+
+    // Scrolling the source drags the rendered page along. Read from the top
+    // edge of the viewport (`posAtCoords`) instead of from the caret: in the
+    // split view the eye is scrolling, not writing. One frame at a time —
+    // a scroll fires far more often than a repaint is worth.
+    const stopScroll = observeVisibleLine(view, () => scrollRef.current);
+
+    return () => {
+      languageRequest.current++;
+      if (gitTimer.current) clearTimeout(gitTimer.current);
+      stopScroll();
+      view.destroy();
+      viewRef.current = null;
+      viewHolder.current = null;
+    };
+    // Single mount: the switches are handled by the effects below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Switched tabs: store the previous state and restore (or create) the new one.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || idRef.current === doc.id) return;
+    statesRef.current.set(idRef.current, view.state);
+    idRef.current = doc.id;
+    const stored = statesRef.current.get(doc.id);
+    view.setState(stored ?? makeState(doc));
+    configureLanguage(doc);
+    // A stored state was born with the previous line wrapping (and read-only
+    // setting).
+    view.dispatch({
+      effects: [
+        wrapComp.reconfigure(wrap ? EditorView.lineWrapping : []),
+        readOnlyComp.reconfigure(readOnlyExtension(isReadOnly(doc))),
+        liveComp.reconfigure(live ? mdLive : []),
+        extrasComp.reconfigure(editorExtras(flags)),
+        syntaxComp.reconfigure(syntaxFor(schemeId)),
+        metricsComp.reconfigure(codeMetrics(metrics)),
+      ],
+    });
+    view.focus();
+    // A different file means a different caret: publish it so the bar and the
+    // outline are about *this* document from the first frame.
+    lastCaret.current = null;
+    const sel = view.state.selection.main;
+    caretRef.current?.({
+      line: view.state.doc.lineAt(sel.head).number - 1,
+      block: isMarkdown(doc.path)
+        ? blockOf(view.state.doc.toString(), sel.head)
+        : ("paragraph" as BlockKind),
+    });
+    // The whole `doc` would change on every key; only the path matters here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc.id]);
+
+  // The git gutter's other half: what the file looked like at HEAD. Re-asked
+  // when fresh contents arrive from disk (save, reload, an agent's write) —
+  // typing between those refreshes only the diff, from the cached answer.
+  useEffect(() => {
+    if (idRef.current !== doc.id || !viewRef.current) return;
+    let alive = true;
+    void headTextFor(
+      { id: doc.id, root: doc.root, path: doc.path },
+      `${doc.diskVersion}:${doc.modifiedAt}`,
+    ).then((head) => {
+      const view = viewRef.current;
+      if (!alive || !view || idRef.current !== doc.id) return;
+      applyGitChanges(view, head);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [doc.id, doc.root, doc.path, doc.diskVersion, doc.modifiedAt]);
+
+  // A pending "put the caret here" — a search hit, mostly. Consumed once:
+  // the jump must not replay when the user scrolls away and comes back.
+  const reveal = useEditor((s) => s.reveal);
+  useEffect(() => {
+    if (!reveal || reveal.id !== doc.id) return;
+    const view = viewRef.current;
+    if (!view || idRef.current !== doc.id) return;
+    const target = view.state.doc.line(
+      Math.min(Math.max(reveal.line, 1), view.state.doc.lines),
+    );
+    view.dispatch({
+      selection: EditorSelection.cursor(target.from),
+      effects: EditorView.scrollIntoView(target.from, { y: "center" }),
+    });
+    view.focus();
+    useEditor.getState().clearReveal();
+  }, [reveal, doc.id]);
+
+  // The text came from outside (reloaded from disk, written by an agent).
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || idRef.current !== doc.id) return;
+    const echo = lastPublished.current;
+    if (echo?.id === doc.id && echo.text === doc.text) {
+      lastPublished.current = null;
+      return;
+    }
+    if (view.state.doc.toString() === doc.text) return;
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: doc.text },
+    });
+  }, [doc.text, doc.id]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: wrapComp.reconfigure(wrap ? EditorView.lineWrapping : []),
+    });
+  }, [wrap, wrapComp]);
+
+  // Switched markdown mode: the decorations go on or off in place — no new
+  // state, so the undo history, the scroll and the caret all stay put.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: liveComp.reconfigure(live ? mdLive : []) });
+  }, [live, liveComp]);
+
+  // The metrics changed in Preferences with a file on screen. The swap is in
+  // place — the buffer, the history and the cursor stay — and `requestMeasure`
+  // is what makes CodeMirror re-measure the character width: without it, the
+  // cursor and the scrolling would stay computed at the old size until the
+  // next event.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: metricsComp.reconfigure(codeMetrics(metrics)) });
+    view.requestMeasure();
+  }, [metrics, metricsComp]);
+
+  // Flipped in the Extensões modal with a file on screen: same in-place swap.
+  // The cached states of the other tabs catch up in the tab-switch dispatch.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: [
+        extrasComp.reconfigure(editorExtras(flags)),
+        syntaxComp.reconfigure(syntaxFor(schemeId)),
+      ],
+    });
+  }, [flags, schemeId, extrasComp, syntaxComp]);
+
+  // The file became (or stopped being) read-only underneath — a "Reload from
+  // disk" that brought back a file that is too large, for instance.
+  const readOnly = isReadOnly(doc);
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || idRef.current !== doc.id) return;
+    view.dispatch({
+      effects: readOnlyComp.reconfigure(readOnlyExtension(readOnly)),
+    });
+  }, [readOnly, doc.id, readOnlyComp]);
+
+  // Closed tabs need not keep state (nor the text that came with it).
+  const openDocs = useEditor((s) => s.docs.map((d) => d.id).join("\n"));
+  useEffect(() => {
+    const aliveCount = new Set(openDocs.split("\n"));
+    for (const key of statesRef.current.keys()) {
+      if (!aliveCount.has(key)) {
+        statesRef.current.delete(key);
+        dropHeadText(key);
+      }
+    }
+  }, [openDocs]);
+
+  return (
+    <div
+      className={`editor-surface ${readOnly ? "is-readonly" : ""}`}
+      ref={hostRef}
+    />
+  );
+}

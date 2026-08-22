@@ -1,0 +1,597 @@
+/* Extracted from the global stylesheet so Vite can load it with this lazy feature. */
+
+/* --- notes and text --- */
+
+.cv-note {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-overlay);
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: var(--r-lg);
+  box-shadow: var(--cv-lift), inset 0 1px 0 rgb(255 255 255 / 45%);
+  z-index: 1;
+
+  /* Body size of the note. Set per note from the item (see DomItems); the
+     fallback is the default every note starts with. Everything inside sizes
+     off it — headings and code in `em` — so one number scales the block. */
+  --note-fs: var(--fs-sm);
+
+  /* Note ink. Everything that writes inside it reads these tokens instead
+     of --text: a pastel block with white text is unreadable. */
+  --note-ink: var(--text);
+  --note-ink-dim: var(--text-dim);
+  --note-ink-strong: var(--text-bright);
+  --note-rule: var(--border-strong);
+  --note-code-bg: rgb(0 0 0 / 30%);
+}
+
+/* The fill arrives as `--note-fill` (set per note in DomItems) rather than as
+   an inline `background`, so the sheen can be composed over it here: an even
+   block of color reads as paper, the same block with light falling on its top
+   third reads as a physical thing lying on the board. */
+.cv-note.has-fill {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 14%), rgb(255 255 255 / 0%) 42%),
+    var(--note-fill);
+}
+
+/* Light-colored block: dark ink, like a paper sticky note. The class
+   comes from the fill's luminance (`noteInk`) — on a dark block the default
+   tokens above already work. */
+.cv-note.ink-dark {
+  --note-ink: #1c1c1e;
+  --note-ink-dim: rgb(28 28 30 / 55%);
+  --note-ink-strong: #0a0a0c;
+  --note-rule: rgb(0 0 0 / 22%);
+  --note-code-bg: rgb(0 0 0 / 8%);
+}
+
+/* `.cv-note.is-selected` draws the same ring and grips as a card — see the
+   shared rule in canvas.css. */
+
+.cv-note-head {
+  height: 10px;
+  border-radius: calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px) 0 0;
+  opacity: 0.85;
+  cursor: grab;
+  flex-shrink: 0;
+}
+
+.cv-note-head:active {
+  cursor: grabbing;
+}
+
+.cv-note-text {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  border: none;
+  border-radius: 0 0 var(--r-md) var(--r-md);
+  background: transparent;
+  color: var(--note-ink);
+  font: inherit;
+  font-size: var(--note-fs);
+  line-height: 1.55;
+  padding: 8px 10px;
+  outline: none;
+  box-shadow: none;
+}
+
+.cv-note-text::placeholder {
+  color: var(--note-ink-dim);
+}
+
+/* Note reading view: light markdown. Editing goes back to the raw textarea
+   — the user sees exactly what agents read via the CLI. */
+.cv-note-read {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  cursor: text;
+}
+
+.cv-note-md {
+  padding: 8px 10px;
+  font-size: var(--note-fs);
+  line-height: 1.55;
+  color: var(--note-ink);
+  overflow-wrap: anywhere;
+}
+
+.cv-note-md.is-empty {
+  color: var(--note-ink-dim);
+}
+
+.cv-note-md h1,
+.cv-note-md h2,
+.cv-note-md h3 {
+  margin: 2px 0 4px;
+  color: var(--note-ink-strong);
+  line-height: 1.3;
+}
+
+/* In `em`, not px: the note carries its own body size and a heading pinned
+   to 15px would shrink below the paragraph under it on a blown-up note. */
+.cv-note-md h1 {
+  font-size: 1.25em;
+}
+
+.cv-note-md h2 {
+  font-size: 1.125em;
+}
+
+.cv-note-md h3 {
+  font-size: 1.04em;
+  color: var(--note-ink);
+}
+
+.cv-note-md p {
+  margin: 0 0 2px;
+}
+
+.cv-note-md .cv-md-li {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 2px;
+}
+
+.cv-note-md .cv-md-marker {
+  color: var(--note-ink-dim);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A real checkbox in the reading view: the one thing you can change in a note
+   without opening the editor, because ticking a task is not writing. */
+.cv-note-md .cv-md-check {
+  position: relative;
+  flex-shrink: 0;
+  width: 0.92em;
+  height: 0.92em;
+  margin-top: 0.3em;
+  padding: 0;
+  border: 1.5px solid var(--note-ink-dim);
+  border-radius: 3.5px;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background var(--dur-1) ease,
+    border-color var(--dur-1) ease;
+}
+
+.cv-note-md .cv-md-check:hover {
+  border-color: var(--note-ink);
+}
+
+.cv-note-md .cv-md-check[aria-checked="true"] {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 42%);
+}
+
+/* Drawn from two borders, not a ✓ glyph: at 0.9em the character lands
+   off-center in half the fonts the app can fall back to. */
+.cv-note-md .cv-md-check[aria-checked="true"]::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 0.26em;
+  height: 0.52em;
+  border: solid var(--on-accent);
+  border-width: 0 1.6px 1.6px 0;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.cv-note-md .cv-md-li.is-done > span {
+  color: var(--note-ink-dim);
+  text-decoration: line-through;
+}
+
+/* A highlighter, not a tint: 30% yellow diluted into the dark surface comes
+   out olive (the same trap the note fill avoids by painting flat). Opaque ink
+   with dark text reads the same on a graphite note and on a pastel one, and
+   the hairline is what keeps it visible when the note itself is yellow. */
+.cv-note-md mark {
+  background: rgb(250 204 21 / 88%);
+  color: #1c1c1e;
+  border-radius: 2px;
+  padding: 0 2px;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 16%);
+}
+
+.cv-note-md s {
+  color: var(--note-ink-dim);
+}
+
+.cv-md-link {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  opacity: 0.92;
+  cursor: pointer;
+}
+
+.cv-md-link:hover {
+  opacity: 1;
+  text-decoration-thickness: 2px;
+}
+
+.cv-note.ink-dark .cv-md-link {
+  color: #1d4ed8;
+}
+
+.cv-note-md .cv-md-blank {
+  height: 6px;
+}
+
+.cv-note-md blockquote {
+  margin: 2px 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--note-rule);
+  color: var(--note-ink-dim);
+}
+
+.cv-note-md pre {
+  position: relative;
+  margin: 4px 0;
+  padding: 6px 8px;
+  background: var(--note-code-bg);
+  border: 1px solid var(--note-rule);
+  border-radius: var(--r-sm);
+  font-family: var(--mono);
+  font-size: 0.92em;
+  overflow-x: auto;
+}
+
+/* The word after the fence, kept as a label. A note is not an editor: naming
+   the language is worth more here than coloring it. */
+.cv-note-md pre[data-lang]::before {
+  content: attr(data-lang);
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  font-size: 0.75em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--note-ink-dim);
+  pointer-events: none;
+}
+
+.cv-note-md code {
+  background: var(--note-code-bg);
+  border-radius: 3px;
+  padding: 0 3px;
+  color: var(--note-ink-strong);
+}
+
+.cv-note-md hr {
+  border: none;
+  border-top: 1px solid var(--note-rule);
+  margin: 6px 0;
+}
+
+/* Padlock: appears on hover; when locked, always visible — a state the
+   user must see without hovering. */
+.cv-note-lock {
+  position: absolute;
+  top: 12px;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  opacity: 0;
+  transition:
+    opacity var(--dur-1) ease,
+    color var(--dur-1) ease;
+}
+
+.cv-note:hover .cv-note-lock,
+.cv-note-lock:focus-visible {
+  opacity: 1;
+}
+
+.cv-note.is-locked .cv-note-lock {
+  opacity: 1;
+  color: var(--text-bright);
+}
+
+/* On a light block the dark padlock chip becomes a smudge; it turns into
+   light glass with the same ink as the rest of the note. */
+.cv-note.ink-dark .cv-note-lock {
+  color: var(--note-ink-dim);
+  background: rgb(255 255 255 / 45%);
+  border-color: rgb(0 0 0 / 12%);
+}
+
+.cv-note.ink-dark.is-locked .cv-note-lock {
+  color: var(--note-ink-strong);
+}
+
+.cv-note.is-locked {
+  border-style: dashed;
+}
+
+.cv-text {
+  position: absolute;
+  z-index: 1;
+  font-family: "Segoe Print", "Comic Sans MS", cursive;
+  line-height: 1.4;
+  white-space: pre;
+  cursor: move;
+  user-select: none;
+}
+
+/* No grips here: a text already mounts its four corner handles while
+   selected (see `.cv-text .cv-resize`), and a second set of dots on a
+   one-line label is just noise. The ring is the card's, solid, tighter. */
+.cv-text.is-selected {
+  outline: 1.5px solid rgb(94 160 255 / 65%);
+  outline-offset: 5px;
+  border-radius: 2px;
+}
+
+.cv-text-edit {
+  font: inherit;
+  line-height: 1.4;
+  color: inherit;
+  background: transparent;
+  border: 1px dashed var(--accent-border);
+  border-radius: 2px;
+  padding: 0;
+  margin: -1px;
+  resize: none;
+  outline: none;
+  white-space: pre;
+  overflow: hidden;
+  min-width: 3ch;
+  display: block;
+  box-shadow: none;
+}
+
+/* --- tools, zoom and notices --- */
+
+/* Floating palette: canvas glass, a true capsule, round slots. Rounded-square
+   slots inside a rounded-square rail made the rail read as a list of buttons;
+   circles inside a capsule read as one instrument with positions on it, which
+   is what a tool rail is. */
+.cv-toolbar {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 6px;
+  background: var(--cv-glass);
+  backdrop-filter: var(--cv-glass-blur);
+  border: 1px solid var(--cv-glass-border);
+  border-radius: 999px;
+  box-shadow: var(--cv-float), var(--cv-glass-edge);
+}
+
+.cv-toolbar .icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+}
+
+.cv-toolbar .icon-btn:hover {
+  background: rgb(255 255 255 / 9%);
+}
+
+/* The tool in hand: a lit dome, not a flat blue square. It is the one thing
+   on the rail that has to survive being read at a glance from across the
+   board. */
+.cv-toolbar .icon-btn.is-active {
+  background: var(--accent-grad);
+  color: var(--on-accent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 42%),
+    0 2px 6px rgb(10 132 255 / 35%);
+}
+
+/* Short and centered, not edge-to-edge: inside a capsule a full-width rule
+   would have to be clipped by the curve to look right. */
+.cv-toolbar-sep {
+  width: 18px;
+  height: 1px;
+  background: rgb(255 255 255 / 12%);
+  margin: 2px 0;
+}
+
+/* Each rail slot is the anchor its family's flyout hangs off. */
+.cv-tool-family {
+  position: relative;
+  display: flex;
+}
+
+.cv-tool-btn {
+  position: relative;
+}
+
+/* "There is more behind this one": the corner fold drawn on a control
+   that holds a family. Small enough to read as texture until you look. */
+.cv-tool-more {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 4px;
+  height: 4px;
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+  background: currentColor;
+  opacity: 0.45;
+}
+
+.cv-tool-btn:hover .cv-tool-more,
+.cv-tool-btn.is-active .cv-tool-more {
+  opacity: 0.8;
+}
+
+/* While the family is open the balloon would land on top of it. */
+.cv-tool-family.is-open .cv-tool-btn::after {
+  content: none;
+}
+
+/* The family itself: same material as the rail, opening out to the right. */
+.cv-flyout {
+  position: absolute;
+  left: calc(100% + 7px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 41;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px;
+  background: var(--cv-glass);
+  backdrop-filter: var(--cv-glass-blur);
+  border: 1px solid var(--cv-glass-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--cv-float), var(--cv-glass-edge);
+  animation: cv-flyout-in var(--dur-1) var(--ease-pop);
+}
+
+/* One step down from the rail's 30px: the rail is where the hand goes, the
+   flyout is where it goes next. */
+.cv-flyout .icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+}
+
+/* The thickness picks are dots, not glyphs — a glyph's box around each one
+   makes the row wider than the whole color grid it sits beside. */
+.cv-flyout .cv-sizes .icon-btn {
+  width: 22px;
+  height: 22px;
+}
+
+.cv-flyout .icon-btn.is-active {
+  background: var(--accent-grad);
+  color: var(--on-accent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 42%),
+    0 2px 6px rgb(10 132 255 / 35%);
+}
+
+@keyframes cv-flyout-in {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) translateX(-6px) scale(0.96);
+  }
+}
+
+.cv-flyout--style {
+  gap: 7px;
+}
+
+.cv-flyout-sep {
+  align-self: stretch;
+  width: 1px;
+  background: rgb(255 255 255 / 9%);
+  margin: 2px 0;
+}
+
+/* The ink chip the rail wears: current color, current thickness. */
+.cv-ink {
+  display: block;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 25%),
+    inset 0 1px 0 rgb(255 255 255 / 35%);
+}
+
+.cv-swatches {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.cv-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid rgb(255 255 255 / 14%);
+  padding: 0;
+}
+
+.cv-swatch.is-active {
+  box-shadow:
+    0 0 0 1.5px var(--bg-overlay),
+    0 0 0 3px var(--accent);
+}
+
+.cv-sizes {
+  display: flex;
+  gap: 1px;
+}
+
+.cv-size-dot {
+  display: block;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cv-flyout {
+    animation: none;
+  }
+}
+
+/* The bottom half of `.cv-camera`: the pane, the glass and the shadow are
+   the cluster's, so all that is left here is the row itself. */
+.cv-zoomctl {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.cv-zoomctl .icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+}
+
+.cv-zoomctl .icon-btn:hover {
+  background: rgb(255 255 255 / 9%);
+}
+
+/* Splits the row into "change the zoom" and "change the frame" — two
+   different questions that were sitting in one undifferentiated strip. */
+.cv-zoom-sep {
+  width: 1px;
+  align-self: stretch;
+  background: rgb(255 255 255 / 12%);
+  margin: 4px 3px;
+}
+
+/* Stretches instead of measuring: the map above sets the cluster's width, so
+   the percentage takes whatever the row has left and stays centered under
+   the middle of the map. */
+.cv-zoom-pct {
+  flex: 1;
+  min-width: 46px;
+  text-align: center;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  padding: 4px 6px;
+  border-radius: 999px;
+}
+
+.cv-zoom-pct:hover {
+  background: rgb(255 255 255 / 9%);
+  color: var(--text-bright);
+}

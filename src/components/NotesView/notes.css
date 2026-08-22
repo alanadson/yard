@@ -1,0 +1,734 @@
+/* Extracted from the global stylesheet so Vite can load it with this lazy feature. */
+
+/* --- notes (the markdown notebook, Ctrl+Shift+N) ---
+
+   Three panes over a translucent sheet, in the same material as the viewer:
+   rail (notebooks/statuses/tags) → list with previews → the note in the same
+   markdown editor the files get. Chroma here is content — the status dot and
+   the tag colors are user data, never chrome. */
+
+.notes-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 122; /* under the editor (125) and the composer; above the viewer (120) — lib/layers.ts tracks it */
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 45%);
+  backdrop-filter: blur(6px);
+  animation: fade-in 140ms ease-out;
+}
+
+.notes {
+  width: min(1680px, 96vw);
+  height: min(1020px, 94vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgb(26 26 33 / 86%);
+  backdrop-filter: var(--blur-sheet);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-3), var(--hairline);
+}
+
+/* --- the notebook's other two places (notesStore.place) --- */
+
+/* Central area: a "single pane" filling the middle — the same material as a
+   .pane, no backdrop; the sidebar and the side panels stay at hand. */
+.notes--center {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-panel);
+  backdrop-filter: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow:
+    0 4px 16px rgb(0 0 0 / 25%),
+    var(--hairline);
+}
+
+/* Pane tab: the body is the .pane-doc (opaque); only the skeleton here. */
+.notes--tab {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  backdrop-filter: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  /* Narrow pane: the side columns give way entirely (rules below). */
+  container-type: inline-size;
+}
+
+/* In a cramped pane the notebook gives up its columns — the rail first, then
+   the list — instead of squeezing the editor down to zero. Search and the
+   palette still reach any note. */
+@container (max-width: 760px) {
+  .notes--tab .notes-rail {
+    display: none;
+  }
+}
+
+@container (max-width: 540px) {
+  .notes--tab .notes-listpane {
+    display: none;
+  }
+
+  .notes--tab .notes-brand-count {
+    display: none;
+  }
+}
+
+/* --- top: mark, save notice, new note --- */
+
+.notes-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px 9px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.notes-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-bright);
+}
+
+.notes-brand svg {
+  color: var(--text-dim);
+}
+
+.notes-brand-count {
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  letter-spacing: 0.005em;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.notes-savewarn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--red);
+}
+
+.notes-topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notes-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* --- rail: collections, notebooks, tags, trash --- */
+
+.notes-rail {
+  position: relative; /* Resizer */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: rgb(0 0 0 / 14%);
+}
+
+.notes-rail-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.notes-rail-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 0 8px;
+}
+
+.notes-rail-foot {
+  flex-shrink: 0;
+  padding: 6px 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.notes-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 10px 3px 14px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+}
+
+.notes-rail-empty {
+  margin: 4px 14px 6px;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.notes-row {
+  display: flex;
+  align-items: center;
+  margin: 0 8px 1px;
+  border-radius: var(--r-md);
+}
+
+.notes-row:hover {
+  background: var(--bg-hover);
+}
+
+.notes-row.is-active {
+  background: rgb(10 132 255 / 26%);
+}
+
+.notes-row.is-active .notes-row-label,
+.notes-row.is-active .notes-row-icon {
+  color: var(--text-bright);
+}
+
+.notes-row-chevron {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 26px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  border-radius: var(--r-sm);
+}
+
+.notes-row-chevron--empty {
+  pointer-events: none;
+}
+
+.notes-row-chevron:not(.notes-row-chevron--empty):hover {
+  color: var(--text-bright);
+}
+
+.notes-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 8px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  text-align: left;
+  border-radius: var(--r-md);
+}
+
+.notes-row-icon {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.notes-emoji {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.notes-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notes-row-count {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.notes-row .tree-rename {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The dot that carries content color: the note's status and the tag's color. */
+.notes-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* --- list: search, context, previews --- */
+
+.notes-listpane {
+  position: relative; /* Resizer */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+}
+
+.notes-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.notes-list-bar {
+  flex-shrink: 0;
+  padding: 10px 10px 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.notes-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 4px 0 9px;
+  background: rgb(0 0 0 / 26%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--text-dim);
+}
+
+.notes-search:focus-within {
+  border-color: var(--accent-border);
+}
+
+.notes-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-bright);
+  font-size: var(--fs-sm);
+}
+
+.notes-search input::placeholder {
+  color: var(--text-dim);
+}
+
+.notes-list-sub {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  min-width: 0;
+}
+
+.notes-list-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.notes-list-count {
+  margin-left: 7px;
+  font-weight: 400;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.notes-list-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.notes-sort {
+  height: 24px;
+  font-size: var(--fs-xs);
+}
+
+.notes-list-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px 14px;
+}
+
+.notes-list-scroll:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: -2px;
+}
+
+.notes-item {
+  padding: 8px 10px 9px;
+  margin-bottom: 2px;
+  border-radius: var(--r-lg);
+  cursor: default;
+}
+
+.notes-item:hover {
+  background: var(--bg-hover);
+}
+
+.notes-item.is-active {
+  background: rgb(10 132 255 / 22%);
+}
+
+.notes-item-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.notes-item-pin {
+  color: var(--accent-text);
+  flex-shrink: 0;
+}
+
+.notes-item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.notes-item.is-active .notes-item-title {
+  color: var(--text-bright);
+}
+
+.notes-item-when {
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.notes-item-snippet {
+  margin-top: 3px;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* Search hit — the same amber ink as the editor's Ctrl+F. */
+.notes-hit {
+  background: rgb(240 195 60 / 26%);
+  color: var(--text-bright);
+  border-radius: 2px;
+}
+
+.notes-item-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.notes-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 140px;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 1px 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  background: rgb(255 255 255 / 5%);
+  border: 1px solid var(--border-soft);
+  border-radius: 20px;
+}
+
+.notes-chip--more {
+  font-variant-numeric: tabular-nums;
+}
+
+.notes-tasks {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* All done is a content state — green has licence here. */
+.notes-tasks.is-done {
+  color: var(--green);
+}
+
+.notes-empty {
+  padding: 34px 18px;
+  text-align: center;
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.notes-empty-hint {
+  margin-top: 7px;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.notes-empty-hint code {
+  font-size: 10px;
+}
+
+/* --- editor: note header, tags, body, footer --- */
+
+.notes-editorpane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.notes-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.notes-editor-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.notes-trashbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 7px 16px;
+  font-size: var(--fs-sm);
+  background: var(--yellow-bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.notes-trashbar svg {
+  color: var(--yellow);
+  flex-shrink: 0;
+}
+
+.notes-trashbar span {
+  flex: 1;
+}
+
+.notes-head {
+  flex-shrink: 0;
+  padding: 14px 18px 0;
+}
+
+.notes-title {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 0;
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-bright);
+}
+
+.notes-title::placeholder {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+.notes-title:disabled {
+  opacity: 0.75;
+}
+
+.notes-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  min-width: 0;
+}
+
+.notes-meta .select-trigger {
+  height: 25px;
+  font-size: var(--fs-xs);
+}
+
+.notes-meta-book {
+  max-width: 260px;
+}
+
+.notes-meta-gap {
+  flex: 1;
+}
+
+.notes-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 9px 0 10px;
+}
+
+.notes-tags-icon {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.notes-chip-x {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  margin-right: -4px;
+  border-radius: 50%;
+  color: var(--text-dim);
+}
+
+.notes-chip-x:hover {
+  background: var(--bg-active);
+  color: var(--text-bright);
+}
+
+.notes-tags-entry {
+  position: relative;
+  flex: 1;
+  min-width: 130px;
+}
+
+.notes-tags-entry input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  height: 20px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.notes-tags-entry input::placeholder {
+  color: var(--text-dim);
+}
+
+.notes-tags-pop {
+  position: absolute;
+  left: -6px;
+  top: calc(100% + 6px);
+  z-index: 30;
+  min-width: 180px;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  background: var(--material-menu);
+  backdrop-filter: var(--blur-menu);
+  border: 1px solid rgb(255 255 255 / 11%);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2), var(--hairline);
+  animation: menu-in var(--dur-1) var(--ease);
+}
+
+.notes-tags-pop button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  text-align: left;
+  border-radius: var(--r-sm);
+}
+
+.notes-tags-pop button.is-active {
+  /* `--accent-fill`, not `--accent`: the system blue is a *surface* color and
+     measures 3.65:1 with white on top. Same hue, one step deeper. */
+  background: var(--accent-fill);
+  color: var(--on-accent);
+}
+
+.notes-panes {
+  flex: 1;
+  min-height: 0;
+}
+
+.notes-preview {
+  background: transparent;
+}
+
+.notes-foot {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 6px 16px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.notes-foot-left,
+.notes-foot-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* Icon button one step smaller, for the notebook's dense bars. */
+.icon-btn--xs {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-sm);
+}
+
+/* Cramped window: the side panes give way before the editor vanishes — the
+   widths come from the kv, but never beyond these fractions of the sheet. */
+.notes-rail {
+  max-width: 26vw;
+}
+
+.notes-listpane {
+  max-width: 36vw;
+}

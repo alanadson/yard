@@ -1,0 +1,417 @@
+/* --- floors --- */
+
+/* On the canvas it sits left of the zoom control; in other modes, in the
+   corner itself. Anchored to `.workspace` (position: relative). */
+.floors-ctl {
+  position: absolute;
+  bottom: 16px;
+  z-index: 40;
+}
+
+.floors-ctl--canvas {
+  right: 204px;
+}
+
+/* The camera cluster grows to the width of the map when the map is showing,
+   and the button has to step aside for it. Measured, not guessed: 12px of
+   inset + 202px of cluster + a thumb of air. */
+.workspace:has(.cv-minimap) .floors-ctl--canvas {
+  right: 230px;
+}
+
+.floors-ctl--grid {
+  right: 16px;
+}
+
+.floors-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 9px;
+  background: var(--material-menu);
+  backdrop-filter: var(--blur-menu);
+  border: 1px solid rgb(255 255 255 / 11%);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1), var(--hairline);
+  color: var(--text-dim);
+}
+
+.floors-btn:hover,
+.floors-btn.is-active {
+  color: var(--text-bright);
+  background: rgb(50 50 58 / 85%);
+}
+
+.floors-count {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.floors-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  max-height: 340px;
+  display: flex;
+  flex-direction: column;
+  background: var(--material-menu);
+  backdrop-filter: var(--blur-menu);
+  border: 1px solid rgb(255 255 255 / 11%);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2), var(--hairline);
+  overflow: hidden;
+  animation: menu-in var(--dur-1) var(--ease);
+}
+
+.floors-pop-head {
+  padding: 8px 12px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.floors-list {
+  list-style: none;
+  margin: 0;
+  padding: 5px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Row = one button that selects the floor, plus its action buttons beside
+   it. It used to be a `role="menuitem"` div with buttons inside — a nested
+   interactive role that answered Enter but not Space. */
+.floors-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 0;
+  border-radius: 8px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.floors-row:hover {
+  background: var(--bg-hover);
+}
+
+.floors-row.is-active {
+  color: var(--text-bright);
+  background: rgb(10 132 255 / 26%);
+}
+
+.floors-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 5px 2px 5px 8px;
+  border: 0;
+  background: none;
+  border-radius: 8px;
+  font-size: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.floors-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.floors-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 20px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  white-space: nowrap;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.floors-alive {
+  flex-shrink: 0;
+  min-width: 16px;
+  text-align: center;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-bright);
+  background: rgb(255 255 255 / 10%);
+  border-radius: 20px;
+  padding: 0 4px;
+}
+
+.floors-actions {
+  display: none;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
+.floors-row:hover .floors-actions,
+.floors-row:focus-within .floors-actions {
+  display: inline-flex;
+}
+
+.floors-new {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.floors-new:hover {
+  color: var(--text-bright);
+  background: var(--bg-hover);
+}
+
+.floors-hooks summary {
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  margin: 4px 0;
+}
+
+.floors-hooks[open] summary {
+  color: var(--text-bright);
+}
+
+.floors-hooks label {
+  margin-top: 6px;
+}
+
+.floors-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0 0;
+  color: var(--red);
+  font-size: var(--fs-sm);
+}
+
+.floors-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* The after-landing choices — beside the preview, decided before the merge
+   (they replaced two chained native dialogs). */
+.floors-after {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.floors-diff {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+.floors-diff-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: var(--fs-sm);
+  font-family: var(--mono, monospace);
+}
+
+.floors-diff-row + .floors-diff-row {
+  border-top: 1px solid var(--border-soft);
+}
+
+.floors-diff-mark {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 10px;
+}
+
+.floors-diff-row.is-added .floors-diff-mark { color: var(--green); }
+.floors-diff-row.is-deleted .floors-diff-mark { color: var(--red); }
+.floors-diff-row.is-conflicted .floors-diff-mark { color: var(--yellow); }
+.floors-diff-row.is-modified .floors-diff-mark,
+.floors-diff-row.is-renamed .floors-diff-mark { color: var(--accent-text); }
+
+.floors-diff-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.floors-diff-stat {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-xs);
+}
+
+.floors-diff-stat .add { color: var(--green); margin-right: 6px; }
+.floors-diff-stat .del { color: var(--red); }
+
+.floors-compare {
+  display: grid;
+  grid-template-columns: minmax(180px, 38%) 1fr;
+  gap: 12px;
+  min-height: 240px;
+}
+
+.floors-compare-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: auto;
+  max-height: 360px;
+}
+
+.floors-compare-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.floors-compare-row:hover { background: var(--bg-hover); }
+.floors-compare-row.is-active {
+  background: rgb(10 132 255 / 26%);
+  color: var(--text-bright);
+}
+
+.floors-compare-stat {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.floors-compare-detail {
+  min-width: 0;
+}
+
+.floors-agents {
+  border: 0;
+  padding: 0;
+  margin: 8px 0 0;
+}
+
+.floors-agents legend {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.floors-agents .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.floors-hooks textarea {
+  font-family: var(--mono, monospace);
+  font-size: var(--fs-sm);
+  color: var(--text-bright);
+  background: rgb(0 0 0 / 26%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 7px 9px;
+  resize: vertical;
+}
+
+.cv-hint {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: var(--text-dim);
+  pointer-events: none;
+  z-index: 5;
+  line-height: 1.6;
+}
+
+.cv-hint p {
+  margin: 3px 0;
+}
+
+.cv-status {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  padding: 4px 14px;
+  background: var(--material-menu);
+  backdrop-filter: var(--blur-menu);
+  border: 1px solid rgb(255 255 255 / 11%);
+  border-radius: 20px;
+  box-shadow: var(--shadow-1), var(--hairline);
+  font-size: var(--fs-xs);
+  color: var(--text);
+  pointer-events: none;
+}
+
+/* The list of costs of closing a floor — the same enumeration the native
+   dialog carried as running text, now readable item by item. */
+.floors-costs {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.floors-costs li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.floors-costs svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+  color: var(--yellow);
+}

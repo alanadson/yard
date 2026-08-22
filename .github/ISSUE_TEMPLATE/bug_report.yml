@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in Yard does not behave as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Security problems go through the private
+        vulnerability form instead — see SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Yard version or commit
+      placeholder: v0.1.0 / ad31b24
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 Pro 24H2 (10.0.26100)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a project…
+        2. Add a terminal with…
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant lines from `%APPDATA%\Yard\yard.log`, if any.
+      render: text
+  - type: dropdown
+    id: agents
+    attributes:
+      label: Agents involved
+      multiple: true
+      options: [Claude Code, Codex, OpenCode, Gemini CLI, Grok, a plain shell, other]

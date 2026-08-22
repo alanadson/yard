@@ -1,0 +1,1139 @@
+/* Extracted from the global stylesheet so Vite can load it with this lazy feature. */
+
+/* --- files/changes panel --- */
+
+.changes {
+  position: relative;
+  flex-shrink: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 260px; /* CHANGES_MIN */
+  background: var(--material-thin);
+  backdrop-filter: var(--blur-thin);
+  border-left: 1px solid rgb(0 0 0 / 32%);
+}
+
+.changes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 8px 6px 14px;
+}
+
+.changes-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.changes-title small {
+  font-weight: 400;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.changes-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.changes-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 10px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.changes-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.changes-tabs button:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+.changes-tabs button.is-active {
+  background: rgb(255 255 255 / 12%);
+  color: var(--text-bright);
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 30%),
+    inset 0 1px 0 rgb(255 255 255 / 8%);
+}
+
+.changes-count {
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 5px;
+  border-radius: 20px;
+  color: var(--text-dim);
+  background: rgb(255 255 255 / 7%);
+  border: 1px solid var(--border);
+}
+
+/* The `tabpanel` wrapper is pure semantics: it has to disappear from the
+   layout so `.changes-body` / `.changes-empty` keep flexing against the
+   panel exactly as they did when they were direct children. */
+.changes-panelbody {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.changes-panelbody:focus {
+  outline: none;
+}
+
+.changes-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 6px 12px;
+}
+
+.changes-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px 20px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.changes-empty svg {
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+
+.changes-empty small {
+  color: var(--text-dim);
+  max-width: 240px;
+  line-height: 1.55;
+}
+
+.changes-note {
+  margin: 2px 4px 8px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 3.5%);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+/* live feed */
+
+.feed-list,
+.file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* A row outside the scroll viewport is neither measured nor painted. That is
+   two buttons, two SVGs and two `data-tip` balloons per row — and each balloon
+   is an absolute `::after` with shadow and `border-radius`, drawn even at
+   `opacity: 0`. The declared size is that of the collapsed row, so the
+   scrollbar does not jump; an expanded diff exceeds it and the browser
+   measures for real, which is what `auto` does. */
+.file-list > li {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 24px;
+}
+
+.feed-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 6px;
+  border-radius: 8px;
+  font-size: var(--fs-sm);
+}
+
+.feed-row:hover {
+  background: var(--bg-hover);
+}
+
+.feed-row--fresh {
+  animation: feed-flash 1.6s ease-out;
+}
+
+@keyframes feed-flash {
+  from {
+    background: var(--accent-soft);
+  }
+
+  to {
+    background: transparent;
+  }
+}
+
+.feed-meta {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* path: the directory shrinks, the file name always shows */
+
+.path-label {
+  display: inline-flex;
+  min-width: 0;
+  flex: 1;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+.path-dir {
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.path-name {
+  color: var(--text);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.path-label--deleted .path-name {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+
+/* status badges (letters, VS Code style) */
+
+.file-badge {
+  width: 14px;
+  height: 14px;
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.badge--add {
+  color: var(--green);
+  background: var(--green-bg);
+}
+
+.badge--del {
+  color: var(--red);
+  background: var(--red-bg);
+}
+
+.badge--mod {
+  color: var(--accent-text);
+  background: var(--accent-dim);
+}
+
+.badge--conflict {
+  color: var(--yellow);
+  background: var(--yellow-bg);
+}
+
+/* review (git) */
+
+.review-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 4px 10px;
+}
+
+.review-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: rgb(255 255 255 / 4%);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.review-chip svg {
+  flex-shrink: 0;
+}
+
+.stat-add {
+  color: var(--green);
+}
+
+.stat-del {
+  color: var(--red);
+}
+
+.stat-bin {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.review-section {
+  margin-bottom: 10px;
+}
+
+/* Sticky: scrolling a long list, the section title keeps telling you which
+   group you are in. */
+.review-section-title {
+  position: sticky;
+  top: -8px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  padding: 8px 6px 4px;
+  background: #1c1c21;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-dim);
+}
+
+/* Two sibling controls, not one inside the other: the chevron used to be a
+   `role="button"` span nested in the row's `<button>`, which is invalid HTML
+   (the browser hands the click to the outer button) and left "expand the
+   inline diff" reachable only by mouse. */
+.file-row-wrap {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.file-row-wrap:hover {
+  background: var(--bg-hover);
+  border-radius: 8px;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 6px;
+  border-radius: 8px;
+  font-size: var(--fs-sm);
+  text-align: left;
+  color: var(--text);
+}
+
+button.file-row:hover {
+  background: var(--bg-hover);
+}
+
+.file-row--static {
+  cursor: default;
+}
+
+.feed-row--clickable {
+  cursor: pointer;
+}
+
+/* The chevron is its own target within the row: expands the inline diff
+   without opening the large viewer. */
+.file-chevron {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-left: 4px;
+  border: 0;
+  background: none;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.file-chevron:hover {
+  background: var(--bg-active);
+  color: var(--text-bright);
+}
+
+.file-row svg {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.file-stats {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.file-orig {
+  margin: 0 6px 2px 44px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+/* diff inline */
+
+.diff {
+  margin: 4px 4px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: #121215;
+  overflow: hidden;
+}
+
+.diff pre {
+  margin: 0;
+  padding: 6px 0;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+.diff pre span {
+  display: block;
+  padding: 0 8px;
+  white-space: pre;
+}
+
+.diff-add {
+  color: var(--green);
+  background: rgb(64 209 110 / 7%);
+}
+
+.diff-del {
+  color: var(--red);
+  background: rgb(255 105 97 / 7%);
+}
+
+.diff-hunk {
+  color: var(--text-dim);
+  background: rgb(255 255 255 / 4%);
+}
+
+.diff-meta {
+  color: var(--text-dim);
+}
+
+.diff-ctx {
+  color: var(--text);
+}
+
+.diff-note {
+  margin: 4px 8px 8px 12px;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.diff-note--error {
+  color: var(--red);
+}
+
+/* --- large diff viewer --- */
+
+.viewer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 45%);
+  backdrop-filter: blur(6px);
+  animation: fade-in 140ms ease-out;
+}
+
+/* Floating window: nearly opaque material (it holds code), radius 14, deep
+   shadow and hairline. */
+.viewer {
+  width: min(1280px, 96vw);
+  height: min(880px, 92vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgb(28 28 34 / 94%);
+  backdrop-filter: var(--blur-sheet);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-3), var(--hairline);
+  animation: modal-in var(--dur-2) var(--ease-pop);
+}
+
+.viewer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 10px 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.viewer-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.viewer-path {
+  display: inline-flex;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+}
+
+.viewer-orig {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+}
+
+.viewer-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.viewer-updating {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  animation: mark-breathe 1.6s ease-in-out infinite;
+}
+
+.viewer-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.viewer-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: rgb(0 0 0 / 26%);
+  border: 1px solid rgb(255 255 255 / 5%);
+  border-radius: 999px;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 20%);
+}
+
+.viewer-seg button {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.viewer-seg button:hover {
+  color: var(--text-bright);
+}
+
+.viewer-seg button.is-active {
+  background: rgb(255 255 255 / 14%);
+  color: var(--text-bright);
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 35%),
+    inset 0 1px 0 rgb(255 255 255 / 9%);
+}
+
+.viewer-toggle {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: rgb(255 255 255 / 5%);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.viewer-toggle:hover {
+  color: var(--text-bright);
+  background: var(--bg-hover);
+}
+
+.viewer-toggle.is-active {
+  background: var(--accent-dim);
+  border-color: rgb(10 132 255 / 40%);
+  color: var(--accent-text);
+}
+
+.icon-btn.is-active {
+  background: var(--bg-active);
+  color: var(--text-bright);
+}
+
+.viewer-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border-strong);
+  margin: 0 3px;
+}
+
+.viewer-main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.viewer-rail {
+  width: 224px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 8px 6px;
+  background: rgb(0 0 0 / 18%);
+  border-right: 1px solid var(--border);
+}
+
+.viewer-rail ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.viewer-rail-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  border-radius: 8px;
+  text-align: left;
+  color: var(--text);
+}
+
+.viewer-rail-row:hover {
+  background: var(--bg-hover);
+}
+
+.viewer-rail-row.is-active {
+  background: rgb(10 132 255 / 26%);
+  color: var(--text-bright);
+  box-shadow: inset 0 0 0 1px rgb(10 132 255 / 18%);
+}
+
+.viewer-rail-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+.viewer-body {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  background: #121215;
+}
+
+.viewer-note {
+  margin: 14px;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.viewer-note--error {
+  color: var(--red);
+}
+
+.viewer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 14px;
+  border-top: 1px solid var(--border);
+  background: rgb(0 0 0 / 14%);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  flex-shrink: 0;
+}
+
+.viewer-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* diff grid (shared between unified and side-by-side) */
+.diff-hunk {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 420px;
+}
+
+.dgrid {
+  min-width: fit-content;
+  padding: 4px 0 16px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+}
+
+.dline {
+  display: flex;
+}
+
+.dnum {
+  width: 46px;
+  flex-shrink: 0;
+  padding-right: 8px;
+  text-align: right;
+  color: var(--text-dim);
+  opacity: 0.7;
+  user-select: none;
+}
+
+.dsign {
+  width: 16px;
+  flex-shrink: 0;
+  text-align: center;
+  user-select: none;
+}
+
+.dtext {
+  white-space: pre;
+  padding-right: 16px;
+}
+
+.viewer-body--wrap .dgrid {
+  min-width: 0;
+}
+
+.viewer-body--wrap .dtext {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dline--add {
+  background: rgb(64 209 110 / 9%);
+}
+
+.dline--add .dsign,
+.dline--add .dnum {
+  color: var(--green);
+  opacity: 0.9;
+}
+
+.dline--del {
+  background: rgb(255 105 97 / 9%);
+}
+
+.dline--del .dsign,
+.dline--del .dnum {
+  color: var(--red);
+  opacity: 0.9;
+}
+
+/* The hunk header sticks to the top while the hunk is on screen. */
+.dline--hunk {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 2px 0;
+  background: #202027;
+  color: var(--text-dim);
+  box-shadow: var(--hairline);
+}
+
+.dline--note .dtext {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* inline highlight: the core that actually changed */
+.demph {
+  border-radius: 2px;
+  color: inherit;
+  background: var(--accent-soft);
+}
+
+.dline--add .demph,
+.dcell--add .demph {
+  background: rgb(64 209 110 / 26%);
+}
+
+.dline--del .demph,
+.dcell--del .demph {
+  background: rgb(255 105 97 / 26%);
+}
+
+/* side by side: aligned pairs, long lines wrap within the cell */
+
+.dgrid--split {
+  min-width: 0;
+}
+
+.srow {
+  display: flex;
+}
+
+.dcell {
+  width: 50%;
+  min-width: 0;
+  display: flex;
+}
+
+.dcell + .dcell {
+  border-left: 1px solid var(--border);
+}
+
+.dcell .dtext {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dcell--empty {
+  background: repeating-linear-gradient(
+    45deg,
+    transparent 0 6px,
+    rgb(255 255 255 / 2.5%) 6px 8px
+  );
+}
+
+.dcell--add {
+  background: rgb(64 209 110 / 9%);
+}
+
+.dcell--add .dnum {
+  color: var(--green);
+  opacity: 0.9;
+}
+
+.dcell--del {
+  background: rgb(255 105 97 / 9%);
+}
+
+.dcell--del .dnum {
+  color: var(--red);
+  opacity: 0.9;
+}
+
+/* --- review annotations on the diff ------------------------------------------
+   The "+" hides in the left of the number gutter — the numbers are right
+   aligned, so that strip is blank for anything under four digits. It only
+   appears on the hovered row: a column of buttons down the whole diff would
+   compete with the code, which is what the viewer is for. */
+
+.dline,
+.dcell {
+  position: relative;
+}
+
+.dnote-add {
+  position: absolute;
+  left: 1px;
+  top: 0;
+  bottom: 0;
+  width: 17px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  opacity: 0;
+  color: var(--accent-text);
+  border-radius: var(--r-sm);
+  transition: opacity var(--dur-1) var(--ease);
+}
+
+.dline:hover .dnote-add,
+.dcell:hover .dnote-add,
+.dnote-add:focus-visible {
+  opacity: 1;
+}
+
+.dnote-add:hover {
+  background: var(--accent-dim);
+}
+
+/* The note sits in the flow, pushing the code down: a floating card would
+   cover the very lines the comment is about. */
+.dnotes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* Left padding lines the card up with the code, past the gutters: one
+     number column side by side, two plus the sign column unified. */
+  padding: 6px 16px 8px 62px;
+  background: rgb(10 132 255 / 5%);
+  border-left: 2px solid var(--accent-border);
+}
+
+.dgrid--unified .dnotes {
+  padding-left: 108px;
+}
+
+.dnotes--file {
+  margin: 0 0 16px;
+  padding-left: 16px;
+}
+
+.dnote {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 760px;
+  padding: 7px 8px 7px 11px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-1);
+}
+
+.dnote--draft {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 8px;
+}
+
+.dnote-body {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-family:
+    "Inter Variable",
+    "SF Pro Text",
+    -apple-system,
+    "Segoe UI Variable Text",
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dnote-tools {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease);
+}
+
+.dnote:hover .dnote-tools,
+.dnote:focus-within .dnote-tools {
+  opacity: 1;
+}
+
+.dnote-input {
+  width: 100%;
+  min-height: 46px;
+  resize: vertical;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-bright);
+  font-family:
+    "Inter Variable",
+    "SF Pro Text",
+    -apple-system,
+    "Segoe UI Variable Text",
+    "Segoe UI",
+    system-ui,
+    sans-serif;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  padding: 0;
+}
+
+.dnote-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dnote-hint {
+  margin-right: auto;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.dnote-foot .btn {
+  padding: 3px 9px;
+  font-size: var(--fs-xs);
+}
+
+/* Bar above the footer: what the whole review adds up to, and where it goes. */
+.viewer-review {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  background: rgb(10 132 255 / 7%);
+  font-size: var(--fs-sm);
+}
+
+.viewer-review-count {
+  color: var(--text-bright);
+  font-weight: 500;
+}
+
+.viewer-review-elsewhere,
+.viewer-review-empty {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.viewer-review-empty {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+}
+
+.viewer-review .btn--ghost {
+  margin-right: auto;
+}
+
+.viewer-review-target {
+  min-width: 168px;
+  max-width: 240px;
+}
+
+/* --- peek: diff preview on hover --- */
+
+.peek {
+  position: fixed;
+  z-index: 90;
+  width: 500px;
+  max-width: 60vw;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--material-menu);
+  backdrop-filter: var(--blur-menu);
+  border: 1px solid rgb(255 255 255 / 11%);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2), var(--hairline);
+  animation: fade-in 120ms ease-out;
+  /* preview is read-only: without pointer events the mouse never "falls" into it */
+  pointer-events: none;
+}
+
+.peek-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-xs);
+}
+
+.peek-header .path-label {
+  flex: 1;
+}
+
+.peek-body {
+  overflow: hidden;
+  max-height: 300px;
+}
+
+.peek-body pre {
+  margin: 0;
+  padding: 6px 0;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+.peek-body pre span {
+  display: block;
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.peek-more {
+  padding: 5px 10px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+/* Huge diffs use one text node instead of one React row per source line. */
+.diff-large-raw {
+  margin: 0;
+  padding: 14px 16px 40px;
+  min-width: max-content;
+  color: var(--text);
+  font: var(--code-size) / 1.55 var(--font-code);
+  white-space: pre;
+  tab-size: 2;
+}
+
+.viewer-body--wrap .diff-large-raw {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The footer of the row window — the same in the review and in the Source
+   Control tab, which is why it lives in this sheet. The rest of the group is
+   counted out loud: a list silently truncated lies about the size of the work,
+   and here the number is the difference between "done" and "1,800 to go". */
+.list-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 6px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--accent-text, var(--text));
+  font-size: var(--fs-sm);
+}
+
+.list-more:hover {
+  background: var(--bg-hover);
+}
+
+.list-more-rest {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
