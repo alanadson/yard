@@ -25,7 +25,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 which = "7"
 sysinfo = "0.32"
 notify = "7"
-notify-debouncer-mini = "0.5"
+notify-debouncer-mini = "0.7"
 dirs = "5"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 tracing = "0.1"
