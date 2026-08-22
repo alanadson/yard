@@ -26,7 +26,7 @@ which = "7"
 sysinfo = "0.32"
 notify = "7"
 notify-debouncer-mini = "0.5"
-dirs = "5"
+dirs = "6"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
