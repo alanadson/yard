@@ -39,7 +39,7 @@ parking_lot = "0.12"
 tokio = { version = "1", features = ["net", "io-util", "time", "sync", "rt"] }
 # Agent usage limits (usage.rs): three GETs a minute on a background thread —
 # a small blocking client does the job without dragging in reqwest.
-ureq = "2"
+ureq = "3"
 # Installed-font scan (fonts.rs): family name, monospaced flag and whether the
 # GSUB table carries ligatures — the preferences panel offers real choices
 # instead of a free-text field.
