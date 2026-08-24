@@ -25,6 +25,7 @@ pub mod scm;
 pub mod scores;
 pub mod state;
 pub mod usage;
+pub mod wsl;
 
 mod logging;
 mod resources;
@@ -190,6 +191,18 @@ fn default_shell() -> String {
 #[tauri::command]
 fn list_shells() -> Vec<ShellOption> {
     pty::list_shells()
+}
+
+/// Whether an agent can be told to run inside WSL, and in which distro.
+///
+/// It spawns `wsl.exe`, so it goes to the blocking pool: on a machine where
+/// the WSL service is cold this call takes seconds, and it must not stall a
+/// runtime worker while the settings screen is opening.
+#[tauri::command]
+async fn wsl_status() -> wsl::WslStatus {
+    tauri::async_runtime::spawn_blocking(wsl::status)
+        .await
+        .unwrap_or_default()
 }
 
 /// First call reads every installed font file (the scan is cached after), so
@@ -1226,6 +1239,7 @@ pub fn run() {
             forget_pty,
             default_shell,
             list_shells,
+            wsl_status,
             list_fonts,
             save_workspace,
             load_workspace,

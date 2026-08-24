@@ -114,6 +114,14 @@ export interface AgentInfo {
   docs: string | null;
 }
 
+/** Whether an agent can be told to run inside WSL, and in which distro. */
+export interface WslStatus {
+  available: boolean;
+  distros: string[];
+  /** Why it cannot be used — the line under the disabled control. */
+  reason: string | null;
+}
+
 export interface AgentSession {
   agent: string;
   externalId: string;
@@ -857,6 +865,7 @@ export const ipc = {
   // agents
   detectAgents: (refresh = false) =>
     invoke<AgentInfo[]>("detect_agents", { refresh }),
+  wslStatus: () => invoke<WslStatus>("wsl_status"),
   listAgentSessions: (agent: string, projectPath: string) =>
     invoke<AgentSession[]>("list_agent_sessions", { agent, projectPath }),
   getSessionUsage: (file: string) =>
