@@ -27,8 +27,24 @@ vi.mock("./ipc", () => ({
   },
 }));
 
-import { fanOutTask } from "./floorFanout";
+import { agentAsFanout, fanOutTask } from "./floorFanout";
+import { useAgentDefaults } from "../stores/agentDefaultsStore";
 import { useProjects } from "../stores/projectsStore";
+
+/** An `AgentInfo` as the detector would report it. */
+function agentInfo(id: string, name: string, bin = `${id}.exe`) {
+  return {
+    id,
+    name,
+    bin,
+    version: null,
+    installed: true,
+    resumeTemplate: null,
+    continueArgs: null,
+    sessionsKind: null,
+    docs: null,
+  };
+}
 
 const AGENTS = [
   { id: "claude", name: "Claude Code", program: "claude" },
@@ -116,5 +132,64 @@ describe("fanOutTask", () => {
       fanOutTask({ projectId: p, name: "t", prompt: "faça", agents: AGENTS }),
     ).rejects.toThrow(/repositório git/);
     expect(closeGroup).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The fleet is the one place where nobody gets to tick a checkbox: N CLIs are
+ * spawned in a loop, off screen. If the agent's fixed line did not reach them,
+ * five agents would come up asking for permission with no terminal in view to
+ * answer in.
+ */
+describe("the line configured in Settings", () => {
+  it("reaches every agent of the fleet", async () => {
+    const p = project();
+    useAgentDefaults.setState({ defaults: {} });
+    useAgentDefaults
+      .getState()
+      .setConfig("claude", { args: "--dangerously-skip-permissions" });
+    createFloor.mockImplementationOnce(async () => floorOf(p, "t-claude"));
+
+    await fanOutTask({
+      projectId: p,
+      name: "tarefa",
+      prompt: "faça",
+      agents: [agentAsFanout(agentInfo("claude", "Claude Code"))!],
+    });
+
+    expect(startTerminalProcess).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ args: ["--dangerously-skip-permissions"] }),
+    );
+  });
+});
+
+/**
+ * A fleet is spawned off screen, so "roda no WSL" has to survive the trip: the
+ * process is `wsl.exe` and the worktree is where the agent lands. Getting this
+ * wrong means N terminals that die on a Windows path inside a distro, with no
+ * pane in view to read the error in.
+ */
+describe("an agent that lives in WSL", () => {
+  it("is launched through wsl.exe, in its own worktree", async () => {
+    const p = project();
+    useAgentDefaults.setState({ defaults: {} });
+    useAgentDefaults.getState().setConfig("claude", { where: "wsl", distro: "Ubuntu" });
+    createFloor.mockImplementationOnce(async () => floorOf(p, "t-claude"));
+
+    await fanOutTask({
+      projectId: p,
+      name: "tarefa",
+      prompt: "faça",
+      agents: [agentAsFanout(agentInfo("claude", "Claude Code", "claude.cmd"))!],
+    });
+
+    expect(startTerminalProcess).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        program: "wsl.exe",
+        args: ["-d", "Ubuntu", "--cd", "C:/Workspace/x/.yard/t-claude", "--", "claude"],
+      }),
+    );
   });
 });

@@ -7,9 +7,11 @@ import { Split } from "lucide-react";
 import { Modal } from "../modals/Modal";
 import { BrandIcon } from "../BrandIcon";
 import { brandById } from "../../lib/brands";
+import { pickableAgents } from "../../lib/agentDefaults";
 import { agentAsFanout, fanOutTask } from "../../lib/floorFanout";
 import { LOADING, load, type LoadState } from "../../lib/loading";
 import { ipc, type AgentInfo } from "../../lib/ipc";
+import { useAgentDefaults } from "../../stores/agentDefaultsStore";
 import { useChanges } from "../../stores/changesStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
@@ -30,6 +32,7 @@ export function FanoutModal() {
   const [chosen, setChosenIds] = useState<string[]>([]);
   const [cloneGround, setCloneGround] = useState(false);
   const [busy, setBusy] = useState(false);
+  const defaults = useAgentDefaults((s) => s.defaults);
   const isRepo = useChanges((s) =>
     project ? (s.gitByProject[project.id]?.isRepo ?? true) : false,
   );
@@ -43,8 +46,10 @@ export function FanoutModal() {
       // and a full round of tokens on the same request — ticking the whole
       // machine by default charges dearly for a click that looks light.
       setChosenIds(
-        r.data
-          .filter((a) => a.installed && a.bin)
+        pickableAgents(
+          r.data.filter((a) => a.installed && a.bin),
+          useAgentDefaults.getState().defaults,
+        )
           .slice(0, 2)
           .map((a) => a.id),
       );
@@ -55,8 +60,11 @@ export function FanoutModal() {
 
   if (!project) return null;
 
-  const installed = (agents.state === "pronto" ? agents.data : []).filter(
-    (a) => a.installed && a.bin,
+  // An agent turned off in Settings is not offered to a fleet either — the
+  // fan-out picker is the same kind of list as the grid in "Nova aba".
+  const installed = pickableAgents(
+    (agents.state === "pronto" ? agents.data : []).filter((a) => a.installed && a.bin),
+    defaults,
   );
 
   const launch = async () => {

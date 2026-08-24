@@ -14,6 +14,7 @@ import { closeGroup, startTerminalProcess } from "./lifecycle";
 import { placeCard } from "./canvasWrite";
 import { deliverBriefing } from "./roleBrief";
 import type { AgentInfo } from "./ipc";
+import { useAgentDefaults } from "../stores/agentDefaultsStore";
 import { useProjects } from "../stores/projectsStore";
 
 export interface FanoutAgent {
@@ -23,6 +24,12 @@ export interface FanoutAgent {
   args?: string[];
 }
 
+/**
+ * Both doors into the fan-out (the dialog and `yard floor fanout`) come
+ * through here. What the agent is configured with is **not** applied at this
+ * point: it needs the worktree path, which does not exist yet, so `fanOutTask`
+ * asks `launchOf` once the floor is created.
+ */
 export function agentAsFanout(a: AgentInfo): FanoutAgent | null {
   if (!a.installed || !a.bin) return null;
   return { id: a.id, name: a.name, program: a.bin };
@@ -108,21 +115,29 @@ export async function fanOutTask(input: FanoutInput): Promise<FanoutResult> {
       );
     }
     const cwd = created.provision.path;
+    // Where the agent runs is decided here and not in `agentAsFanout`, because
+    // wrapping it in `wsl.exe` needs the worktree path — which only exists
+    // once the floor has been created.
+    const launch = useAgentDefaults.getState().launchOf(agent.id, {
+      program: agent.program,
+      args: agent.args ?? [],
+      cwd,
+    });
 
     const terminalId = s.addTerminal({
       groupId: created.groupId,
       title: agent.name,
       kind: "agent",
       agentId: agent.id,
-      program: agent.program,
-      args: agent.args ?? [],
+      program: launch.program,
+      args: launch.args,
       cwd,
     });
     placeCard(created.groupId, terminalId);
     try {
       await startTerminalProcess(terminalId, {
-        program: agent.program,
-        args: agent.args ?? [],
+        program: launch.program,
+        args: launch.args,
         cwd,
         kind: "agent",
         title: agent.name,

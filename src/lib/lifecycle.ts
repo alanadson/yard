@@ -9,6 +9,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 
 import { removeNodeAndEdges } from "./canvasOps";
 import { commitCanvasExternal } from "./canvasWrite";
+import { spawnEnvFor } from "./spawnEnv";
 import { ipc, type PtyKind } from "./ipc";
 import { retainLivePortals } from "./portalSpawn";
 import { sendability } from "./sendable";
@@ -66,6 +67,9 @@ export async function startTerminalProcess(
     title: opts.title,
     rows: 38,
     cols: 120,
+    // The cache lifetime rides in the environment, which a PTY fixes at spawn
+    // (`lib/spawnEnv.ts`).
+    env: spawnEnvFor(id),
   });
   useProjects.getState().updateTerminal(id, { alive: true });
 }

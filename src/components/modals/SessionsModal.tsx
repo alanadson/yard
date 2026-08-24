@@ -18,6 +18,7 @@ import {
   type AgentSession,
   type SessionUsage,
 } from "../../lib/ipc";
+import { useAgentDefaults } from "../../stores/agentDefaultsStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
 
@@ -118,11 +119,21 @@ export function SessionsModal({ projectPath }: { projectPath: string }) {
       }
       const detected = await ipc.detectAgents(false);
       const info = detected.find((a) => a.id === s.agent);
-      const id = addTerminal({
-        groupId,
+      const cwd = s.projectPath || projectPath;
+      // The line configured for this CLI holds for a resumed conversation too
+      // — there is no dialog here to pre-fill it into — and so does where it
+      // runs. `resume` below stays the bare resume argv: it is the session's
+      // identity, not the command line.
+      const born = useAgentDefaults.getState().launchOf(s.agent, {
         program: info?.bin ?? s.agent,
         args,
-        cwd: s.projectPath || projectPath,
+        cwd,
+      });
+      const id = addTerminal({
+        groupId,
+        program: born.program,
+        args: born.args,
+        cwd,
         kind: "agent",
         title: s.title ? truncate(s.title, 28) : `${s.agent} (retomado)`,
         agentId: s.agent,

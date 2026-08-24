@@ -29,6 +29,7 @@ import {
 } from "../../lib/clipboardImage";
 import { AsyncDisposer } from "../../lib/disposables";
 import { interceptFlowInput } from "../../lib/flowIntercept";
+import { spawnEnvFor } from "../../lib/spawnEnv";
 import { ipc, on, type SpawnOptions } from "../../lib/ipc";
 import { ligatureRanges } from "../../lib/ligatures";
 import { uiLog } from "../../lib/log";
@@ -460,6 +461,10 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
         kind: cur.kind,
         title: cur.title,
         keepScrollback: true,
+        // Read now, not stored on the row: a PTY fixes its environment at
+        // spawn, so changing the cache setting applies on the next restart
+        // (`lib/spawnEnv.ts`).
+        env: spawnEnvFor(id),
         ...override,
       });
       store.markRunning(id, snap.pid);

@@ -35,7 +35,10 @@ import {
 import { findGroupNamed, isIsolatedFloor } from "./floors";
 import { createFloor } from "./floorCreate";
 import { agentAsFanout, fanOutTask } from "./floorFanout";
+import { defaultRoleOf } from "./agentDefaults";
+import { spawnEnvFor } from "./spawnEnv";
 import { landFloor, previewFloor, settleAfterLand } from "./floorLand";
+import { useAgentDefaults } from "../stores/agentDefaultsStore";
 import { useProjects } from "../stores/projectsStore";
 import {
   reachedWait,
@@ -153,9 +156,26 @@ async function spawnCard(
     cols: SPAWN_COLS,
     kind: opts.kind as "shell" | "agent",
     title: opts.title,
+    // The cache lifetime is an environment variable, and a PTY's environment
+    // is fixed at spawn (`lib/spawnEnv.ts`).
+    env: spawnEnvFor(id),
   });
   useProjects.getState().updateTerminal(id, { alive: true });
   return snap;
+}
+
+/**
+ * The launch of a recruited card: untouched on Windows, wrapped in `wsl.exe`
+ * when the agent was told to live in a distro. It happens once per branch,
+ * where the working directory is finally known.
+ */
+function bornAs(
+  agentId: string | null,
+  program: string,
+  args: string[],
+  cwd: string,
+): { program: string; args: string[] } {
+  return useAgentDefaults.getState().launchOf(agentId, { program, args, cwd });
 }
 
 const SPAWN_ROWS = 38;
@@ -864,11 +884,19 @@ async function cmdRecruit(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
     kind = "agent";
     rowAgentId = found.id;
   }
-  const cardRole = role ? await resolveRole(ctx.canvas, role) : undefined;
+  // Without `--role`, the recruit is born into whatever role that CLI is
+  // configured with in Configurações › Agentes — the same one a click in
+  // "Nova aba" would have given it. An explicit `--role` still wins.
+  const cardRole = role
+    ? await resolveRole(ctx.canvas, role)
+    : (defaultRoleOf(useAgentDefaults.getState().defaults, rowAgentId)?.role ??
+      undefined);
   // The role reaches the recruit the same way it reaches a CLI the user opens
   // by hand: through the flag when the CLI has one, typed in when it does not.
   const launch = roleLaunch(rowAgentId, cardRole);
   cliArgs.push(...launch.args);
+  // What this CLI is configured with — the fixed line, the cache, the distro —
+  // is added by `bornAs`, once the working directory is known.
 
   if (replace) return replaceCard(ctx, replace, { name, program, cliArgs, kind, rowAgentId, dir, cardRole, launch });
 
@@ -878,13 +906,14 @@ async function cmdRecruit(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
 
   const cwd = dir ?? ctx.caller.cwd;
   const s = useProjects.getState();
+  const born = bornAs(rowAgentId, program, cliArgs, cwd);
   const newId = s.addTerminal({
     groupId: ctx.groupId,
     title: name,
     kind: kind as "shell" | "agent",
     agentId: rowAgentId,
-    program,
-    args: cliArgs,
+    program: born.program,
+    args: born.args,
     cwd,
   });
 
@@ -984,12 +1013,13 @@ async function replaceCard(
         "Espere alguns segundos e rode o mesmo `recruit --replace` de novo.\n",
     );
   }
+  const born = bornAs(newValue.rowAgentId, newValue.program, newValue.cliArgs, cwd);
   s.updateTerminal(target.id, {
     title: newValue.name,
     kind: newValue.kind as "shell" | "agent",
     agentId: newValue.rowAgentId,
-    program: newValue.program,
-    args: newValue.cliArgs,
+    program: born.program,
+    args: born.args,
     cwd,
     resume: null,
     alive: false,
@@ -997,8 +1027,8 @@ async function replaceCard(
 
   try {
     const snap = await spawnCard(target.id, {
-      program: newValue.program,
-      args: newValue.cliArgs,
+      program: born.program,
+      args: born.args,
       cwd,
       kind: newValue.kind,
       title: newValue.name,
@@ -1081,13 +1111,14 @@ async function recruitInFloor(
   const cwd = next.dir ?? s.rootOfGroup(target.id) ?? ctx.caller.cwd;
 
   const idx = s.terminalsOf(target.id).length;
+  const born = bornAs(next.rowAgentId, next.program, next.cliArgs, cwd);
   const newId = s.addTerminal({
     groupId: target.id,
     title: next.name,
     kind: next.kind as "shell" | "agent",
     agentId: next.rowAgentId,
-    program: next.program,
-    args: next.cliArgs,
+    program: born.program,
+    args: born.args,
     cwd,
   });
   commitCanvas(target.id, (c) => ({
