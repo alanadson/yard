@@ -23,7 +23,12 @@ export type Inline =
   | { t: "code"; v: string }
   | { t: "strike"; v: string }
   | { t: "mark"; v: string }
-  | { t: "link"; v: string; href: string };
+  | { t: "link"; v: string; href: string }
+  /** `![alt](src)`. `src` is relative to the project root, http(s) or data:. */
+  | { t: "img"; alt: string; src: string };
+
+/** Column alignment of a table, read off the `:---:` row. */
+export type CellAlign = "left" | "center" | "right";
 
 export type Block =
   | { t: "h"; level: 1 | 2 | 3; parts: Inline[]; line: number }
@@ -43,6 +48,15 @@ export type Block =
   | { t: "quote"; parts: Inline[]; line: number }
   | { t: "pre"; v: string; lang?: string; line: number }
   | { t: "hr"; line: number }
+  | {
+      t: "table";
+      /** Header cells, already parsed as inline. */
+      head: Inline[][];
+      /** Body rows, padded to the header's width. */
+      rows: Inline[][][];
+      align: CellAlign[];
+      line: number;
+    }
   | { t: "blank"; line: number };
 
 const MAX_DEPTH = 5;
@@ -75,6 +89,27 @@ export function parseMarkdown(src: string): Block[] {
         line: at,
         ...(fence[1] ? { lang: fence[1] } : {}),
       });
+      continue;
+    }
+
+    // A table is a header line, an alignment line and any number of body
+    // lines. Both of the first two are required: a lone `| texto |` is a
+    // sentence someone wrote with pipes in it, and promoting that to a
+    // one-cell table would be a surprise nobody asked for.
+    if (line.includes("|") && isAlignRow(lines[i + 1] ?? "")) {
+      const head = splitRow(line);
+      const align = alignOf(lines[i + 1], head.length);
+      i += 2;
+      const rows: Inline[][][] = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) {
+        const cells = splitRow(lines[i]);
+        // Padded, never truncated: a short row is a typo, and dropping the
+        // column would silently misalign everything to its right.
+        while (cells.length < head.length) cells.push("");
+        rows.push(cells.slice(0, head.length).map(parseInline));
+        i++;
+      }
+      out.push({ t: "table", head: head.map(parseInline), rows, align, line: at });
       continue;
     }
 
@@ -160,13 +195,68 @@ export function parseMarkdown(src: string): Block[] {
   return out;
 }
 
+/**
+ * The cells of one table line.
+ *
+ * No escaping of `\|`: this is the *note's* parser, and a document gets the
+ * full one (`lib/mddoc.ts`). A pipe inside a cell is rare enough that "put it
+ * in backticks" is a fair answer, and the alternative is a state machine in a
+ * file whose whole point is that it is small.
+ */
+function splitRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((c) => c.trim());
+}
+
+/** Is this the `| --- | :--: |` line that turns the one above it into a table? */
+function isAlignRow(line: string): boolean {
+  if (!line.includes("|")) return false;
+  const cells = splitRow(line);
+  return cells.length > 0 && cells.every((c) => /^:?-{1,}:?$/.test(c));
+}
+
+function alignOf(line: string, width: number): CellAlign[] {
+  const cells = splitRow(line);
+  const out: CellAlign[] = [];
+  for (let i = 0; i < width; i++) {
+    const c = cells[i] ?? "";
+    const left = c.startsWith(":");
+    const right = c.endsWith(":");
+    out.push(left && right ? "center" : right ? "right" : "left");
+  }
+  return out;
+}
+
 // `code` first: what is between backticks does not become bold or italic.
 // The link comes next so a URL full of underscores is not read as italics.
 // Two-character markers always before their one-character prefix.
 const INLINE_RE =
-  /(`[^`]+`)|(\[[^\]\n]*\]\([^)\s]*\))|(\*\*[^*]+\*\*)|(__[^_]+__)|(~~[^~\n]+~~)|(==[^=\n]+==)|(\*[^*\n]+\*)|(_[^_\n]+_)/;
+  /(`[^`]+`)|(!\[[^\]\n]*\]\([^)\s]*\))|(\[[^\]\n]*\]\([^)\s]*\))|(\*\*[^*]+\*\*)|(__[^_]+__)|(~~[^~\n]+~~)|(==[^=\n]+==)|(\*[^*\n]+\*)|(_[^_\n]+_)/;
 
 const LINK_RE = /^\[([^\]\n]*)\]\(([^)\s]*)\)$/;
+const IMG_RE = /^!\[([^\]\n]*)\]\(([^)\s]*)\)$/;
+
+/**
+ * What a note is allowed to **show**.
+ *
+ * Wider than `safeHref` in one direction and narrower in another: a bare
+ * relative path is the common case (a note points at a screenshot inside the
+ * project, and the body resolves it against the project root), an embedded
+ * `data:image/…` is what a pasted print becomes — and anything else carrying a
+ * scheme is refused. Note text arrives from agents through the CLI bridge, so
+ * a `javascript:` here is untrusted input, not a picture.
+ */
+export function safeImgSrc(raw: string): string | null {
+  const s = raw.trim();
+  if (!s) return null;
+  if (/^data:image\/[\w.+-]+;base64,/i.test(s)) return s;
+  if (/^https?:\/\//i.test(s)) return s;
+  return /^[a-z][a-z0-9+.-]*:/i.test(s) ? null : s;
+}
 
 /**
  * What a note is allowed to point at.
@@ -191,6 +281,21 @@ export function parseInline(src: string): Inline[] {
     const m = INLINE_RE.exec(rest);
     if (!m || m.index === undefined) break;
     const tok = m[0];
+    const img = tok.startsWith("![") ? IMG_RE.exec(tok) : null;
+    if (img) {
+      const src = safeImgSrc(img[2]);
+      // A refused picture is not markup: the raw text stays exactly as typed,
+      // like a refused link, and the scan carries on past it.
+      if (!src) {
+        out.push({ t: "text", v: rest.slice(0, m.index + tok.length) });
+        rest = rest.slice(m.index + tok.length);
+        continue;
+      }
+      if (m.index > 0) out.push({ t: "text", v: rest.slice(0, m.index) });
+      out.push({ t: "img", alt: img[1], src });
+      rest = rest.slice(m.index + tok.length);
+      continue;
+    }
     const link = tok.startsWith("[") ? LINK_RE.exec(tok) : null;
     const href = link ? safeHref(link[2]) : null;
     // A refused link is not markup: leave the raw text in place and keep

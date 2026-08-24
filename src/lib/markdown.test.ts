@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseInline, parseMarkdown } from "./markdown";
+import { parseInline, parseMarkdown, type Block } from "./markdown";
 
 describe("parseMarkdown", () => {
   it("recognizes heading, list and quote", () => {
@@ -100,5 +100,90 @@ describe("parseInline", () => {
     expect(parseInline("[x](data:text/html,oi)")).toEqual([
       { t: "text", v: "[x](data:text/html,oi)" },
     ]);
+  });
+});
+
+/**
+ * Tables and images (§12.2/12.3). Both were in the spec's list of what a
+ * rendered note has to show and in neither the parser nor the body — a note
+ * pasted with a table read as three lines of pipes.
+ */
+describe("tables", () => {
+  const src = ["| a | b |", "| --- | ---: |", "| 1 | 2 |"].join("\n");
+
+  it("reads the header, the alignment row and the body", () => {
+    const [block] = parseMarkdown(src);
+    expect(block).toMatchObject({
+      t: "table",
+      align: ["left", "right"],
+      line: 0,
+    });
+  });
+
+  it("keeps each cell as inline parts, so **bold** works inside one", () => {
+    const [block] = parseMarkdown("| **a** |\n| --- |\n| b |");
+    const table = block as Extract<Block, { t: "table" }>;
+    expect(table.head[0]).toEqual([{ t: "strong", v: "a" }]);
+  });
+
+  it("swallows the whole table in one block", () => {
+    // The alignment row must never survive as a paragraph of dashes, and the
+    // body rows must not each become their own block.
+    expect(parseMarkdown(src)).toHaveLength(1);
+  });
+
+  it("pads a short row instead of dropping the cell", () => {
+    const table = parseMarkdown("| a | b |\n| --- | --- |\n| 1 |")[0] as Extract<
+      Block,
+      { t: "table" }
+    >;
+    expect(table.rows[0]).toHaveLength(2);
+  });
+
+  it("leaves a lone pipe line as a paragraph", () => {
+    // Without the alignment row underneath it, `| not a table |` is text
+    // someone wrote — turning it into a one-cell table would be a surprise.
+    expect(parseMarkdown("| not a table |")[0].t).toBe("p");
+  });
+});
+
+describe("images", () => {
+  it("reads an image as its own inline part, not as a link", () => {
+    expect(parseInline("veja ![alt](shot.png) aqui")).toEqual([
+      { t: "text", v: "veja " },
+      { t: "img", alt: "alt", src: "shot.png" },
+      { t: "text", v: " aqui" },
+    ]);
+  });
+
+  it("accepts a relative path — a note points into the project", () => {
+    expect(parseInline("![](docs/a.png)")).toEqual([
+      { t: "img", alt: "", src: "docs/a.png" },
+    ]);
+  });
+
+  it("accepts an embedded data: URL", () => {
+    // What a screenshot pasted into a note becomes. It is the one long src
+    // that must survive: refusing it would break paste-a-print entirely.
+    const src = "data:image/png;base64,iVBOR";
+    expect(parseInline(`![p](${src})`)).toEqual([{ t: "img", alt: "p", src }]);
+  });
+
+  it("refuses a src with a scheme that is not http(s) or data", () => {
+    // Note text comes from agents through the CLI. A `javascript:` or a
+    // `file:` src is untrusted input, and it falls back to plain text.
+    expect(parseInline("![x](javascript:boom)")).toEqual([
+      { t: "text", v: "![x](javascript:boom)" },
+    ]);
+  });
+
+  it("leaves the refused source visible, character for character", () => {
+    // Asserted on what the note *shows*, not on how many text parts it took
+    // to say it: `[^)\s]*` stops at the first `)`, so a src with parentheses
+    // comes back split — which renders identically and is not a defect.
+    const src = "![x](javascript:alert(1))";
+    const parts = parseInline(src);
+    expect(parts.every((p) => p.t === "text")).toBe(true);
+    expect(parts.map((p) => (p.t === "text" ? p.v : "")).join("")).toBe(src);
   });
 });
