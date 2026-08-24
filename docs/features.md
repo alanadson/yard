@@ -58,6 +58,59 @@ listing of local Claude Code and Codex sessions per project, resumed in one
 click; token counting and cost estimate; watcher (`notify`) over the session
 directories.
 
+**How each CLI opens.** Every agent is described once in **Configurações →
+Agentes** (Settings → Agents) — a strip of marks at the top, one panel
+underneath — and what is said there reaches **every** way that CLI is born.
+"Nova aba" is a grid of marks where **one click opens the tab**: it asks
+nothing, because the answers already live here (and the two it used to ask that
+are per-invocation, the destination and the folder, have a right answer with
+nobody to ask — the pane that asked for the tab, and the project's own path).
+The ways with no dialog at all — `yard recruit` on the canvas, a fan-out of
+floors, a resumed session — get the same thing applied straight to their argv
+and environment. Per agent:
+
+- **The name and the role it is born with.** The name the tab and the card
+  carry (empty = the CLI's own), and the responsibility handed over at launch —
+  through `--append-system-prompt` where the CLI has one, typed in as the first
+  message where it does not. The role also covers `yard recruit` when the
+  command carries no `--role`; either can still be changed afterwards from the
+  card's menu.
+
+- **The fixed command line.** A switch for the flag that stops the CLI asking
+  permission before each edit — each one spells it differently
+  (`--dangerously-skip-permissions`, `--yolo`, `--force`…) — plus a free field
+  for anything else (`--model opus`, `--add-dir ../api`; quotes group, as in a
+  terminal). A flag the caller already spelled is not repeated: a role's
+  `--append-system-prompt` wins over the fixed line's.
+- **Where it runs: Windows or WSL.** In WSL the card is spawned as
+  `wsl.exe [-d <distro>] --cd <windows path> -- <cli> …` — the bare command,
+  because the `claude.cmd` shim npm installed on Windows does not exist inside
+  the distro, and the project folder handed over as a Windows path for WSL
+  itself to translate. The choice is only clickable when `wsl.exe` answers with
+  at least one registered distro (`wsl_status`, which decodes the **UTF-16**
+  output of `wsl -l -q`); the CLI still has to be installed inside that distro.
+- **The conversation cache.** How long the already-processed context survives a
+  pause: one hour keeps coming back cheap and makes each cache write dearer,
+  five minutes is the opposite, and off reprocesses everything each turn. Those
+  are the only lifetimes on offer, so there is no "expires in N minutes" box.
+  Each CLI is asked in its own language, and the catalog only holds what its
+  documentation states: **Claude Code** through the environment
+  (`ENABLE_PROMPT_CACHING_1H`, `FORCE_PROMPT_CACHING_5M`,
+  `DISABLE_PROMPT_CACHING`), **aider** through flags (`--cache-prompts`, and
+  `--cache-keepalive-pings 12` for the ~1 h version — its caching is off until
+  asked). The environment is read at spawn and the flags are added at creation,
+  so either way a change applies from the next start, not to a CLI already up.
+  An agent with no documented knob keeps the row and says why — Codex caches on
+  its own from ~1,024 tokens with no lifetime setting — instead of a control
+  that would silently do nothing.
+- **Whether it is offered.** Turning an agent off takes it out of the "Nova aba"
+  grid and the fan-out list, and nothing else: it stays installed, stays
+  configured on this screen, and `yard recruit --agent <id>` still finds it.
+
+Stored in `kv` under `agents.defaults`, keyed by the catalog id — as the bare
+line when that is all there is to say — so an agent you configured and then
+uninstalled still has a row to be erased in.
+
 **Agent role.** When opening a CLI you can say what it's in charge of: a role is
 a short name (what shows on the card and the tab) plus the instructions that go
 along at launch. Roles become a library — reusable by name, kept in just the
@@ -146,7 +199,8 @@ started the server can already drive the browser showing it.
 
 **Browser in the pane.** Besides CLIs and files, a pane's tab bar opens an
 **embedded browser**: the "Nova aba" (New tab) dialog (`+`, Ctrl+T) has a
-*Navegador* (Browser) tile in the quick start, alongside the CLIs — the grid is
+*Navegador* (Browser) tile in the grid, alongside the CLIs — one click opens it
+blank with the address bar focused. The grid is
 "what this tab can be", not "which terminal", and it's where other tab types
 come in later. The page gets the size of the pane, next to the CLI that's
 building it. It's the same engine as the canvas portals — tab and card are two
