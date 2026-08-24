@@ -144,7 +144,8 @@ MCP manager.
 Neither of the two was in the plan; both changed what the app is. They are
 recorded here as a delivered phase, with what is still pending.
 
-**Canvas mode** (the group's 4th layout mode). Infinite canvas with pan/zoom
+**Canvas** (the group's other surface — see `src/lib/surface.ts`; it shipped as
+a 4th layout mode and was split off later). Infinite canvas with pan/zoom
 (snaps to 100%), terminals as draggable/resizable cards, freehand pen and
 shapes (roughjs + perfect-freehand), arrows, text, sticky notes with light
 markdown, curved connections, eraser, undo/redo, single-key shortcuts.

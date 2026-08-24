@@ -67,7 +67,7 @@ src/
 │   ├── TitleBar/            # custom bar (decorations: false), min/max/close buttons
 │   ├── ProjectSidebar/      # tree: projects → groups → terminals
 │   ├── WorkspaceGrid/       # react-resizable-panels: automatic/grid/spotlight layouts
-│   ├── CanvasView/          # 4th layout mode: infinite canvas (cards, notes, drawing)
+│   ├── CanvasView/          # the group's other surface: infinite canvas (cards, notes, drawing)
 │   ├── TerminalPane/        # frame: title, sub-tabs, actions (restart/suspend/kill)
 │   ├── XTermView/           # the xterm itself (attach, resize, input)
 │   ├── Settings/            # Settings (Ctrl+Shift+P): category menu + full-screen page
@@ -166,13 +166,17 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 CREATE TABLE IF NOT EXISTS groups (
   id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  -- Nullable since v7: a group with no project IS a board ("quadro"), the
+  -- canvas as its own container, holding cards from several projects at once.
+  project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
   name TEXT NOT NULL, layout_json TEXT NOT NULL DEFAULT '{}',
   suspended INTEGER NOT NULL DEFAULT 0, sort INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS terminals (
   id TEXT PRIMARY KEY,
   group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  slot INTEGER NOT NULL DEFAULT 0,           -- which pane, on the grid
+  surface TEXT NOT NULL DEFAULT 'grid',      -- 'grid' (a tab) | 'canvas' (a card)
   title TEXT, kind TEXT NOT NULL,            -- 'shell' | 'agent'
   program TEXT NOT NULL, args_json TEXT NOT NULL DEFAULT '[]',
   cwd TEXT NOT NULL, resume_json TEXT,       -- how to resume (e.g. claude --resume <id>)
@@ -185,9 +189,25 @@ CREATE TABLE IF NOT EXISTS agent_sessions (   -- index of what the agents save l
 ```
 
 The canvas, the floors, the routines and the roles live inside the group's
-`layout_json` (`layoutJson.canvas`, `layout_json.floor`) — **no database
-migration**; that is what let the whole canvas mode fit without touching the
-schema.
+`layout_json` (`layoutJson.canvas`, `layout_json.floor`) — that is what let the
+whole canvas fit with almost no schema. The one column it did end up costing is
+`terminals.surface` (schema v6): the canvas and the pane grid used to draw the
+**same** terminals, and separating them needs each row to say which of the two
+it belongs to. `layoutJson` carries the other half of the split —
+`{ mode: auto|grid|spotlight, surface: grid|canvas }`, where `mode` used to hold
+`"canvas"` as a fourth value and wiped the pinned grid every time the user
+looked at the board (`src/lib/surface.ts`).
+
+The second column it cost is `groups.project_id` becoming nullable (v7). A
+group with no project is a **board**: one rule, so no second flag can disagree
+with it, and every existing mechanism that hangs off a group — terminals,
+canvas JSON, roles, routines, flows — keeps working on a board with no changes.
+`projectOfGroup` and `rootOfGroup` already answered `undefined`/`null`, which
+is why the blast radius was small. The one-way trip out of the old model is
+`extractBoards` (`src/lib/boards.ts`): every group carrying a canvas with
+something on it becomes a board named `<projeto> · <grupo>`, taking its cards
+and drawings. Its board ids are **derived** (`board-<groupId>`), not minted, so
+the migration is idempotent — `load` runs more than once.
 
 Strategy: hot state lives in memory in Rust; snapshots go to SQLite with a
 revision counter in `kv('workspace_rev')` — the backend **refuses** to save a

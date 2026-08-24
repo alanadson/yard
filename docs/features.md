@@ -122,19 +122,76 @@ change) the role later, from the card's menu, next to the tab or with
 `yard role set` — then it's handed to the running process and stays on the
 command line for the next ones.
 
-**Canvas.** Fourth layout mode for a group (alongside automatic/grid/spotlight):
-an infinite canvas with pan/zoom (snaps to 100%), terminals as draggable,
+**Canvas.** Two things, and they are separate on purpose.
+
+*A group's other surface*, not a fourth layout mode: its own button in the
+title bar, its own CLIs, and the Auto/Grade/Holofote you pinned for the panes
+waiting untouched underneath. A CLI belongs to one of the two — one opened on
+the board is a card and never a tab, one opened in a pane is a tab and never a
+card — and taking the screen to either (the tree, the search, `Ctrl+P`) turns
+the group to the right side first.
+
+*A **quadro** (board)*, which is the canvas as its own container: it belongs to
+**no project**, so it can hold cards from several at once — a Claude in `yard`
+next to a Codex in another repo, each card carrying its own folder. Boards live
+in their own section at the top of the sidebar, above `PROJETOS`, because they
+are not inside any project; the tree below is where you pick which project a
+new card runs in. A board has no panes and no floors — it is a board — and
+"Nova CLI neste quadro" asks for the folder instead of inferring it, which is
+the one question that only exists here. Modeled as a group with no project
+(`terminals` still hang off it), so cards, wires, roles, routines, flows and
+portals all work there unchanged.
+
+An infinite canvas with pan/zoom (snaps to 100%), terminals as draggable,
 resizable cards, freehand pen and shapes (roughjs + perfect-freehand), arrows,
 text, sticky notes with light markdown, curved connections, eraser, undo/redo and
 single-key shortcuts (`V H P E R O L A T N W C F`). One click on a note selects
 it; a second (or a double-click) opens editing — so `Delete` keeps deleting
-whatever is selected instead of becoming a text key. Everything persists in
-`layoutJson.canvas` — no database migration. Zoom is `transform: scale`; only
-resizing a card touches the ConPTY's rows/columns.
+whatever is selected instead of becoming a text key. The board itself persists in
+`layoutJson.canvas`; which surface each CLI lives on is `terminals.surface`
+(schema v6). Zoom is `transform: scale`; only resizing a card touches the
+ConPTY's rows/columns.
+
+**What else the board holds.** Four node types beyond the CLI card, the note,
+the portal and the flow:
+
+- **Grupos** (`Ctrl+G`) — a named frame drawn *behind* what it holds; dragging
+  it carries its contents, and frames nest. Membership is **geometric**, never
+  a stored list of ids: a thing is in the frame when its box is inside the
+  frame's box, so no delete, paste or `yard` call can leave the group pointing
+  at something that is not there. The frame's body takes no clicks at all —
+  only its title band and its border — because a group that swallowed clicks
+  would make every card inside it unselectable. Deleting the frame is
+  "desagrupar": the cards stay exactly where they are.
+- **Fichários** — several notes in one node, behind a strip of tabs. A filed
+  note **is still a note**: the fichário holds ids, not copies, so
+  `yard note read/write/edit`, the wires drawn to that note (they anchor on
+  the fichário), its lock and the global search all keep working on it. One
+  note lives in at most one fichário, and deleting the fichário puts its notes
+  back on the board rather than taking them with it.
+- **Arquivos** (imagem, vídeo, PDF, áudio) — a file pinned to a place on the
+  board. It stores an **address**, never bytes: a 300 MB video does not become
+  300 MB of `layoutJson`, and the frames travel over the same `yardfile://`
+  protocol the file viewer uses, so the webview fetches its own chunks and
+  seeking works. Inside the project the path is relative to it (a score
+  applied in another checkout still resolves); outside, the card carries its
+  own root.
+- **Árvores de arquivos** — the explorer as a card, with the four modes of the
+  spec: **Lista**, **Grade** (thumbnails), **Alterações** (`git status`) and
+  **Histórico** (the commit graph, lanes drawn from the `parents` links;
+  `src/lib/gitGraph.ts`). More than one may sit on the same board and each
+  keeps its own folder, open branches, mode and selection — which is why it
+  does not reuse the side panel's tree, whose state is global by design.
+
+Notes render **tables** and **images** as well: a relative image path resolves
+against the project root, `data:` URLs (a pasted screenshot) are embedded, and
+anything carrying another scheme is refused and left as plain text — note text
+arrives from agents through the CLI, so a `src` is untrusted input.
 
 **Search** (`Ctrl+P`). One box over everything that finds anything in the whole
 workspace — not just the active group: agents and terminals (with the process
-state right there), groups and floors, projects, canvas notes and portals, files
+state right there), groups and floors, projects, everything on the canvas
+(notes, portals, grupos, fichários, arquivos and árvores), files
 changed/touched/already open, bench prompts and tasks, addresses the processes
 announced, and the app's actions. Accent-insensitive, word-by-word search
 (`novo term` finds "Novo terminal") with an acronym shortcut underneath (`ctc`
