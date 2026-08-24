@@ -84,6 +84,10 @@ const KIND_LABELS: Record<CanvasItemType, string> = {
   note: "Nota",
   portal: "Portal",
   flow: "Fluxo",
+  media: "Arquivo",
+  binder: "Fichário",
+  tree: "Árvore de arquivos",
+  group: "Grupo",
   connection: "Conexão",
 };
 

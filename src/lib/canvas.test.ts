@@ -5,8 +5,12 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { GROUP_DEFAULT_NAME, GROUP_HEAD } from "./canvasGroups";
 import {
   connectionGeometry,
+  hitItem,
+  itemBounds,
+  translateItem,
   NODE_FONT_MAX,
   normalizeCanvas,
   NOTE_FONT_MAX,
@@ -489,3 +493,204 @@ describe("routineDue", () => {
     ).toBe(110 * MIN);
   });
 });
+
+/**
+ * The frame item (§5.4). It is the one item whose body must **not** take a
+ * click — the whole point is to select the cards standing inside it — so the
+ * hit test is the part worth locking down.
+ */
+describe("the group item", () => {
+  const group: CanvasItem = {
+    id: "g1",
+    type: "group",
+    x: 0,
+    y: 0,
+    w: 400,
+    h: 300,
+    name: "Frontend",
+    color: "#5fa8ff",
+  };
+
+  it("survives a round trip through normalizeCanvas", () => {
+    const out = normalizeCanvas({ nodes: {}, items: [group] });
+    expect(out?.items).toEqual([group]);
+  });
+
+  it("falls back to a name when the persisted one is junk", () => {
+    const out = normalizeCanvas({
+      nodes: {},
+      items: [{ ...group, name: "   " }],
+    });
+    expect((out?.items[0] as { name: string }).name).toBe(GROUP_DEFAULT_NAME);
+  });
+
+  it("is hit on its title band", () => {
+    expect(hitItem(group, 20, GROUP_HEAD / 2, 0, () => undefined)).toBe(true);
+  });
+
+  it("is hit on its border", () => {
+    expect(hitItem(group, 0, 200, 2, () => undefined)).toBe(true);
+  });
+
+  it("is NOT hit in the middle of its body", () => {
+    // A frame that swallowed clicks in its body would make every card inside
+    // it unselectable — the exact thing §5.4 forbids.
+    expect(hitItem(group, 200, 200, 0, () => undefined)).toBe(false);
+  });
+
+  it("reports its whole rectangle as bounds", () => {
+    expect(itemBounds(group, () => undefined)).toEqual({ x: 0, y: 0, w: 400, h: 300 });
+  });
+
+  it("moves as a rectangle", () => {
+    expect(translateItem(group, 10, -5)).toMatchObject({ x: 10, y: -5 });
+  });
+})
+
+/**
+ * The media item (§52). The field that matters is `path`: an item that loses
+ * it on a round trip is a card pointing at nothing, and the loss is silent —
+ * it only shows on the next reload.
+ */
+describe("the media item", () => {
+  const media: CanvasItem = {
+    id: "m1",
+    type: "media",
+    x: 10,
+    y: 20,
+    w: 400,
+    h: 300,
+    path: "docs/shot.png",
+    color: "#f5f5f5",
+  };
+
+  it("survives a round trip through normalizeCanvas", () => {
+    const out = normalizeCanvas({ nodes: {}, items: [media] });
+    expect(out?.items[0]).toMatchObject({ path: "docs/shot.png", w: 400, h: 300 });
+  });
+
+  it("keeps a root of its own when the file lives outside the project", () => {
+    const out = normalizeCanvas({
+      nodes: {},
+      items: [{ ...media, root: "D:/fotos" }],
+    });
+    expect(out?.items[0]).toMatchObject({ root: "D:/fotos" });
+  });
+
+  it("is dropped when it carries no path — there is nothing to show", () => {
+    const out = normalizeCanvas({ nodes: {}, items: [{ ...media, path: "  " }] });
+    expect(out?.items).toEqual([]);
+  });
+
+  it("is hit anywhere on its body, like every other card", () => {
+    expect(hitItem(media, 200, 150, 0, () => undefined)).toBe(true);
+  });
+
+  it("moves as a rectangle", () => {
+    expect(translateItem(media, 5, 5)).toMatchObject({ x: 15, y: 25 });
+  });
+})
+
+/**
+ * The binder item (§13). `notes` is a list of *references*, and a reference
+ * that outlives what it points at is the classic way a persisted graph rots:
+ * `yard note delete` can take a filed note out from under its binder at any
+ * moment.
+ */
+describe("the binder item", () => {
+  const binder: CanvasItem = {
+    id: "b1",
+    type: "binder",
+    x: 0,
+    y: 0,
+    w: 380,
+    h: 300,
+    notes: ["n1", "n2"],
+    active: 1,
+    color: "#f5f5f5",
+  };
+  const note = (id: string): CanvasItem => ({
+    id,
+    type: "note",
+    x: 0,
+    y: 0,
+    w: 200,
+    h: 140,
+    text: id,
+    color: "#fff",
+  });
+
+  it("survives a round trip through normalizeCanvas", () => {
+    const out = normalizeCanvas({ nodes: {}, items: [note("n1"), note("n2"), binder] });
+    expect(out?.items[2]).toMatchObject({ notes: ["n1", "n2"], active: 1 });
+  });
+
+  it("drops a tab whose note is not on the board any more", () => {
+    const out = normalizeCanvas({ nodes: {}, items: [note("n1"), binder] });
+    expect((out?.items[1] as { notes: string[] }).notes).toEqual(["n1"]);
+  });
+
+  it("pulls `active` back when pruning left it past the end", () => {
+    // It pointed at `n2`, which is gone. Left alone it would index nothing
+    // and the binder would open blank on a board that has the note.
+    const out = normalizeCanvas({ nodes: {}, items: [note("n1"), binder] });
+    expect((out?.items[1] as { active?: number }).active).toBe(0);
+  });
+
+  it("survives with no notes at all — an empty binder is legal", () => {
+    const out = normalizeCanvas({ nodes: {}, items: [{ ...binder, notes: [] }] });
+    expect(out?.items[0]).toMatchObject({ type: "binder", notes: [] });
+  });
+})
+
+/**
+ * The file-tree item (§14). §14.1 is explicit that more than one may sit on
+ * the same board and that **each instance keeps its own** root, open folders,
+ * mode and selection — so all four travel on the item, and a crooked `mode`
+ * from an older save must land on something that renders.
+ */
+describe("the tree item", () => {
+  const tree: CanvasItem = {
+    id: "t1",
+    type: "tree",
+    x: 0,
+    y: 0,
+    w: 320,
+    h: 400,
+    path: "src",
+    mode: "grid",
+    expanded: ["src", "src/lib"],
+    selected: "src/lib/canvas.ts",
+    color: "#f5f5f5",
+  };
+
+  it("survives a round trip through normalizeCanvas", () => {
+    const out = normalizeCanvas({ nodes: {}, items: [tree] });
+    expect(out?.items[0]).toMatchObject({
+      path: "src",
+      mode: "grid",
+      expanded: ["src", "src/lib"],
+      selected: "src/lib/canvas.ts",
+    });
+  });
+
+  it("falls back to the list mode when the saved one is not one of ours", () => {
+    const out = normalizeCanvas({ nodes: {}, items: [{ ...tree, mode: "hologram" }] });
+    expect((out?.items[0] as { mode: string }).mode).toBe("list");
+  });
+
+  it("keeps a tree rooted at the project root, where `path` is empty", () => {
+    // `""` is the project root and the most common case of all — it must not
+    // be mistaken for a missing field and dropped.
+    const out = normalizeCanvas({ nodes: {}, items: [{ ...tree, path: "" }] });
+    expect(out?.items).toHaveLength(1);
+  });
+
+  it("drops junk out of the open-folder list", () => {
+    const out = normalizeCanvas({
+      nodes: {},
+      items: [{ ...tree, expanded: ["src", 7, null, "lib"] }],
+    });
+    expect((out?.items[0] as { expanded: string[] }).expanded).toEqual(["src", "lib"]);
+  });
+})

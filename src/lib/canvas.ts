@@ -11,6 +11,23 @@
  * `screen = (world - viewport.xy) * viewport.zoom`.
  */
 
+import { BINDER_MIN_H, BINDER_MIN_W, BINDER_NAME_MAX } from "./binder";
+import {
+  isTreeMode,
+  TREE_MIN_H,
+  TREE_MIN_W,
+  TREE_NAME_MAX,
+  type TreeMode,
+} from "./treeNode";
+import { MEDIA_MIN_H, MEDIA_MIN_W, MEDIA_NAME_MAX } from "./mediaNode";
+import {
+  GROUP_DEFAULT_NAME,
+  GROUP_HEAD,
+  GROUP_MIN_H,
+  GROUP_MIN_W,
+  GROUP_NAME_MAX,
+} from "./canvasGroups";
+
 export interface CanvasViewport {
   x: number;
   y: number;
@@ -145,6 +162,77 @@ export type CanvasItem =
        * keeps the flow manual (HUD or an agent calling it on its own).
        */
       trigger?: boolean;
+    })
+  | (ItemBase & {
+      type: "tree";
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      /** Folder shown, `/` separated, relative to `root`. `""` is the root. */
+      path: string;
+      /** Absolute root. Absent = the group's project (same rule as `media`). */
+      root?: string;
+      /** Which of the four faces of §14.2 is showing. */
+      mode: TreeMode;
+      /**
+       * Folders open **in this card**. §14.1 asks for one state per instance,
+       * and the panel's is global — so it travels here.
+       */
+      expanded?: string[];
+      /** File highlighted in this card. */
+      selected?: string;
+      /** Pinned name. Without it, the folder's own. */
+      name?: string;
+    })
+  | (ItemBase & {
+      type: "binder";
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      /** Pinned name. Without it, the active note's name. */
+      name?: string;
+      /**
+       * Ids of the notes behind the tabs, in tab order.
+       *
+       * References, never copies: a filed note is still an item of its own in
+       * `items`, which is what keeps `yard note write`, its wires, its lock
+       * and the global search working on it. See `lib/binder.ts`.
+       */
+      notes: string[];
+      /** Index of the visible tab. Pruned back into range on load. */
+      active?: number;
+    })
+  | (ItemBase & {
+      type: "media";
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      /**
+       * Path of the file, `/` separated, relative to `root` — or to the
+       * group's project when `root` is absent. Never bytes: a card is an
+       * address, so a 300 MB video does not become 300 MB of `layoutJson`.
+       */
+      path: string;
+      /**
+       * Folder the path hangs off. Absent = the project's own root, which is
+       * what keeps a card portable when a score is applied elsewhere; present
+       * for a file outside the project, and for every card on a board.
+       */
+      root?: string;
+      /** Pinned name (`--name`). Without it, the file's own name. */
+      name?: string;
+    })
+  | (ItemBase & {
+      type: "group";
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      /** What the band at the top says. Never blank — see `sanitizeItem`. */
+      name: string;
     })
   | (ItemBase & { type: "connection"; from: string; to: string });
 
@@ -572,9 +660,11 @@ export function normalizeCanvas(raw: unknown): CanvasData | undefined {
     }
   }
 
-  const items = Array.isArray(r.items)
-    ? (r.items as CanvasItem[]).filter(isValidItem).map(sanitizeItem)
-    : [];
+  const items = pruneBinders(
+    Array.isArray(r.items)
+      ? (r.items as CanvasItem[]).filter(isValidItem).map(sanitizeItem)
+      : [],
+  );
 
   const data: CanvasData = { viewport, nodes, items };
   const roles = normalizeRoles(r.roles);
@@ -586,6 +676,30 @@ export function normalizeCanvas(raw: unknown): CanvasData | undefined {
   const presets = normalizePresets(r.rolePresets);
   if (presets) data.rolePresets = presets;
   return data;
+}
+
+/**
+ * Drops tabs pointing at notes that are not on the board.
+ *
+ * A cross-item rule, so it cannot live in `sanitizeItem` — that one sees one
+ * item at a time. It has to exist because a binder's `notes` are references
+ * and `yard note delete` can take a filed note out from under its binder at
+ * any moment: without this, the tab survives every reload and opens onto
+ * nothing. `active` is pulled back into range in the same pass, or a binder
+ * that lost its last tab would open blank on a board that still has notes.
+ */
+function pruneBinders(items: CanvasItem[]): CanvasItem[] {
+  const notes = new Set(items.filter((i) => i.type === "note").map((i) => i.id));
+  return items.map((it) => {
+    if (it.type !== "binder") return it;
+    const kept = it.notes.filter((id) => notes.has(id));
+    if (kept.length === it.notes.length) return it;
+    return {
+      ...it,
+      notes: kept,
+      active: kept.length ? Math.min(it.active ?? 0, kept.length - 1) : undefined,
+    };
+  });
 }
 
 /** Drops junk on optional fields so a crooked save cannot poison the type. */
@@ -615,6 +729,69 @@ function sanitizeItem(it: CanvasItem): CanvasItem {
       name: (it.name || "Fluxo").trim().slice(0, FLOW_NAME_MAX) || "Fluxo",
       stages: normalizeFlowStages(it.stages),
       ...(it.trigger === false ? { trigger: false } : { trigger: undefined }),
+    };
+  }
+  if (it.type === "tree") {
+    return {
+      ...it,
+      w: Math.max(TREE_MIN_W, it.w),
+      h: Math.max(TREE_MIN_H, it.h),
+      path: it.path.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, ""),
+      // A mode this build does not know renders nothing at all, and the card
+      // would look broken for a reason nobody could see. The list always works.
+      mode: isTreeMode(it.mode) ? it.mode : "list",
+      ...(Array.isArray(it.expanded)
+        ? {
+            expanded: it.expanded.filter(
+              (p): p is string => typeof p === "string" && !!p,
+            ),
+          }
+        : { expanded: undefined }),
+      ...(typeof it.root === "string" && it.root.trim()
+        ? { root: it.root.trim().replace(/\\/g, "/") }
+        : { root: undefined }),
+      ...(typeof it.selected === "string" && it.selected
+        ? { selected: it.selected }
+        : { selected: undefined }),
+      ...(typeof it.name === "string" && it.name.trim()
+        ? { name: it.name.trim().slice(0, TREE_NAME_MAX) }
+        : { name: undefined }),
+    };
+  }
+  if (it.type === "binder") {
+    return {
+      ...it,
+      w: Math.max(BINDER_MIN_W, it.w),
+      h: Math.max(BINDER_MIN_H, it.h),
+      notes: it.notes.filter((n): n is string => typeof n === "string" && !!n),
+      ...(typeof it.name === "string" && it.name.trim()
+        ? { name: it.name.trim().slice(0, BINDER_NAME_MAX) }
+        : { name: undefined }),
+    };
+  }
+  if (it.type === "media") {
+    return {
+      ...it,
+      w: Math.max(MEDIA_MIN_W, it.w),
+      h: Math.max(MEDIA_MIN_H, it.h),
+      path: it.path.trim().replace(/\\/g, "/"),
+      ...(typeof it.root === "string" && it.root.trim()
+        ? { root: it.root.trim().replace(/\\/g, "/") }
+        : { root: undefined }),
+      ...(typeof it.name === "string" && it.name.trim()
+        ? { name: it.name.trim().slice(0, MEDIA_NAME_MAX) }
+        : { name: undefined }),
+    };
+  }
+  if (it.type === "group") {
+    // A frame with no name is a rectangle nobody can tell from a drawn one,
+    // and the band would render as an empty bar. It always says something.
+    const name = (it.name || "").trim().slice(0, GROUP_NAME_MAX);
+    return {
+      ...it,
+      name: name || GROUP_DEFAULT_NAME,
+      w: Math.max(GROUP_MIN_W, it.w),
+      h: Math.max(GROUP_MIN_H, it.h),
     };
   }
   if (it.type !== "portal") return it;
@@ -704,6 +881,18 @@ function isValidItem(it: CanvasItem): boolean {
         typeof it.name === "string" &&
         Array.isArray(it.stages)
       );
+    case "tree":
+      return [it.x, it.y, it.w, it.h].every(Number.isFinite) && typeof it.path === "string";
+    case "binder":
+      return [it.x, it.y, it.w, it.h].every(Number.isFinite) && Array.isArray(it.notes);
+    case "media":
+      return (
+        [it.x, it.y, it.w, it.h].every(Number.isFinite) &&
+        typeof it.path === "string" &&
+        it.path.trim().length > 0
+      );
+    case "group":
+      return [it.x, it.y, it.w, it.h].every(Number.isFinite);
     case "connection":
       return typeof it.from === "string" && typeof it.to === "string";
     default:
@@ -911,6 +1100,10 @@ export function itemBounds(
     case "note":
     case "portal":
     case "flow":
+    case "media":
+    case "binder":
+    case "tree":
+    case "group":
       return { x: it.x, y: it.y, w: it.w, h: it.h };
     case "line":
     case "arrow":
@@ -997,9 +1190,35 @@ export function hitItem(
     case "note":
     case "portal":
     case "flow":
+    case "media":
+    case "binder":
+    case "tree":
       return (
         wx >= it.x - tol && wx <= it.x + it.w + tol && wy >= it.y - tol && wy <= it.y + it.h + tol
       );
+    case "group": {
+      // Title band, or the border ring — never the body. A frame that took
+      // clicks in the middle would make every card it holds unselectable,
+      // which is the one thing §5.4 says a group must not do.
+      //
+      // The ring counts here and not in the DOM: this test serves the right
+      // click and the eraser, which work in world coordinates and can afford
+      // a 3px tolerance around a stroke. The pointer cannot — an element
+      // covering the ring would cover the interior too (see `GroupFrame`).
+      const inside =
+        wx >= it.x - tol &&
+        wx <= it.x + it.w + tol &&
+        wy >= it.y - tol &&
+        wy <= it.y + it.h + tol;
+      if (!inside) return false;
+      if (wy <= it.y + GROUP_HEAD) return true;
+      const t = tol + 3;
+      return (
+        Math.abs(wx - it.x) <= t ||
+        Math.abs(wx - (it.x + it.w)) <= t ||
+        Math.abs(wy - (it.y + it.h)) <= t
+      );
+    }
     case "connection": {
       const a = nodeOf(it.from);
       const b = nodeOf(it.to);
@@ -1113,6 +1332,53 @@ export function sameItem(a: CanvasItem, b: CanvasItem): boolean {
         )
       );
     }
+    case "tree": {
+      const o = b as typeof a;
+      return (
+        a.x === o.x &&
+        a.y === o.y &&
+        a.w === o.w &&
+        a.h === o.h &&
+        a.path === o.path &&
+        a.root === o.root &&
+        a.mode === o.mode &&
+        a.name === o.name &&
+        a.selected === o.selected &&
+        (a.expanded?.length ?? 0) === (o.expanded?.length ?? 0) &&
+        (a.expanded ?? []).every((p, i) => p === o.expanded?.[i])
+      );
+    }
+    case "binder": {
+      const o = b as typeof a;
+      return (
+        a.x === o.x &&
+        a.y === o.y &&
+        a.w === o.w &&
+        a.h === o.h &&
+        a.name === o.name &&
+        a.active === o.active &&
+        a.notes.length === o.notes.length &&
+        a.notes.every((n, i) => n === o.notes[i])
+      );
+    }
+    case "media": {
+      const o = b as typeof a;
+      return (
+        a.x === o.x &&
+        a.y === o.y &&
+        a.w === o.w &&
+        a.h === o.h &&
+        a.path === o.path &&
+        a.root === o.root &&
+        a.name === o.name
+      );
+    }
+    case "group": {
+      const o = b as typeof a;
+      return (
+        a.x === o.x && a.y === o.y && a.w === o.w && a.h === o.h && a.name === o.name
+      );
+    }
     case "connection": {
       const o = b as typeof a;
       return a.from === o.from && a.to === o.to;
@@ -1188,6 +1454,10 @@ export function translateItem(it: CanvasItem, dx: number, dy: number): CanvasIte
     case "note":
     case "portal":
     case "flow":
+    case "media":
+    case "binder":
+    case "tree":
+    case "group":
       return { ...it, x: it.x + dx, y: it.y + dy };
     case "line":
     case "arrow":
