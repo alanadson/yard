@@ -322,7 +322,8 @@ interface TabRef {
  * only two reads as a bug.
  */
 function tabsInSlot(groupId: string, slot: number): TabRef[] {
-  const all = useProjects.getState().terminalsOf(groupId);
+  // A bar only ever paints the grid's CLIs: the board's cards are not tabs.
+  const all = useProjects.getState().terminalsOn(groupId, "grid");
   const docs = useEditor.getState().docs.filter((d) => d.groupId === groupId);
   const browsers = useBrowsers.getState().tabs.filter((b) => b.groupId === groupId);
   const place = useNotes.getState().place;
@@ -355,10 +356,10 @@ function focusedTabs(): {
   activeId: string | null;
   tabs: TabRef[];
 } | null {
-  const { activeGroupId, terminalsOf, layoutOf, terminal } =
+  const { activeGroupId, terminalsOn, layoutOf, terminal } =
     useProjects.getState();
   if (!activeGroupId) return null;
-  const everything = terminalsOf(activeGroupId);
+  const everything = terminalsOn(activeGroupId, "grid");
   const docs = useEditor
     .getState()
     .docs.filter((d) => d.groupId === activeGroupId);

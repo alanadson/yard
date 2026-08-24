@@ -14,6 +14,14 @@ export type EntryKind =
   | "project"
   | "note"
   | "memo"
+  /** A frame drawn on the canvas (§5.4) — not a workspace group. */
+  | "frame"
+  /** A file pinned to the canvas as a card (§52). */
+  | "media"
+  /** A fichário — several notes in one node (§13). */
+  | "binder"
+  /** A file-tree card on the canvas (§14). */
+  | "tree"
   | "portal"
   | "url"
   | "file"
@@ -54,7 +62,11 @@ export interface Scope {
 export const SCOPES: readonly Scope[] = [
   { prefix: ">", kinds: ["action"], label: "ações" },
   { prefix: "@", kinds: ["terminal"], label: "agentes" },
-  { prefix: "#", kinds: ["note", "portal", "url"], label: "canvas" },
+  {
+    prefix: "#",
+    kinds: ["note", "portal", "frame", "media", "binder", "tree", "url"],
+    label: "canvas",
+  },
   { prefix: "/", kinds: ["file"], label: "arquivos" },
 ];
 
@@ -81,6 +93,10 @@ export const KIND_LABEL: Record<EntryKind, string> = {
   project: "Projetos",
   note: "Notas do canvas",
   memo: "Anotações",
+  frame: "Grupos do canvas",
+  media: "Arquivos no canvas",
+  binder: "Fichários",
+  tree: "Árvores de arquivos",
   portal: "Portais",
   url: "Endereços anunciados",
   file: "Arquivos",
@@ -96,6 +112,10 @@ const KIND_ORDER: readonly EntryKind[] = [
   "note",
   "memo",
   "portal",
+  "frame",
+  "media",
+  "binder",
+  "tree",
   "group",
   "project",
   "prompt",

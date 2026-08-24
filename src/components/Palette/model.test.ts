@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   fieldsOf,
   parseQuery,
+  SCOPES,
   restingOrder,
   sectionsOf,
   type PaletteEntry,
@@ -47,6 +48,26 @@ describe("parseQuery", () => {
   it("ignores leading spaces before the prefix", () => {
     expect(parseQuery("  #nota").scope?.prefix).toBe("#");
     expect(parseQuery("  #nota").text).toBe("nota");
+  });
+});
+
+describe("the canvas scope", () => {
+  it("covers every kind of node the board can hold", () => {
+    // §66 asks the same question of each new node type, and this is the one
+    // it is easiest to forget: a fichário or an árvore that the Busca cannot
+    // reach is invisible the moment the camera is somewhere else.
+    const canvas = SCOPES.find((s) => s.prefix === "#")!;
+    expect(canvas.kinds).toEqual(
+      expect.arrayContaining(["note", "portal", "frame", "media", "binder", "tree"]),
+    );
+  });
+
+  it("covers the frames drawn on the board", () => {
+    // `#` is "what is on the canvas". A frame (§5.4) is on the canvas and
+    // carries the only name the user gave that region — leaving it out of the
+    // scope makes the one thing they named the one thing they cannot find.
+    const canvas = SCOPES.find((s) => s.prefix === "#")!;
+    expect(canvas.kinds).toContain("frame");
   });
 });
 

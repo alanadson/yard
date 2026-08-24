@@ -646,7 +646,7 @@ export function CodeEditor() {
   // restored with `open` from a canvas would otherwise throw this window over
   // a tab grid that has a perfectly good bar to show the file in.
   const noTabs = useProjects((s) =>
-    s.activeGroupId ? s.layoutOf(s.activeGroupId).mode === "canvas" : true,
+    s.activeGroupId ? s.layoutOf(s.activeGroupId).surface === "canvas" : true,
   );
   const tabsKey = useEditor((s) =>
     s.docs.map((d) => `${d.id}:${isDirty(d)}:${d.stale}:${d.missing}`).join("|"),

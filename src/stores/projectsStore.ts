@@ -16,14 +16,28 @@ import {
   type PtyKind,
 } from "../lib/ipc";
 import { EMPTY_CANVAS, normalizeCanvas, type CanvasData } from "../lib/canvas";
+import { extractBoards } from "../lib/boards";
 import { GROUND_FLOOR, normalizeFloor, type FloorMeta } from "../lib/floors";
+import {
+  normalizeSurface,
+  onSurface,
+  splitLegacyMode,
+  type GridMode,
+  type Surface,
+} from "../lib/surface";
 import { Lru } from "../lib/lru";
 import { uiLog } from "../lib/log";
 import { readInitialPrefs } from "../lib/prefs";
 import { sameRoot } from "../lib/roots";
 import { useUI } from "./uiStore";
 
-export type LayoutMode = "auto" | "grid" | "spotlight" | "canvas";
+/**
+ * The shape of the pane grid. Canvas is **not** one of these any more: it is
+ * the other surface of the group (`GroupLayout.surface`), so switching to it
+ * no longer erases the Grade/Holofote the user pinned. `lib/surface.ts` tells
+ * the whole story, including how the old four-valued field is read.
+ */
+export type LayoutMode = GridMode;
 
 /** Visual identity of the project (icon/color picker). */
 export interface ProjectStyle {
@@ -33,6 +47,8 @@ export interface ProjectStyle {
 
 export interface GroupLayout {
   mode: LayoutMode;
+  /** Which of the two surfaces the group is showing: the grid or the canvas. */
+  surface: Surface;
   /** How many panes the grid shows (ignored in `auto` mode). */
   panelCount: number;
   /** Active sub-tab of each slot. */
@@ -45,6 +61,7 @@ export interface GroupLayout {
 
 export const DEFAULT_LAYOUT: GroupLayout = {
   mode: "auto",
+  surface: "grid",
   panelCount: 2,
   activeBySlot: {},
 };
@@ -63,8 +80,13 @@ export function parseLayout(json: string): GroupLayout {
   let layout: GroupLayout;
   try {
     const parsed = JSON.parse(json || "{}");
+    // `mode` used to hold `"canvas"` as a fourth value; `splitLegacyMode`
+    // turns that back into the pair. An explicit `surface` (everything
+    // written after the split) always wins over what the mode implied.
+    const legacy = splitLegacyMode(parsed.mode);
     layout = {
-      mode: parsed.mode ?? DEFAULT_LAYOUT.mode,
+      mode: legacy.mode,
+      surface: parsed.surface === undefined ? legacy.surface : normalizeSurface(parsed.surface),
       panelCount: Math.min(6, Math.max(1, parsed.panelCount ?? 2)),
       activeBySlot: parsed.activeBySlot ?? {},
     };
@@ -103,6 +125,17 @@ interface ProjectsState {
   terminals: TerminalRow[];
   activeProjectId: string | null;
   activeGroupId: string | null;
+  /**
+   * The group the user was in before stepping onto a board — `null` when they
+   * have not been in one this session.
+   *
+   * It exists because the canvas shows only the boards in the sidebar and a
+   * board has no pane switch either, so "back to the panes" needs somewhere
+   * concrete to point at. Session state: it is in the store (not a module
+   * variable) so it resets with everything else, and `save` never sees it —
+   * only projects, groups and terminals reach the disk.
+   */
+  groupBeforeBoard: string | null;
 
   load: () => Promise<void>;
   save: () => Promise<void>;
@@ -121,6 +154,12 @@ interface ProjectsState {
   removeProject: (id: string) => void;
   setActiveProject: (id: string | null) => void;
 
+  /**
+   * Creates a board: a group with no project, showing the canvas. It is not
+   * `addGroup(null)` on purpose — a board is a different thing from a floor,
+   * and a caller that forgot to pass a project would silently make one.
+   */
+  addBoard: (name: string) => string;
   addGroup: (
     projectId: string,
     name?: string,
@@ -135,6 +174,11 @@ interface ProjectsState {
   removeGroup: (id: string) => void;
   moveGroup: (id: string, delta: number) => void;
   setActiveGroup: (id: string | null) => void;
+  /**
+   * Leaves the board for `groupBeforeBoard`, or the active project's first
+   * group. Does nothing when there is no project to go to.
+   */
+  leaveBoard: () => void;
   updateLayout: (groupId: string, patch: Partial<GroupLayout>) => void;
   /** Apply a transform to the group's canvas state and schedule a save. */
   updateCanvas: (groupId: string, fn: (c: CanvasData) => CanvasData) => void;
@@ -150,6 +194,8 @@ interface ProjectsState {
     args?: string[];
     cwd: string;
     resume?: string[] | null;
+    /** Which surface it is born on. Absent = the grid, where CLIs come from. */
+    surface?: Surface;
   }) => string;
   updateTerminal: (id: string, patch: Partial<TerminalRow>) => void;
   /**
@@ -166,7 +212,17 @@ interface ProjectsState {
   removeTerminal: (id: string) => void;
 
   groupsOf: (projectId: string) => GroupRow[];
+  /** The boards, in bar order. Never includes a project's groups. */
+  boards: () => GroupRow[];
+  /** Is this group a board — the canvas as its own container? */
+  isBoard: (groupId: string) => boolean;
   terminalsOf: (groupId: string) => TerminalRow[];
+  /**
+   * The group's terminals on one surface — what the grid draws and what the
+   * canvas draws. `terminalsOf` stays the whole group, because closing it,
+   * scoring it or counting what is alive has to see both.
+   */
+  terminalsOn: (groupId: string, surface: Surface) => TerminalRow[];
   layoutOf: (groupId: string) => GroupLayout;
   /** The group's floor metadata; a group without `floor` is treated as ground. */
   floorOf: (groupId: string) => FloorMeta;
@@ -194,6 +250,7 @@ export const useProjects = create<ProjectsState>((set, get) => ({
   terminals: [],
   activeProjectId: null,
   activeGroupId: null,
+  groupBeforeBoard: null,
 
   load: async () => {
     let snap: Awaited<ReturnType<typeof ipc.loadWorkspace>>;
@@ -206,10 +263,17 @@ export const useProjects = create<ProjectsState>((set, get) => ({
       set({ loadError: String(e) });
       throw e;
     }
-    const { groups, terminals, changed, needsMark } = await collapseToTabs(
-      snap.groups,
-      snap.terminals,
-    );
+    const tabs = await collapseToTabs(snap.groups, snap.terminals);
+    const { needsMark } = tabs;
+    // Three migrations, one save. The order is not free: the surface stamp has
+    // to run before the boards come out, because what travels to a board is
+    // the terminals **on the canvas** — and until they are stamped, nobody
+    // knows which those are.
+    const stamped = stampSurfaces(tabs.groups, tabs.terminals);
+    const carved = extractBoards(snap.projects, tabs.groups, stamped.terminals);
+    const groups = carved.groups;
+    const terminals = carved.terminals;
+    const changed = tabs.changed || stamped.changed || carved.changed;
 
     // Where the user was is preserved when it still exists. `load` is not
     // only the boot path: it is also the recovery from a `save` refused for a
@@ -227,11 +291,19 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     // whatever mode *that* one is in, and the board the user closed was
     // simply somewhere else.
     const remembered = previous.activeGroupId ?? (await lastGroupPref());
-    const groupStill = groups.find((g) => g.id === remembered) ?? null;
+    // A group whose canvas just became a board: the user was looking at that
+    // canvas, so that is where they come back — not at the panes behind it.
+    const followed =
+      remembered && carved.boardOf.has(remembered)
+        ? (carved.boardOf.get(remembered) as string)
+        : remembered;
+    const groupStill = groups.find((g) => g.id === followed) ?? null;
     const activeProjectId =
       projectStill ?? groupStill?.projectId ?? snap.projects[0]?.id ?? null;
+    // A board has no project, so it can never "belong" to the active one —
+    // it is kept by name instead, or the first group of the project wins.
     const activeGroupId =
-      groupStill?.projectId === activeProjectId
+      groupStill && (groupStill.projectId === null || groupStill.projectId === activeProjectId)
         ? groupStill.id
         : (groups.find((g) => g.projectId === activeProjectId)?.id ?? null);
 
@@ -417,6 +489,24 @@ export const useProjects = create<ProjectsState>((set, get) => ({
   },
 
   // --- groups ---
+  addBoard: (name) => {
+    const id = nanoid(10);
+    const siblings = get().groups.filter((g) => g.projectId === null);
+    const group: GroupRow = {
+      id,
+      projectId: null,
+      name: name.trim() || `Quadro ${siblings.length + 1}`,
+      // A board is the canvas and nothing else, so it is born showing it. The
+      // grid fields stay at their defaults and are never read for a board.
+      layoutJson: JSON.stringify({ ...DEFAULT_LAYOUT, surface: "canvas" }),
+      suspended: false,
+      sort: siblings.reduce((max, g) => Math.max(max, g.sort + 1), 0),
+    };
+    set((s) => ({ groups: [...s.groups, group], activeGroupId: id }));
+    get().scheduleSave();
+    return id;
+  },
+
   addGroup: (projectId, name, opts) => {
     const id = nanoid(10);
     const siblings = get().groups.filter((g) => g.projectId === projectId);
@@ -486,10 +576,32 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     get().scheduleSave();
   },
 
+  leaveBoard: () => {
+    const s = get();
+    const remembered =
+      s.groupBeforeBoard && s.groups.find((g) => g.id === s.groupBeforeBoard);
+    const fallback = s.activeProjectId ? s.groupsOf(s.activeProjectId)[0] : undefined;
+    const target = remembered || fallback;
+    // Nothing to leave to: the workspace has no project yet. Doing nothing is
+    // right — the button that calls this is not offered in that state either.
+    if (target) get().setActiveGroup(target.id);
+  },
+
   setActiveGroup: (id) => {
     const group = get().groups.find((g) => g.id === id);
+    // Stepping onto a board: remember where from, and never overwrite that
+    // with another board — two boards in a row would erase the way back.
+    const current = get().groups.find((g) => g.id === get().activeGroupId);
+    const before =
+      group?.projectId === null && current && current.projectId !== null
+        ? current.id
+        : get().groupBeforeBoard;
     set({
+      groupBeforeBoard: before,
       activeGroupId: id,
+      // A board has no project, and blanking the active one would empty the
+      // bench, the changes panel and the file tree the moment the user looked
+      // at a board. They keep pointing where they were.
       activeProjectId: group?.projectId ?? get().activeProjectId,
     });
   },
@@ -503,6 +615,11 @@ export const useProjects = create<ProjectsState>((set, get) => ({
               layoutJson: JSON.stringify({
                 ...parseLayout(g.layoutJson),
                 ...patch,
+                // A board has no panes at all. Enforced here, the only door
+                // layout writes go through, because the way out was a trap:
+                // the user landed on an empty grid whose "Canvas" button was
+                // exactly the one they had just left.
+                ...(g.projectId === null ? { surface: "canvas" as const } : {}),
               }),
             }
           : g,
@@ -545,6 +662,7 @@ export const useProjects = create<ProjectsState>((set, get) => ({
       args: input.args ?? [],
       cwd: input.cwd,
       resume: input.resume ?? null,
+      surface: input.surface ?? "grid",
       // Same reason as `addGroup`: `siblings.length` collides with a surviving
       // tab once anything has been closed, and the tab order stops being
       // something the user can reason about.
@@ -570,11 +688,15 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     if (!term || beforeId === id) return;
     if (term.slot === slot && beforeId === null) return;
     // The group's bar order without the moved tab, then the tab put back at
-    // the drop point. `sort` is renumbered for the whole group so it stays
+    // the drop point. `sort` is renumbered for the whole surface so it stays
     // unique — a tie would leave the order to array position, which nothing
     // guarantees across a save/load.
+    //
+    // Only the terminal's own surface takes part: `slot` means "pane" and the
+    // canvas has none, so a card left on the default slot 0 would otherwise
+    // be counted among the tabs of pane 0 and shuffled along with them.
     const rest = get()
-      .terminalsOf(term.groupId)
+      .terminalsOn(term.groupId, normalizeSurface(term.surface))
       .filter((t) => t.id !== id);
     let i = beforeId ? rest.findIndex((t) => t.id === beforeId) : -1;
     if (i < 0) {
@@ -605,11 +727,12 @@ export const useProjects = create<ProjectsState>((set, get) => ({
   moveTerminalBy: (id, delta) => {
     const term = get().terminal(id);
     if (!term) return;
-    // Only among siblings of the same pane: the order the tree shows is that
-    // pane's tab bar, and swapping with a neighbour from another pane would
-    // move the tab somewhere nobody asked for.
+    // Only among siblings of the same pane, on the same surface: the order
+    // the tree shows is that pane's tab bar, and swapping with a neighbour
+    // from another pane — or with a card that merely shares the slot number —
+    // would move the tab somewhere nobody asked for.
     const siblings = get()
-      .terminalsOf(term.groupId)
+      .terminalsOn(term.groupId, normalizeSurface(term.surface))
       .filter((t) => t.slot === term.slot);
     const i = siblings.findIndex((t) => t.id === id);
     const j = i + delta;
@@ -630,8 +753,10 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     if (term) {
       const layout = get().layoutOf(term.groupId);
       if (layout.activeBySlot[term.slot] === id) {
+        // The pane falls back to another of its own tabs — a card that shares
+        // the slot number is not one of them.
         const next = get()
-          .terminalsOf(term.groupId)
+          .terminalsOn(term.groupId, normalizeSurface(term.surface))
           .find((t) => t.slot === term.slot);
         const activeBySlot = { ...layout.activeBySlot };
         if (next) activeBySlot[term.slot] = next.id;
@@ -647,10 +772,17 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     get()
       .groups.filter((g) => g.projectId === projectId)
       .sort((a, b) => a.sort - b.sort),
+  boards: () =>
+    get()
+      .groups.filter((g) => g.projectId === null)
+      .sort((a, b) => a.sort - b.sort),
+  isBoard: (groupId) =>
+    get().groups.find((g) => g.id === groupId)?.projectId === null,
   terminalsOf: (groupId) =>
     get()
       .terminals.filter((t) => t.groupId === groupId)
       .sort((a, b) => a.sort - b.sort),
+  terminalsOn: (groupId, surface) => onSurface(get().terminalsOf(groupId), surface),
   layoutOf: (groupId) => {
     const g = get().groups.find((x) => x.id === groupId);
     return g ? parseLayout(g.layoutJson) : { ...DEFAULT_LAYOUT };
@@ -690,6 +822,39 @@ useProjects.subscribe((state, prev) => {
   if (state.activeGroupId === prev.activeGroupId) return;
   void ipc.writePref(LAST_GROUP_KEY, state.activeGroupId ?? "").catch(() => {});
 });
+
+/**
+ * Gives a surface to every terminal that predates the split.
+ *
+ * Before it, the grid and the canvas drew the **same** terminals, so there is
+ * no honest way to tell which of the two a given CLI "belonged" to — it
+ * belonged to both. The rule that moves nothing on screen is the group's own
+ * surface: whatever the user had in front of them when they closed the app is
+ * where their CLIs are when it opens again.
+ *
+ * Idempotent, and deliberately without a `kv` mark: a terminal that already
+ * carries a surface is never touched, so a workspace that has been through
+ * here once costs a single pass over the array and no write.
+ */
+function stampSurfaces(
+  groups: GroupRow[],
+  terminals: TerminalRow[],
+): { terminals: TerminalRow[]; changed: boolean } {
+  if (terminals.every((t) => t.surface === "grid" || t.surface === "canvas")) {
+    return { terminals, changed: false };
+  }
+  const surfaceOfGroup = new Map(
+    groups.map((g) => [g.id, parseLayout(g.layoutJson).surface] as const),
+  );
+  return {
+    changed: true,
+    terminals: terminals.map((t) =>
+      t.surface === "grid" || t.surface === "canvas"
+        ? t
+        : { ...t, surface: surfaceOfGroup.get(t.groupId) ?? "grid" },
+    ),
+  };
+}
 
 /** Mark in `kv` that the tab-merge already ran on this profile. */
 const TABS_MIGRATION_KEY = "layoutTabsMigrated";

@@ -58,6 +58,7 @@ import type { XTermHandle } from "../XTermView";
 import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
 import { InlineRename } from "../ContextMenu/InlineRename";
 import { closeDocTab, docTabMenu } from "../../lib/editorActions";
+import { show } from "../../lib/navigate";
 import { paneMenu } from "../../lib/paneMenu";
 import { captureTextTarget, textMenuEntries } from "../../lib/textMenu";
 import { terminalActionEntries } from "../../lib/terminalMenu";
@@ -409,12 +410,17 @@ export function TerminalPane({
   /** The pane's menu: what to open here, and the group's layout. */
   const buildPaneMenu = (): MenuEntry[] =>
     paneMenu(
-      { mode: useProjects.getState().layoutOf(groupId).mode, notesHere: notes },
+      {
+        mode: useProjects.getState().layoutOf(groupId).mode,
+        surface: useProjects.getState().layoutOf(groupId).surface,
+        notesHere: notes,
+      },
       {
         newCli: newCli,
         newBrowser: newBrowser,
         dockNotes: () => useNotes.getState().dockTo(groupId, slot),
         setMode: (mode) => useProjects.getState().updateLayout(groupId, { mode }),
+        showSurface: (surface) => show(groupId, surface),
       },
     );
 

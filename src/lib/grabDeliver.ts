@@ -38,7 +38,9 @@ export async function deliverGrab(
   if (!groupId) return;
 
   const canvas = projects.layoutOf(groupId).canvas;
-  const terminals = projects.terminalsOf(groupId);
+  // The pick came from a portal, which lives on the canvas: the agents that
+  // can receive it are the cards wired to it.
+  const terminals = projects.terminalsOn(groupId, "canvas");
   const edges = buildEdges(canvas?.items ?? []);
   const wired = terminals.filter((t) => edges.get(portalId)?.has(t.id));
   const runtimes = useTerminals.getState().byId;

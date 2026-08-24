@@ -357,6 +357,8 @@ interface NoteItemProps extends CommonHandlers {
   connectClass: string;
   /** Only the selection tool enters edit from the note body. */
   selectTool: boolean;
+  /** Project root a relative image in the note resolves against (§12.3). */
+  root: string;
   onToggleLock: (id: string) => void;
   focusAtEnd: (el: HTMLTextAreaElement | null) => void;
   /** Hands the floating formatting bar a way in, for as long as we're edited. */
@@ -387,6 +389,7 @@ function NoteItemImpl({
   editing,
   connectClass,
   selectTool,
+  root,
   onItemDown,
   onItemMove,
   onItemUp,
@@ -681,6 +684,7 @@ function NoteItemImpl({
           <NoteBody
             text={it.text}
             placeholder="Anote aqui…"
+            root={root}
             onTask={toggleTask}
             onLink={onOpenLink}
           />

@@ -595,3 +595,806 @@
   background: rgb(255 255 255 / 9%);
   color: var(--text-bright);
 }
+
+/* --- Grupos (§5.4): a named frame drawn behind what it holds ---------------
+
+   The whole rule of this element is `pointer-events`. A frame that took
+   clicks in its body would make every card inside it unselectable — the one
+   failure that turns frames from useful into hated — so the box itself is
+   deaf and only two children hear: the title band and the border ring.
+
+   `z-index: 1` puts it under the cards (2) and the notes, and above nothing
+   but the dot mesh. It is scenery. */
+.cv-group {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: var(--r-xl);
+  /* The fill is a whisper of the frame's own ink, not a gray: two frames of
+     different colors have to be tellable apart at 30% zoom, where the border
+     is a hairline and the fill is all there is. */
+  background: color-mix(in srgb, var(--cv-group-ink) 7%, transparent);
+  --cv-grab: min(30px, calc(11px / var(--cv-z, 1)));
+}
+
+.cv-group-ring {
+  position: absolute;
+  inset: 0;
+  border: 1.5px solid color-mix(in srgb, var(--cv-group-ink) 55%, transparent);
+  border-radius: inherit;
+  /* The ring is the grab surface for the edges, but only the stroke itself:
+     `pointer-events: none` on the box plus this on the border would still
+     capture the interior, so the fill stays out of it explicitly. */
+  pointer-events: none;
+  background: transparent;
+}
+
+/* The band. `auto` here and nowhere else on the frame: this is where the
+   frame is grabbed, named and double-clicked to rename. */
+.cv-group-head {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: var(--cv-group-head, 34px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  pointer-events: auto;
+  cursor: grab;
+  border-radius: var(--r-xl) var(--r-xl) 0 0;
+  background: color-mix(in srgb, var(--cv-group-ink) 16%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--cv-group-ink) 30%, transparent);
+}
+
+.cv-group-head:active {
+  cursor: grabbing;
+}
+
+.cv-group-name {
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Ignore the pointer so the whole band — text included — starts the drag
+     and the double-click lands on the band's handler. */
+  pointer-events: none;
+}
+
+.cv-group-name-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 620;
+  color: var(--text);
+  background: rgb(0 0 0 / 26%);
+  border: 1px solid var(--cv-glass-border);
+  border-radius: var(--r-sm);
+  padding: 2px 6px;
+  outline: none;
+  pointer-events: auto;
+  cursor: text;
+}
+
+.cv-group-name-input:focus {
+  border-color: rgb(10 132 255 / 60%);
+  box-shadow: 0 0 0 3px rgb(10 132 255 / 15%);
+}
+
+/* Selected: the same blue ring every other item on this board wears, so a
+   marquee over a frame, a note and two cards still reads as one selection. */
+.cv-group.is-selected::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border: 1.5px solid rgb(94 160 255 / 65%);
+  border-radius: calc(var(--r-xl) + 6px);
+  box-shadow: 0 0 0 4px rgb(10 132 255 / 8%);
+  pointer-events: none;
+}
+
+/* The grips have to hear the pointer even though the frame does not. */
+.cv-group .cv-resize {
+  pointer-events: auto;
+}
+
+/* --- Tabelas e imagens na nota (§12.2/12.3) -------------------------------
+
+   Both size off `--note-fs`, the token that carries the note's own font size,
+   so a note blown up to be read across the room takes its table and its
+   caption with it. */
+.cv-md-tablewrap {
+  /* The note is a fixed box on the board: a wide table has to scroll inside
+     it, never push the body sideways — an overflowing column would simply be
+     unreachable. */
+  overflow-x: auto;
+  margin: 0.45em 0;
+  max-width: 100%;
+}
+
+.cv-md-table {
+  border-collapse: collapse;
+  font-size: inherit;
+  /* Never narrower than its content: `100%` on a two-column table stretches
+     two words across the whole note. */
+  width: auto;
+  min-width: 0;
+}
+
+.cv-md-table th,
+.cv-md-table td {
+  border: 1px solid var(--border);
+  padding: 3px 8px;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.cv-md-table th {
+  font-weight: 620;
+  background: rgb(255 255 255 / 6%);
+}
+
+/* Zebra, quietly: a note is small and a table in it is usually short, so the
+   stripe is there to guide the eye across a row, not to decorate. */
+.cv-md-table tbody tr:nth-child(even) td {
+  background: rgb(255 255 255 / 3%);
+}
+
+/* A note with a dark fill flips the ink; the rules and the header have to
+   follow, or a yellow note shows a table drawn in invisible white. */
+.cv-note.ink-dark .cv-md-table th,
+.cv-note.ink-dark .cv-md-table td {
+  border-color: rgb(0 0 0 / 22%);
+}
+
+.cv-note.ink-dark .cv-md-table th {
+  background: rgb(0 0 0 / 10%);
+}
+
+.cv-note.ink-dark .cv-md-table tbody tr:nth-child(even) td {
+  background: rgb(0 0 0 / 5%);
+}
+
+.cv-md-img {
+  display: block;
+  max-width: 100%;
+  margin: 0.4em 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: rgb(0 0 0 / 20%);
+}
+
+/* A picture that could not be drawn says which one it was, instead of
+   leaving the broken-image frame every webview draws differently. */
+.cv-md-img-miss {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 20px;
+  color: var(--text-dim);
+  font-size: 0.9em;
+}
+
+/* --- Cartão de mídia (§52) ------------------------------------------------
+
+   Same object language as a note: a colored grab strip at the top and a body
+   underneath. The body is `contain`, never `cover` — cropping a reference
+   image is the one thing a reference must not do, and a card sized by hand is
+   the user saying how much room the picture gets. */
+.cv-media {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  z-index: 2;
+  background: rgb(26 26 30 / 92%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--cv-lift), var(--cv-edge);
+  overflow: hidden;
+  --cv-grab: min(30px, calc(11px / var(--cv-z, 1)));
+}
+
+.cv-media-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 26px;
+  flex: 0 0 auto;
+  cursor: grab;
+  border-bottom: 1px solid var(--border);
+  /* The strip carries the item's color; the text over it has to survive both
+     a near-white and a mid-gray, so it is the same flat-fill contrast rule
+     the notes use — a dark ink with a light halo. */
+  color: rgb(0 0 0 / 82%);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.cv-media-head:active {
+  cursor: grabbing;
+}
+
+.cv-media-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-media-size {
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.cv-media-btn {
+  display: grid;
+  place-items: center;
+  /* The global reset does not zero padding on a button: without this the
+     glyph lands off-center inside its own box. */
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: rgb(0 0 0 / 12%);
+  color: inherit;
+  cursor: pointer;
+}
+
+.cv-media-btn:hover {
+  background: rgb(0 0 0 / 22%);
+}
+
+.cv-media-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 6px;
+  cursor: grab;
+  background: rgb(0 0 0 / 24%);
+}
+
+.cv-media-img,
+.cv-media-el {
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+}
+
+.cv-media-audio {
+  width: 100%;
+}
+
+.cv-media-msg {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.cv-media-msg.is-error {
+  color: var(--red);
+}
+
+.cv-media.is-selected::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border: 1.5px solid rgb(94 160 255 / 65%);
+  border-radius: calc(var(--r-lg) + 7px);
+  box-shadow: 0 0 0 4px rgb(10 132 255 / 8%);
+  pointer-events: none;
+}
+
+.cv-media.is-connect-source {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--cv-lift);
+}
+
+.cv-media.is-connect-target {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgb(64 209 110 / 18%), var(--cv-lift);
+}
+
+/* --- Fichário (§13): notas em abas ---------------------------------------
+
+   Header on top (name + count), page in the middle, tab strip at the bottom —
+   where a real fichário's tabs are, and where they do not compete with the
+   header for the same row. */
+.cv-binder {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  z-index: 2;
+  background: rgb(26 26 30 / 92%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--cv-lift), var(--cv-edge);
+  overflow: hidden;
+  --cv-grab: min(30px, calc(11px / var(--cv-z, 1)));
+}
+
+.cv-binder-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 26px;
+  flex: 0 0 auto;
+  cursor: grab;
+  border-bottom: 1px solid var(--border);
+  color: rgb(0 0 0 / 82%);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.cv-binder-head:active {
+  cursor: grabbing;
+}
+
+.cv-binder-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-binder-count {
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.cv-binder-btn {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: rgb(0 0 0 / 12%);
+  color: inherit;
+  cursor: pointer;
+}
+
+.cv-binder-btn:hover {
+  background: rgb(0 0 0 / 22%);
+}
+
+.cv-binder-page {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 10px;
+  cursor: grab;
+  font-size: var(--note-fs, 12px);
+  line-height: 1.5;
+}
+
+.cv-binder-text {
+  width: 100%;
+  height: 100%;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  cursor: text;
+}
+
+.cv-binder-empty {
+  display: block;
+  padding: 12px 4px;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+/* The strip scrolls sideways rather than wrapping: a fichário of nine notes
+   must not grow a second row of tabs and eat the page. */
+.cv-binder-tabs {
+  display: flex;
+  gap: 3px;
+  flex: 0 0 auto;
+  padding: 4px 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-top: 1px solid var(--border);
+  background: rgb(0 0 0 / 22%);
+}
+
+.cv-binder-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.cv-binder-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  max-width: 120px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: rgb(255 255 255 / 6%);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.cv-binder-tab:hover {
+  background: rgb(255 255 255 / 12%);
+  color: var(--text);
+}
+
+.cv-binder-tab.is-active {
+  background: rgb(10 132 255 / 18%);
+  border-color: rgb(10 132 255 / 45%);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.cv-binder-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Only on the tab under the cursor: five permanent × on a strip of five tabs
+   is five invitations to lose a note by mis-clicking. */
+.cv-binder-tab-off {
+  display: none;
+  place-items: center;
+  border-radius: 50%;
+  opacity: 0.65;
+}
+
+.cv-binder-tab:hover .cv-binder-tab-off,
+.cv-binder-tab.is-active .cv-binder-tab-off {
+  display: grid;
+}
+
+.cv-binder-tab-off:hover {
+  opacity: 1;
+  background: rgb(255 255 255 / 18%);
+}
+
+.cv-binder.is-selected::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border: 1.5px solid rgb(94 160 255 / 65%);
+  border-radius: calc(var(--r-lg) + 7px);
+  box-shadow: 0 0 0 4px rgb(10 132 255 / 8%);
+  pointer-events: none;
+}
+
+.cv-binder.is-connect-source {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--cv-lift);
+}
+
+.cv-binder.is-connect-target {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgb(64 209 110 / 18%), var(--cv-lift);
+}
+
+/* --- Árvore de arquivos no canvas (§14) -----------------------------------
+
+   Header, mode strip, body. The body is the only part that scrolls, so the
+   mode strip stays reachable in a card showing eighty commits. */
+.cv-tree {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  z-index: 2;
+  background: rgb(26 26 30 / 92%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--cv-lift), var(--cv-edge);
+  overflow: hidden;
+  --cv-grab: min(30px, calc(11px / var(--cv-z, 1)));
+}
+
+.cv-tree-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 26px;
+  flex: 0 0 auto;
+  cursor: grab;
+  border-bottom: 1px solid var(--border);
+  color: rgb(0 0 0 / 82%);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.cv-tree-head:active {
+  cursor: grabbing;
+}
+
+.cv-tree-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-tree-btn {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: rgb(0 0 0 / 12%);
+  color: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cv-tree-btn:hover {
+  background: rgb(0 0 0 / 22%);
+}
+
+.cv-tree-modes {
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+  padding: 4px 5px;
+  border-bottom: 1px solid var(--border);
+  background: rgb(0 0 0 / 22%);
+}
+
+.cv-tree-mode {
+  flex: 1;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.cv-tree-mode:hover {
+  background: rgb(255 255 255 / 8%);
+  color: var(--text);
+}
+
+.cv-tree-mode.is-active {
+  background: rgb(10 132 255 / 18%);
+  border-color: rgb(10 132 255 / 45%);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.cv-tree-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+  font-size: var(--fs-xs);
+}
+
+.cv-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cv-tree-row:hover {
+  background: rgb(255 255 255 / 7%);
+}
+
+.cv-tree-row.is-selected {
+  background: rgb(10 132 255 / 20%);
+}
+
+.cv-tree-caret {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.cv-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The one-letter git status, in a fixed column so the names still line up. */
+.cv-tree-status {
+  display: grid;
+  place-items: center;
+  width: 13px;
+  flex: 0 0 auto;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.cv-tree-status.st-M {
+  color: var(--yellow);
+}
+
+.cv-tree-status.st-A,
+.cv-tree-status.st-\? {
+  color: var(--green);
+}
+
+.cv-tree-status.st-D {
+  color: var(--red);
+}
+
+.cv-tree-msg {
+  display: block;
+  padding: 10px 8px;
+  color: var(--text-dim);
+}
+
+.cv-tree-msg.is-error {
+  color: var(--red);
+  overflow-wrap: anywhere;
+}
+
+/* Grade: thumbnails of the current folder, one row of tiles that wraps. */
+.cv-tree-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 6px;
+  padding: 6px;
+}
+
+.cv-tree-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: rgb(255 255 255 / 4%);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.cv-tree-tile:hover {
+  border-color: var(--border-strong);
+  background: rgb(255 255 255 / 9%);
+}
+
+.cv-tree-thumb {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 48px;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+  background: rgb(0 0 0 / 28%);
+}
+
+.cv-tree-tile-name {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* Histórico: the gutter of lanes, then the subject. */
+.cv-tree-graph {
+  display: flex;
+  flex-direction: column;
+}
+
+.cv-tree-commit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+}
+
+.cv-tree-lanes {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.cv-lane-line {
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+  fill: none;
+}
+
+.cv-lane-dot {
+  fill: var(--accent);
+  stroke: var(--bg);
+  stroke-width: 1.5;
+}
+
+/* A merge reads differently from a plain commit at a glance — it is the one
+   dot whose shape carries information. */
+.cv-lane-dot.is-merge {
+  fill: var(--yellow);
+}
+
+.cv-tree-commit-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-tree-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 20px;
+  background: rgb(10 132 255 / 22%);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.cv-tree.is-selected::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border: 1.5px solid rgb(94 160 255 / 65%);
+  border-radius: calc(var(--r-lg) + 7px);
+  box-shadow: 0 0 0 4px rgb(10 132 255 / 8%);
+  pointer-events: none;
+}
+
+.cv-tree.is-connect-source {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--cv-lift);
+}
+
+.cv-tree.is-connect-target {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgb(64 209 110 / 18%), var(--cv-lift);
+}

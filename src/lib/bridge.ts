@@ -39,6 +39,7 @@ import { defaultRoleOf } from "./agentDefaults";
 import { spawnEnvFor } from "./spawnEnv";
 import { landFloor, previewFloor, settleAfterLand } from "./floorLand";
 import { useAgentDefaults } from "../stores/agentDefaultsStore";
+import { normalizeSurface } from "./surface";
 import { useProjects } from "../stores/projectsStore";
 import {
   reachedWait,
@@ -115,7 +116,15 @@ function buildCtx(terminalId: string): Ctx | string {
     );
   }
   const canvas = s.layoutOf(caller.groupId).canvas ?? EMPTY_CANVAS;
-  return makeCtx(caller, caller.groupId, canvas, s.terminalsOf(caller.groupId));
+  // The caller's own surface, and only it: the board and the panes stopped
+  // sharing their CLIs, so a card that could address a tab would be offering
+  // a conversation the user has no way to see, on either side.
+  return makeCtx(
+    caller,
+    caller.groupId,
+    canvas,
+    s.terminalsOn(caller.groupId, normalizeSurface(caller.surface)),
+  );
 }
 
 /**
@@ -915,6 +924,10 @@ async function cmdRecruit(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
     program: born.program,
     args: born.args,
     cwd,
+    // Beside whoever asked for it. Born on the other surface it would be
+    // wired to an agent that cannot reach it — `connectedAgents` only ever
+    // looks at the caller's own.
+    surface: normalizeSurface(ctx.caller.surface),
   });
 
   const base = callerRect(ctx);
@@ -1110,7 +1123,10 @@ async function recruitInFloor(
   }
   const cwd = next.dir ?? s.rootOfGroup(target.id) ?? ctx.caller.cwd;
 
-  const idx = s.terminalsOf(target.id).length;
+  // Another group: what counts there is what that floor is showing, or the
+  // recruit lands behind the surface the user is not on.
+  const surface = s.layoutOf(target.id).surface;
+  const idx = s.terminalsOn(target.id, surface).length;
   const born = bornAs(next.rowAgentId, next.program, next.cliArgs, cwd);
   const newId = s.addTerminal({
     groupId: target.id,
@@ -1120,6 +1136,7 @@ async function recruitInFloor(
     program: born.program,
     args: born.args,
     cwd,
+    surface,
   });
   commitCanvas(target.id, (c) => ({
     ...c,

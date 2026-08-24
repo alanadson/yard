@@ -6,11 +6,16 @@
  * splits when the user drags a tab onto another pane (or pins a grid on
  * the title bar).
  *
- * Three modes (§F2):
+ * Three shapes (§F2):
  *
  * - **auto**: the pane count follows the number of occupied slots (1/2/4);
  * - **grid**: the user pins 1–6 panes;
  * - **spotlight**: one large pane and the rest in a column beside it.
+ *
+ * The canvas is not a fourth shape: it is the group's **other surface**
+ * (`layout.surface`), with terminals of its own. This component draws
+ * whichever of the two is showing, and never mixes their CLIs — see
+ * `lib/surface.ts`.
  *
  * The dividers are `react-resizable-panels`; each pane's size is session
  * state, not workspace state — what persists is the mode and the count.
@@ -25,7 +30,9 @@ import { FloorsControl } from "../Floors";
 import { FlowRunsBar } from "../CanvasView/FlowHud";
 import { TerminalPane } from "../TerminalPane";
 import { range } from "../../lib/format";
+import { show } from "../../lib/navigate";
 import { paneMenu } from "../../lib/paneMenu";
+import { onSurface } from "../../lib/surface";
 import { useBrowsers, type PaneBrowser } from "../../stores/browsersStore";
 import { useEditor, type OpenDoc } from "../../stores/editorStore";
 import { NOTES_TAB_ID, useNotes } from "../../stores/notesStore";
@@ -51,18 +58,20 @@ interface Props {
  * present in every mode, because switching floors does not depend on the canvas.
  */
 export function WorkspaceGrid({ groupId }: Props) {
-  const mode = useProjects((s) => s.layoutOf(groupId).mode);
+  const onBoard = useProjects((s) => s.layoutOf(groupId).surface === "canvas");
+  // Floors are worktrees of a project, and a board has no project — its cards
+  // each carry their own folder. So the control has nothing to switch there.
+  const isBoard = useProjects((s) => s.isBoard(groupId));
   return (
     <>
       <GridBody groupId={groupId} />
       {/* On the canvas the full HUD already lives inside it; outside it, the
           running pipeline needs to exist somewhere — it was the only way to
           know which stage it is at and to cancel. */}
-      {mode !== "canvas" && <FlowRunsBar groupId={groupId} />}
-      <FloorsControl
-        groupId={groupId}
-        variant={mode === "canvas" ? "canvas" : "grid"}
-      />
+      {!onBoard && <FlowRunsBar groupId={groupId} />}
+      {!isBoard && (
+        <FloorsControl groupId={groupId} variant={onBoard ? "canvas" : "grid"} />
+      )}
     </>
   );
 }
@@ -80,6 +89,11 @@ function GridBody({ groupId }: Props) {
     () => allTerminals.filter((t) => t.groupId === groupId),
     [allTerminals, groupId],
   );
+  // The two surfaces no longer draw the same CLIs: a card recruited on the
+  // board is not a tab of any pane, and a tab is not a card. Everything below
+  // this line is about the panes; the canvas gets its own slice.
+  const paneTerminals = useMemo(() => onSurface(terminals, "grid"), [terminals]);
+  const cardTerminals = useMemo(() => onSurface(terminals, "canvas"), [terminals]);
 
   const layout = useMemo(() => {
     const g = groups.find((x) => x.id === groupId);
@@ -88,14 +102,14 @@ function GridBody({ groupId }: Props) {
 
   const bySlot = useMemo(() => {
     const map = new Map<number, TerminalRow[]>();
-    for (const t of terminals) {
+    for (const t of paneTerminals) {
       const list = map.get(t.slot) ?? [];
       list.push(t);
       map.set(t.slot, list);
     }
     for (const list of map.values()) list.sort((a, b) => a.sort - b.sort);
     return map;
-  }, [terminals]);
+  }, [paneTerminals]);
 
   // Open files are tabs of a pane, exactly like the CLIs — so they are sliced
   // by slot here and handed over the same way. The subscription is on the
@@ -214,14 +228,14 @@ function GridBody({ groupId }: Props) {
 
   // The canvas handles its own empty state (you can draw with no terminal
   // at all) and remounts on group switch — the `key` resets camera and selection.
-  if (layout.mode === "canvas") {
+  if (layout.surface === "canvas") {
     return (
       <ErrorBoundary where="o quadro">
         <Suspense fallback={<div className="grid-empty" />}>
           <CanvasView
             key={groupId}
             groupId={groupId}
-            terminals={terminals}
+            terminals={cardTerminals}
             canvas={layout.canvas}
           />
         </Suspense>
@@ -232,7 +246,7 @@ function GridBody({ groupId }: Props) {
   // A group with no terminal but with a file, a browser or the notes tab
   // open is not empty — the pane below draws it.
   if (
-    terminals.length === 0 &&
+    paneTerminals.length === 0 &&
     docsBySlot.size === 0 &&
     browsersBySlot.size === 0 &&
     notesSlot === null
@@ -251,7 +265,7 @@ function GridBody({ groupId }: Props) {
           <ContextMenu
             anchor={menu}
             items={paneMenu(
-              { mode: layout.mode, notesHere: false },
+              { mode: layout.mode, surface: layout.surface, notesHere: false },
               {
                 newCli: () =>
                   useUI.getState().openModal("new-terminal", { groupId, slot: 0 }),
@@ -259,6 +273,7 @@ function GridBody({ groupId }: Props) {
                 dockNotes: () => useNotes.getState().dockTo(groupId, 0),
                 setMode: (mode) =>
                   useProjects.getState().updateLayout(groupId, { mode }),
+                showSurface: (surface) => show(groupId, surface),
               },
             )}
             onClose={() => setMenu(null)}

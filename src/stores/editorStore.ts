@@ -421,7 +421,7 @@ function tabTarget(): TabTarget {
   return {
     groupId: activeGroupId,
     slot: Math.max(0, slot),
-    overlay: layoutOf(activeGroupId).mode === "canvas",
+    overlay: layoutOf(activeGroupId).surface === "canvas",
   };
 }
 
@@ -776,12 +776,12 @@ export const useEditor = create<EditorState>((set, get) => {
       // The pane's bar pointed at this tab: hand it to the neighbour in the
       // same pane, document or CLI, before it points at nothing.
       if (isClosed?.groupId) {
-        const { layoutOf, setActiveTab, terminalsOf } = useProjects.getState();
+        const { layoutOf, setActiveTab, terminalsOn } = useProjects.getState();
         if (layoutOf(isClosed.groupId).activeBySlot[isClosed.slot] === id) {
           const otherDoc = get().docs.find(
             (d) => d.groupId === isClosed.groupId && d.slot === isClosed.slot,
           );
-          const terminal = terminalsOf(isClosed.groupId).find(
+          const terminal = terminalsOn(isClosed.groupId, "grid").find(
             (t) => t.slot === isClosed.slot,
           );
           if (otherDoc) {

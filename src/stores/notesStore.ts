@@ -397,10 +397,10 @@ export const useNotes = create<NotesState>((set, get) => {
    * does — before it points at an id nothing renders.
    */
   const repairSlot = (groupId: string, slot: number) => {
-    const { layoutOf, setActiveTab, terminalsOf, updateLayout } = useProjects.getState();
+    const { layoutOf, setActiveTab, terminalsOn, updateLayout } = useProjects.getState();
     const layout = layoutOf(groupId);
     if (layout.activeBySlot[slot] !== NOTES_TAB_ID) return;
-    const terminal = terminalsOf(groupId).find((t) => t.slot === slot);
+    const terminal = terminalsOn(groupId, "grid").find((t) => t.slot === slot);
     const doc = useEditor
       .getState()
       .docs.find((d) => d.groupId === groupId && d.slot === slot);
@@ -435,7 +435,7 @@ export const useNotes = create<NotesState>((set, get) => {
       persist(KV_OPEN, "true");
       return;
     }
-    if (projects.layoutOf(dock.groupId).mode === "canvas") {
+    if (projects.layoutOf(dock.groupId).surface === "canvas") {
       set({ open: true });
       persist(KV_OPEN, "true");
       return;
@@ -556,11 +556,11 @@ export const useNotes = create<NotesState>((set, get) => {
         useUI.getState().showToast("Abra um grupo antes de pôr as anotações numa aba.");
         return false;
       }
-      if (projects.layoutOf(groupId).mode === "canvas") {
+      if (projects.layoutOf(groupId).surface === "canvas") {
         useUI
           .getState()
           .showToast(
-            "Este grupo está no modo canvas, que não tem barra de abas — troque o layout ou use a área central.",
+            "Este grupo está mostrando o canvas, que não tem barra de abas — volte para os painéis ou use a área central.",
           );
         return false;
       }

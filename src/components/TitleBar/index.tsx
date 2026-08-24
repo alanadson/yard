@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Blocks,
+  Frame,
   GitBranch,
   GitCompare,
   LayoutGrid,
@@ -26,6 +27,7 @@ import {
   Settings,
 } from "lucide-react";
 
+import { show } from "../../lib/navigate";
 import { projectIcon } from "../../lib/projectStyle";
 import { AsyncDisposer } from "../../lib/disposables";
 import { Select } from "../Select";
@@ -37,18 +39,20 @@ import { ContextMenu, type MenuAnchor } from "../ContextMenu";
 import { titleBarMenu } from "../../lib/titleBarMenu";
 import { parseLayout, useProjects, type LayoutMode } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
+import { layoutControlsState } from "./layoutControls";
 
 const appWindow = getCurrentWindow();
 
+/**
+ * The shapes of the pane grid. Canvas is deliberately **not** here: it is the
+ * group's other surface, with its own CLIs, and it gets its own button — as a
+ * fourth segment it shared this field and wiped the Grade/Holofote the user
+ * had pinned every time they looked at the board.
+ */
 const MODES: { id: LayoutMode; label: string; tip: string }[] = [
   { id: "auto", label: "Auto", tip: "Automático: a grade segue os painéis usados" },
   { id: "grid", label: "Grade", tip: "Grade fixa, com o número de painéis ao lado" },
   { id: "spotlight", label: "Holofote", tip: "Um painel grande, os outros ao lado" },
-  {
-    id: "canvas",
-    label: "Canvas",
-    tip: "Canvas infinito: terminais soltos, desenho à mão, notas e conexões",
-  },
 ];
 
 const PANES = [1, 2, 3, 4, 6].map((n) => ({
@@ -76,6 +80,7 @@ export function TitleBar() {
   const sidebarOpen = useUI((s) => s.sidebarOpen);
   const openModal = useUI((s) => s.openModal);
   const activeGroupId = useProjects((s) => s.activeGroupId);
+  const groupBeforeBoard = useProjects((s) => s.groupBeforeBoard);
   const groups = useProjects((s) => s.groups);
   const updateLayout = useProjects((s) => s.updateLayout);
   const projectOfGroup = useProjects((s) => s.projectOfGroup);
@@ -97,8 +102,23 @@ export function TitleBar() {
 
   const group = groups.find((g) => g.id === activeGroupId);
   const project = activeGroupId ? projectOfGroup(activeGroupId) : undefined;
-  const layout = group ? parseLayout(group.layoutJson) : null;
-  const floor = layout?.floor;
+  const activeLayout = group ? parseLayout(group.layoutJson) : null;
+  // A board belongs to no project: it is the canvas as its own container. The
+  // switch still describes the screen, while its pane modes belong to the
+  // project group remembered by `layoutControlsState`.
+  const board = group && group.projectId === null ? group : null;
+  const leaveBoard = useProjects((s) => s.leaveBoard);
+  const controls = layoutControlsState({
+    activeGroupId,
+    activeProjectId,
+    groupBeforeBoard,
+    activeSurface: activeLayout?.surface ?? "grid",
+    groups,
+  });
+  const controlGroup = groups.find((candidate) => candidate.id === controls?.groupId);
+  const layout = controlGroup ? parseLayout(controlGroup.layoutJson) : null;
+  const onBoard = controls?.canvasActive ?? false;
+  const floor = activeLayout?.floor;
   const ProjectIcon = projectIcon(project?.icon);
 
   useEffect(() => {
@@ -172,7 +192,13 @@ export function TitleBar() {
           />
           Yard
         </span>
-        {project && (
+        {board ? (
+          <span className="crumb" data-tip="Quadro — o canvas como container próprio">
+            <Frame size={14} className="crumb-icon" aria-hidden="true" />
+            <span className="crumb-project">{board.name}</span>
+          </span>
+        ) : (
+          project && (
           <span
             className="crumb"
             data-tip={project.path}
@@ -203,36 +229,61 @@ export function TitleBar() {
               </>
             )}
           </span>
+          )
         )}
       </div>
 
       <div className="titlebar-center">
-        {activeGroupId && layout && (
-          <div className="layout-switch" role="group" aria-label="Layout do grupo">
-            <LayoutGrid size={13} aria-hidden="true" />
-            {MODES.map((m) => (
-              <button
-                key={m.id}
-                className={layout.mode === m.id ? "is-active" : ""}
-                aria-pressed={layout.mode === m.id}
-                onClick={() => updateLayout(activeGroupId, { mode: m.id })}
-                data-tip={m.tip}
-              >
-                {m.label}
-              </button>
-            ))}
-            {(layout.mode === "grid" || layout.mode === "spotlight") && (
-              <Select
-                value={String(layout.panelCount)}
-                label="Número de painéis"
-                tip="Número de painéis"
-                options={PANES}
-                onChange={(v) =>
-                  updateLayout(activeGroupId, { panelCount: Number(v) })
-                }
-              />
-            )}
-          </div>
+        {controls && layout && (
+          <>
+            <div
+              className={`layout-switch ${onBoard ? "is-behind" : ""}`}
+              role="group"
+              aria-label="Layout dos painéis"
+            >
+              <LayoutGrid size={13} aria-hidden="true" />
+              {MODES.map((m) => (
+                <button
+                  key={m.id}
+                  className={!onBoard && layout.mode === m.id ? "is-active" : ""}
+                  aria-pressed={!onBoard && layout.mode === m.id}
+                  // Picking a shape while the board is up also brings the panes
+                  // back: otherwise the click changes something the user cannot
+                  // see, which reads as a dead button.
+                  onClick={() => {
+                    updateLayout(controls.groupId, { mode: m.id });
+                    show(controls.groupId, "grid");
+                    if (board) leaveBoard();
+                  }}
+                  data-tip={m.tip}
+                >
+                  {m.label}
+                </button>
+              ))}
+              {(layout.mode === "grid" || layout.mode === "spotlight") && (
+                <Select
+                  value={String(layout.panelCount)}
+                  label="Número de painéis"
+                  tip="Número de painéis"
+                  options={PANES}
+                  onChange={(v) =>
+                    updateLayout(controls.groupId, { panelCount: Number(v) })
+                  }
+                />
+              )}
+            </div>
+            <button
+              className={`layout-canvas ${onBoard ? "is-active" : ""}`}
+              aria-pressed={onBoard}
+              data-tip="Canvas infinito: cartões soltos, desenho à mão, notas e conexões — com as CLIs dele"
+              onClick={() => {
+                show(controls.groupId, onBoard ? "grid" : "canvas");
+                if (board && onBoard) leaveBoard();
+              }}
+            >
+              <Frame size={13} aria-hidden="true" /> Canvas
+            </button>
+          </>
         )}
       </div>
 

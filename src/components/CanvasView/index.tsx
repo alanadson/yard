@@ -44,7 +44,7 @@ import {
 import "./canvas.css";
 import "./canvas-tail.css";
 import { nanoid } from "nanoid";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -56,15 +56,22 @@ import {
   AlignVerticalDistributeCenter,
   ArrowLeftRight,
   BringToFront,
+  ChevronLeft,
+  ChevronRight,
   ClipboardPaste,
   Copy,
   Expand,
+  FolderTree,
   Globe,
+  Group as GroupIcon,
+  Image as ImageIcon,
   LayoutGrid,
   Lock,
   Map as MapIcon,
+  NotebookTabs,
   Maximize2,
   Pencil,
+  PenSquare,
   Plus,
   Scissors,
   ScanSearch,
@@ -81,7 +88,11 @@ import {
 } from "lucide-react";
 
 import { CanvasToolbar, type Tool } from "./CanvasToolbar";
+import { BinderCard } from "./BinderCard";
+import { TreeCard } from "./TreeCard";
+import { MediaCard } from "./MediaCard";
 import { FlowCard } from "./FlowCard";
+import { GroupFrame } from "./GroupFrame";
 import { FlowHud } from "./FlowHud";
 import { Minimap, type MiniBox } from "./Minimap";
 import { NoteToolbar, type NoteEditorApi } from "./NoteToolbar";
@@ -139,6 +150,46 @@ import {
   removeItemAndEdges,
   reorderItem as reorder,
 } from "../../lib/canvasOps";
+import {
+  addFrame,
+  frameAround,
+  frameItem,
+  GROUP_DEFAULT_NAME,
+  GROUP_MIN_H,
+  GROUP_MIN_W,
+  GROUP_NAME_MAX,
+  withGroupMembers,
+  type FrameRef,
+} from "../../lib/canvasGroups";
+import {
+  MEDIA_MIN_H,
+  MEDIA_MIN_W,
+  mediaBoxAt,
+  mediaNodeName,
+  splitForRoot,
+  type MediaItem,
+} from "../../lib/mediaNode";
+import {
+  BINDER_DEFAULT_H,
+  BINDER_DEFAULT_W,
+  BINDER_MIN_H,
+  BINDER_MIN_W,
+  binderHolding,
+  fileIntoBinder,
+  filedNoteIds,
+  releaseNotes,
+  removeFromBinder,
+  reorderTab,
+  showTab,
+  type BinderItem,
+} from "../../lib/binder";
+import {
+  TREE_DEFAULT_H,
+  TREE_DEFAULT_W,
+  TREE_MIN_H,
+  TREE_MIN_W,
+  type TreeItem,
+} from "../../lib/treeNode";
 import { flowsOf, wireOfPair, type FlowItem } from "../../lib/flow";
 import { cancelRunsOf, liveRunsOf } from "../../lib/flowRun";
 import {
@@ -272,6 +323,18 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   const diffOpen = useChanges((s) => s.viewer !== null);
   const editorOpen = useEditor((s) => s.open);
   const projectId = useProjects((s) => s.groups.find((g) => g.id === groupId)?.projectId ?? null);
+  /**
+   * Folder a relative path written inside a note points into (§12.3).
+   *
+   * A note has no file of its own, so the project is the only anchor a bare
+   * `docs/shot.png` can have — the same path the agent beside it would type.
+   * A board (`quadro`) belongs to no project and gets an empty root: there a
+   * picture has to carry a full address, and a bare path says so instead of
+   * guessing a folder from whichever card happens to be nearest.
+   */
+  const projectRoot = useProjects(
+    (s) => s.projects.find((p) => p.id === projectId)?.path ?? "",
+  );
 
   const data = canvas ?? EMPTY_CANVAS;
 
@@ -554,11 +617,19 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     if (!itemDragDelta) return null;
     const anchored = items.some(
       (i) =>
-        (i.type === "note" || i.type === "portal" || i.type === "flow") &&
+        (i.type === "note" ||
+          i.type === "portal" ||
+          i.type === "flow" ||
+          i.type === "binder" ||
+          i.type === "tree" ||
+          i.type === "media") &&
         itemDragDelta.ids.has(i.id),
     );
     return anchored ? itemDragDelta : null;
   }, [itemDragDelta, items]);
+
+  /** Notes currently drawn inside a fichário instead of on the board (§13). */
+  const filed = useMemo(() => filedNoteIds(items), [items]);
 
   // Connection anchors: cards AND notes — a note<->CLI connection is what
   // turns the note into live context for the agent (via the `yard` CLI).
@@ -571,7 +642,15 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   const anchors = useMemo(() => {
     const m: Record<string, CanvasNode> = { ...rects };
     for (const it of items) {
-      if (it.type !== "note" && it.type !== "portal" && it.type !== "flow") continue;
+      if (
+        it.type !== "note" &&
+        it.type !== "portal" &&
+        it.type !== "flow" &&
+        it.type !== "binder" &&
+        it.type !== "tree" &&
+        it.type !== "media"
+      )
+        continue;
       const live = noteResize?.id === it.id ? noteResize : null;
       const shift = noteDrag?.ids.has(it.id) ? noteDrag : null;
       m[it.id] = {
@@ -580,6 +659,16 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         w: live?.w ?? it.w,
         h: live?.h ?? it.h,
       };
+    }
+    // A filed note has no rectangle of its own on the board, but the wires
+    // drawn to it are still live — the agent connected to it still reads and
+    // writes it through the CLI. They anchor on the fichário that is showing
+    // it, which is also where the user's eye expects the cable to land.
+    for (const it of items) {
+      if (it.type !== "binder") continue;
+      const box = m[it.id];
+      if (!box) continue;
+      for (const id of it.notes) m[id] = box;
     }
     const next = reconcileNodes(prevAnchorsRef.current, m);
     prevAnchorsRef.current = next;
@@ -600,11 +689,16 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     const m: Record<string, Box> = {};
     for (const it of items) {
       if (it.type === "connection") continue;
+      // A filed note has no rectangle on the board: its `x`/`y` are wherever
+      // it sat before it was filed, and leaving them here would put an
+      // invisible box in the marquee's way, in a frame's membership test and
+      // in "enquadrar tudo".
+      if (it.type === "note" && filed.has(it.id)) continue;
       const b = itemBounds(it, () => undefined);
       if (b) m[it.id] = b;
     }
     return m;
-  }, [items]);
+  }, [items, filed]);
   const itemBoxesRef = useRef(itemBoxes);
   itemBoxesRef.current = itemBoxes;
 
@@ -1192,14 +1286,21 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     // pipeline, so without this it kept stamping the next stage into the CLI
     // from a card nobody could see any more.
     cancelRunsOf(dead);
-    commit((c) => ({
-      ...c,
-      items: c.items.filter(
-        (i) =>
-          !dead.has(i.id) &&
-          !(i.type === "connection" && (dead.has(i.from) || dead.has(i.to))),
-      ),
-    }));
+    commit((c) => {
+      // Same rule as `deleteItem`: every fichário in the batch hands its
+      // notes back to the board before it goes. A note that is *itself* in
+      // the selection still gets deleted below — the user asked for that one.
+      let next = c;
+      for (const id of dead) next = releaseNotes(next, id);
+      return {
+        ...next,
+        items: next.items.filter(
+          (i) =>
+            !dead.has(i.id) &&
+            !(i.type === "connection" && (dead.has(i.from) || dead.has(i.to))),
+        ),
+      };
+    });
     setSelection(EMPTY_SEL);
   }, [commit, currentData]);
 
@@ -1249,6 +1350,22 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   }, [currentData, deleteSelection]);
 
   /**
+   * Frames on the board, as `withGroupMembers` wants them. Read from the live
+   * data and not from the memoized `items`: a drag can start on the same tick
+   * a frame was created (Ctrl+G then grab), and that memo is a render behind.
+   */
+  const frameRefs = useCallback(
+    (): FrameRef[] =>
+      currentData()
+        .items.filter((i) => i.type === "group")
+        .map((i) => ({
+          id: i.id,
+          box: { x: i.x, y: i.y, w: i.w, h: i.h },
+        })),
+    [currentData],
+  );
+
+  /**
    * Copies of everything selected, offset and with fresh ids — plus the wires
    * *between* the copies, so duplicating an agent and its two notes brings
    * the little graph along instead of three loose rectangles.
@@ -1276,12 +1393,289 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     [currentData],
   );
 
+  /**
+   * What a copy/duplicate of the selection really covers: the selection plus
+   * whatever a selected frame holds.
+   *
+   * Duplicating a frame and getting an empty rectangle is not what anybody
+   * means by duplicating a group. Terminal cards are the honest exception —
+   * they are processes, not drawings, and `cloneItems` leaves them alone; a
+   * duplicated frame brings the notes, texts, portals and sketches inside it,
+   * and `yard recruit` is how a second agent is born.
+   */
+  const selectionWithFrames = useCallback(
+    () => withGroupMembers(selectionRef.current, frameRefs(), allBoxes()),
+    [allBoxes, frameRefs],
+  );
+
   const duplicateSelection = useCallback(() => {
-    const { copies, ids } = cloneItems(selectionRef.current, 24, 24);
+    const { copies, ids } = cloneItems(selectionWithFrames(), 24, 24);
     if (copies.length === 0) return;
     commit((c) => addItems(c, ...copies));
     setSelection(ids);
-  }, [cloneItems, commit]);
+  }, [cloneItems, commit, selectionWithFrames]);
+
+  /**
+   * Wraps the selection in a frame (§5.4, Ctrl+G).
+   *
+   * The frame is *not* added to the selection afterwards. Leaving the cards
+   * selected is what lets the user keep arranging them; and selecting the
+   * frame instead would mean the very next arrow key moved the whole group.
+   */
+  const groupSelection = useCallback(() => {
+    const sel = selectionRef.current;
+    if (!sel.size) return;
+    // A frame already in the selection would be wrapped by the new one, which
+    // is legal (frames nest) but almost never what Ctrl+G meant.
+    const boxes = Object.values(boxesOf(sel));
+    const box = frameAround(boxes);
+    if (!box) return;
+    const id = nanoid(8);
+    commit((c) => addFrame(c, frameItem(id, box)));
+    announce(`Grupo criado com ${sel.size} item(ns)`);
+  }, [announce, boxesOf, commit]);
+
+  /**
+   * Puts everything the frame holds in the selection — without the frame.
+   *
+   * The gesture the frame cannot offer any other way: its body is
+   * click-through by design, so a marquee is the only alternative, and a
+   * marquee over a frame catches the frame too.
+   */
+  const selectGroupContents = useCallback(
+    (id: string) => {
+      const frame = frameRefs().find((f) => f.id === id);
+      if (!frame) return;
+      const inside = withGroupMembers(new Set([id]), frameRefs(), allBoxes());
+      inside.delete(id);
+      if (!inside.size) {
+        announce("Grupo vazio");
+        return;
+      }
+      setSelection(inside);
+      announce(`${inside.size} item(ns) do grupo selecionado(s)`);
+    },
+    [allBoxes, announce, frameRefs],
+  );
+
+  const renameGroup = useCallback(
+    (id: string, name: string) => {
+      // Blank falls back rather than clearing: an unnamed frame renders as an
+      // empty bar, which reads as a bug. `sanitizeItem` says the same on load.
+      const next = name.trim().slice(0, GROUP_NAME_MAX) || GROUP_DEFAULT_NAME;
+      commit((c) => patchItemOfType(c, id, "group", { name: next }));
+    },
+    [commit],
+  );
+
+  const endGroupEdit = useCallback((id: string) => {
+    // Functional form, same reason as `endTextEdit`: one pointerdown can close
+    // this edit and open another item's, and the order is not ours to pick.
+    setEditingId((cur) => (cur === id ? null : cur));
+  }, []);
+
+  // --- árvores de arquivos (§14) -------------------------------------------
+
+  const patchTree = useCallback(
+    (id: string, patch: Partial<TreeItem>) => {
+      // No undo entry: opening a folder, switching to the grid or picking a
+      // file is navigation inside the card, not a change to the board. An
+      // undo stack full of "expanded a folder" buries the real edits.
+      commit((c) => patchItemOfType(c, id, "tree", patch), { undo: false });
+    },
+    [commit],
+  );
+
+  const createTreeAt = useCallback(
+    (x: number, y: number) => {
+      const id = nanoid(8);
+      commit((c) =>
+        addItems(c, {
+          id,
+          type: "tree",
+          x,
+          y,
+          w: TREE_DEFAULT_W,
+          h: TREE_DEFAULT_H,
+          // Born at the project root and in the list: the two answers that are
+          // right without asking anything.
+          path: "",
+          mode: "list",
+          color: CANVAS_COLORS[0],
+        }),
+      );
+      selectOnly(id);
+    },
+    [commit, selectOnly],
+  );
+
+  // --- fichários (§13) -----------------------------------------------------
+
+  const showBinderTab = useCallback(
+    (binderId: string, noteId: string) => {
+      // No undo entry: turning a page is navigation, not a change to the
+      // board, and filling the stack with it would bury the real edits.
+      commit((c) => showTab(c, binderId, noteId), { undo: false });
+    },
+    [commit],
+  );
+
+  const unfileNote = useCallback(
+    (noteId: string) => {
+      commit((c) => removeFromBinder(c, noteId));
+      selectOnly(noteId);
+      announce("Nota de volta ao canvas");
+    },
+    [announce, commit, selectOnly],
+  );
+
+  /** Files a loose note into a fichário — the note's side of §13.2. */
+  const fileNote = useCallback(
+    (noteId: string, binderId: string) => {
+      commit((c) => fileIntoBinder(c, binderId, noteId));
+      selectOnly(binderId);
+      announce("Nota arquivada no fichário");
+    },
+    [announce, commit, selectOnly],
+  );
+
+  /**
+   * A brand new note, born already filed and already in edit.
+   *
+   * The alternative (create loose, then file) costs two gestures and leaves a
+   * stray rectangle on the board in between.
+   */
+  const newNoteInBinder = useCallback(
+    (binderId: string) => {
+      const id = nanoid(8);
+      commit((c) => {
+        const withNote = addItems(c, {
+          id,
+          type: "note",
+          x: 0,
+          y: 0,
+          w: 230,
+          h: 170,
+          text: "",
+          color,
+        });
+        return fileIntoBinder(withNote, binderId, id);
+      });
+      setEditingId(id);
+    },
+    [color, commit],
+  );
+
+  /**
+   * Turns the selected notes into a fichário (§13.2) — or plants an empty one.
+   *
+   * The frame lands where the notes were, so the gesture reads as "these five
+   * stickers become this one folder" instead of a folder appearing elsewhere.
+   */
+  const binderFromSelection = useCallback(
+    (at?: { x: number; y: number }) => {
+      const sel = selectionRef.current;
+      const live = currentData().items;
+      const notes = live.filter(
+        (i): i is Extract<CanvasItem, { type: "note" }> =>
+          i.type === "note" && sel.has(i.id),
+      );
+      const anchor =
+        at ?? (notes.length ? { x: notes[0].x, y: notes[0].y } : { x: 0, y: 0 });
+      const id = nanoid(8);
+      commit((c) => {
+        let next = addItems(c, {
+          id,
+          type: "binder",
+          x: anchor.x,
+          y: anchor.y,
+          w: BINDER_DEFAULT_W,
+          h: BINDER_DEFAULT_H,
+          notes: [],
+          color,
+        });
+        for (const note of notes) next = fileIntoBinder(next, id, note.id);
+        return next;
+      });
+      selectOnly(id);
+      announce(
+        notes.length
+          ? `Fichário com ${notes.length} nota(s)`
+          : "Fichário vazio criado",
+      );
+    },
+    [announce, color, commit, currentData, selectOnly],
+  );
+
+  /**
+   * Plants a media card (§52) at a point on the board, from a file the user
+   * picks in the OS dialog.
+   *
+   * Nothing is copied and nothing is uploaded: the card keeps the address
+   * (`lib/mediaNode.ts` cuts it into the root/path pair the protocol wants)
+   * and the bytes stay exactly where they were.
+   */
+  const addMediaAt = useCallback(
+    async (x: number, y: number) => {
+      const chosen = await openFileDialog({
+        multiple: false,
+        directory: false,
+        title: "Colocar um arquivo no canvas",
+        ...(projectRoot ? { defaultPath: projectRoot } : {}),
+      });
+      if (typeof chosen !== "string") return;
+      const { root, path } = splitForRoot(chosen, projectRoot);
+      const id = nanoid(8);
+      const box = mediaBoxAt(x, y);
+      commit((c) =>
+        addItems(c, {
+          id,
+          type: "media",
+          ...box,
+          path,
+          ...(root ? { root } : {}),
+          color: CANVAS_COLORS[0],
+        }),
+      );
+      selectOnly(id);
+      announce(`${mediaNodeName({ id, type: "media", ...box, path, color: "" })} no canvas`);
+    },
+    [announce, commit, projectRoot, selectOnly],
+  );
+
+  /**
+   * Points an existing card at another file, keeping its box and its wiring.
+   *
+   * The alternative — delete and add — loses the rectangle the user sized and
+   * every connection drawn to the card, which is exactly what you do *not*
+   * want when a mock-up is replaced by its next version.
+   */
+  const replaceMediaFile = useCallback(
+    async (id: string) => {
+      const chosen = await openFileDialog({
+        multiple: false,
+        directory: false,
+        title: "Trocar o arquivo do cartão",
+        ...(projectRoot ? { defaultPath: projectRoot } : {}),
+      });
+      if (typeof chosen !== "string") return;
+      const { root, path } = splitForRoot(chosen, projectRoot);
+      commit((c) => patchItemOfType(c, id, "media", { path, root }));
+    },
+    [commit, projectRoot],
+  );
+
+  const openMediaInEditor = useCallback(
+    (path: string) => {
+      void useEditor
+        .getState()
+        .openFile(path)
+        .catch((e) =>
+          useUI.getState().showToast(`Não consegui abrir: ${e}`, "error"),
+        );
+    },
+    [],
+  );
 
   /**
    * Plants a flow card (a prompt pipeline) and opens the editor. The flow is
@@ -1317,7 +1711,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
 
   /** Puts the selected items on the clipboard (cards can't travel). */
   const copySelection = useCallback(async () => {
-    const sel = selectionRef.current;
+    const sel = selectionWithFrames();
     const chosen = currentData().items.filter(
       (i) =>
         !rectsRef.current[i.id] &&
@@ -1328,7 +1722,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     clipFallback = chosen;
     await copyText(`${CLIP_TAG}\n${JSON.stringify(chosen)}`);
     return true;
-  }, [currentData]);
+  }, [currentData, selectionWithFrames]);
 
   /**
    * Pastes at the cursor when there is one, at the middle of the screen
@@ -1456,15 +1850,21 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   const reveal = useUI((s) => s.canvasReveal);
   useEffect(() => {
     if (!reveal || reveal.groupId !== groupId) return;
-    const box = boxOf(reveal.id);
+    // A note the search found inside a fichário has no box of its own. Going
+    // to it means opening its tab and framing the binder — anything else
+    // would centre the camera on empty board and claim success.
+    const binder = binderHolding(currentData().items, reveal.id);
+    const target = binder?.id ?? reveal.id;
+    const box = boxOf(target);
     useUI.getState().clearCanvasReveal();
     if (!box) {
       useUI.getState().showToast("Isso não está mais no canvas deste grupo.", "error");
       return;
     }
-    selectOnly(reveal.id);
+    if (binder) showBinderTab(binder.id, reveal.id);
+    selectOnly(target);
     centerOn(box.x + box.w / 2, box.y + box.h / 2);
-  }, [reveal, groupId, boxOf, selectOnly, centerOn]);
+  }, [reveal, groupId, boxOf, currentData, selectOnly, centerOn, showBinderTab]);
 
   const toggleMinimap = useCallback(() => {
     setMinimap((v) => {
@@ -1596,6 +1996,16 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       if (ctrl && !e.shiftKey && e.code === "KeyD") {
         e.preventDefault();
         duplicateSelection();
+        return;
+      }
+      // Ctrl+G wraps the selection in a frame (§5.4). There is no
+      // Ctrl+Shift+G to undo it: that one already belongs to "next group of
+      // the project" globally, and ungrouping is just deleting the frame —
+      // which `Delete` and the frame's own menu already do, without taking
+      // the members with it.
+      if (ctrl && !e.shiftKey && e.code === "KeyG") {
+        e.preventDefault();
+        groupSelection();
         return;
       }
       // Walking the wiring: Alt is what keeps this off Ctrl+arrow, which most
@@ -2025,10 +2435,15 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
 
       const w = toWorld(e.clientX, e.clientY);
       const bases: Record<string, Box> = {};
+      // A frame carries what stands inside it (§5.4). The expansion happens
+      // here, at the start of the gesture, and never touches the *selection*:
+      // what the user has in hand stays what they picked, so releasing the
+      // frame does not leave twelve cards selected.
+      const carried = withGroupMembers(moving, frameRefs(), allBoxes());
       // Re-read from the store: with Alt the copies were just committed and
       // are not in `itemBoxes` yet (that memo is a render behind).
       const live = currentData().items;
-      for (const mid of moving) {
+      for (const mid of carried) {
         const r = rectsRef.current[mid];
         if (r) {
           bases[mid] = { x: r.x, y: r.y, w: r.w, h: r.h };
@@ -2051,7 +2466,17 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       };
       (e.target as Element).setPointerCapture(e.pointerId);
     },
-    [cloneItems, commit, currentData, focusCanvas, toWorld, toggleSelected, tool],
+    [
+      allBoxes,
+      cloneItems,
+      commit,
+      currentData,
+      focusCanvas,
+      frameRefs,
+      toWorld,
+      toggleSelected,
+      tool,
+    ],
   );
 
   const onItemMove = useCallback(
@@ -2593,11 +3018,26 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   const startNoteResize = useCallback(
     (
       e: React.PointerEvent,
-      it: Extract<CanvasItem, { type: "note" | "flow" }>,
+      it: Extract<
+        CanvasItem,
+        { type: "note" | "flow" | "group" | "media" | "binder" | "tree" }
+      >,
       dir: ResizeDir,
     ) => {
       if (e.button !== 0) return;
       e.stopPropagation();
+      const min =
+        it.type === "flow"
+          ? { w: FLOW_MIN_W, h: FLOW_MIN_H }
+          : it.type === "group"
+            ? { w: GROUP_MIN_W, h: GROUP_MIN_H }
+            : it.type === "media"
+              ? { w: MEDIA_MIN_W, h: MEDIA_MIN_H }
+              : it.type === "binder"
+                ? { w: BINDER_MIN_W, h: BINDER_MIN_H }
+                : it.type === "tree"
+                  ? { w: TREE_MIN_W, h: TREE_MIN_H }
+                  : { w: NOTE_MIN_W, h: NOTE_MIN_H };
       noteSess.current = {
         id: it.id,
         pointerId: e.pointerId,
@@ -2605,8 +3045,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         cx: e.clientX,
         cy: e.clientY,
         start: { x: it.x, y: it.y, w: it.w, h: it.h },
-        minW: it.type === "flow" ? FLOW_MIN_W : NOTE_MIN_W,
-        minH: it.type === "flow" ? FLOW_MIN_H : NOTE_MIN_H,
+        minW: min.w,
+        minH: min.h,
       };
       (e.currentTarget as Element).setPointerCapture(e.pointerId);
     },
@@ -2643,7 +3083,12 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       if (!moved) return;
       commit((c) =>
         patchItemById(c, s.id, (i) =>
-          i.type === "note" || i.type === "flow"
+          i.type === "note" ||
+          i.type === "flow" ||
+          i.type === "group" ||
+          i.type === "media" ||
+          i.type === "binder" ||
+          i.type === "tree"
             ? { ...i, x: r.x, y: r.y, w: r.w, h: r.h }
             : i,
         ),
@@ -2929,7 +3374,10 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     // Same rule as the selection delete: the flow card leaves, the pipeline
     // it is running stops with it.
     cancelRunsOf([id]);
-    commit((c) => removeItemAndEdges(c, id));
+    // A fichário is a container, and a container that takes its contents with
+    // it is a trapdoor: the notes are put back on the board *before* the
+    // binder goes (§13).
+    commit((c) => removeItemAndEdges(releaseNotes(c, id), id));
     dropFromSelection(id);
   };
 
@@ -3066,7 +3514,28 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     // empty space still gets the background menu — a group being selected is
     // no reason to stop offering "add here".
     if (it && selection.size > 1 && selection.has(it.id)) {
+      const notesInSel = items.filter(
+        (i) => i.type === "note" && selection.has(i.id),
+      ).length;
       return [
+        {
+          id: "group",
+          label: "Agrupar",
+          icon: <GroupIcon size={13} />,
+          shortcut: "Ctrl+G",
+          onSelect: groupSelection,
+        },
+        ...(notesInSel > 1
+          ? [
+              {
+                id: "binder",
+                label: `Transformar ${notesInSel} notas em fichário`,
+                icon: <NotebookTabs size={13} />,
+                onSelect: () => binderFromSelection(),
+              } as MenuEntry,
+            ]
+          : []),
+        { kind: "sep" },
         ...arrangeEntries(),
         { kind: "sep" },
         {
@@ -3157,11 +3626,29 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               },
             },
             {
+              id: "tree",
+              label: "Árvore de arquivos",
+              icon: <FolderTree size={13} />,
+              onSelect: () => createTreeAt(w.x, w.y),
+            },
+            {
+              id: "binder",
+              label: "Fichário (notas em abas)",
+              icon: <NotebookTabs size={13} />,
+              onSelect: () => binderFromSelection({ x: w.x, y: w.y }),
+            },
+            {
               id: "portal",
               label: "Portal",
               icon: <Globe size={13} />,
               shortcut: "W",
               onSelect: () => openModal("new-portal", { groupId, x: w.x, y: w.y }),
+            },
+            {
+              id: "media",
+              label: "Arquivo (imagem, vídeo, PDF)",
+              icon: <ImageIcon size={13} />,
+              onSelect: () => void addMediaAt(w.x, w.y),
             },
             {
               id: "text",
@@ -3319,6 +3806,21 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             resetTip: "Voltar ao tamanho padrão",
           },
           { kind: "sep" },
+          ...(binderItems.length
+            ? [
+                {
+                  id: "file",
+                  label: "Arquivar em",
+                  icon: <NotebookTabs size={13} />,
+                  submenu: binderItems.map((b, i) => ({
+                    id: b.id,
+                    label: b.name || `Fichário ${i + 1}`,
+                    icon: <NotebookTabs size={13} />,
+                    onSelect: () => fileNote(it.id, b.id),
+                  })),
+                } as MenuEntry,
+              ]
+            : []),
           {
             id: "edit",
             label: "Editar nota",
@@ -3465,6 +3967,143 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               ),
           },
           del,
+        ];
+      case "tree":
+        return [
+          swatches,
+          {
+            id: "root",
+            label: "Voltar à raiz do projeto",
+            icon: <FolderTree size={13} />,
+            disabled: !it.path,
+            onSelect: () => patchTree(it.id, { path: "", expanded: [] }),
+          },
+          { kind: "sep" },
+          dup,
+          ...order,
+          { kind: "sep" },
+          del,
+        ];
+      case "binder":
+        return [
+          swatches,
+          {
+            id: "newnote",
+            label: "Nova nota aqui",
+            icon: <StickyNote size={13} />,
+            onSelect: () => newNoteInBinder(it.id),
+          },
+          ...(it.notes.length > 1
+            ? [
+                {
+                  id: "tabs",
+                  label: "Ordem das abas",
+                  icon: <NotebookTabs size={13} />,
+                  submenu: [
+                    {
+                      id: "left",
+                      label: "Mover a aba atual para a esquerda",
+                      icon: <ChevronLeft size={13} />,
+                      disabled: (it.active ?? 0) === 0,
+                      onSelect: () =>
+                        commit((c) =>
+                          reorderTab(c, it.id, it.active ?? 0, (it.active ?? 0) - 1),
+                        ),
+                    },
+                    {
+                      id: "right",
+                      label: "Mover a aba atual para a direita",
+                      icon: <ChevronRight size={13} />,
+                      disabled: (it.active ?? 0) >= it.notes.length - 1,
+                      onSelect: () =>
+                        commit((c) =>
+                          reorderTab(c, it.id, it.active ?? 0, (it.active ?? 0) + 1),
+                        ),
+                    },
+                    { kind: "sep" },
+                    {
+                      id: "first",
+                      label: "Trazer a aba atual para o início",
+                      icon: <BringToFront size={13} />,
+                      disabled: (it.active ?? 0) === 0,
+                      onSelect: () =>
+                        commit((c) => reorderTab(c, it.id, it.active ?? 0, 0)),
+                    },
+                  ],
+                } as MenuEntry,
+              ]
+            : []),
+          { kind: "sep" },
+          ...order,
+          { kind: "sep" },
+          {
+            // Spelled out because the count is the whole question: nobody
+            // deleting a folder expects to be asked about its contents, and
+            // nobody wants five notes gone either. They come back to the board.
+            id: "delete",
+            label: it.notes.length
+              ? `Excluir o fichário (${it.notes.length} nota(s) voltam ao canvas)`
+              : "Excluir o fichário",
+            icon: <Trash2 size={13} />,
+            danger: true,
+            shortcut: "Del",
+            onSelect: () => deleteItem(it.id),
+          },
+        ];
+      case "media":
+        return [
+          swatches,
+          ...(it.root
+            ? []
+            : [
+                {
+                  id: "open",
+                  label: "Abrir no editor",
+                  icon: <PenSquare size={13} />,
+                  onSelect: () => openMediaInEditor(it.path),
+                } as MenuEntry,
+              ]),
+          {
+            id: "swap",
+            label: "Trocar o arquivo…",
+            icon: <ImageIcon size={13} />,
+            onSelect: () => void replaceMediaFile(it.id),
+          },
+          { kind: "sep" },
+          dup,
+          ...order,
+          { kind: "sep" },
+          del,
+        ];
+      case "group":
+        return [
+          swatches,
+          {
+            id: "rename",
+            label: "Renomear",
+            icon: <Pencil size={13} />,
+            onSelect: () => beginTextEdit(it.id),
+          },
+          {
+            id: "pick",
+            label: "Selecionar o conteúdo",
+            icon: <SquareDashedMousePointer size={13} />,
+            onSelect: () => selectGroupContents(it.id),
+          },
+          { kind: "sep" },
+          dup,
+          ...order,
+          { kind: "sep" },
+          {
+            // Not "Excluir": for a frame the two are the same gesture, and
+            // "Desagrupar" is the one that says what actually happens — the
+            // moldura goes, the cards stay exactly where they are.
+            id: "ungroup",
+            label: "Desagrupar",
+            icon: <GroupIcon size={13} />,
+            shortcut: "Del",
+            onSelect: () => deleteItem(it.id),
+          },
         ];
       // stroke, rect, ellipse, line, arrow
       default:
@@ -3674,14 +4313,36 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     () =>
       items.filter(
         (i): i is Extract<CanvasItem, { type: "text" | "note" }> =>
-          i.type === "text" || i.type === "note",
+          // A filed note is drawn by its fichário, not by the board. It is
+          // still an item — still addressable by the CLI, still wired — it
+          // just has one place on screen, and that place is the tab.
+          i.type === "text" || (i.type === "note" && !filed.has(i.id)),
       ),
+    [items, filed],
+  );
+  const treeItems = useMemo(
+    () => items.filter((i): i is TreeItem => i.type === "tree"),
+    [items],
+  );
+  const binderItems = useMemo(
+    () => items.filter((i): i is BinderItem => i.type === "binder"),
     [items],
   );
   const portalItems = useMemo(
     () =>
       items.filter(
         (i): i is Extract<CanvasItem, { type: "portal" }> => i.type === "portal",
+      ),
+    [items],
+  );
+  const mediaItems = useMemo(
+    () => items.filter((i): i is MediaItem => i.type === "media"),
+    [items],
+  );
+  const groupItems = useMemo(
+    () =>
+      items.filter(
+        (i): i is Extract<CanvasItem, { type: "group" }> => i.type === "group",
       ),
     [items],
   );
@@ -3775,6 +4436,36 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           } as React.CSSProperties
         }
       >
+        {/* Frames come first in the DOM on purpose: they are background, and
+            the z-index tie with the cards has to resolve in the cards' favor
+            (see `.cv-group` in canvas.css). */}
+        {groupItems.map((raw) => {
+          const { dx, dy } = shiftOf(raw.id);
+          return (
+            <GroupFrame
+              key={raw.id}
+              it={raw}
+              dx={dx}
+              dy={dy}
+              w={noteResize?.id === raw.id ? noteResize.w : raw.w}
+              h={noteResize?.id === raw.id ? noteResize.h : raw.h}
+              selected={selection.has(raw.id)}
+              faded={pendingErase.has(raw.id)}
+              selectTool={tool === "select"}
+              editing={editingId === raw.id}
+              onItemDown={onItemDown}
+              onItemMove={onItemMove}
+              onItemUp={onItemUp}
+              onBeginEdit={beginTextEdit}
+              onRename={renameGroup}
+              onEndEdit={endGroupEdit}
+              onResizeStart={startNoteResize}
+              onResizeMove={moveNoteResize}
+              onResizeEnd={endNoteResize}
+            />
+          );
+        })}
+
         {domItems.map((raw) => {
           const { dx, dy } = shiftOf(raw.id);
           const faded = pendingErase.has(raw.id);
@@ -3819,6 +4510,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               editing={editingId === raw.id}
               connectClass={connectClass}
               selectTool={tool === "select"}
+              root={projectRoot}
               onItemDown={onItemDown}
               onItemMove={onItemMove}
               onItemUp={onItemUp}
@@ -3872,6 +4564,110 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               onMenuOpen={setCardMenuOpen}
               onRect={onPortalRect}
               onBounds={onPortalBounds}
+            />
+          );
+        })}
+
+        {treeItems.map((raw) => {
+          const { dx, dy } = shiftOf(raw.id);
+          const connectClass =
+            tool === "connect" && connectFrom === raw.id
+              ? "is-connect-source"
+              : tool === "connect" && hoverNode === raw.id && connectFrom
+                ? "is-connect-target"
+                : "";
+          return (
+            <TreeCard
+              key={raw.id}
+              it={raw}
+              dx={dx}
+              dy={dy}
+              w={noteResize?.id === raw.id ? noteResize.w : raw.w}
+              h={noteResize?.id === raw.id ? noteResize.h : raw.h}
+              selected={selection.has(raw.id)}
+              faded={pendingErase.has(raw.id)}
+              connectClass={connectClass}
+              projectRoot={projectRoot}
+              onItemDown={onItemDown}
+              onItemMove={onItemMove}
+              onItemUp={onItemUp}
+              onPatch={patchTree}
+              onOpenFile={openMediaInEditor}
+              onResizeStart={startNoteResize}
+              onResizeMove={moveNoteResize}
+              onResizeEnd={endNoteResize}
+            />
+          );
+        })}
+
+        {binderItems.map((raw) => {
+          const { dx, dy } = shiftOf(raw.id);
+          const connectClass =
+            tool === "connect" && connectFrom === raw.id
+              ? "is-connect-source"
+              : tool === "connect" && hoverNode === raw.id && connectFrom
+                ? "is-connect-target"
+                : "";
+          return (
+            <BinderCard
+              key={raw.id}
+              it={raw}
+              items={items}
+              dx={dx}
+              dy={dy}
+              w={noteResize?.id === raw.id ? noteResize.w : raw.w}
+              h={noteResize?.id === raw.id ? noteResize.h : raw.h}
+              selected={selection.has(raw.id)}
+              faded={pendingErase.has(raw.id)}
+              connectClass={connectClass}
+              selectTool={tool === "select"}
+              editingId={editingId}
+              root={projectRoot}
+              onItemDown={onItemDown}
+              onItemMove={onItemMove}
+              onItemUp={onItemUp}
+              onShowTab={showBinderTab}
+              onRemoveTab={unfileNote}
+              onNewNote={newNoteInBinder}
+              onBeginEdit={beginTextEdit}
+              onPatchText={patchText}
+              onEndEdit={endTextEdit}
+              onToggleTask={toggleNoteTask}
+              onOpenLink={openNoteLink}
+              onResizeStart={startNoteResize}
+              onResizeMove={moveNoteResize}
+              onResizeEnd={endNoteResize}
+            />
+          );
+        })}
+
+        {mediaItems.map((raw) => {
+          const { dx, dy } = shiftOf(raw.id);
+          const connectClass =
+            tool === "connect" && connectFrom === raw.id
+              ? "is-connect-source"
+              : tool === "connect" && hoverNode === raw.id && connectFrom
+                ? "is-connect-target"
+                : "";
+          return (
+            <MediaCard
+              key={raw.id}
+              it={raw}
+              dx={dx}
+              dy={dy}
+              w={noteResize?.id === raw.id ? noteResize.w : raw.w}
+              h={noteResize?.id === raw.id ? noteResize.h : raw.h}
+              selected={selection.has(raw.id)}
+              faded={pendingErase.has(raw.id)}
+              connectClass={connectClass}
+              projectRoot={projectRoot}
+              onItemDown={onItemDown}
+              onItemMove={onItemMove}
+              onItemUp={onItemUp}
+              onOpen={openMediaInEditor}
+              onResizeStart={startNoteResize}
+              onResizeMove={moveNoteResize}
+              onResizeEnd={endNoteResize}
             />
           );
         })}

@@ -262,12 +262,12 @@ export function moveTab(
 
   // Same pane = a reorder; there is no pane left behind to repair.
   if (!before || (before.groupId === groupId && before.slot === slot)) return;
-  const { layoutOf, updateLayout, terminalsOf } = useProjects.getState();
+  const { layoutOf, updateLayout, terminalsOn } = useProjects.getState();
   const layout = layoutOf(before.groupId);
   if (layout.activeBySlot[before.slot] !== id) return;
   const notes = useNotes.getState().place;
   const neighbor =
-    terminalsOf(before.groupId).find((t) => t.slot === before.slot) ??
+    terminalsOn(before.groupId, "grid").find((t) => t.slot === before.slot) ??
     useEditor
       .getState()
       .docs.find((d) => d.groupId === before.groupId && d.slot === before.slot) ??

@@ -124,7 +124,7 @@ export function FlowHud({ groupId, flows, onReveal, onDraw }: Props) {
     const s = useProjects.getState();
     const canvas = s.layoutOf(groupId).canvas;
     if (!canvas) return undefined;
-    return flowAgents(canvas, flowId, s.terminalsOf(groupId)).find((t) =>
+    return flowAgents(canvas, flowId, s.terminalsOn(groupId, "canvas")).find((t) =>
       isLive(useTerminals.getState().byId[t.id]),
     );
   };

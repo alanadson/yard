@@ -129,6 +129,9 @@ export function SessionsModal({ projectPath }: { projectPath: string }) {
         args,
         cwd,
       });
+      // A resumed session comes back on the surface the user is looking at —
+      // a tab among the tabs, or a card on the board.
+      const surface = useProjects.getState().layoutOf(groupId).surface;
       const id = addTerminal({
         groupId,
         program: born.program,
@@ -138,10 +141,11 @@ export function SessionsModal({ projectPath }: { projectPath: string }) {
         title: s.title ? truncate(s.title, 28) : `${s.agent} (retomado)`,
         agentId: s.agent,
         resume: args,
+        surface,
       });
-      // A resumed session is a card appearing on the board like any other:
-      // it belongs where the user last pointed, not at the next grid slot.
-      placeCard(groupId, id);
+      // On the board it belongs where the user last pointed, not at the next
+      // automatic slot.
+      if (surface === "canvas") placeCard(groupId, id);
       useProjects.getState().updateTerminal(id, { alive: true });
       closeModal();
     } catch (e) {

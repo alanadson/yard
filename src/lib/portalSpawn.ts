@@ -116,7 +116,8 @@ export async function spawnPortalNear(opts: {
 }): Promise<string> {
   const projects = useProjects.getState();
   const canvas = projects.layoutOf(opts.groupId).canvas;
-  const terminals = projects.terminalsOf(opts.groupId);
+  // A portal only exists on the canvas, so its neighbours are the cards.
+  const terminals = projects.terminalsOn(opts.groupId, "canvas");
 
   const near = opts.nearTerminalId
     ? (canvas?.nodes?.[opts.nearTerminalId] ??

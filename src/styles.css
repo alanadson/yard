@@ -1074,9 +1074,14 @@ body.tips-off [data-tip]:focus-visible::after {
   }
 }
 
-/* Below 1180px only the meters leave; the chip (and with it the popover and
-   the Energético state) stays reachable — before, the whole meter vanished. */
-@media (max-width: 1180px) {
+/* Below this only the meters leave; the chip (and with it the popover and the
+   Energético state) stays reachable — before, the whole meter vanished.
+
+   The threshold was 1180px while the centre was a single pill of four
+   segments. Splitting Canvas out of that pill into a button of its own added
+   about a hundred pixels to the centre, and at 1296px the first meter was
+   painting *under* it again. Same policy as above, one step earlier. */
+@media (max-width: 1400px) {
   .usage-strip .usage-chip {
     display: none;
   }
@@ -1428,6 +1433,42 @@ body.tips-off [data-tip]:focus-visible::after {
     inset 0 1px 0 rgb(255 255 255 / 9%);
 }
 
+/* With the canvas up, the pane switch describes what is *behind* it: still
+   live (picking a shape brings the panes back), just no longer the subject. */
+.layout-switch.is-behind {
+  opacity: 0.55;
+}
+
+/* The canvas is the group's other surface, not a fourth segment of the switch
+   above — it sits outside the pill, with a gap that says so. */
+.layout-canvas {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  padding: 6px 13px;
+  border: 1px solid rgb(255 255 255 / 6%);
+  border-radius: 999px;
+  background: rgb(0 0 0 / 28%);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 20%);
+  color: var(--text-dim);
+  font-size: var(--fs-md);
+  font-weight: 500;
+}
+
+.layout-canvas:hover {
+  color: var(--text);
+}
+
+.layout-canvas.is-active {
+  background: rgb(255 255 255 / 14%);
+  border-color: rgb(255 255 255 / 12%);
+  color: var(--text-bright);
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 35%),
+    inset 0 1px 0 rgb(255 255 255 / 9%);
+}
+
 /* Inside the segmented control the pop-up button is one more segment: no
    well of its own, only the label and the caret. */
 .layout-switch .select-trigger {
@@ -1716,6 +1757,62 @@ body.tips-off [data-tip]:focus-visible::after {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 0 6px 10px;
+}
+
+/* The boards list sits above the projects tree and sizes to its content: the
+   tree below keeps `flex: 1`, so a bar with three boards does not give half
+   its height to them. Past the cap it scrolls on its own. */
+.sidebar-boards {
+  flex: 0 0 auto;
+  max-height: 38%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 6px 6px;
+}
+
+/* On the canvas the projects tree is gone and the boards are the whole bar. */
+.sidebar-boards.is-alone {
+  flex: 1;
+  max-height: none;
+}
+
+.tree-row--board {
+  cursor: pointer;
+  color: var(--text);
+}
+
+/* Same blue pill as the active group — it is the same idea: the thing on
+   screen right now. */
+.tree-row--board.is-active {
+  background: rgb(10 132 255 / 26%);
+  color: var(--text-bright);
+  box-shadow: inset 0 0 0 1px rgb(10 132 255 / 18%);
+}
+
+.tree-icon--board {
+  color: var(--text-dim);
+}
+
+/* A card hangs straight off its board, one level shallower than a tab, which
+   hangs off a group inside a project. */
+.sidebar-boards .tree-row--terminal,
+.sidebar-boards .tree-empty {
+  padding-left: 26px;
+}
+
+/* Which project the card is running in. Dimmer than the name: it is what tells
+   two identically-named CLIs apart, not what you read first. */
+/* "Abrir em [projeto]" on a board: the label and the picker on one line, so
+   the picker reads as the answer to the label and not as a stray control. */
+.new-term-where {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tree-origin {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
 }
 
 .sidebar-empty {

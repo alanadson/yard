@@ -14,6 +14,7 @@ import {
 
 import { classifyPrompt, TAIL_CAP } from "../lib/blocked";
 import { AsyncDisposer } from "../lib/disposables";
+import { isFrontOnScreen } from "../lib/frontTab";
 import { ipc, on } from "../lib/ipc";
 import { shouldNotify } from "../lib/notifyAgent";
 import { useChanges } from "../stores/changesStore";
@@ -47,13 +48,11 @@ function isInFront(id: string): boolean {
   const row = s.terminal(id);
   if (!row || row.groupId !== s.activeGroupId) return false;
 
-  const layout = s.layoutOf(row.groupId);
-  // On the canvas every card is on the board; elsewhere, what counts is the
-  // tab in front in that pane (or the one the pane picks by default).
-  if (layout.mode === "canvas") return true;
-  const active = layout.activeBySlot[row.slot];
-  if (active) return active === id;
-  return s.terminalsOf(row.groupId).find((t) => t.slot === row.slot)?.id === id;
+  return isFrontOnScreen(
+    s.layoutOf(row.groupId),
+    row,
+    s.terminalsOn(row.groupId, "grid"),
+  );
 }
 
 export function useGlobalEvents() {

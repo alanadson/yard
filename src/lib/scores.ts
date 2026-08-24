@@ -54,7 +54,9 @@ export function serializeGroup(groupId: string, name: string): ScoreFile {
   const s = useProjects.getState();
   const group = s.groups.find((g) => g.id === groupId);
   const canvas = s.layoutOf(groupId).canvas ?? EMPTY_CANVAS;
-  const terminals = s.terminalsOf(groupId).map<ScoreTerminal>((t) => ({
+  // A score is the *board*: its cards, their wires and their roles. The
+  // group's tabs are not part of it — they have no position to restore.
+  const terminals = s.terminalsOn(groupId, "canvas").map<ScoreTerminal>((t) => ({
     key: t.id,
     title: baseName(t),
     kind: t.kind,
@@ -160,6 +162,7 @@ export function applyScore(
       program: t.program,
       args: t.args,
       cwd,
+      surface: "canvas",
     });
     idMap.set(t.key, fresh);
   }
@@ -218,7 +221,7 @@ export function applyScore(
   // Without this a new group would open in the automatic grid and the
   // arrangement — positions, notes, arrows — would be invisible: a score
   // only exists on the canvas.
-  if (!hasContent) s.updateLayout(groupId, { mode: "canvas" });
+  if (!hasContent) s.updateLayout(groupId, { surface: "canvas" });
 
   return { terminals: score.terminals.length, items: items.length };
 }

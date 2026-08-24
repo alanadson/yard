@@ -61,7 +61,7 @@ export function FlowModal() {
   const wired = useMemo(() => {
     const canvas = useProjects.getState().layoutOf(groupId).canvas;
     if (!canvas || !itemId) return [];
-    return flowAgents(canvas, itemId, useProjects.getState().terminalsOf(groupId));
+    return flowAgents(canvas, itemId, useProjects.getState().terminalsOn(groupId, "canvas"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

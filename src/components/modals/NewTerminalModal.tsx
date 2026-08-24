@@ -37,10 +37,13 @@ import {
 } from "lucide-react";
 
 import { Modal } from "./Modal";
+import { Select } from "../Select";
 import { BrandIcon } from "../BrandIcon";
 import { defaultRoleOf, pickableAgents, titleFor } from "../../lib/agentDefaults";
 import { brandById } from "../../lib/brands";
 import { commitCanvasExternal, placeCard } from "../../lib/canvasWrite";
+import { show } from "../../lib/navigate";
+import type { Surface } from "../../lib/surface";
 import { ipc, type AgentInfo, type ShellOption } from "../../lib/ipc";
 import { deliverBriefing } from "../../lib/roleBrief";
 import { roleLaunch } from "../../lib/roles";
@@ -132,13 +135,21 @@ export function NewTerminalModal() {
   const groupId = payload?.groupId ?? activeGroupId ?? null;
   const group = groupId ? groups.find((g) => g.id === groupId) : undefined;
   /**
+   * A board belongs to no project, and that is the point of it: the folder the
+   * CLI runs in becomes a **choice** instead of something to infer. Everywhere
+   * else the dialog stopped asking, because it always had the right answer.
+   */
+  const onBoard = group?.projectId === null;
+  const [picked, setPicked] = useState<string | null>(null);
+  /**
    * `projects[0]` used to be the fallback, which could open the terminal in a
    * project nobody was in.
    */
-  const targetProject =
-    (group ? projectOfGroup(group.id) : undefined) ??
-    projects.find((p) => p.id === activeProjectId) ??
-    projects[0];
+  const targetProject = onBoard
+    ? (projects.find((p) => p.id === (picked ?? activeProjectId)) ?? projects[0])
+    : ((group ? projectOfGroup(group.id) : undefined) ??
+      projects.find((p) => p.id === activeProjectId) ??
+      projects[0]);
 
   useEffect(() => {
     void ipc
@@ -216,10 +227,16 @@ export function NewTerminalModal() {
    * group active is not — and the dialog closing with nothing on screen
    * showing what was created is the worst possible answer to a click.
    */
-  const goToTarget = (targetId: string) => {
+  /**
+   * Puts the screen where the new thing landed. The surface matters as much
+   * as the group: a tab created while the board is up would otherwise be born
+   * behind it, and a card created from a pane would be born behind the panes.
+   */
+  const goToTarget = (targetId: string, surface: Surface) => {
     if (useProjects.getState().activeGroupId !== targetId) {
       useProjects.getState().setActiveGroup(targetId);
     }
+    show(targetId, surface);
   };
 
   /**
@@ -248,9 +265,11 @@ export function NewTerminalModal() {
         closeModal();
         return;
       }
-      if (group && projectsState.layoutOf(group.id).mode === "canvas") {
+      if (group && projectsState.layoutOf(group.id).surface === "canvas") {
         showToast(
-          "Esse grupo está no modo canvas, que não tem barra de abas — troque o layout antes de encaixar o caderno.",
+          onBoard
+            ? "Um quadro não tem barra de abas — encaixe o caderno num painel de um grupo, ou use o caderno em tela."
+            : "Esse grupo está mostrando o canvas, que não tem barra de abas — volte para os painéis antes de encaixar o caderno.",
           "error",
         );
         return;
@@ -259,7 +278,7 @@ export function NewTerminalModal() {
       useNotes
         .getState()
         .dockTo(target, (target === payload?.groupId ? payload?.slot : undefined) ?? 0);
-      goToTarget(target);
+      goToTarget(target, "grid");
       closeModal();
       return;
     }
@@ -269,6 +288,17 @@ export function NewTerminalModal() {
     // the tab. With no address it opens blank, with the URL bar focused, which
     // is where an address was going to be typed anyway.
     if (recipient.kind === "browser") {
+      // A browser tab belongs to a pane, and a board has none. Its browser is
+      // the portal — a card on the board — and that is drawn from the board's
+      // own toolbar, so the dialog points there instead of opening a tab
+      // nobody would ever see.
+      if (onBoard) {
+        showToast(
+          "Num quadro o navegador é um portal: use a ferramenta de portal na barra do quadro.",
+          "error",
+        );
+        return;
+      }
       const target = group?.id ?? addGroup(targetProject!.id);
       useBrowsers.getState().open({
         groupId: target,
@@ -276,7 +306,9 @@ export function NewTerminalModal() {
         // that asked; another group goes to its first pane.
         slot: (target === payload?.groupId ? payload?.slot : undefined) ?? 0,
       });
-      goToTarget(target);
+      // A browser tab is a tab: it belongs to a pane, not to the board (the
+      // board's browser is a portal, which is another thing entirely).
+      goToTarget(target, "grid");
       closeModal();
       return;
     }
@@ -317,6 +349,11 @@ export function NewTerminalModal() {
         args: launch.args,
         cwd: folder,
       });
+      // Born on the surface the target group is showing — and only there.
+      // The board and the panes stopped sharing their CLIs, so this is the
+      // one decision that says which of the two will ever draw this one.
+      const surface: Surface =
+        useProjects.getState().layoutOf(target).surface === "canvas" ? "canvas" : "grid";
       const id = addTerminal({
         groupId: target,
         // Only honors the requested slot when the CLI is born in the same group
@@ -328,22 +365,25 @@ export function NewTerminalModal() {
         kind: recipient.kind,
         title,
         agentId,
+        surface,
       });
       // The point travels in the payload only when the canvas context menu
       // opened this: the menu sits *inside* the canvas, so walking down to
       // "Terminal" already moved the pointer off the spot being pointed at.
-      placeCard(
-        target,
-        id,
-        payload?.x !== undefined && payload.y !== undefined && target === payload.groupId
-          ? { x: payload.x, y: payload.y }
-          : null,
-      );
+      if (surface === "canvas") {
+        placeCard(
+          target,
+          id,
+          payload?.x !== undefined && payload.y !== undefined && target === payload.groupId
+            ? { x: payload.x, y: payload.y }
+            : null,
+        );
+      }
       // After `placeCard`, which is what put the card in `nodes` for the tint
       // to land on. Through the external commit, like `placeCard` itself: the
       // two writes are one gesture, and a `Ctrl+Z` that undid half of it would
       // leave a role attached to a card back in an automatic slot.
-      if (pick) {
+      if (pick && surface === "canvas") {
         commitCanvasExternal(target, (c) => ({
           ...c,
           roles: { ...(c.roles ?? {}), [id]: pick.role },
@@ -358,7 +398,7 @@ export function NewTerminalModal() {
       // Waits for the CLI to be up and quiet on its own; the dialog must not
       // hang around for the seconds an agent takes to paint its banner.
       if (launch.briefing) void deliverBriefing(id, launch.briefing);
-      goToTarget(target);
+      goToTarget(target, surface);
       closeModal();
     } catch (e) {
       showToast(`Não consegui abrir: ${e}`, "error");
@@ -438,13 +478,28 @@ export function NewTerminalModal() {
       <div className="option-list-head">
         {/* Where the tab is going to be born, said out loud: the dialog stopped
             asking, so it owes the answer. */}
-        <span>
-          {loadingAgents
-            ? "Procurando CLIs…"
-            : targetProject
-              ? `Abrir em ${targetProject.name}`
-              : "Início rápido"}
-        </span>
+        {onBoard && projects.length > 0 ? (
+          // On a board the answer is not inferable — it is what lets one board
+          // hold cards from three projects at once.
+          <span className="new-term-where">
+            Abrir em
+            <Select
+              value={targetProject?.id ?? ""}
+              label="Pasta da CLI"
+              tip="Em qual projeto esta CLI vai rodar"
+              options={projects.map((p) => ({ value: p.id, label: p.name }))}
+              onChange={setPicked}
+            />
+          </span>
+        ) : (
+          <span>
+            {loadingAgents
+              ? "Procurando CLIs…"
+              : targetProject
+                ? `Abrir em ${targetProject.name}`
+                : "Início rápido"}
+          </span>
+        )}
         <button
           className={`icon-btn ${loadingAgents ? "is-busy" : ""}`}
           data-tip="Detectar de novo"

@@ -24,6 +24,7 @@ import {
   ChevronRight,
   FolderOpen,
   FolderPlus,
+  Frame,
   History,
   Layers,
   MoreVertical,
@@ -40,10 +41,11 @@ import { TerminalMark } from "../BrandIcon";
 import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
 import { InlineRename } from "../ContextMenu/InlineRename";
 import { Resizer } from "../Resizer";
-import { ipc } from "../../lib/ipc";
+import { ipc, type TerminalRow } from "../../lib/ipc";
 import { closeGroup, closeProject } from "../../lib/lifecycle";
 import { goToTerminal } from "../../lib/navigate";
 import { projectIcon } from "../../lib/projectStyle";
+import { cardOrigin, sectionsFor, treeRows, type TreeKind } from "./rows";
 import { terminalActionEntries } from "../../lib/terminalMenu";
 import { baseName } from "../../lib/terminals";
 import { useAction } from "../../hooks/useAction";
@@ -56,9 +58,6 @@ import {
   SIDEBAR_MAX,
   SIDEBAR_MIN,
 } from "../../stores/uiStore";
-
-/** `"sidebar"` is the bar's background: the menu that speaks of no row. */
-type TreeKind = "project" | "group" | "terminal" | "sidebar";
 
 interface MenuState {
   kind: TreeKind;
@@ -78,6 +77,24 @@ export function ProjectSidebar() {
   // are stable references, so subscribing to them costs nothing.
   const projects = useProjects((s) => s.projects);
   const groups = useProjects((s) => s.groups);
+  const addBoard = useProjects((s) => s.addBoard);
+  /**
+   * Which sections the bar paints. On the canvas the only thing that can be on
+   * screen is a board, so the projects tree gives way to the boards.
+   *
+   * The subscription is a **boolean**, and the object is built in a memo. A
+   * selector returning `sectionsFor(...)` directly hands Zustand a fresh
+   * object on every call, and since it compares by identity that is
+   * "Maximum update depth exceeded" — the render feeding itself. Same rule as
+   * every list slice in `WorkspaceGrid`.
+   */
+  const onCanvas = useProjects(
+    (s) => !!s.activeGroupId && s.layoutOf(s.activeGroupId).surface === "canvas",
+  );
+  const sections = useMemo(
+    () => sectionsFor(onCanvas ? "canvas" : "grid"),
+    [onCanvas],
+  );
   const terminals = useProjects((s) => s.terminals);
   const activeGroupId = useProjects((s) => s.activeGroupId);
   const setActiveGroup = useProjects((s) => s.setActiveGroup);
@@ -108,9 +125,21 @@ export function ProjectSidebar() {
     () => useTerminals.getState().byId,
     [runtimeSignals, terminals],
   );
+  /**
+   * The boards: groups that belong to no project. Derived here instead of
+   * through the store selector so the memo is keyed on the same `groups`
+   * reference the rest of this tree already subscribes to.
+   */
+  const boards = useMemo(
+    () => groups.filter((g) => g.projectId === null).sort((a, b) => a.sort - b.sort),
+    [groups],
+  );
   const groupsByProject = useMemo(() => {
     const index = new Map<string, typeof groups>();
     for (const group of groups) {
+      // A board belongs to no project: it is not in this index at all, it is
+      // its own section at the top of the bar.
+      if (group.projectId === null) continue;
       const list = index.get(group.projectId) ?? [];
       list.push(group);
       index.set(group.projectId, list);
@@ -153,22 +182,24 @@ export function ProjectSidebar() {
     else rowRefs.current.delete(id);
   }, []);
 
-  /** The visible rows, in the order they are painted. */
-  const flatRows = useMemo(() => {
-    const out: { id: string; kind: TreeKind }[] = [];
-    for (const project of projects) {
-      out.push({ id: project.id, kind: "project" });
-      if (collapsed[project.id]) continue;
-      for (const group of groupsByProject.get(project.id) ?? []) {
-        out.push({ id: group.id, kind: "group" });
-        if (collapsed[group.id]) continue;
-        for (const t of terminalsByGroup.get(group.id) ?? []) {
-          out.push({ id: t.id, kind: "terminal" });
-        }
-      }
-    }
-    return out;
-  }, [projects, groupsByProject, terminalsByGroup, collapsed]);
+  /**
+   * The visible rows, in the order they are painted — boards first, projects
+   * after. The arrows walk this one list across both sections, so the focus
+   * leaves the last board and lands on the first project instead of stopping
+   * at the seam.
+   */
+  const flatRows = useMemo(
+    () =>
+      treeRows({
+        sections,
+        boards,
+        projects,
+        groupsOf: (id) => groupsByProject.get(id) ?? [],
+        cardsOf: (id) => terminalsByGroup.get(id) ?? [],
+        collapsed,
+      }),
+    [sections, boards, projects, groupsByProject, terminalsByGroup, collapsed],
+  );
 
   /** Only one row is reachable by Tab; the arrows move between them. */
   const tabIndexOf = (id: string) =>
@@ -296,7 +327,9 @@ export function ProjectSidebar() {
   const commitRename = (next: string) => {
     if (!renaming) return;
     if (renaming.kind === "project") renameProject(renaming.id, next);
-    else if (renaming.kind === "group") renameGroup(renaming.id, next);
+    // A board is a group with no project, so it renames through the same door.
+    else if (renaming.kind === "group" || renaming.kind === "board")
+      renameGroup(renaming.id, next);
     else updateTerminal(renaming.id, { title: next });
     setRenaming(null);
   };
@@ -333,6 +366,30 @@ export function ProjectSidebar() {
   const newCli = (groupId: string) => {
     setActiveGroup(groupId);
     openModal("new-terminal", { groupId });
+  };
+
+  /**
+   * Deleting a board takes its cards with it — they are processes, and there
+   * is no other surface of this board for them to fall back to. Said plainly,
+   * because the drawings and the notes go too and none of that is recoverable.
+   */
+  const confirmDeleteBoard = async (boardId: string) => {
+    const board = boards.find((b) => b.id === boardId);
+    if (!board) return;
+    const cards = terminalsByGroup.get(boardId) ?? [];
+    const aliveCount = cards.filter((t) => isLive(runtimes[t.id])).length;
+    const detail =
+      aliveCount > 0
+        ? `${aliveCount} CLI(s) ainda rodando. Excluir encerra os processos.`
+        : cards.length > 0
+          ? `O quadro tem ${cards.length} CLI(s).`
+          : "O quadro está vazio.";
+    const ok = await ask(
+      `Excluir o quadro “${board.name}”? ${detail} Os desenhos e as notas dele ` +
+        `também vão.${unsavedWarning({ groupId: boardId })}`,
+      { title: "Excluir quadro", kind: "warning" },
+    );
+    if (ok) await act(() => closeGroup(boardId), "Não consegui excluir o quadro");
   };
 
   const confirmDeleteGroup = async (groupId: string) => {
@@ -399,6 +456,40 @@ export function ProjectSidebar() {
           label: "Esconder a barra",
           shortcut: "Ctrl+B",
           onSelect: () => useUI.getState().toggleSidebar(),
+        },
+      ];
+    }
+
+    if (menu.kind === "board") {
+      const board = boards.find((b) => b.id === menu.id);
+      if (!board) return [];
+      return [
+        {
+          id: "new-cli",
+          label: "Nova CLI neste quadro",
+          icon: <TerminalIcon size={13} />,
+          onSelect: () => newCli(board.id),
+        },
+        {
+          id: "rename",
+          label: "Renomear",
+          icon: <Pencil size={13} />,
+          onSelect: () => beginRename("board", board.id),
+        },
+        { kind: "sep" },
+        {
+          id: "new-board",
+          label: "Novo quadro",
+          icon: <Plus size={13} />,
+          onSelect: () => beginRename("board", addBoard("")),
+        },
+        { kind: "sep" },
+        {
+          id: "delete",
+          label: "Excluir quadro",
+          icon: <Trash2 size={13} />,
+          danger: true,
+          onSelect: () => void confirmDeleteBoard(board.id),
         },
       ];
     }
@@ -484,7 +575,7 @@ export function ProjectSidebar() {
           id: "new-group",
           label: "Novo grupo",
           icon: <Plus size={13} />,
-          onSelect: () => addGroup(group.projectId),
+          onSelect: () => group.projectId && addGroup(group.projectId),
         },
         {
           id: "scores",
@@ -547,6 +638,118 @@ export function ProjectSidebar() {
     });
   };
 
+  /**
+   * One CLI row — used by the boards on top and by the groups below, which is
+   * why it is a function and not two copies of ninety lines of markup.
+   * `level` is the ARIA depth: a card hangs straight off its board (2), a tab
+   * hangs off a group inside a project (3).
+   */
+  const renderTerminal = (t: TerminalRow, level: number, origin?: string | null) => {
+    const rt = runtimes[t.id];
+    const termMenuOpen = menu?.kind === "terminal" && menu.id === t.id;
+    const label = baseName(t);
+    // The tree is the primary navigation: clicking has to bring the CLI to
+    // the front, not just light up the row. On a board that means taking the
+    // camera to the card — both routes live in `lib/navigate`.
+    const openIt = () => goToTerminal(t);
+    return (
+                            <div
+                              key={t.id}
+                              className={`tree-row tree-row--terminal ${
+                                termMenuOpen ? "is-menu-open" : ""
+                              } ${t.id === focusedTerminalId ? "is-focused" : ""}`}
+                              role="treeitem"
+                              aria-level={level}
+                              // The dot and the badges are colour only; both
+                              // states have to reach a screen reader through
+                              // the name — "blocked" is the one signal the
+                              // whole product exists to deliver.
+                              aria-label={`${label}${origin ? ` em ${origin}` : ""} — ${readableState(rt?.state)}${
+                                rt?.blocked
+                                  ? ", esperando uma resposta sua"
+                                  : rt?.finished
+                                    ? ", terminou de trabalhar"
+                                    : rt?.unread
+                                      ? ", saída nova ainda não vista"
+                                      : ""
+                              }`}
+                              aria-selected={t.id === focusedTerminalId}
+                              aria-current={
+                                t.id === focusedTerminalId ? "true" : undefined
+                              }
+                              ref={(el) => registerRow(t.id, el)}
+                              tabIndex={tabIndexOf(t.id)}
+                              onFocus={() => setFocusId(t.id)}
+                              onKeyDown={(e) =>
+                                onRowKeyDown(e, "terminal", t.id, openIt, null)
+                              }
+                              onClick={openIt}
+                              onContextMenu={(e) => {
+                                openIt();
+                                openMenu(e, "terminal", t.id);
+                              }}
+                              data-tip-at="left" data-tip-wrap="" data-tip={`${t.program} ${t.args.join(" ")}`.trim()}
+                            >
+                              <span
+                                className={`dot dot--${rt?.state ?? "idle"}`}
+                                data-tip={readableState(rt?.state)}
+                                // The row's own name already says the state.
+                                aria-hidden="true"
+                              />
+                              <TerminalMark term={t} size={11} className="tree-icon" />
+                              {renaming?.kind === "terminal" &&
+                              renaming.id === t.id ? (
+                                <InlineRename
+                                  value={label}
+                                  onCommit={commitRename}
+                                  onCancel={() => setRenaming(null)}
+                                />
+                              ) : (
+                                <span
+                                  className="tree-label"
+                                  onDoubleClick={(e) => {
+                                    e.stopPropagation();
+                                    beginRename("terminal", t.id);
+                                  }}
+                                >
+                                  {label}
+                                  {origin && (
+                                    <span className="tree-origin"> · {origin}</span>
+                                  )}
+                                </span>
+                              )}
+                              {rt?.blocked ? (
+                                <span
+                                  className="badge-blocked"
+                                  data-tip-wrap=""
+                                  data-tip={rt.blockedAsk ?? "Esperando uma resposta sua"}
+                                />
+                              ) : rt?.finished ? (
+                                <span
+                                  className="badge-finished"
+                                  data-tip="Terminou de trabalhar"
+                                />
+                              ) : rt?.unread ? (
+                                <span
+                                  className="badge-unread"
+                                  data-tip="Saída nova ainda não vista"
+                                />
+                              ) : null}
+                              <button
+                                className="icon-btn"
+                                data-tip-at="right" data-tip="Mais ações"
+                                aria-label={`Mais ações de ${label}`}
+                                onClick={(e) => {
+                                  openIt();
+                                  openMenu(e, "terminal", t.id, true);
+                                }}
+                              >
+                                <MoreVertical size={13} />
+                              </button>
+                            </div>
+    );
+  };
+
   return (
     <aside
       className="sidebar"
@@ -556,22 +759,164 @@ export function ProjectSidebar() {
       // Now it answers for what the whole bar does.
       onContextMenu={(e) => openMenu(e, "sidebar", "")}
     >
-      <div className="sidebar-header">
-        <span>Projetos</span>
-        <button
-          className="icon-btn"
-          data-tip="Adicionar projeto"
-          aria-label="Adicionar projeto"
-          onClick={() => openModal("new-project")}
-        >
-          <FolderPlus size={14} />
-        </button>
+      {/* A board is not inside any project — it is the canvas as its own
+          container, mixing cards from several. The two sections are
+          surface-exclusive: boards on Canvas, projects on the pane grid. */}
+      {sections.boards && (
+        <div className="sidebar-header">
+          <span>Quadros</span>
+          <button
+            className="icon-btn"
+            data-tip="Novo quadro"
+            aria-label="Novo quadro"
+            onClick={() => beginRename("board", addBoard(""))}
+          >
+            <Plus size={14} />
+          </button>
+        </div>
+      )}
+
+      <div
+        className={`sidebar-boards ${sections.projects ? "" : "is-alone"}`}
+        role="tree"
+        aria-label="Quadros do canvas"
+        hidden={!sections.boards}
+      >
+        {boards.length === 0 && (
+          <div className="tree-empty">
+            Nenhum quadro —{" "}
+            <button onClick={() => beginRename("board", addBoard(""))}>criar um</button>
+          </div>
+        )}
+        {boards.map((board) => {
+          const cards = terminalsByGroup.get(board.id) ?? [];
+          const boardMenuOpen = menu?.kind === "board" && menu.id === board.id;
+          const boardCollapsed = collapsed[board.id];
+          return (
+            <div key={board.id} className="tree-project" role="none">
+              <div
+                className={`tree-row tree-row--board ${
+                  board.id === activeGroupId ? "is-active" : ""
+                } ${boardMenuOpen ? "is-menu-open" : ""}`}
+                role="treeitem"
+                aria-level={1}
+                aria-label={board.name}
+                aria-selected={board.id === activeGroupId}
+                aria-current={board.id === activeGroupId ? "true" : undefined}
+                aria-expanded={cards.length > 0 ? !boardCollapsed : undefined}
+                ref={(el) => registerRow(board.id, el)}
+                tabIndex={tabIndexOf(board.id)}
+                onFocus={() => setFocusId(board.id)}
+                onKeyDown={(e) =>
+                  onRowKeyDown(
+                    e,
+                    "board",
+                    board.id,
+                    () => setActiveGroup(board.id),
+                    cards.length > 0 ? !boardCollapsed : null,
+                  )
+                }
+                onClick={() => setActiveGroup(board.id)}
+                onContextMenu={(e) => {
+                  setActiveGroup(board.id);
+                  openMenu(e, "board", board.id);
+                }}
+                data-tip-wrap="" data-tip="Botão direito para ações"
+              >
+                {cards.length > 0 ? (
+                  <button
+                    className="tree-toggle"
+                    aria-expanded={!boardCollapsed}
+                    aria-label={
+                      boardCollapsed ? `Expandir ${board.name}` : `Recolher ${board.name}`
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggle(board.id);
+                    }}
+                  >
+                    {boardCollapsed ? (
+                      <ChevronRight size={13} />
+                    ) : (
+                      <ChevronDown size={13} />
+                    )}
+                  </button>
+                ) : (
+                  <Frame size={13} className="tree-icon tree-icon--board" />
+                )}
+                {renaming?.kind === "board" && renaming.id === board.id ? (
+                  <InlineRename
+                    value={board.name}
+                    onCommit={commitRename}
+                    onCancel={() => setRenaming(null)}
+                  />
+                ) : (
+                  <span
+                    className="tree-label"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      beginRename("board", board.id);
+                    }}
+                  >
+                    {board.name}
+                  </span>
+                )}
+                <button
+                  className="icon-btn"
+                  data-tip-at="right" data-tip="Nova CLI neste quadro"
+                  aria-label={`Nova CLI em ${board.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    newCli(board.id);
+                  }}
+                >
+                  <Plus size={13} />
+                </button>
+                <button
+                  className="icon-btn"
+                  data-tip-at="right" data-tip="Mais ações"
+                  aria-label={`Mais ações de ${board.name}`}
+                  onClick={(e) => openMenu(e, "board", board.id, true)}
+                >
+                  <MoreVertical size={13} />
+                </button>
+              </div>
+
+              {cards.length === 0 && (
+                <div className="tree-empty">
+                  Quadro vazio —{" "}
+                  <button onClick={() => newCli(board.id)}>abrir uma CLI</button>
+                </div>
+              )}
+
+              {/* The folder each card runs in: on a board two CLIs with the
+                  same name are told apart only by the project behind them. */}
+              {!boardCollapsed &&
+                cards.map((t) => renderTerminal(t, 2, cardOrigin(projects, t.cwd)))}
+            </div>
+          );
+        })}
       </div>
+
+      {sections.projects && (
+        <div className="sidebar-header">
+          <span>Projetos</span>
+          <button
+            className="icon-btn"
+            data-tip="Adicionar projeto"
+            aria-label="Adicionar projeto"
+            onClick={() => openModal("new-project")}
+          >
+            <FolderPlus size={14} />
+          </button>
+        </div>
+      )}
 
       <div
         className="sidebar-tree"
         role="tree"
         aria-label="Projetos, grupos e terminais"
+        hidden={!sections.projects}
       >
         {projects.length === 0 && (
           <div className="sidebar-empty">
@@ -798,110 +1143,7 @@ export function ProjectSidebar() {
                       )}
 
                       {!groupCollapsed &&
-                        groupTerminals.map((t) => {
-                          const rt = runtimes[t.id];
-                          const termMenuOpen =
-                            menu?.kind === "terminal" && menu.id === t.id;
-                          const label = baseName(t);
-                          // The tree is the primary navigation: clicking has
-                          // to bring the CLI to the front, not just light up
-                          // the row. On the canvas that means taking the camera
-                          // to the card — both routes live in `lib/navigate`.
-                          const openIt = () => goToTerminal(t);
-                          return (
-                            <div
-                              key={t.id}
-                              className={`tree-row tree-row--terminal ${
-                                termMenuOpen ? "is-menu-open" : ""
-                              } ${t.id === focusedTerminalId ? "is-focused" : ""}`}
-                              role="treeitem"
-                              aria-level={3}
-                              // The dot and the badges are colour only; both
-                              // states have to reach a screen reader through
-                              // the name — "blocked" is the one signal the
-                              // whole product exists to deliver.
-                              aria-label={`${label} — ${readableState(rt?.state)}${
-                                rt?.blocked
-                                  ? ", esperando uma resposta sua"
-                                  : rt?.finished
-                                    ? ", terminou de trabalhar"
-                                    : rt?.unread
-                                      ? ", saída nova ainda não vista"
-                                      : ""
-                              }`}
-                              aria-selected={t.id === focusedTerminalId}
-                              aria-current={
-                                t.id === focusedTerminalId ? "true" : undefined
-                              }
-                              ref={(el) => registerRow(t.id, el)}
-                              tabIndex={tabIndexOf(t.id)}
-                              onFocus={() => setFocusId(t.id)}
-                              onKeyDown={(e) =>
-                                onRowKeyDown(e, "terminal", t.id, openIt, null)
-                              }
-                              onClick={openIt}
-                              onContextMenu={(e) => {
-                                openIt();
-                                openMenu(e, "terminal", t.id);
-                              }}
-                              data-tip-at="left" data-tip-wrap="" data-tip={`${t.program} ${t.args.join(" ")}`.trim()}
-                            >
-                              <span
-                                className={`dot dot--${rt?.state ?? "idle"}`}
-                                data-tip={readableState(rt?.state)}
-                                // The row's own name already says the state.
-                                aria-hidden="true"
-                              />
-                              <TerminalMark term={t} size={11} className="tree-icon" />
-                              {renaming?.kind === "terminal" &&
-                              renaming.id === t.id ? (
-                                <InlineRename
-                                  value={label}
-                                  onCommit={commitRename}
-                                  onCancel={() => setRenaming(null)}
-                                />
-                              ) : (
-                                <span
-                                  className="tree-label"
-                                  onDoubleClick={(e) => {
-                                    e.stopPropagation();
-                                    beginRename("terminal", t.id);
-                                  }}
-                                >
-                                  {label}
-                                </span>
-                              )}
-                              {rt?.blocked ? (
-                                <span
-                                  className="badge-blocked"
-                                  data-tip-wrap=""
-                                  data-tip={rt.blockedAsk ?? "Esperando uma resposta sua"}
-                                />
-                              ) : rt?.finished ? (
-                                <span
-                                  className="badge-finished"
-                                  data-tip="Terminou de trabalhar"
-                                />
-                              ) : rt?.unread ? (
-                                <span
-                                  className="badge-unread"
-                                  data-tip="Saída nova ainda não vista"
-                                />
-                              ) : null}
-                              <button
-                                className="icon-btn"
-                                data-tip-at="right" data-tip="Mais ações"
-                                aria-label={`Mais ações de ${label}`}
-                                onClick={(e) => {
-                                  openIt();
-                                  openMenu(e, "terminal", t.id, true);
-                                }}
-                              >
-                                <MoreVertical size={13} />
-                              </button>
-                            </div>
-                          );
-                        })}
+                        groupTerminals.map((t) => renderTerminal(t, 3))}
                     </div>
                   );
                 })}

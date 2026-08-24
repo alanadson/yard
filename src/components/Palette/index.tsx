@@ -23,7 +23,11 @@ import {
   CircleDot,
   FileText,
   Folder,
+  FolderTree,
   Globe,
+  Group,
+  Image as ImageIcon,
+  NotebookTabs,
   Layers,
   ListTodo,
   NotebookPen,
@@ -46,8 +50,10 @@ import {
 import { FileGlyph } from "../FileGlyph";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { noteName, portalName } from "../../lib/canvas";
+import { mediaNodeName } from "../../lib/mediaNode";
+import { treeNodeName } from "../../lib/treeNode";
 import { isTopLayer } from "../../lib/layers";
-import { goToCanvasItem, goToTerminal } from "../../lib/navigate";
+import { goToCanvasItem, goToTerminal, show } from "../../lib/navigate";
 import {
   fallbackTitle,
   notebookPath,
@@ -370,6 +376,10 @@ const ICON: Record<EntryKind, JSX.Element> = {
   project: <Folder size={14} />,
   note: <StickyNote size={14} />,
   memo: <NotebookPen size={14} />,
+  frame: <Group size={14} />,
+  media: <ImageIcon size={14} />,
+  binder: <NotebookTabs size={14} />,
+  tree: <FolderTree size={14} />,
   portal: <Globe size={14} />,
   url: <Radio size={14} />,
   file: <FileText size={14} />,
@@ -417,7 +427,8 @@ function buildEntries(world: World): PaletteEntry[] {
 
   const localOf = (groupId: string) => {
     const group = groupById.get(groupId);
-    const project = group ? projectById.get(group.projectId) : undefined;
+    // A board has no project — `label` then reads as just the board's name.
+    const project = group?.projectId ? projectById.get(group.projectId) : undefined;
     return {
       group,
       project,
@@ -468,7 +479,7 @@ function buildEntries(world: World): PaletteEntry[] {
 
   // --- groups and floors ---------------------------------------------------
   for (const g of world.groups) {
-    const project = projectById.get(g.projectId);
+    const project = g.projectId ? projectById.get(g.projectId) : undefined;
     const floor = floorOf(g.id);
     const isFloor = floor.kind !== "ground";
     out.push({
@@ -545,6 +556,55 @@ function buildEntries(world: World): PaletteEntry[] {
           // The body is searchable but not shown: a note is memory, and
           // remembering *what was written* is the whole reason to look for it.
           keywords: [item.text.slice(0, 600), item.locked ? "travada" : ""],
+          weight: local.weight,
+          run: () => goToCanvasItem(g.id, item.id),
+        });
+      } else if (item.type === "binder") {
+        // Its notes are indexed on their own (they are still notes), and
+        // picking one opens its tab — see the reveal in `CanvasView`. This
+        // row is the fichário itself, for whoever named it.
+        out.push({
+          id: `binder:${item.id}`,
+          kind: "binder",
+          title: item.name || "Fichário",
+          subtitle: `${item.notes.length} nota(s) — ${local.label}`,
+          keywords: ["fichario abas notas"],
+          weight: local.weight,
+          run: () => goToCanvasItem(g.id, item.id),
+        });
+      } else if (item.type === "tree") {
+        out.push({
+          id: `tree:${item.id}`,
+          kind: "tree",
+          title: treeNodeName(item),
+          subtitle: `${item.path || "raiz"} — ${local.label}`,
+          keywords: [item.path, "arvore arquivos explorador"],
+          weight: local.weight,
+          run: () => goToCanvasItem(g.id, item.id),
+        });
+      } else if (item.type === "media") {
+        // A file pinned to the board is findable by its own name *and* by its
+        // path — the two ways anybody refers to a file.
+        out.push({
+          id: `media:${item.id}`,
+          kind: "media",
+          title: mediaNodeName(item),
+          subtitle: `${item.path} — ${local.label}`,
+          icon: <FileGlyph name={mediaNodeName(item)} size={14} />,
+          keywords: [item.path, item.root ?? "", "arquivo canvas midia"],
+          weight: local.weight,
+          run: () => goToCanvasItem(g.id, item.id),
+        });
+      } else if (item.type === "group") {
+        // A frame is the only name the user ever gives to a *region* of the
+        // board. Finding "Frontend" and landing on the frame is how you get
+        // back to a corner of a big canvas you have not visited in a week.
+        out.push({
+          id: `frame:${item.id}`,
+          kind: "frame",
+          title: item.name,
+          subtitle: local.label,
+          keywords: ["grupo moldura canvas"],
           weight: local.weight,
           run: () => goToCanvasItem(g.id, item.id),
         });
@@ -971,23 +1031,39 @@ function actions(world: World): PaletteEntry[] {
 
   if (hasGroup) {
     const groupId = world.activeGroupId!;
-    const current = useProjects.getState().layoutOf(groupId).mode;
+    const layout = useProjects.getState().layoutOf(groupId);
+    // The canvas is the group's other surface, not a fourth mode: one row
+    // that flips between the two, and it carries the weight because it is
+    // the only one that changes *what* is on screen rather than its shape.
+    const onBoard = layout.surface === "canvas";
+    rows.push({
+      id: "action:surface-canvas",
+      kind: "action",
+      title: onBoard ? "Voltar aos painéis" : "Ir para o canvas",
+      subtitle: onBoard
+        ? "as abas e a grade do grupo"
+        : "cartões num quadro infinito, com as CLIs de lá",
+      keywords: ["canvas", "quadro", "paineis", "abas", "superficie"],
+      weight: 10,
+      run: () => show(groupId, onBoard ? "grid" : "canvas"),
+    });
     const modes: { mode: LayoutMode; label: string; hint: string }[] = [
-      { mode: "canvas", label: "Modo canvas", hint: "cartões num quadro infinito" },
       { mode: "auto", label: "Modo automático", hint: "a grade se ajusta sozinha" },
       { mode: "grid", label: "Modo grade", hint: "número fixo de painéis" },
       { mode: "spotlight", label: "Modo holofote", hint: "um grande, o resto pequeno" },
     ];
     for (const m of modes) {
-      if (m.mode === current) continue;
+      if (m.mode === layout.mode && !onBoard) continue;
       rows.push({
         id: `action:layout-${m.mode}`,
         kind: "action",
         title: m.label,
         subtitle: m.hint,
-        keywords: ["layout", "modo", "grupo"],
-        weight: m.mode === "canvas" ? 10 : 0,
-        run: () => useProjects.getState().updateLayout(groupId, { mode: m.mode }),
+        keywords: ["layout", "modo", "grupo", "paineis"],
+        run: () => {
+          useProjects.getState().updateLayout(groupId, { mode: m.mode });
+          show(groupId, "grid");
+        },
       });
     }
   }

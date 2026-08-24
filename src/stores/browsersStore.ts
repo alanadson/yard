@@ -166,12 +166,14 @@ export const useBrowsers = create<BrowsersState>((set, get) => ({
     if (!closed) return;
     // The pane's bar pointed at this tab: hand it to a neighbour in the same
     // pane — another browser, a CLI, a document — before it points at nothing.
-    const { layoutOf, setActiveTab, terminalsOf } = useProjects.getState();
+    const { layoutOf, setActiveTab, terminalsOn } = useProjects.getState();
     if (layoutOf(closed.groupId).activeBySlot[closed.slot] !== id) return;
     const other = tabs.find(
       (t) => t.groupId === closed.groupId && t.slot === closed.slot,
     );
-    const terminal = terminalsOf(closed.groupId).find((t) => t.slot === closed.slot);
+    const terminal = terminalsOn(closed.groupId, "grid").find(
+      (t) => t.slot === closed.slot,
+    );
     const doc = useEditor
       .getState()
       .docs.find((d) => d.groupId === closed.groupId && d.slot === closed.slot);
