@@ -308,6 +308,107 @@
   color: var(--text-dim);
 }
 
+/* --- agents: one tab per CLI, one panel underneath ---
+
+   Nine detected CLIs used to be nine stacked blocks of near-identical
+   controls, which made "how is Claude set up?" three scrolls away from "and
+   Codex?". The strip is the index; everything below it is about one agent. */
+
+.set-agent-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.set-agent-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-1) ease,
+    border-color var(--dur-1) ease;
+}
+
+.set-agent-tab:hover {
+  border-color: var(--border-strong);
+}
+
+.set-agent-tab.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--text-bright);
+}
+
+/* Not installed, or kept out of the pickers: still selectable, visibly quieter
+   — the panel is where it says why. */
+.set-agent-tab.is-missing,
+.set-agent-tab.is-off {
+  opacity: 0.55;
+}
+
+.set-agent-tab-name {
+  white-space: nowrap;
+}
+
+/* "This one has been set up" — a dot, because the strip has to stay scannable. */
+.set-agent-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+.set-agent-tab.is-active .set-agent-dot {
+  background: var(--text-bright);
+}
+
+/* The command line is a row like the others, but its field wants the width. */
+.set-agent-args input {
+  flex: 1;
+  min-width: 0;
+  margin-left: 14px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+/* The tab name is a plain field, not a command line: it keeps the text face. */
+.set-agent-name {
+  width: 210px;
+  flex-shrink: 0;
+  margin-left: 14px;
+}
+
+/* The role picker is a form inside a card, so it gets the card's padding
+   instead of the row grid the neighbours use. */
+.set-agent-role {
+  padding: 12px;
+}
+
+/* "Roda em" and the distro travel together on the right of their row. */
+.set-agent-pair {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.set-agent-pair .set-picker {
+  width: 148px;
+}
+
+/* A setting that is on but cannot work is a warning, not a hint. */
+.hint--warn {
+  color: var(--yellow);
+}
+
 /* At the width where the label is in view, the balloon would only repeat what
    is already readable — the `data-tip` stays in place for when the label
    disappears (rule below). */

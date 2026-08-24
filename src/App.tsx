@@ -24,6 +24,7 @@ import { uiLog } from "./lib/log";
 import { readInitialPrefs } from "./lib/prefs";
 import { startPtyWatch } from "./lib/ptyWatch";
 import { baseName } from "./lib/terminals";
+import { useAgentDefaults } from "./stores/agentDefaultsStore";
 import { useAgents } from "./stores/agentsStore";
 import { useBench } from "./stores/benchStore";
 import { useBrowsers, watchPaneBrowserEvents } from "./stores/browsersStore";
@@ -268,6 +269,9 @@ export default function App() {
         load(),
         bootPrefs.then((prefs) => loadPrefs(prefs)),
         bootPrefs.then((prefs) => useBench.getState().load(prefs)),
+        // Before anything can be spawned: the fixed command line of each CLI
+        // is read at spawn time, with no `await` to spare.
+        bootPrefs.then((prefs) => useAgentDefaults.getState().load(prefs)),
         bootPrefs.then((prefs) => useBrowsers.getState().load(prefs)),
         bootPrefs.then((prefs) => useReview.getState().load(prefs)),
         bootPrefs.then((prefs) => useExtensions.getState().load(prefs)),

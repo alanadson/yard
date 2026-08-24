@@ -62,7 +62,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategoryEntry[] = [
     id: "agentes",
     label: "Agentes",
     title: "Agentes",
-    desc: "Notificações e acompanhamento das CLIs de código",
+    desc: "Como cada CLI de código abre, e o que avisa quando ela para",
     tone: "#2fae54",
   },
   {

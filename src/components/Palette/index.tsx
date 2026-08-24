@@ -932,6 +932,23 @@ function actions(world: World): PaletteEntry[] {
       run: () => ui().openModal("preferences"),
     },
     {
+      id: "action:agentes",
+      kind: "action",
+      title: "Agentes — como cada CLI abre",
+      subtitle: "a linha de comando fixa de cada agente, e o “sem pedir permissão”",
+      keywords: [
+        "permissao",
+        "dangerously",
+        "skip",
+        "yolo",
+        "flags",
+        "argumentos",
+        "claude",
+        "codex",
+      ],
+      run: () => ui().openModal("preferences", "agentes"),
+    },
+    {
       id: "action:shortcuts",
       kind: "action",
       title: "Atalhos de teclado",
