@@ -220,7 +220,3 @@ export function launchHint(agentId: string | null | undefined): string {
     : "As instruções são enviadas como a primeira mensagem, assim que a CLI subir.";
 }
 
-/** Same line for the dialog where the CLI has not been picked yet. */
-export const LAUNCH_HINT_ANY =
-  "As instruções vão junto na abertura: no prompt de sistema quando a CLI " +
-  "aceita um, senão como a primeira mensagem.";
