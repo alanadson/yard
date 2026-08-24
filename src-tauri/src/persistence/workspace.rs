@@ -33,7 +33,12 @@ pub struct Project {
 #[serde(rename_all = "camelCase")]
 pub struct Group {
     pub id: String,
-    pub project_id: String,
+    /// The project this group belongs to — `None` makes it a **board**: the
+    /// canvas as its own container, holding cards from several projects at
+    /// once, so there is no single project it could point at. Nullable in the
+    /// schema since v7.
+    #[serde(default)]
+    pub project_id: Option<String>,
     pub name: String,
     #[serde(default = "empty_json")]
     pub layout_json: String,
@@ -54,6 +59,20 @@ pub struct Terminal {
     pub group_id: String,
     #[serde(default)]
     pub slot: i64,
+    /// Which of the group's two surfaces draws this terminal: `grid` (a tab of
+    /// a pane) or `canvas` (a card on the board). They used to draw the same
+    /// pool, so a CLI was both at once; now it is one or the other, and this
+    /// is the only thing that says which.
+    ///
+    /// `None` means "written before the split, nobody has decided yet". This
+    /// layer deliberately does **not** decide: which surface a pre-split
+    /// terminal belongs to is the surface its group was showing, and the group
+    /// layout is JSON parsed in the front end (`stampSurfaces`), which stamps
+    /// these on the first load and saves them back. Defaulting to `"grid"`
+    /// here would look harmless and quietly send every card of every canvas
+    /// group to a pane, since a stamped row is never stamped again.
+    #[serde(default)]
+    pub surface: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default = "shell_kind")]
@@ -78,6 +97,7 @@ pub struct Terminal {
 fn shell_kind() -> String {
     "shell".to_string()
 }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -162,9 +182,9 @@ pub fn save(conn: &mut Connection, snap: &WorkspaceSnapshot) -> anyhow::Result<S
     }
     {
         let mut stmt = tx.prepare(
-            "INSERT INTO terminals(id, group_id, slot, title, kind, agent_id, program,
+            "INSERT INTO terminals(id, group_id, slot, surface, title, kind, agent_id, program,
                                    args_json, cwd, resume_json, sort, alive, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         )?;
         for t in &snap.terminals {
             let args = serde_json::to_string(&t.args).unwrap_or_else(|_| "[]".into());
@@ -176,6 +196,7 @@ pub fn save(conn: &mut Connection, snap: &WorkspaceSnapshot) -> anyhow::Result<S
                 t.id,
                 t.group_id,
                 t.slot,
+                t.surface,
                 t.title,
                 t.kind,
                 t.agent_id,
@@ -250,27 +271,28 @@ pub fn load(conn: &Connection) -> anyhow::Result<WorkspaceSnapshot> {
     }
     {
         let mut stmt = conn.prepare(
-            "SELECT id, group_id, slot, title, kind, agent_id, program, args_json, cwd,
+            "SELECT id, group_id, slot, surface, title, kind, agent_id, program, args_json, cwd,
                     resume_json, sort, alive, created_at
              FROM terminals ORDER BY sort",
         )?;
         let rows = stmt.query_map([], |r| {
-            let args_json: String = r.get(7)?;
-            let resume_json: Option<String> = r.get(9)?;
+            let args_json: String = r.get(8)?;
+            let resume_json: Option<String> = r.get(10)?;
             Ok(Terminal {
                 id: r.get(0)?,
                 group_id: r.get(1)?,
                 slot: r.get(2)?,
-                title: r.get(3)?,
-                kind: r.get(4)?,
-                agent_id: r.get(5)?,
-                program: r.get(6)?,
+                surface: r.get(3)?,
+                title: r.get(4)?,
+                kind: r.get(5)?,
+                agent_id: r.get(6)?,
+                program: r.get(7)?,
                 args: serde_json::from_str(&args_json).unwrap_or_default(),
-                cwd: r.get(8)?,
+                cwd: r.get(9)?,
                 resume: resume_json.and_then(|s| serde_json::from_str(&s).ok()),
-                sort: r.get(10)?,
-                alive: r.get::<_, i64>(11)? != 0,
-                created_at: r.get(12)?,
+                sort: r.get(11)?,
+                alive: r.get::<_, i64>(12)? != 0,
+                created_at: r.get(13)?,
             })
         })?;
         for t in rows {
@@ -291,7 +313,7 @@ mod tests {
             "CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
              CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, path TEXT, color TEXT, icon TEXT, sort INTEGER, created_at INTEGER);
              CREATE TABLE groups (id TEXT PRIMARY KEY, project_id TEXT, name TEXT, layout_json TEXT, suspended INTEGER, sort INTEGER);
-             CREATE TABLE terminals (id TEXT PRIMARY KEY, group_id TEXT, slot INTEGER, title TEXT, kind TEXT, agent_id TEXT, program TEXT, args_json TEXT, cwd TEXT, resume_json TEXT, sort INTEGER, alive INTEGER, created_at INTEGER);",
+             CREATE TABLE terminals (id TEXT PRIMARY KEY, group_id TEXT, slot INTEGER, surface TEXT, title TEXT, kind TEXT, agent_id TEXT, program TEXT, args_json TEXT, cwd TEXT, resume_json TEXT, sort INTEGER, alive INTEGER, created_at INTEGER);",
         )
         .unwrap();
         conn
@@ -312,6 +334,136 @@ mod tests {
             groups: vec![],
             terminals: vec![],
         }
+    }
+
+    fn a_terminal(id: &str, surface: &str) -> Terminal {
+        Terminal {
+            id: id.into(),
+            group_id: "g1".into(),
+            slot: 0,
+            surface: Some(surface.into()),
+            title: None,
+            kind: "shell".into(),
+            agent_id: None,
+            program: "pwsh".into(),
+            args: vec![],
+            cwd: "C:/x".into(),
+            resume: None,
+            sort: 0,
+            alive: false,
+            created_at: 0,
+        }
+    }
+
+    /// The regression this locks down: the canvas and the pane grid stopped
+    /// sharing their CLIs, so which of the two a terminal belongs to is the
+    /// only thing that decides whether it is ever drawn again. Dropping it on
+    /// the way to disk turned every card back into a tab on the next boot.
+    #[test]
+    fn the_surface_of_each_terminal_survives_the_round_trip() {
+        let mut conn = mem_db();
+        let mut snapshot = snap(0, "p");
+        snapshot.groups = vec![Group {
+            id: "g1".into(),
+            project_id: Some("p1".into()),
+            name: "g".into(),
+            layout_json: "{}".into(),
+            suspended: false,
+            sort: 0,
+        }];
+        snapshot.terminals = vec![a_terminal("card", "canvas"), a_terminal("tab", "grid")];
+
+        assert!(save(&mut conn, &snapshot).unwrap().accepted);
+
+        let loaded = load(&conn).unwrap();
+        let surface_of = |id: &str| {
+            loaded
+                .terminals
+                .iter()
+                .find(|t| t.id == id)
+                .map(|t| t.surface.clone())
+                .unwrap()
+        };
+        assert_eq!(surface_of("card").as_deref(), Some("canvas"));
+        assert_eq!(surface_of("tab").as_deref(), Some("grid"));
+    }
+
+    /// A row that predates the split carries no surface, and this layer does
+    /// not invent one: which of the two it belongs to depends on the group's
+    /// `layout_json`, which is parsed in the front end. Guessing here would
+    /// stamp the row and stop `stampSurfaces` from ever looking at it.
+    #[test]
+    fn a_terminal_with_no_surface_stays_undecided_through_the_round_trip() {
+        let sent: Terminal = serde_json::from_str(
+            r#"{"id":"t1","groupId":"g1","program":"pwsh","cwd":"C:/x"}"#,
+        )
+        .unwrap();
+        assert_eq!(sent.surface, None);
+
+        let mut conn = mem_db();
+        let mut snapshot = snap(0, "p");
+        snapshot.groups = vec![Group {
+            id: "g1".into(),
+            project_id: Some("p1".into()),
+            name: "g".into(),
+            layout_json: "{}".into(),
+            suspended: false,
+            sort: 0,
+        }];
+        snapshot.terminals = vec![sent];
+        assert!(save(&mut conn, &snapshot).unwrap().accepted);
+
+        assert_eq!(load(&conn).unwrap().terminals[0].surface, None);
+    }
+
+    /// A board is a group with no project: the canvas as its own container,
+    /// holding cards from several projects at once. If this layer coerced the
+    /// absent project into something (an empty string, the first project), the
+    /// board would come back owned by a project it never belonged to.
+    #[test]
+    fn a_board_round_trips_as_a_group_with_no_project() {
+        let mut conn = mem_db();
+        let mut snapshot = snap(0, "p");
+        snapshot.groups = vec![
+            Group {
+                id: "g1".into(),
+                project_id: Some("p1".into()),
+                name: "Principal".into(),
+                layout_json: "{}".into(),
+                suspended: false,
+                sort: 0,
+            },
+            Group {
+                id: "b1".into(),
+                project_id: None,
+                name: "Refatoracao do PTY".into(),
+                layout_json: r#"{"surface":"canvas"}"#.into(),
+                suspended: false,
+                sort: 1,
+            },
+        ];
+
+        assert!(save(&mut conn, &snapshot).unwrap().accepted);
+
+        let loaded = load(&conn).unwrap();
+        let project_of = |id: &str| {
+            loaded
+                .groups
+                .iter()
+                .find(|g| g.id == id)
+                .map(|g| g.project_id.clone())
+                .unwrap()
+        };
+        assert_eq!(project_of("g1").as_deref(), Some("p1"));
+        assert_eq!(project_of("b1"), None);
+    }
+
+    /// A front end that predates boards sends every group with a project.
+    #[test]
+    fn a_group_sent_without_a_project_is_a_board_not_an_error() {
+        let sent: Group =
+            serde_json::from_str(r#"{"id":"b1","name":"Quadro","layoutJson":"{}"}"#).unwrap();
+        assert_eq!(sent.project_id, None);
     }
 
     #[test]

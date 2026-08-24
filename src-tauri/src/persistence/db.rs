@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 /// Schema version. Every new migration increments this and gets a block in
 /// `migrate`. Never rewrite a migration that has already shipped.
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 7;
 
 pub fn open() -> anyhow::Result<Connection> {
     crate::paths::ensure_dirs()?;
@@ -68,7 +68,8 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
 
             CREATE TABLE IF NOT EXISTS groups (
               id          TEXT PRIMARY KEY,
-              project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              -- Nullable since v7: a group with no project is a canvas board.
+              project_id  TEXT REFERENCES projects(id) ON DELETE CASCADE,
               name        TEXT NOT NULL,
               layout_json TEXT NOT NULL DEFAULT '{}',
               suspended   INTEGER NOT NULL DEFAULT 0,
@@ -79,6 +80,7 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
               id          TEXT PRIMARY KEY,
               group_id    TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
               slot        INTEGER NOT NULL DEFAULT 0,
+              surface     TEXT,
               title       TEXT,
               kind        TEXT NOT NULL DEFAULT 'shell',
               agent_id    TEXT,
@@ -190,7 +192,97 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         tracing::info!("migracao aplicada: schema v5");
     }
 
+    if current < 6 {
+        // The canvas and the pane grid stopped drawing the same terminals
+        // (`src/lib/surface.ts`): each row now says which of the two draws it.
+        // Existing rows are left **null** on purpose. Which surface a
+        // pre-split terminal belongs to is the one its group was showing, and
+        // that lives in `groups.layout_json` — parsed in the front end, which
+        // stamps them on the first load and saves them back
+        // (`stampSurfaces`). A default here would stamp every row with
+        // `'grid'` before that code ever ran, and a stamped row is never
+        // looked at again: every card of every canvas group would silently
+        // become a tab.
+        if !has_column(conn, "terminals", "surface")? {
+            conn.execute("ALTER TABLE terminals ADD COLUMN surface TEXT", [])?;
+        }
+        conn.pragma_update(None, "user_version", 6)?;
+        tracing::info!("migracao aplicada: schema v6");
+    }
+
+    if current < 7 {
+        rebuild_groups_without_project_constraint(conn)?;
+        conn.pragma_update(None, "user_version", 7)?;
+        tracing::info!("migracao aplicada: schema v7");
+    }
+
     Ok(())
+}
+
+/// v7: `groups.project_id` becomes nullable, so a **board** can exist.
+///
+/// A board ("quadro") is the canvas as its own container: it holds cards from
+/// several projects at once, so there is no single project it could point at.
+/// A group with `project_id IS NULL` *is* a board — one rule, no second flag
+/// that could disagree with it.
+///
+/// `project_id` was declared `NOT NULL` in v1 and SQLite cannot drop a column
+/// constraint with `ALTER TABLE`, so the table is rebuilt. This follows the
+/// documented 12-step procedure: foreign keys off **outside** the transaction
+/// (the pragma is a no-op inside one), rebuild, then on again and check. The
+/// `ON DELETE CASCADE` is recreated verbatim — deleting a project still has to
+/// take its groups and their terminals, and a board must survive it.
+fn rebuild_groups_without_project_constraint(conn: &Connection) -> anyhow::Result<()> {
+    // Already nullable (a database created by a v7-or-later `CREATE TABLE`):
+    // rebuilding would only risk the data for nothing.
+    if !column_is_not_null(conn, "groups", "project_id")? {
+        return Ok(());
+    }
+    conn.pragma_update(None, "foreign_keys", "OFF")?;
+    let outcome = conn.execute_batch(
+        r#"
+        BEGIN;
+
+        CREATE TABLE groups_v7 (
+          id          TEXT PRIMARY KEY,
+          project_id  TEXT REFERENCES projects(id) ON DELETE CASCADE,
+          name        TEXT NOT NULL,
+          layout_json TEXT NOT NULL DEFAULT '{}',
+          suspended   INTEGER NOT NULL DEFAULT 0,
+          sort        INTEGER NOT NULL DEFAULT 0
+        );
+
+        INSERT INTO groups_v7(id, project_id, name, layout_json, suspended, sort)
+          SELECT id, project_id, name, layout_json, suspended, sort FROM groups;
+
+        DROP TABLE groups;
+        ALTER TABLE groups_v7 RENAME TO groups;
+
+        CREATE INDEX IF NOT EXISTS idx_groups_project ON groups(project_id);
+
+        COMMIT;
+        "#,
+    );
+    // The pragma goes back on whatever happened: leaving the connection with
+    // foreign keys off would silently accept orphan rows for the rest of the
+    // session, which is far worse than the failed migration.
+    conn.pragma_update(None, "foreign_keys", "ON")?;
+    outcome?;
+    Ok(())
+}
+
+/// Whether a column carries `NOT NULL` — read from `PRAGMA table_info`, so it
+/// answers for the table that is actually on disk.
+fn column_is_not_null(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(row.get::<_, i64>(3)? != 0);
+        }
+    }
+    Ok(false)
 }
 
 /// v3: returns to the workspace what the prototype quarantine took off stage.
@@ -417,6 +509,106 @@ mod tests {
         assert_eq!(slot, 0);
         assert_eq!(alive, 1);
         assert!(!has_table(&c, "projects_prototipo").unwrap());
+    }
+
+    /// The canvas and the pane grid stopped drawing the same terminals, so
+    /// every row needs to say which of the two it belongs to. A database that
+    /// stopped at v5 has no such column, and the migration must leave those
+    /// rows **empty** rather than guessing: which surface a pre-split terminal
+    /// belongs to depends on the group's `layout_json`, and the front end is
+    /// where that is parsed (`stampSurfaces`). Filling them with `'grid'` here
+    /// looked harmless and silently sent every card of every canvas group to a
+    /// pane, because a stamped row is never stamped again.
+    #[test]
+    fn v6_adds_the_surface_column_and_leaves_old_rows_for_the_front_end() {
+        let c = conn();
+        c.execute_batch(
+            r#"
+            CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, path TEXT, color TEXT, icon TEXT, sort INTEGER, created_at INTEGER);
+            CREATE TABLE groups (id TEXT PRIMARY KEY, project_id TEXT, name TEXT, layout_json TEXT, suspended INTEGER, sort INTEGER);
+            CREATE TABLE terminals (id TEXT PRIMARY KEY, group_id TEXT, slot INTEGER, title TEXT, kind TEXT, agent_id TEXT, program TEXT, args_json TEXT, cwd TEXT, resume_json TEXT, sort INTEGER, alive INTEGER, created_at INTEGER);
+            INSERT INTO projects VALUES ('p1', 'yard', 'C:\Workspace\Code\yard', NULL, NULL, 0, 0);
+            INSERT INTO groups VALUES ('g1', 'p1', 'Principal', '{"mode":"canvas"}', 0, 0);
+            INSERT INTO terminals VALUES ('t1', 'g1', 0, NULL, 'agent', 'claude', 'claude.exe', '[]', 'C:\Workspace\Code\yard', NULL, 0, 0, 0);
+            PRAGMA user_version = 5;
+            "#,
+        )
+        .unwrap();
+
+        migrate(&c).unwrap();
+
+        assert!(has_column(&c, "terminals", "surface").unwrap());
+        let surface: Option<String> = c
+            .query_row("SELECT surface FROM terminals WHERE id = 't1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(surface, None);
+    }
+
+    /// A canvas board ("quadro") is a group that belongs to **no** project:
+    /// it holds cards from several at once, so there is no single project it
+    /// could point at. `project_id` was `NOT NULL` since v1, and SQLite cannot
+    /// drop that with an `ALTER` — v7 rebuilds the table, which must keep every
+    /// row and leave the `terminals` foreign key intact.
+    #[test]
+    fn v7_lets_a_group_exist_with_no_project_and_keeps_the_old_ones() {
+        let c = conn();
+        migrate(&c).unwrap();
+        c.execute_batch(
+            r#"
+            INSERT INTO projects(id, name, path, sort, created_at)
+              VALUES ('p1', 'yard', 'C:\Workspace\Code\yard', 0, 0);
+            INSERT INTO groups(id, project_id, name, layout_json, suspended, sort)
+              VALUES ('g1', 'p1', 'Principal', '{}', 0, 3);
+            INSERT INTO terminals(id, group_id, program, cwd, created_at)
+              VALUES ('t1', 'g1', 'pwsh', 'C:\Workspace\Code\yard', 0);
+            "#,
+        )
+        .unwrap();
+
+        // The board: no project, and it must be accepted.
+        c.execute(
+            "INSERT INTO groups(id, project_id, name, layout_json, suspended, sort)
+             VALUES ('b1', NULL, 'Refatoracao do PTY', '{}', 0, 0)",
+            [],
+        )
+        .unwrap();
+
+        // The group that does have a project kept everything it had...
+        let (project, name, sort): (Option<String>, String, i64) = c
+            .query_row(
+                "SELECT project_id, name, sort FROM groups WHERE id = 'g1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(project.as_deref(), Some("p1"));
+        assert_eq!(name, "Principal");
+        assert_eq!(sort, 3);
+        // ...and its terminal is still tied to it, which is what proves the
+        // rebuilt table did not take the foreign key down with it.
+        let orphans: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM terminals t
+                 LEFT JOIN groups g ON g.id = t.group_id WHERE g.id IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphans, 0);
+        // Deleting the project still takes its groups (the CASCADE survived),
+        // and leaves the board alone.
+        c.execute("DELETE FROM projects WHERE id = 'p1'", []).unwrap();
+        let left: Vec<String> = c
+            .prepare("SELECT id FROM groups ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(left, vec!["b1".to_string()]);
     }
 
     /// Path already re-registered: the new project stays, and the old

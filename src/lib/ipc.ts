@@ -8,6 +8,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+import type { Surface } from "./surface";
+
 // ---------------------------------------------------------------------------
 // types
 // ---------------------------------------------------------------------------
@@ -236,7 +238,13 @@ export interface ProjectRow {
 
 export interface GroupRow {
   id: string;
-  projectId: string;
+  /**
+   * `null` makes this group a **board** ("quadro"): the canvas as its own
+   * container, holding cards from several projects at once, so there is no
+   * single project it could belong to. `projectsStore.isBoard` is the reading
+   * of this field everything else goes through.
+   */
+  projectId: string | null;
   name: string;
   layoutJson: string;
   suspended: boolean;
@@ -247,6 +255,17 @@ export interface TerminalRow {
   id: string;
   groupId: string;
   slot: number;
+  /**
+   * Which surface draws this terminal: a tab of a pane, or a card on the
+   * canvas.
+   *
+   * `null` is what the backend sends for a row written before the column
+   * existed — it adds it empty on purpose, because the surface a pre-split
+   * terminal belongs to is the one its group was showing, and only this side
+   * parses the group layout. `projectsStore.load` stamps every one of those on
+   * the way in and saves them back, so nothing else finds it missing for long.
+   */
+  surface?: Surface | null;
   title?: string | null;
   kind: PtyKind;
   agentId?: string | null;
