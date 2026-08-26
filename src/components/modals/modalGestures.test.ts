@@ -1,6 +1,7 @@
 /**
- * The two rules that separate a dialog from a floating div: what each exit
- * does with a filled-in form, and where Tab goes.
+ * The rules that separate a dialog from a floating div: what each exit does
+ * with a filled-in form, where Tab goes, and which press on the backdrop
+ * counts as leaving.
  *
  * They were written inside the component, and that is why they diverged:
  *
@@ -14,7 +15,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { focusAfterTab, exitGesture } from "./modalGestures";
+import { backdropPressExits, focusAfterTab, exitGesture } from "./modalGestures";
 
 describe("exitGesture", () => {
   it("with the form empty, any exit closes", () => {
@@ -53,5 +54,25 @@ describe("focusAfterTab", () => {
 
   it("a dialog with nothing focusable traps nobody", () => {
     expect(focusAfterTab([], null, false)).toBeNull();
+  });
+});
+
+/**
+ * Two dialogs read the backdrop press — the frame in `Modal` and the
+ * Settings window, which has a sidebar where `Modal` has a header — so the
+ * rule lives in one place, or the day the Settings sheet closed under a
+ * right-click would come.
+ */
+describe("backdropPressExits", () => {
+  it("the primary button on the backdrop is an exit", () => {
+    expect(backdropPressExits(0)).toBe(true);
+  });
+
+  it("the right button is not — that gesture is \"open the menu\", and closing the dialog from under it would be the wrong answer", () => {
+    expect(backdropPressExits(2)).toBe(false);
+  });
+
+  it("nor the middle one", () => {
+    expect(backdropPressExits(1)).toBe(false);
   });
 });

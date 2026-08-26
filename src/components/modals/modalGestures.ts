@@ -1,6 +1,6 @@
 /**
- * The two dialog rules that are not drawing: what an exit does with a
- * filled-in form, and where Tab goes.
+ * The dialog rules that are not drawing: what an exit does with a filled-in
+ * form, where Tab goes, and which press on the backdrop counts as leaving.
  *
  * They live outside the component because both had three implementations in
  * `Modal.tsx` — one per gesture — and they diverged: the header's × discarded
@@ -43,4 +43,14 @@ export function focusAfterTab<T>(
   if (shift && current === firstOne) return last;
   if (!shift && current === last) return firstOne;
   return null;
+}
+
+/**
+ * Whether a press on the backdrop is an exit. Only the primary button: with
+ * the right one the gesture is "open the menu", and closing the dialog from
+ * under it would be the wrong answer. Two frames read the backdrop — `Modal`
+ * and the Settings window — so the rule is written once.
+ */
+export function backdropPressExits(button: number): boolean {
+  return button === 0;
 }

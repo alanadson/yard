@@ -12,7 +12,7 @@ import "./modal.css";
 
 import { useT } from "../../hooks/useT";
 import { isTopLayer } from "../../lib/layers";
-import { exitGesture, focusAfterTab } from "./modalGestures";
+import { backdropPressExits, exitGesture, focusAfterTab } from "./modalGestures";
 
 interface Props {
   title: string;
@@ -39,7 +39,7 @@ interface Props {
    * and says so instead of discarding the work; the second one (within three
    * seconds) discards.
    *
-   * "Criar andar" is what made this necessary: a name, a branch and three
+   * "Abrir frente" is what made this necessary: a name, a branch and three
    * blocks of hooks, all thrown away by one click that landed a few pixels
    * outside. The `Esc` came next, being the most reflexive gesture there is.
    * The × was the one left out, a few pixels from both — the rule now lives in
@@ -101,9 +101,7 @@ export function Modal({
   };
 
   const onBackdrop = (e: React.MouseEvent) => {
-    // Only the primary button closes: with the right one the gesture is "open
-    // the menu", and closing the dialog from under it would be the wrong answer.
-    if (e.button !== 0) return;
+    if (!backdropPressExits(e.button)) return;
     exit();
   };
 
