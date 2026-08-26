@@ -103,7 +103,7 @@ export async function fanOutTask(input: FanoutInput): Promise<FanoutResult> {
     } catch (e) {
       // This agent's floor was not born; the others carry on. Aborting here
       // left behind the ones already created, without saying anything.
-      failures.push(t("{agent}: não consegui criar o andar ({e})", { agent: agent.name, e: String(e) }));
+      failures.push(t("{agent}: não consegui abrir a frente ({e})", { agent: agent.name, e: String(e) }));
       continue;
     }
     if (created.provision.kind !== "isolated") {
@@ -112,7 +112,7 @@ export async function fanOutTask(input: FanoutInput): Promise<FanoutResult> {
       // carrying on would be worse, because the agents would trample each
       // other in the same folder.
       throw new Error(
-        t("esta pasta não é um repositório git — a tarefa precisa de um andar isolado por agente"),
+        t("esta pasta não é um repositório git — a tarefa precisa de uma frente isolada por agente"),
       );
     }
     const cwd = created.provision.path;
@@ -156,7 +156,7 @@ export async function fanOutTask(input: FanoutInput): Promise<FanoutResult> {
       // mid-fleet must not abort the agents that have not been created yet —
       // but now it is counted, instead of vanishing in silence.
       failures.push(
-        t("{agent}: o andar existe, mas o processo não subiu ({e})", { agent: agent.name, e: String(e) }),
+        t("{agent}: a frente existe, mas o processo não subiu ({e})", { agent: agent.name, e: String(e) }),
       );
       notStarted.push({
         groupId: created.groupId,

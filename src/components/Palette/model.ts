@@ -90,7 +90,7 @@ export function parseQuery(raw: string): ParsedQuery {
 export const KIND_LABEL: Record<EntryKind, string> = {
   action: "Ações",
   terminal: "Agentes e terminais",
-  group: "Grupos e andares",
+  group: "Grupos e frentes",
   project: "Projetos",
   note: "Notas do canvas",
   memo: "Anotações",

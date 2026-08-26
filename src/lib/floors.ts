@@ -131,7 +131,7 @@ export function parseHookLines(text: string): string[] {
 
 /**
  * A group of the project whose name matches, ignoring case and surrounding
- * space — the rule both the "Criar andar" dialog and `yard floor create` use
+ * space — the rule both the "Abrir frente" dialog and `yard floor create` use
  * to refuse a duplicate.
  *
  * It lives here because the two used to disagree: the CLI checked, the dialog
@@ -161,7 +161,7 @@ export function uniqueFloorName(
   groups: readonly { name: string }[],
   base: string,
 ): string {
-  const trimmed = base.trim() || t("Andar");
+  const trimmed = base.trim() || t("Frente");
   if (!findGroupNamed(groups, trimmed)) return trimmed;
   let n = 2;
   while (findGroupNamed(groups, `${trimmed} (${n})`)) {

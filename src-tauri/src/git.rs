@@ -578,7 +578,7 @@ pub fn floor_slug(name: &str) -> String {
     }
     let slug = out.trim_matches('-').to_string();
     if slug.is_empty() {
-        "andar".into()
+        "frente".into()
     } else {
         slug
     }
@@ -675,14 +675,14 @@ pub fn worktree_provision(
     }
     if !has_head(project_path) {
         return Err(
-            "o repositorio ainda nao tem nenhum commit — faca o primeiro commit antes de criar um andar"
+            "o repositorio ainda nao tem nenhum commit — faca o primeiro commit antes de abrir uma frente"
                 .into(),
         );
     }
 
     // Two different names can collapse into the same slug — "Correção" and
     // "Correcao" both give `correcao`, and any name made only of punctuation
-    // gives `andar`. The old code stopped there with "ja existe um andar em
+    // gives `frente`. The old code stopped there with "ja existe uma frente em
     // <caminho>", naming a folder the user had never typed and giving no way
     // forward except renaming by guesswork. A numeric suffix keeps distinct
     // floors distinct; the display name is unaffected.
@@ -693,7 +693,7 @@ pub fn worktree_provision(
     while floors.join(&slug).exists() {
         if n > 99 {
             return Err(format!(
-                "ja existem andares demais com um nome parecido com \"{name}\" \
+                "ja existem frentes demais com um nome parecido com \"{name}\" \
                  (slug {base}) — escolha outro nome"
             ));
         }
@@ -968,12 +968,12 @@ pub fn worktree_preview(
     }
     let branch = floor_branch.trim();
     if branch.is_empty() {
-        return Err("o andar nao tem branch para aterrissar".into());
+        return Err("a frente nao tem branch para aterrissar".into());
     }
     let ground_branch = current_branch(project_path)?;
     if ground_branch == branch {
         return Err(format!(
-            "a branch do andar e a mesma do chao ({branch}) — nao ha o que aterrissar"
+            "a branch da frente e a mesma do chao ({branch}) — nao ha o que aterrissar"
         ));
     }
 
@@ -1038,13 +1038,13 @@ pub fn worktree_land(
     if preview.ground_dirty {
         return Err(
             "o chao tem trabalho nao commitado — faca commit (ou descarte) antes de aterrissar. \
-             (criar o primeiro andar acrescenta `.yard/` ao `.gitignore`)"
+             (abrir a primeira frente acrescenta `.yard/` ao `.gitignore`)"
                 .into(),
         );
     }
     if preview.floor_dirty {
         return Err(
-            "o andar tem trabalho nao commitado — faca commit (ou descarte) antes de aterrissar"
+            "a frente tem trabalho nao commitado — faca commit (ou descarte) antes de aterrissar"
                 .into(),
         );
     }
@@ -1526,8 +1526,8 @@ mod tests {
         assert_eq!(floor_slug("Correção de Login"), "correcao-de-login");
         assert_eq!(floor_slug("  auth / refresh  "), "auth-refresh");
         // Nothing usable: falls back to the generic name, never an empty folder.
-        assert_eq!(floor_slug("???"), "andar");
-        assert_eq!(floor_slug(""), "andar");
+        assert_eq!(floor_slug("???"), "frente");
+        assert_eq!(floor_slug(""), "frente");
     }
 
     #[test]
@@ -1730,7 +1730,7 @@ worktree C:/solto\nHEAD 123\ndetached\n";
     }
 
     /// Distinct names that collapse to the same slug get distinct folders,
-    /// instead of the second one dying on "ja existe um andar em <caminho>"
+    /// instead of the second one dying on "ja existe uma frente em <caminho>"
     /// naming a path the user never typed.
     #[test]
     fn names_with_the_same_slug_get_different_folders() {
@@ -1869,8 +1869,8 @@ worktree C:/solto\nHEAD 123\ndetached\n";
             return;
         }
         let floor_path = std::path::PathBuf::from(&floor.path);
-        std::fs::write(floor_path.join("base.txt"), "chao\nandar\n").unwrap();
-        if !commit_all(&floor_path, "no andar") {
+        std::fs::write(floor_path.join("base.txt"), "chao\nfrente\n").unwrap();
+        if !commit_all(&floor_path, "na frente") {
             let _ = run_git(&root, &["worktree", "remove", "--force", &floor.path]);
             let _ = std::fs::remove_dir_all(&root);
             return;
@@ -1892,7 +1892,7 @@ worktree C:/solto\nHEAD 123\ndetached\n";
         assert!(land.ok, "{}", land.message);
         assert!(!land.conflicted);
         let text = std::fs::read_to_string(root.join("base.txt")).unwrap();
-        assert!(text.contains("andar"), "{text}");
+        assert!(text.contains("frente"), "{text}");
 
         // Second land is a no-op.
         let again = worktree_land(&root, &branch, Some(&floor_path)).unwrap();

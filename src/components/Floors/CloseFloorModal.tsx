@@ -45,7 +45,7 @@ export function CloseFloorModal() {
     setBusy(true);
     try {
       await closeFloor({ project, group, deleteBranch: deleteBranch });
-      showToast(t('Andar "{name}" encerrado.', { name: group.name }));
+      showToast(t('Frente "{name}" encerrada.', { name: group.name }));
       closeModal();
     } catch (e) {
       // Uncommitted work (the most common refusal) arrives here as an error:
@@ -71,7 +71,7 @@ export function CloseFloorModal() {
             onClick={() => void closeIt()}
           >
             <Trash2 size={13} aria-hidden="true" />
-            {busy ? t("Encerrando…") : t("Encerrar andar")}
+            {busy ? t("Encerrando…") : t("Encerrar frente")}
           </button>
         </div>
       }
@@ -104,7 +104,7 @@ export function CloseFloorModal() {
 
       <p className="hint">
         {t(
-          "Com trabalho não commitado no andar o encerramento é recusado — nada é apagado até a árvore estar limpa.",
+          "Com trabalho não commitado na frente o encerramento é recusado — nada é apagado até a árvore estar limpa.",
         )}
       </p>
     </Modal>

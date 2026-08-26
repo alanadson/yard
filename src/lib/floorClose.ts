@@ -44,14 +44,14 @@ export function closeFloorWarning(
 ): string {
   const isolated = floor.kind === "isolated" && !!floor.worktreePath;
   return (
-    t('Encerrar o andar "{name}"?\n\n', { name: group.name }) +
+    t('Encerrar a frente "{name}"?\n\n', { name: group.name }) +
     (liveCount
       ? t(
           "• {n} terminal(is) rodando serão encerrados agora — no Windows eles trancam a pasta do worktree.\n",
           { n: liveCount },
         )
       : "") +
-    t("• Os cartões, o canvas e as rotinas deste andar vão embora.\n") +
+    t("• Os cartões, o canvas e as rotinas desta frente vão embora.\n") +
     (isolated
       ? t("• O worktree em {path} é apagado do disco.\n", { path: floor.worktreePath ?? "" })
       : "") +
@@ -67,7 +67,7 @@ export async function closeFloor(opts: {
   skipDirtyCheck?: boolean;
 }): Promise<void> {
   const floor = parseLayout(opts.group.layoutJson).floor;
-  if (!floor) throw new Error(t("este grupo não é um andar"));
+  if (!floor) throw new Error(t("este grupo não é uma frente"));
   const isolated = floor.kind === "isolated" && !!floor.worktreePath;
 
   if (isolated && !opts.skipDirtyCheck) {
@@ -78,7 +78,7 @@ export async function closeFloor(opts: {
       uiLog.warn(`worktree_dirty falhou em ${floor.worktreePath}: ${e}`);
       throw new Error(
         t(
-          'Não consegui verificar se o andar "{name}" tem trabalho pendente — encerramento cancelado por segurança.',
+          'Não consegui verificar se a frente "{name}" tem trabalho pendente — encerramento cancelado por segurança.',
           { name: opts.group.name },
         ),
       );
@@ -86,7 +86,7 @@ export async function closeFloor(opts: {
     if (dirty) {
       throw new Error(
         t(
-          'O andar "{name}" tem trabalho não commitado — faça commit (ou descarte) antes de encerrar.',
+          'A frente "{name}" tem trabalho não commitado — faça commit (ou descarte) antes de encerrar.',
           { name: opts.group.name },
         ),
       );
@@ -122,7 +122,7 @@ export async function closeFloor(opts: {
       useUI
         .getState()
         .showToast(
-          t('A limpeza do andar "{name}" falhou: {detail}. O andar foi encerrado assim mesmo.', {
+          t('A limpeza da frente "{name}" falhou: {detail}. A frente foi encerrada assim mesmo.', {
             name: opts.group.name,
             detail: r.detail,
           }),

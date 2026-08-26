@@ -187,7 +187,7 @@ export function LandModal() {
                 if (!e.target.checked) setCloseOthers(false);
               }}
             />
-            {t("Encerrar o andar depois de aterrissar (apaga o worktree e a branch)")}
+            {t("Encerrar a frente depois de aterrissar (apaga o worktree e a branch)")}
           </label>
           {siblings.length > 0 && (
             <label className="checkbox">
@@ -197,7 +197,7 @@ export function LandModal() {
                 disabled={!closeThis}
                 onChange={(e) => setCloseOthers(e.target.checked)}
               />
-              {t("Descartar também {n} outro(s) andar(es) desta tarefa (apaga as branches deles)", {
+              {t("Descartar também {n} outra(s) frente(s) desta tarefa (apaga as branches delas)", {
                 n: siblings.length,
               })}
             </label>
@@ -212,7 +212,7 @@ export function LandPreviewBody({ preview }: { preview: LandPreview }) {
   const t = useT();
   const blockers: string[] = [];
   if (preview.groundDirty) blockers.push(t("O chão tem trabalho não commitado."));
-  if (preview.floorDirty) blockers.push(t("O andar tem trabalho não commitado."));
+  if (preview.floorDirty) blockers.push(t("A frente tem trabalho não commitado."));
   if (!preview.alreadyMerged && !preview.clean) {
     blockers.push(
       t("Isso geraria {n} conflito(s): {paths}", {

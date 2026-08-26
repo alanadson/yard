@@ -1,6 +1,6 @@
 /**
  * Creating a floor: provision the worktree, then the group. Shared by the
- * "Criar andar" dialog, `yard floor create` and fan-out — the three used to
+ * "Abrir frente" dialog, `yard floor create` and fan-out — the three used to
  * diverge on clone-ground, rollback and the name-uniqueness check.
  *
  * Provisioning hits the disk before anything exists in the store, so a
@@ -43,10 +43,10 @@ export async function createFloor(input: CreateFloorInput): Promise<CreatedFloor
   const project = s.projects.find((p) => p.id === input.projectId);
   if (!project) throw new Error(t("projeto não encontrado"));
   const name = input.name.trim();
-  if (!name) throw new Error(t("dê um nome ao andar"));
+  if (!name) throw new Error(t("dê um nome à frente"));
   const duplicates = findGroupNamed(s.groupsOf(project.id), name);
   if (duplicates) {
-    throw new Error(t('já existe um grupo/andar chamado "{name}" neste projeto', { name: duplicates.name }));
+    throw new Error(t('já existe um grupo ou frente com o nome "{name}" neste projeto', { name: duplicates.name }));
   }
   if (input.existingBranch && !input.branch?.trim()) {
     throw new Error(t("uma branch existente exige o nome dela"));

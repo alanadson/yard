@@ -84,7 +84,7 @@ export function CompareModal() {
     const ok = await ask(
       t("Aterrissar “{name}” no chão", { name: chosen.name }) +
         (siblings.length
-          ? t(" e encerrar os {n} outro(s) andar(es) desta tarefa", { n: siblings.length })
+          ? t(" e encerrar as {n} outra(s) frente(s) desta tarefa", { n: siblings.length })
           : "") +
         t("? O merge entra na branch do chão; as branches dos perdedores são apagadas."),
       { title: t("Ficar com este"), kind: "warning" },
@@ -122,7 +122,7 @@ export function CompareModal() {
 
   return (
     <Modal
-      title={t("Comparar andares — {name}", { name: project.name })}
+      title={t("Comparar frentes — {name}", { name: project.name })}
       onClose={closeModal}
       wide
       headerExtra={
@@ -139,7 +139,7 @@ export function CompareModal() {
         <div className="modal-foot-row">
           <span className="hint grow">
             {floors.length === 0
-              ? t("Nenhum andar isolado neste projeto.")
+              ? t("Nenhuma frente isolada neste projeto.")
               : t("Escolha o vencedor. Os outros da mesma tarefa são encerrados.")}
           </span>
           <button className="btn" onClick={closeModal}>
@@ -157,10 +157,10 @@ export function CompareModal() {
       }
     >
       {floors.length === 0 ? (
-        <p className="hint">{t("Crie um andar (ou uma tarefa com vários agentes) para comparar.")}</p>
+        <p className="hint">{t("Abra uma frente (ou uma tarefa com vários agentes) para comparar.")}</p>
       ) : (
         <div className="floors-compare">
-          <ul className="floors-compare-list" role="listbox" aria-label={t("Andares")}>
+          <ul className="floors-compare-list" role="listbox" aria-label={t("Frentes")}>
             {floors.map((g) => (
               <CompareRow
                 key={g.id}

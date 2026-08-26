@@ -53,7 +53,7 @@ export function NewFloorModal() {
   const create = async () => {
     const name = itemName.trim();
     if (!name) {
-      fail("nome", t("Dê um nome ao andar."));
+      fail("nome", t("Dê um nome à frente."));
       return;
     }
     if (existing && !branch.trim()) {
@@ -67,7 +67,7 @@ export function NewFloorModal() {
     if (duplicates) {
       fail(
         "nome",
-        t('Já existe um grupo/andar chamado "{name}" neste projeto.', { name: duplicates.name }),
+        t('Já existe um grupo ou frente com o nome "{name}" neste projeto.', { name: duplicates.name }),
       );
       return;
     }
@@ -100,16 +100,16 @@ export function NewFloorModal() {
             projectName: project.name,
           }),
         );
-        if (!r.ok) showToast(t("Setup do andar falhou: {detail}", { detail: r.detail }), "error");
+        if (!r.ok) showToast(t("Setup da frente falhou: {detail}", { detail: r.detail }), "error");
       }
       showToast(
         provision.kind === "isolated"
-          ? t('Andar "{name}" criado na branch {branch}.', { name, branch: provision.branch ?? "" })
-          : t('Andar "{name}" criado sem git — mesmo diretório do chão.', { name }),
+          ? t('Frente "{name}" aberta na branch {branch}.', { name, branch: provision.branch ?? "" })
+          : t('Frente "{name}" aberta sem git — mesmo diretório do chão.', { name }),
       );
       closeModal();
     } catch (e) {
-      showToast(t("Não consegui criar o andar: {e}", { e: String(e) }), "error");
+      showToast(t("Não consegui abrir a frente: {e}", { e: String(e) }), "error");
     } finally {
       setBusy(false);
     }
@@ -117,7 +117,7 @@ export function NewFloorModal() {
 
   return (
     <Modal
-      title={t("Criar andar")}
+      title={t("Abrir frente")}
       onClose={closeModal}
       dirty={
         !!itemName.trim() ||
@@ -129,7 +129,7 @@ export function NewFloorModal() {
       footer={
         <div className="modal-foot-row">
           <span className="hint grow">
-            {t("O andar vira um")} <code>git worktree</code> {t("em")}{" "}
+            {t("A frente vira um")} <code>git worktree</code> {t("em")}{" "}
             <code>.yard\floors\…</code> {t("— o chão continua intocado.")}
           </span>
           <button className="btn" onClick={closeModal}>
@@ -140,7 +140,7 @@ export function NewFloorModal() {
             disabled={busy || !itemName.trim()}
             onClick={() => void create()}
           >
-            {busy ? t("Criando…") : t("Criar andar")}
+            {busy ? t("Abrindo…") : t("Abrir frente")}
           </button>
         </div>
       }
@@ -153,7 +153,7 @@ export function NewFloorModal() {
             value={itemName}
             placeholder={t("ex.: fix-login")}
             aria-invalid={err?.field === "nome" ? true : undefined}
-            aria-describedby={err?.field === "nome" ? "novo-andar-erro" : undefined}
+            aria-describedby={err?.field === "nome" ? "nova-frente-erro" : undefined}
             onChange={(e) => {
               setName(e.target.value);
               if (err?.field === "nome") setError(null);
@@ -161,7 +161,7 @@ export function NewFloorModal() {
           />
         </label>
         {err?.field === "nome" && (
-          <p className="hint hint--error" id="novo-andar-erro" role="alert">
+          <p className="hint hint--error" id="nova-frente-erro" role="alert">
             {err.msg}
           </p>
         )}
@@ -177,7 +177,7 @@ export function NewFloorModal() {
                 }
                 aria-invalid={err?.field === "branch" ? true : undefined}
                 aria-describedby={
-                  err?.field === "branch" ? "novo-andar-erro-branch" : undefined
+                  err?.field === "branch" ? "nova-frente-erro-branch" : undefined
                 }
                 onChange={(e) => {
                   setBranch(e.target.value);
@@ -186,7 +186,7 @@ export function NewFloorModal() {
               />
             </label>
             {err?.field === "branch" && (
-              <p className="hint hint--error" id="novo-andar-erro-branch" role="alert">
+              <p className="hint hint--error" id="nova-frente-erro-branch" role="alert">
                 {err.msg}
               </p>
             )}
@@ -206,7 +206,7 @@ export function NewFloorModal() {
             checked={cloneGround}
             onChange={(e) => setCloneGround(e.target.checked)}
           />
-          {t("Clonar o layout do chão (terminais nascem parados, no cwd do andar)")}
+          {t("Clonar o layout do chão (terminais nascem parados, no cwd da frente)")}
         </label>
         {isRepo && (
           <label className="checkbox">

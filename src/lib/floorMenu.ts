@@ -38,7 +38,7 @@ export function floorRowMenu(ctx: FloorMenuContext, act: FloorMenuActions): Menu
   const { floor } = ctx;
   const isFloor = !ctx.isGround && !!floor;
   const entries: MenuEntry[] = [
-    { id: "ir", label: "Ir para este andar", onSelect: act.goTo },
+    { id: "ir", label: t("Ir para esta frente"), onSelect: act.goTo },
   ];
 
   if (isFloor && isIsolatedFloor(floor)) {
@@ -52,7 +52,7 @@ export function floorRowMenu(ctx: FloorMenuContext, act: FloorMenuActions): Menu
   if (floor?.hooks?.run.length) {
     entries.push({
       id: "hooks",
-      label: t("Rodar os hooks do andar"),
+      label: t("Rodar os hooks da frente"),
       disabled: ctx.busy,
       onSelect: act.runHooks,
     });
@@ -88,7 +88,7 @@ export function floorRowMenu(ctx: FloorMenuContext, act: FloorMenuActions): Menu
       { kind: "sep" },
       {
         id: "close",
-        label: t("Encerrar o andar…"),
+        label: t("Encerrar a frente…"),
         danger: true,
         disabled: ctx.busy,
         onSelect: act.close,

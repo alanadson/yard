@@ -486,7 +486,7 @@ export function SecAgents() {
         )}{" "}
         (<code>yard recruit</code>
         {t(
-          "), os de uma tarefa em andares e as conversas retomadas. Quem já está aberto não muda: vale a partir do próximo início.",
+          "), os de uma tarefa em frentes e as conversas retomadas. Quem já está aberto não muda: vale a partir do próximo início.",
         )}
       </p>
       <p className="hint">

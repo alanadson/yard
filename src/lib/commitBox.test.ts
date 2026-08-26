@@ -115,7 +115,7 @@ describe("commitAction", () => {
 
 describe("messageHint", () => {
   it("a short message gets no hint", () => {
-    expect(messageHint("corrige o merge de andares")).toBeNull();
+    expect(messageHint("corrige o merge de frentes")).toBeNull();
     expect(messageHint("")).toBeNull();
   });
 

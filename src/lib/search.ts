@@ -5,15 +5,15 @@
  *
  * - **word score** — how much of what was typed the candidate's own words
  *   cover. It is what makes "novo term" find "Novo terminal" and, more
- *   importantly, what stops "novo terminal no andar da api" from matching
+ *   importantly, what stops "novo terminal na frente da api" from matching
  *   everything that merely contains "novo".
  * - **subsequence** — the acronym path: `ctc` reaching `CanvasView/TerminalCard`.
  *   Deliberately weaker; it only decides between candidates the word score
  *   left tied.
  *
  * Everything is compared **folded**: lowercase, accents stripped, whitespace
- * collapsed. Typing `portugues` has to find "Português" and `andar` has to
- * find "Andar" — in a Portuguese interface, a search that demands the right
+ * collapsed. Typing `portugues` has to find "Português" and `frente` has to
+ * find "Frente" — in a Portuguese interface, a search that demands the right
  * accent is a search nobody uses twice.
  */
 
@@ -39,7 +39,7 @@ export function tokenize(value: string): string[] {
 
 /**
  * Navigation filler: words that say where the user is going, not what they
- * are looking for. "abrir o andar da api" means "andar api", so an unmatched
+ * are looking for. "abrir a frente da api" means "frente api", so an unmatched
  * "abrir" must not count against the candidate.
  *
  * Verbs that actually name an action ("novo", "criar", "fechar") are **not**
@@ -59,8 +59,8 @@ const FILLER = new Set([
  * Word-level score: 3 for an exact word, 2 for a prefix, 1 for a substring,
  * summed over what was typed.
  *
- * The gate at the end is the part that matters. Without it "andar api" scored
- * on every row that had the word "andar", so typing more words made the list
+ * The gate at the end is the part that matters. Without it "frente api" scored
+ * on every row that had the word "frente", so typing more words made the list
  * *worse* — the opposite of what typing more is for.
  */
 export function wordScore(query: string, fields: readonly string[]): number {

@@ -48,7 +48,7 @@ const project: ProjectRow = {
 };
 
 const group: GroupRow = {
-  id: "g-andar",
+  id: "g-frente",
   projectId: "p1",
   name: "Correção",
   layoutJson: JSON.stringify({
@@ -87,7 +87,7 @@ beforeEach(() => {
     groups: [group],
     terminals: [],
     activeProjectId: "p1",
-    activeGroupId: "g-andar",
+    activeGroupId: "g-frente",
   });
 });
 

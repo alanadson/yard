@@ -91,9 +91,9 @@ export function FanoutModal() {
             }) +
               `${result.failures.join("; ")}.` +
               (result.notStarted.length
-                ? t(" Os andares existem — use ▶ no cartão para iniciar.")
+                ? t(" As frentes existem — use ▶ no cartão para iniciar.")
                 : "")
-          : t("Tarefa “{name}”: {n} andar(es) no ar.", { name: itemName.trim(), n: launched }),
+          : t("Tarefa “{name}”: {n} frente(s) no ar.", { name: itemName.trim(), n: launched }),
         result.failures.length ? "error" : "info",
       );
       closeModal();
@@ -126,7 +126,7 @@ export function FanoutModal() {
                     "{n} worktree(s) no disco e {n} agente(s) rodando o mesmo pedido — depois você compara e aterrissa o vencedor.",
                     { n: chosen.length },
                   )
-                : t("Escolha ao menos um agente. Cada um ganha um andar isolado com o mesmo pedido.")}
+                : t("Escolha ao menos um agente. Cada um ganha uma frente isolada com o mesmo pedido.")}
           </span>
           <button className="btn" onClick={closeModal}>
             {t("Cancelar")}

@@ -868,7 +868,7 @@ async function cmdRecruit(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
   if (!name) {
     return err(
       'uso: yard recruit "Nome" [--agent claude|codex|…] [--role "…"] [--dir PATH]\n' +
-        '     yard recruit "Nome" --floor "Andar"        (nasce no canvas do andar)\n' +
+        '     yard recruit "Nome" --floor "Frente"       (nasce no canvas da frente)\n' +
         '     yard recruit "Nome" --replace "Antigo" [--agent …]   (troca o processo do cartão)\n',
     );
   }
@@ -1122,7 +1122,7 @@ async function recruitInFloor(
   const target = findGroupByName(project.id, floorName);
   if (!target) {
     return err(
-      `yard: não achei o andar "${floorName}" neste projeto. Rode \`yard floor list\`.\n`,
+      `yard: não achei a frente "${floorName}" neste projeto. Rode \`yard floor list\`.\n`,
     );
   }
   const cwd = next.dir ?? s.rootOfGroup(target.id) ?? ctx.caller.cwd;
@@ -1158,13 +1158,13 @@ async function recruitInFloor(
     });
   } catch (e) {
     return err(
-      `yard: "${next.name}" foi criado no andar "${target.name}", mas o processo não subiu: ${e}\n`,
+      `yard: "${next.name}" foi criado na frente "${target.name}", mas o processo não subiu: ${e}\n`,
     );
   }
   if (next.launch.briefing) void deliverBriefing(newId, next.launch.briefing);
   return ok(
-    `Recrutado "${next.name}" no andar "${target.name}" (cwd: ${cwd}). ` +
-      "Conexões não cruzam andares — fale com ele pelo canvas daquele andar.\n",
+    `Recrutado "${next.name}" na frente "${target.name}" (cwd: ${cwd}). ` +
+      "Conexões não cruzam frentes — fale com ele pelo canvas daquela frente.\n",
   );
 }
 
@@ -1176,7 +1176,7 @@ async function cmdFloor(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
 
   if (sub === "list") {
     const groups = s.groupsOf(project.id);
-    let out = `Andares de "${project.name}":\n`;
+    let out = `Frentes de "${project.name}":\n`;
     groups.forEach((g, i) => {
       const floor = s.layoutOf(g.id).floor;
       const aliveCount = s.terminalsOf(g.id).filter((t) => t.alive).length;
@@ -1226,13 +1226,13 @@ async function cmdFloor(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
       });
       return ok(
         provision.kind === "isolated"
-          ? `Andar "${name}" criado: branch ${provision.branch}, worktree em ${provision.path}.` +
+          ? `Frente "${name}" aberta: branch ${provision.branch}, worktree em ${provision.path}.` +
               `${copyGround ? " Layout do chão clonado (terminais parados)." : ""}\n`
-          : `Andar "${name}" criado SEM git (projeto sem repositório ou --no-git): ` +
+          : `Frente "${name}" aberta SEM git (projeto sem repositório ou --no-git): ` +
               `os terminais dele usam o mesmo diretório do chão.\n`,
       );
     } catch (e) {
-      return err(`yard: não consegui criar o andar: ${e}\n`);
+      return err(`yard: não consegui abrir a frente: ${e}\n`);
     }
   }
 
@@ -1248,7 +1248,7 @@ async function cmdFloor(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
       );
     }
     const target = findGroupByName(project.id, name);
-    if (!target) return err(`yard: não achei o andar "${name}".\n`);
+    if (!target) return err(`yard: não achei a frente "${name}".\n`);
     try {
       const result = await landFloor(project, target);
       if (!result.ok) {
@@ -1284,9 +1284,9 @@ async function cmdFloor(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
       .groupsOf(project.id)
       .filter((g) => isIsolatedFloor(s.layoutOf(g.id).floor));
     if (floors.length === 0) {
-      return ok(`Nenhum andar isolado em "${project.name}".\n`);
+      return ok(`Nenhuma frente isolada em "${project.name}".\n`);
     }
-    let out = `Andares de "${project.name}" vs o chão:\n`;
+    let out = `Frentes de "${project.name}" vs o chão:\n`;
     for (const g of floors) {
       try {
         const p = await previewFloor(project, g);
@@ -1958,17 +1958,17 @@ const HELP = `yard — ponte entre agentes, notas e o canvas do Yard
   yard portal navigate|snapshot|click|fill|type|key|hover|scroll|resize|ua
   yard portal screenshot|evaluate|html|text|info|logs "Nome"
   yard recruit "Nome" [--agent id] [--role t] [--dir p]   novo agente conectado
-  yard recruit "Nome" --floor "Andar"          novo agente no canvas do andar
+  yard recruit "Nome" --floor "Frente"         novo agente no canvas da frente
   yard recruit "Nome" --replace "Antigo"       troca o processo do cartão
   yard dismiss "Nome"                          encerra e remove um conectado
-  yard floor list                              chão e andares do projeto
+  yard floor list                              chão e frentes do projeto
   yard floor create "Nome" [--branch x] [--existing-branch] [--no-git] [--copy-ground]
-                                               andar novo (git worktree isolado)
+                                               frente nova (git worktree isolado)
   yard floor land "Nome" [--close] [--keep-losers]
-                                               merge no chão; --close encerra o andar
-  yard floor compare                           diffstat de cada andar vs o chão
+                                               merge no chão; --close encerra a frente
+  yard floor compare                           diffstat de cada frente vs o chão
   yard floor fanout "Nome" --prompt "…" [--agents a,b]
-                                               um pedido, N andares, um agente cada
+                                               um pedido, N frentes, um agente cada
   yard role show ["Agente"] | role set "Agente" "texto|papel salvo"
   yard role create|edit "Papel" "texto" [--scope global|current]
   yard role list | role delete "Papel"         biblioteca de papéis

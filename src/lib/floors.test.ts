@@ -77,7 +77,7 @@ describe("parseHookLines", () => {
 });
 
 /**
- * The rule the "Criar andar" dialog and `yard floor create` share. Before,
+ * The rule the "Abrir frente" dialog and `yard floor create` share. Before,
  * only the CLI checked, and a "sem git" floor never even reached the backend —
  * two groups with the same name left `floor list` and `recruit --floor`
  * ambiguous.

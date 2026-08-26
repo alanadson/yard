@@ -18,7 +18,7 @@ export async function previewFloor(
 ) {
   const floor = parseLayout(group.layoutJson).floor;
   if (!isIsolatedFloor(floor) || !floor?.branch) {
-    throw new Error(t('o andar "{name}" não tem uma branch para aterrissar', { name: group.name }));
+    throw new Error(t('a frente "{name}" não tem uma branch para aterrissar', { name: group.name }));
   }
   return ipc.worktreePreview(project.path, floor.branch, floor.worktreePath);
 }
@@ -29,7 +29,7 @@ export async function landFloor(
 ): Promise<LandResult> {
   const floor = parseLayout(group.layoutJson).floor;
   if (!isIsolatedFloor(floor) || !floor?.branch) {
-    throw new Error(t('o andar "{name}" não tem uma branch para aterrissar', { name: group.name }));
+    throw new Error(t('a frente "{name}" não tem uma branch para aterrissar', { name: group.name }));
   }
   return ipc.worktreeLand(project.path, floor.branch, floor.worktreePath);
 }

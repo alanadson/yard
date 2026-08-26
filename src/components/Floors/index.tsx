@@ -113,8 +113,8 @@ export function FloorsControl({
       <button
         ref={buttonRef}
         className={`floors-btn ${open ? "is-active" : ""}`}
-        data-tip-side="top" data-tip-wrap="" data-tip={t("Andares: cópias isoladas do repositório, cada uma com o próprio canvas")}
-        aria-label={t("Andares")}
+        data-tip-side="top" data-tip-wrap="" data-tip={t("Frentes: cópias isoladas do repositório, cada uma com o próprio canvas")}
+        aria-label={t("Frentes")}
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
@@ -147,7 +147,7 @@ function FloorsPopover({
     .sort((a, b) => a.sort - b.sort);
 
   /**
-   * Which row is mid-operation. "Criar andar" already had this; the three row
+   * Which row is mid-operation. "Abrir frente" already had this; the three row
    * actions did not, and they are all slow and all repeatable: two clicks on
    * ▶ ran `npm run dev` twice in the same worktree, the second one fighting
    * the first for the port.
@@ -172,14 +172,14 @@ function FloorsPopover({
   const unload = async (g: GroupRow) => {
     const ids = liveIdsOf(g.id);
     if (ids.length === 0) {
-      showToast(t("Nenhum terminal vivo neste andar."));
+      showToast(t("Nenhum terminal vivo nesta frente."));
       return;
     }
     const failures = await ipc.suspendGroup(ids);
     showToast(
       failures.length
-        ? t("Andar descarregado com {n} falha(s).", { n: failures.length })
-        : t('Andar "{name}" descarregado — sessões preservadas.', { name: g.name }),
+        ? t("Frente descarregada com {n} falha(s).", { n: failures.length })
+        : t('Frente "{name}" descarregada — sessões preservadas.', { name: g.name }),
     );
   };
 
@@ -208,9 +208,9 @@ function FloorsPopover({
     // `role="group"`, not `role="menu"`: the rows carry their own action
     // buttons, and a menu whose items contain buttons is a broken menu — the
     // shape here is a list of choices, which is what this says.
-    <div className="floors-pop" role="group" aria-label={t("Andares do projeto")}>
+    <div className="floors-pop" role="group" aria-label={t("Frentes do projeto")}>
       <div className="floors-pop-head">
-        <span>{t("Andares — {name}", { name: project.name })}</span>
+        <span>{t("Frentes — {name}", { name: project.name })}</span>
       </div>
       <ul className="floors-list">
         {ofProject.map((g, i) => {
@@ -303,7 +303,7 @@ function FloorsPopover({
                         {isIsolatedFloor(floor) && (
                           <button
                             className="icon-btn"
-                            data-tip={t("Aterrissar este andar no chão")}
+                            data-tip={t("Aterrissar esta frente no chão")}
                             aria-label={t("Aterrissar {name}", { name: g.name })}
                             disabled={occupied !== null}
                             onClick={(e) => {
@@ -318,7 +318,7 @@ function FloorsPopover({
                         {floor.hooks?.run.length ? (
                           <button
                             className={`icon-btn ${occupied === g.id ? "is-busy" : ""}`}
-                            data-tip={t("Rodar hooks do andar")}
+                            data-tip={t("Rodar hooks da frente")}
                             aria-label={t("Rodar hooks de {name}", { name: g.name })}
                             aria-busy={occupied === g.id}
                             disabled={occupied !== null}
@@ -332,7 +332,7 @@ function FloorsPopover({
                         ) : null}
                         <button
                           className={`icon-btn ${occupied === g.id ? "is-busy" : ""}`}
-                          data-tip-wrap="" data-tip={t("Descarregar: suspender os terminais, mantendo o andar")}
+                          data-tip-wrap="" data-tip={t("Descarregar: suspender os terminais, mantendo a frente")}
                           aria-label={t("Descarregar {name}", { name: g.name })}
                           aria-busy={occupied === g.id}
                           disabled={occupied !== null}
@@ -345,7 +345,7 @@ function FloorsPopover({
                         </button>
                         <button
                           className="icon-btn icon-btn--danger"
-                          data-tip-wrap="" data-tip={t("Encerrar: remover o andar e o worktree (recusado se houver trabalho não commitado)")}
+                          data-tip-wrap="" data-tip={t("Encerrar: remover a frente e o worktree (recusado se houver trabalho não commitado)")}
                           aria-label={t("Encerrar {name}", { name: g.name })}
                           disabled={occupied !== null}
                           onClick={(e) => {
@@ -385,7 +385,7 @@ function FloorsPopover({
           openModal("compare-floors", { projectId: project.id });
         }}
       >
-        <Columns2 size={12} aria-hidden="true" /> {t("Comparar andares…")}
+        <Columns2 size={12} aria-hidden="true" /> {t("Comparar frentes…")}
       </button>
       <button
         className="floors-new"
@@ -394,7 +394,7 @@ function FloorsPopover({
           openModal("new-floor", { projectId: project.id });
         }}
       >
-        <Plus size={12} aria-hidden="true" /> {t("Criar andar…")}
+        <Plus size={12} aria-hidden="true" /> {t("Abrir frente…")}
       </button>
     </div>
   );

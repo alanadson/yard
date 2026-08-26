@@ -1,6 +1,6 @@
 /**
  * The board is where the user spends the session: a toolbar tooltip, a card
- * badge or a floors button left in Portuguese in the middle of an English
+ * badge or a fronts button left in Portuguese in the middle of an English
  * interface is the kind of hole nobody files a bug about. These are the
  * sentences most eyes land on; each one needs its English line.
  */
@@ -21,15 +21,15 @@ const MUST_HAVE = [
   "Nova nota neste fichário",
   "Formatação da nota",
   "Fechar portal",
-  // floors
-  "Andares: cópias isoladas do repositório, cada uma com o próprio canvas",
-  "Aterrissar este andar no chão",
-  "Criar andar",
+  // fronts
+  "Frentes: cópias isoladas do repositório, cada uma com o próprio canvas",
+  "Aterrissar esta frente no chão",
+  "Abrir frente",
   "Nova tarefa",
   // libs: menus, confirms, toasts
-  "Encerrar o andar…",
+  "Encerrar a frente…",
   "A tarefa chegou vazia.",
-  "dê um nome ao andar",
+  "dê um nome à frente",
 ];
 
 describe("Canvas in English", () => {

@@ -30,7 +30,7 @@ describe("tokenize", () => {
   });
 
   it("keeps digits and folds accents", () => {
-    expect(tokenize("Andar 2 — API")).toEqual(["andar", "2", "api"]);
+    expect(tokenize("Frente 2 — API")).toEqual(["frente", "2", "api"]);
   });
 });
 
@@ -44,13 +44,13 @@ describe("wordScore", () => {
   });
 
   it("refuses a candidate that covers less than half of what was typed", () => {
-    // "andar" hits, "api" does not: one of two meaningful words is not enough.
-    expect(wordScore("andar api", ["Andar do checkout"])).toBe(0);
-    expect(wordScore("andar api", ["Andar da api"])).toBeGreaterThan(0);
+    // "frente" hits, "api" does not: one of two meaningful words is not enough.
+    expect(wordScore("frente api", ["Frente do checkout"])).toBe(0);
+    expect(wordScore("frente api", ["Frente da api"])).toBeGreaterThan(0);
   });
 
   it("does not count filler words against a candidate", () => {
-    expect(wordScore("abrir o andar", ["Andar da api"])).toBeGreaterThan(0);
+    expect(wordScore("abrir a frente", ["Frente da api"])).toBeGreaterThan(0);
   });
 
   it("ignores accents on both sides", () => {
