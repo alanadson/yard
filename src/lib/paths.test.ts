@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { fileName, splitPath, toOsPath } from "./paths";
+import { fileName, splitOsPath, splitPath, toOsPath } from "./paths";
 
 describe("splitPath", () => {
   it("splits folder and name, and handles the root", () => {
@@ -78,5 +78,38 @@ describe("toOsPath", () => {
   it("does not touch a backslash inside a POSIX path", () => {
     // On Linux `\` is an ordinary file-name character, not a separator.
     expect(toOsPath("/home/alan/yard", "src/a\\b.ts")).toBe("/home/alan/yard/src/a\\b.ts");
+  });
+});
+
+/**
+ * The document header shows the OS path as a crumb: the folder chain dimmed,
+ * the file name lit. The cut has to respect whichever separator the OS used —
+ * `splitPath` only knows git's `/`, and a Windows path fed to it came back as
+ * one long "file name" with no folder at all.
+ */
+describe("splitOsPath", () => {
+  it("cuts a Windows path at the last backslash", () => {
+    expect(splitOsPath("C:\\Workspace\\yard\\AGENTS.md")).toEqual({
+      dir: "C:\\Workspace\\yard\\",
+      base: "AGENTS.md",
+    });
+  });
+
+  it("cuts a POSIX path at the last slash", () => {
+    expect(splitOsPath("/home/alan/yard/README.md")).toEqual({
+      dir: "/home/alan/yard/",
+      base: "README.md",
+    });
+  });
+
+  it("cuts at whichever separator comes last when both appear", () => {
+    expect(splitOsPath("C:/proj/.yard/floors/fix\\src\\a.ts")).toEqual({
+      dir: "C:/proj/.yard/floors/fix\\src\\",
+      base: "a.ts",
+    });
+  });
+
+  it("a bare name has no folder", () => {
+    expect(splitOsPath("notas.md")).toEqual({ dir: "", base: "notas.md" });
   });
 });

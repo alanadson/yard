@@ -6,11 +6,13 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { diffDocId, type DiffSpec } from "../lib/diffTab";
 import type { DirListing } from "../lib/ipc";
 import {
   ancestors,
   docId,
   isDirty,
+  isReadOnly,
   joinPath,
   parentDir,
   parseStoredDocs,
@@ -441,10 +443,10 @@ describe("tabs", () => {
   it("keeps two files with the same relative path in different worktrees", async () => {
     fsReadText.mockResolvedValue({
       path: "src/App.tsx",
-      text: "andar",
+      text: "frente",
       binary: false,
       truncated: false,
-      size: 5,
+      size: 6,
       modifiedAt: 2000,
       crlf: false,
     });
@@ -642,5 +644,130 @@ describe("surviving a reload", () => {
     const [d] = useEditor.getState().docs;
     expect(d.text).toBe("não perca isto");
     expect(d.missing).toBe(true);
+  });
+});
+
+/**
+ * A comparison opened as a tab beside the CLIs — the Source Control tab's
+ * "open the diff as a tab", the way VS Code's diff editor works. It is a
+ * document without a file behind it: nothing to read, nothing to save, and
+ * the watcher must not mistake it for the file it compares.
+ */
+describe("a comparison as a tab (the diff beside the CLIs)", () => {
+  const changes: DiffSpec = { source: "tree", side: "worktree", origPath: null };
+  const staged: DiffSpec = { source: "tree", side: "index", origPath: null };
+  const onDisk = {
+    path: "src/a.ts",
+    text: "novo",
+    binary: false,
+    truncated: false,
+    lossy: false,
+    size: 4,
+    modifiedAt: 2000,
+    crlf: false,
+    bom: false,
+    media: null,
+  };
+
+  it("opens as a tab of its own, beside the file, without reading the disk", async () => {
+    fsReadText.mockResolvedValue(onDisk);
+
+    useEditor.getState().openDiff("src/a.ts", changes);
+
+    expect(fsReadText).not.toHaveBeenCalled();
+    const tab = useEditor.getState().docs[0];
+    expect(tab.diff).toEqual(changes);
+    expect(tab.path).toBe("src/a.ts");
+    expect(isReadOnly(tab)).toBe(true);
+    expect(useEditor.getState().activeId).toBe(tab.id);
+
+    await useEditor.getState().openFile("src/a.ts");
+    expect(useEditor.getState().docs).toHaveLength(2);
+
+    // Asking again brings the tab forward instead of opening a twin.
+    useEditor.getState().openDiff("src/a.ts", changes);
+    expect(useEditor.getState().docs).toHaveLength(2);
+    expect(useEditor.getState().activeId).toBe(tab.id);
+  });
+
+  it("the two sides of one file are two tabs", () => {
+    useEditor.getState().openDiff("src/a.ts", changes);
+    useEditor.getState().openDiff("src/a.ts", staged);
+    expect(useEditor.getState().docs).toHaveLength(2);
+    expect(useEditor.getState().docs.map((d) => d.diff)).toEqual([changes, staged]);
+  });
+
+  it("the tab says which comparison it shows, and does not make the file's own tab spell its folder", () => {
+    const file = doc("src/a.ts");
+    const tab = doc("src/a.ts", { id: diffDocId("C:\\proj", "src/a.ts", changes), diff: changes });
+    const other = doc("src/a.ts", { id: diffDocId("C:\\proj", "src/a.ts", staged), diff: staged });
+    expect(tabLabel(tab, [file, tab, other])).toBe("a.ts (Alterações)");
+    expect(tabLabel(other, [file, tab, other])).toBe("a.ts (Preparado)");
+    expect(tabLabel(file, [file, tab, other])).toBe("a.ts");
+  });
+
+  it("the watcher reloads the file's tab and leaves the comparison alone", async () => {
+    fsReadText.mockResolvedValue(onDisk);
+    // The comparison first: a lookup that stops at the first tab with that
+    // path would find it, and the file's own tab would never follow the agent.
+    useEditor.setState({
+      docs: [
+        doc("src/a.ts", { id: diffDocId("C:\\proj", "src/a.ts", changes), diff: changes, text: "", saved: "" }),
+        doc("src/a.ts"),
+      ],
+    });
+
+    useEditor.getState().applyActivity(activity([{ path: "src/a.ts", kind: "modified" }]));
+
+    await vi.waitFor(() => {
+      expect(useEditor.getState().docs[1].text).toBe("novo");
+    });
+    expect(fsReadText).toHaveBeenCalledTimes(1);
+    expect(useEditor.getState().docs[0].text).toBe("");
+    expect(useEditor.getState().docs[0].missing).toBe(false);
+  });
+
+  it("reload has nothing to read for a comparison", async () => {
+    useEditor.setState({
+      docs: [doc("src/a.ts", { id: diffDocId("C:\\proj", "src/a.ts", changes), diff: changes })],
+    });
+    await useEditor.getState().reload(useEditor.getState().docs[0].id);
+    expect(fsReadText).not.toHaveBeenCalled();
+  });
+
+  it("comes back after a reload without touching the disk", async () => {
+    const stored = serializeDocs([
+      doc("src/a.ts", {
+        id: diffDocId("C:\\proj", "src/a.ts", changes),
+        diff: changes,
+        groupId: "g2",
+        slot: 1,
+      }),
+    ]);
+    readPrefs.mockResolvedValue({ "editor.docs": stored });
+
+    await useEditor.getState().restore();
+
+    expect(fsReadText).not.toHaveBeenCalled();
+    const [tab] = useEditor.getState().docs;
+    expect(tab.diff).toEqual(changes);
+    expect(tab.id).toBe(diffDocId("C:\\proj", "src/a.ts", changes));
+    expect(tab.groupId).toBe("g2");
+    expect(tab.slot).toBe(1);
+    expect(isReadOnly(tab)).toBe(true);
+  });
+
+  it("a rename carries the comparison along, still under an id of its own", async () => {
+    fsRenameEntry.mockResolvedValue(undefined);
+    useEditor.setState({
+      docs: [doc("a.ts"), doc("a.ts", { id: diffDocId("C:\\proj", "a.ts", changes), diff: changes })],
+    });
+
+    await useEditor.getState().renameEntry("a.ts", "b.ts");
+
+    const { docs } = useEditor.getState();
+    expect(docs.map((d) => d.path)).toEqual(["b.ts", "b.ts"]);
+    expect(new Set(docs.map((d) => d.id)).size).toBe(2);
+    expect(docs[1].id).toBe(diffDocId("C:\\proj", "b.ts", changes));
   });
 });

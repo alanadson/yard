@@ -39,19 +39,14 @@ import { indentWithTab } from "@codemirror/commands";
 import { gotoLine, openSearchPanel } from "@codemirror/search";
 import {
   AlertTriangle,
-  BookOpen,
+  ChevronDown,
   Code2,
   Columns2,
-  ExternalLink,
-  FolderOpen,
   Image as ImageIcon,
   ListTree,
   PanelLeft,
-  Pencil,
-  RotateCw,
   Save,
   Search,
-  WrapText,
   X,
 } from "lucide-react";
 
@@ -71,9 +66,11 @@ import {
   gitGutterExt,
   headTextFor,
 } from "./gitGutter";
+import { DiffTab, isComparison } from "./DiffTab";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { MediaView } from "./MediaView";
 import { MarkdownToolbar } from "./MarkdownToolbar";
+import { fileMenu, mdBar, showSave } from "./chrome";
 import { mdKeymap, runMd } from "./mdCommands";
 import { mdLive } from "./mdLive";
 import { openReplacePanel, yardSearch } from "./searchPanel";
@@ -90,7 +87,7 @@ import { fileSize, mediaKind } from "../../lib/media";
 import { closeDocTab, docTabMenu } from "../../lib/editorActions";
 import { captureTextTarget, textMenuEntries } from "../../lib/textMenu";
 import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
-import { fileName, toOsPath } from "../../lib/paths";
+import { fileName, splitOsPath, toOsPath } from "../../lib/paths";
 import { hasSymbolSupport, symbolsOf } from "../../lib/symbols";
 import { ipc } from "../../lib/ipc";
 import {
@@ -98,7 +95,6 @@ import {
   isReadOnly,
   tabLabel,
   useEditor,
-  type MdMode,
   type OpenDoc,
 } from "../../stores/editorStore";
 import { useProjects } from "../../stores/projectsStore";
@@ -109,41 +105,27 @@ import type { ExtensionId } from "../../lib/extensions";
 import { useT } from "../../hooks/useT";
 import { tn } from "../../lib/i18n";
 
-/**
- * The four ways to look at a markdown file, in the order of how much of the
- * source they show — from "drawn like the page" to "read only the page".
- */
-const MODES: { mode: MdMode; icon: React.ReactNode; label: string; hint: string }[] = [
-  {
-    mode: "live",
-    icon: <Pencil size={14} />,
-    label: "Editar", // i18n-ok — a key, rendered through t()
-    hint: "escreve markdown já desenhado", // i18n-ok
-  },
-  {
-    mode: "source",
-    icon: <Code2 size={14} />,
-    // "Fonte do markdown", not "Fonte": the bare word is the *font* everywhere
-    // else in the app, and one Portuguese key carries one English line.
-    label: "Fonte do markdown", // i18n-ok
-    hint: "o texto cru, como o agente lê", // i18n-ok
-  },
-  {
-    mode: "split",
-    icon: <Columns2 size={14} />,
-    label: "Dividido", // i18n-ok
-    hint: "fonte de um lado, página do outro", // i18n-ok
-  },
-  {
-    mode: "read",
-    icon: <BookOpen size={14} />,
-    label: "Ler", // i18n-ok
-    hint: "só a página, largura toda", // i18n-ok
-  },
-];
-
 /** The symbols rail with nothing to list — `Outline` translates it. */
 const NO_SYMBOLS = "Sem símbolos ainda — funções e classes do arquivo aparecem aqui."; // i18n-ok
+
+/**
+ * One document's surface, whichever face it has: a comparison (the diff
+ * opened from the Source Control tab) draws as the diff, everything else as
+ * the editor. The hosts — the pane's tab panel and the canvas overlay — ask
+ * for this and never need to know the difference.
+ *
+ * The subscription is a boolean on purpose: returning the document would
+ * re-render this on every keystroke of a text file, and with it the editor
+ * below, which `EditorBody` goes out of its way not to do.
+ */
+export function DocBody({ docId }: { docId: string }) {
+  const comparison = useEditor((s) => !!s.docs.find((x) => x.id === docId)?.diff);
+  if (comparison) {
+    const doc = useEditor.getState().docs.find((x) => x.id === docId);
+    if (doc && isComparison(doc)) return <DiffTab doc={doc} />;
+  }
+  return <EditorBody docId={docId} />;
+}
 
 /**
  * The editing surface of **one** document: path bar with the tools, the
@@ -223,6 +205,12 @@ export function EditorBody({ docId: id }: { docId: string }) {
    */
   const [showSource, setShowSource] = useState(false);
   useEffect(() => setShowSource(false), [id]);
+  /**
+   * The file's menu, opened from the path itself. Only the anchor is kept:
+   * the entries are built at open time from whatever the store says then,
+   * so a draft that appeared since the last click still shows "Salvar" live.
+   */
+  const [docMenu, setDocMenu] = useState<MenuAnchor | null>(null);
 
   const save = useCallback(async () => {
     // Prettier first, in the buffer (see `format.ts`): both ways in — Ctrl+S
@@ -348,9 +336,7 @@ export function EditorBody({ docId: id }: { docId: string }) {
 
   const lang = languageLabel(doc.path);
   const osPath = toOsPath(doc.root, doc.path);
-  const reveal = () => {
-    void ipc.revealPath(osPath).catch((e) => showToast(String(e), "error"));
-  };
+  const crumb = splitOsPath(osPath);
   /** Image, video, audio or PDF — whatever the webview draws on its own. */
   const kind = mediaKind(doc.media);
   /**
@@ -359,101 +345,97 @@ export function EditorBody({ docId: id }: { docId: string }) {
    * that has a better face than its code — unless the code is asked for.
    */
   const viewing = doc.binary || (kind !== null && !showSource);
+  const saveButton = showSave({ readOnly: isReadOnly(doc), dirty: isDirty(doc), saving: doc.saving });
   /**
-   * The bar has two groups: what acts on the file and what points outside it.
-   * The rule that separates them only appears when there is something before it
-   * — on an image there is nothing to save, and the rule would open the bar by
-   * itself.
+   * Whether the header has a "how to look" group at all — the rule between
+   * it and search only exists with something on both sides of it.
    */
-  const hasEditGroup = md || (kind !== null && !doc.binary) || !isReadOnly(doc) || dirtyDocs > 1;
+  const hasViewGroup = md || codeSymbolsOn || (kind !== null && !doc.binary);
+  /** What the formatting capsule carries — the modes ride it now. */
+  const mdSlots = mdBar(md, mdMode);
+
+  /**
+   * Everything about the file as a thing on disk, in one menu under the path:
+   * the tab's own menu (save, reload, copy path, show in folder, close…) plus
+   * what this view adds — wrapping, or the default app for a picture.
+   */
+  const openDocMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setDocMenu({ x: r.left, y: r.bottom + 4 });
+  };
+  const docMenuEntries = () =>
+    fileMenu(
+      docTabMenu(doc, useEditor.getState().docs),
+      { wrap, media: viewing },
+      {
+        toggleWrap: () => useEditor.getState().setWrap(!wrap),
+        openExternal: () => {
+          void ipc.openExternal(osPath).catch((e) => showToast(String(e), "error"));
+        },
+      },
+    );
 
   return (
     <div className="editor-body" ref={rootRef}>
-      {/* The path bar: where the file is, and everything you can do to it —
-          under the tabs, above the formatting. */}
+      {/* The document's header: its place on disk as the title (folder dimmed,
+          name lit — and the file's menu behind it), and on the right only how
+          to look at it. Part of the page, not a bar over it. */}
       <div className="editor-pathbar">
-        <span className="editor-fullpath" data-tip-wrap="" data-tip={osPath}>
-          {osPath}
-        </span>
+        <button
+          className={`editor-crumb ${docMenu ? "is-open" : ""}`}
+          data-tip-wrap=""
+          data-tip={osPath}
+          aria-label={t("{path} — ações do arquivo", { path: osPath })}
+          aria-haspopup="menu"
+          aria-expanded={docMenu !== null}
+          onClick={openDocMenu}
+        >
+          <span className="editor-crumb-path">
+            {crumb.dir && (
+              <span className="editor-crumb-dir">
+                {/* One LTR isolate inside an RTL box: the rtl is what puts the
+                    ellipsis at the *start* of the folder chain, the isolate is
+                    what keeps `C:\…\yard\` from coming out as `\C:\…\yard`. */}
+                <span className="editor-crumb-ltr">{crumb.dir}</span>
+              </span>
+            )}
+            <span className="editor-crumb-base">{crumb.base}</span>
+          </span>
+          <ChevronDown size={11} aria-hidden="true" />
+        </button>
 
         <div className="editor-tools">
-            {md && (
-              <div
-                className="md-modes"
-                role="group"
-                aria-label={t("Como mostrar o markdown")}
-              >
-                {MODES.map((m) => (
-                  <button
-                    key={m.mode}
-                    className={`icon-btn ${mdMode === m.mode ? "is-active" : ""}`}
-                    data-tip={`${t(m.label)} — ${t(m.hint)}`}
-                    aria-label={t(m.label)}
-                    aria-pressed={mdMode === m.mode}
-                    onClick={() => useEditor.getState().setMdMode(m.mode)}
-                  >
-                    {m.icon}
-                  </button>
-                ))}
-              </div>
-            )}
             {(md || codeSymbolsOn) && (
-              <>
-                <button
-                  className={`icon-btn ${showOutline ? "is-active" : ""}`}
-                  data-tip={md ? t("Sumário dos títulos") : t("Símbolos do arquivo")}
-                  aria-label={
-                    md
-                      ? t("Mostrar ou esconder o sumário")
-                      : t("Mostrar ou esconder os símbolos do arquivo")
-                  }
-                  aria-pressed={showOutline}
-                  onClick={() => useEditor.getState().setOutline(!showOutline)}
-                >
-                  <ListTree size={14} />
-                </button>
-                <span className="viewer-sep" />
-              </>
+              <button
+                className={`icon-btn ${showOutline ? "is-active" : ""}`}
+                data-tip={md ? t("Sumário dos títulos") : t("Símbolos do arquivo")}
+                aria-label={
+                  md
+                    ? t("Mostrar ou esconder o sumário")
+                    : t("Mostrar ou esconder os símbolos do arquivo")
+                }
+                aria-pressed={showOutline}
+                onClick={() => useEditor.getState().setOutline(!showOutline)}
+              >
+                <ListTree size={14} />
+              </button>
             )}
             {kind && !doc.binary && (
-              <>
-                {/* Only `.svg` reaches here — an image that is also text. */}
-                <button
-                  className={`icon-btn ${showSource ? "is-active" : ""}`}
-                  data-tip={showSource ? t("Ver desenhado") : t("Ver o código")}
-                  aria-label={showSource ? t("Ver desenhado") : t("Ver o código")}
-                  aria-pressed={showSource}
-                  onClick={() => setShowSource(!showSource)}
-                >
-                  {showSource ? <ImageIcon size={14} /> : <Code2 size={14} />}
-                </button>
-                <span className="viewer-sep" />
-              </>
-            )}
-            {!isReadOnly(doc) && (
+              /* Only `.svg` reaches here — an image that is also text. */
               <button
-                className="btn btn--primary btn--sm"
-                disabled={!isDirty(doc) || doc.saving}
-                data-tip={t("Salvar (Ctrl+S)")}
-                onClick={() => void save()}
+                className={`icon-btn ${showSource ? "is-active" : ""}`}
+                data-tip={showSource ? t("Ver desenhado") : t("Ver o código")}
+                aria-label={showSource ? t("Ver desenhado") : t("Ver o código")}
+                aria-pressed={showSource}
+                onClick={() => setShowSource(!showSource)}
               >
-                <Save size={12} aria-hidden="true" />
-                {doc.saving ? t("salvando…") : t("Salvar")}
+                {showSource ? <ImageIcon size={14} /> : <Code2 size={14} />}
               </button>
             )}
-            {dirtyDocs > 1 && (
-              <button
-                className="btn btn--ghost btn--sm"
-                data-tip={t("Salvar os {n} arquivos com alterações", { n: dirtyDocs })}
-                onClick={() => void useEditor.getState().saveAll()}
-              >
-                {t("Salvar tudo")}
-              </button>
-            )}
-            {hasEditGroup && <span className="viewer-sep" />}
-            {/* Search and wrap are about text: out of place on a PNG's screen. */}
+            {/* Search is about text: out of place on a PNG's screen. */}
             {!viewing && (
               <>
+                {hasViewGroup && <span className="viewer-sep" />}
                 <button
                   className="icon-btn"
                   data-tip={t("Buscar no arquivo (Ctrl+F)")}
@@ -471,56 +453,48 @@ export function EditorBody({ docId: id }: { docId: string }) {
                 >
                   <Search size={14} />
                 </button>
-                <button
-                  className={`icon-btn ${wrap ? "is-active" : ""}`}
-                  data-tip={t("Quebra de linha")}
-                  aria-label={t("Quebra de linha")}
-                  aria-pressed={wrap}
-                  onClick={() => useEditor.getState().setWrap(!wrap)}
-                >
-                  <WrapText size={14} />
-                </button>
               </>
             )}
-            {viewing && (
+            {dirtyDocs > 1 && (
               <button
-                className="icon-btn"
-                data-tip={t("Abrir no aplicativo padrão")}
-                aria-label={t("Abrir no aplicativo padrão")}
-                onClick={() => {
-                  void ipc.openExternal(osPath).catch((e) => showToast(String(e), "error"));
-                }}
+                className="btn btn--ghost btn--sm"
+                data-tip={t("Salvar os {n} arquivos com alterações", { n: dirtyDocs })}
+                onClick={() => void useEditor.getState().saveAll()}
               >
-                <ExternalLink size={14} />
+                Salvar tudo
               </button>
             )}
-            <button
-              className="icon-btn"
-              data-tip={t("Reler do disco")}
-              aria-label={t("Reler o arquivo do disco")}
-              onClick={() => void useEditor.getState().reload(doc.id)}
-            >
-              <RotateCw size={14} />
-            </button>
-            <button
-              className="icon-btn"
-              data-tip-at="right"
-              data-tip={t("Mostrar no Explorer")}
-              aria-label={t("Mostrar no Explorer")}
-              onClick={reveal}
-            >
-              <FolderOpen size={14} />
-            </button>
+            {/* The draft made visible: the button is there exactly while
+                there is something to write. */}
+            {saveButton && (
+              <button
+                className="btn btn--primary btn--sm editor-save"
+                disabled={doc.saving}
+                data-tip={t("Salvar (Ctrl+S)")}
+                data-tip-at="right"
+                onClick={() => void save()}
+              >
+                <Save size={12} aria-hidden="true" />
+                {doc.saving ? t("salvando…") : t("Salvar")}
+              </button>
+            )}
           </div>
         </div>
+
+        {docMenu && (
+          <ContextMenu anchor={docMenu} items={docMenuEntries()} onClose={() => setDocMenu(null)} />
+        )}
 
         <div className="editor-main">
           <div className="editor-stage">
             <DocBanner doc={doc} />
-            {md && mdMode !== "read" && (
+            {mdSlots.bar && (
               <MarkdownToolbar
                 block={caret.block}
                 run={runCommand}
+                slots={mdSlots}
+                mode={mdMode}
+                onMode={(m) => useEditor.getState().setMdMode(m)}
                 disabled={isReadOnly(doc)}
               />
             )}
@@ -831,7 +805,7 @@ export function CodeEditor() {
               />
             </nav>
           )}
-          <EditorBody docId={doc.id} />
+          <DocBody docId={doc.id} />
         </div>
       </div>
     </div>

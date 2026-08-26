@@ -23,6 +23,33 @@ export default {
   "Ver desenhado": "View rendered",
   "Ver o código": "View the code",
   "Salvar (Ctrl+S)": "Save (Ctrl+S)",
+  "{path} — ações do arquivo": "{path} — file actions",
+  // the diff tab — a comparison beside the CLIs (DiffTab.tsx)
+  "O que este commit fez neste arquivo": "What this commit did to this file",
+  "O que mudou no disco e ainda não foi preparado (índice → disco)":
+    "What changed on disk and is not staged yet (index → disk)",
+  "O que está preparado para o próximo commit (HEAD → índice)":
+    "What is staged for the next commit (HEAD → index)",
+  "O disco comparado com o último commit (HEAD → disco)":
+    "The disk compared with the last commit (HEAD → disk)",
+  "Este commit não mudou o texto deste arquivo.": "This commit did not change this file's text.",
+  "Nada preparado neste arquivo agora — a aba acompanha o repositório e mostra o diff quando algo for preparado.":
+    "Nothing staged in this file right now — the tab follows the repository and shows the diff once something is staged.",
+  "Nada mexido neste arquivo agora — a aba acompanha o repositório e mostra o diff quando o arquivo mudar.":
+    "Nothing touched in this file right now — the tab follows the repository and shows the diff once the file changes.",
+  "Diff grande ({n} linhas) — exibido como texto contínuo para limitar o DOM; realce e comparação intralinha ficam suspensos.":
+    "Large diff ({n} lines) — shown as plain text to keep the DOM small; highlighting and intraline comparison are off.",
+  "{add} linhas adicionadas, {del} removidas": "{add} lines added, {del} removed",
+  "atualizando…": "updating…",
+  "Visão unificada": "Unified view",
+  "Unificado": "Unified",
+  "Ver a mudança no meio do arquivo inteiro": "See the change within the whole file",
+  "Abrir o arquivo no editor": "Open the file in the editor",
+  "Abrir o arquivo para editar": "Open the file to edit it",
+  "comparação": "comparison",
+  "{n} pedaço": "{n} hunk",
+  "{n} pedaços": "{n} hunks",
+  "Preparado": "Staged",
   "salvando…": "saving…",
   Salvar: "Save",
   "Salvar os {n} arquivos com alterações": "Save the {n} files with changes",

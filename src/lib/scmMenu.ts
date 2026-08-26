@@ -21,6 +21,8 @@ import { t } from "./i18n";
 
 export interface ScmRowActions {
   openDiff: (row: ScmRow) => void;
+  /** The same diff, as a tab beside the CLIs (VS Code's diff editor). */
+  openDiffTab: (row: ScmRow) => void;
   openInEditor: (path: string) => void;
   stage: (path: string) => void;
   unstage: (path: string) => void;
@@ -50,6 +52,8 @@ export function scmRowMenu(
   const absolutePath = ctx.root ? toOsPath(ctx.root, row.path) : null;
   const entries: MenuEntry[] = [
     { id: "diff", label: t("Abrir o diff"), onSelect: () => act.openDiff(row) },
+    // The row goes whole: its `side` is which comparison the tab shows.
+    { id: "diff-tab", label: t("Abrir o diff numa aba"), onSelect: () => act.openDiffTab(row) },
     {
       id: "editor",
       label: t("Abrir no editor"),

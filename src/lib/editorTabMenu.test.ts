@@ -143,3 +143,32 @@ describe("editorTabMenu", () => {
     expect(act.copyPath).toHaveBeenLastCalledWith("C:\\proj\\src\\a.ts");
   });
 });
+
+/**
+ * A comparison tab (the diff opened beside the CLIs) has no file of its own:
+ * nothing to save and nothing to reload from disk — but the path it compares
+ * is a real file, so copying it and showing it in the folder still work.
+ */
+describe("editorTabMenu — a comparison tab", () => {
+  it("has nothing to reload from disk, and still copies and reveals the file it compares", () => {
+    const act = actions();
+    const m = editorTabMenu(
+      {
+        id: "d",
+        path: "src/a.ts",
+        root: "C:/proj",
+        dirty: false,
+        readOnly: true,
+        missing: false,
+        comparison: true,
+      },
+      [tab("a"), { id: "d", path: "src/a.ts" }],
+      act,
+    );
+    expect(findItem(m, "recarregar")?.disabled).toBe(true);
+    expect(findItem(m, "salvar")?.disabled).toBe(true);
+    expect(findItem(m, "revelar")?.disabled).toBe(false);
+    findItem(m, "copiar")?.onSelect?.();
+    expect(act.copyPath).toHaveBeenCalledWith("src/a.ts");
+  });
+});

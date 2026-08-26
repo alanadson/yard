@@ -82,8 +82,8 @@ import { isLive, useTerminals } from "../../stores/terminalsStore";
 import { useUI } from "../../stores/uiStore";
 
 const XTermView = lazy(() => import("../XTermView"));
-const EditorBody = lazy(() =>
-  import("../CodeEditor").then((module) => ({ default: module.EditorBody })),
+const DocBody = lazy(() =>
+  import("../CodeEditor").then((module) => ({ default: module.DocBody })),
 );
 // Rides the same lazy wagon as the editor: CodeMirror only downloads when
 // the notebook (or a file) actually shows up.
@@ -1161,7 +1161,7 @@ export function TerminalPane({
             }}
           >
             <Suspense fallback={<div className="editor-surface" aria-hidden />}>
-              <EditorBody docId={activeDoc.id} />
+              <DocBody docId={activeDoc.id} />
             </Suspense>
           </div>
         )}

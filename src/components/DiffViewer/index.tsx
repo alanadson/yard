@@ -63,6 +63,20 @@ function countLines(text: string): number {
   for (let i = 0; i < text.length; i += 1) if (text.charCodeAt(i) === 10) lines += 1;
   return lines;
 }
+
+/**
+ * How big a diff is, and whether it is past what the renderers below can
+ * draw line by line. Shared with the diff tab (`CodeEditor/DiffTab`), so
+ * both surfaces give up on highlighting at the same size.
+ */
+export function diffProfileOf(diff: FileDiff | null): { lines: number; large: boolean } {
+  if (!diff || diff.isBinary) return { lines: 0, large: false };
+  const lines = countLines(diff.text);
+  return {
+    lines,
+    large: diff.text.length > HIGHLIGHT_MAX_BYTES || lines > HIGHLIGHT_MAX_LINES,
+  };
+}
 import { sendability, waitUntilSendable } from "../../lib/sendable";
 import { copyText } from "../../lib/clipboard";
 import { anchorKey, formatReview, type ReviewComment } from "../../lib/review";
@@ -275,14 +289,7 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [close, nav]);
 
-  const diffProfile = useMemo(() => {
-    if (!diff || diff.isBinary) return { lines: 0, large: false };
-    const lines = countLines(diff.text);
-    return {
-      lines,
-      large: diff.text.length > HIGHLIGHT_MAX_BYTES || lines > HIGHLIGHT_MAX_LINES,
-    };
-  }, [diff]);
+  const diffProfile = useMemo(() => diffProfileOf(diff), [diff]);
 
   const parsed = useMemo(() => {
     if (!diff || diff.isBinary || diffProfile.large) return null;
@@ -762,9 +769,14 @@ function FileRail({
 
 // ---------------------------------------------------------------------------
 // diff renderers
+//
+// Exported: the diff tab beside the CLIs (`CodeEditor/DiffTab`) draws with
+// these same two, passing `review: null` — a comparison read in a tab takes no
+// annotations, and one renderer for both surfaces is what keeps them from
+// drifting apart.
 // ---------------------------------------------------------------------------
 
-type HunkRefs = MutableRefObject<(HTMLElement | null)[]>;
+export type HunkRefs = MutableRefObject<(HTMLElement | null)[]>;
 
 /**
  * Syntax colors for one hunk, keyed by its line objects.
@@ -796,7 +808,7 @@ type ShineMap = Map<DiffLine, ShineChunk[]> | null;
 const useShineMap = (hunk: DiffHunk, support: LanguageSupport | null): ShineMap =>
   useMemo(() => (support ? shineHunk(hunk, support) : null), [hunk, support]);
 
-function Unified({
+export function Unified({
   parsed,
   hunkRefs,
   review,
@@ -804,7 +816,7 @@ function Unified({
 }: {
   parsed: ParsedDiff;
   hunkRefs: HunkRefs;
-  review: ReviewApi;
+  review: ReviewApi | null;
   support: LanguageSupport | null;
 }) {
   return (
@@ -833,7 +845,7 @@ function UnifiedHunk({
   hunk: DiffHunk;
   index: number;
   hunkRefs: HunkRefs;
-  review: ReviewApi;
+  review: ReviewApi | null;
   support: LanguageSupport | null;
 }) {
   const shine = useShineMap(hunk, support);
@@ -870,7 +882,7 @@ function UnifiedHunk({
   );
 }
 
-function Split({
+export function Split({
   parsed,
   hunkRefs,
   review,
@@ -878,7 +890,7 @@ function Split({
 }: {
   parsed: ParsedDiff;
   hunkRefs: HunkRefs;
-  review: ReviewApi;
+  review: ReviewApi | null;
   support: LanguageSupport | null;
 }) {
   return (
@@ -907,7 +919,7 @@ function SplitHunk({
   hunk: DiffHunk;
   index: number;
   hunkRefs: HunkRefs;
-  review: ReviewApi;
+  review: ReviewApi | null;
   support: LanguageSupport | null;
 }) {
   const rows = useMemo(() => toSplitRows(hunk), [hunk]);
@@ -961,7 +973,7 @@ function SplitCell({
 }: {
   line: DiffLine | null;
   side: "del" | "add";
-  review: ReviewApi;
+  review: ReviewApi | null;
   chunks?: ShineChunk[];
 }) {
   if (!line) return <div className="dcell dcell--empty" />;
@@ -1018,7 +1030,7 @@ interface DraftAnchor {
  * One object rather than six props: it crosses three components to reach a
  * line, and a prop list that long is how a renderer stops being readable.
  */
-interface ReviewApi {
+export interface ReviewApi {
   anchors: Map<string, ReviewComment[]>;
   draft: DraftAnchor | null;
   open: (line: number | null, onOld: boolean, code: string) => void;
@@ -1035,13 +1047,14 @@ function NoteButton({
   onOld,
   code,
 }: {
-  review: ReviewApi;
+  review: ReviewApi | null;
   line: number | null;
   onOld: boolean;
   code: string;
 }) {
   const t = useT();
-  if (line == null) return null;
+  // No review at all (the diff tab) or no line to point at: nothing to offer.
+  if (!review || line == null) return null;
   return (
     <button
       className="dnote-add"
@@ -1060,10 +1073,11 @@ function LineSlot({
   keys,
   children,
 }: {
-  review: ReviewApi;
+  review: ReviewApi | null;
   keys: string[];
   children: ReactNode;
 }) {
+  if (!review) return <>{children}</>;
   const cards = keys.flatMap((k) => review.anchors.get(k) ?? []);
   const drafting = review.draft && keys.includes(review.draft.key);
   if (cards.length === 0 && !drafting) return <>{children}</>;

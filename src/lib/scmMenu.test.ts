@@ -19,6 +19,7 @@ import type { MenuEntry } from "../components/ContextMenu";
 function actions() {
   return {
     openDiff: vi.fn(),
+    openDiffTab: vi.fn(),
     openInEditor: vi.fn(),
     stage: vi.fn(),
     unstage: vi.fn(),
@@ -290,5 +291,36 @@ describe("scmStashMenu", () => {
 
   it("dropping the stash is danger — there is no way to bring it back from the screen", () => {
     expect(findItem(scmStashMenu(stored, actions()), "drop")?.danger).toBe(true);
+  });
+});
+
+/**
+ * The diff also opens as a **tab beside the CLIs** — VS Code's diff editor —
+ * and from every group: the row goes with it whole, so the tab shows the same
+ * side the row would (staged = HEAD→index, changes = index→disk).
+ */
+describe("scmRowMenu — the diff as a tab", () => {
+  const rowCtx = { root: "C:/proj", info: info() };
+
+  it("offers the tab for a change and for a staged file, each carrying its own side", () => {
+    const act = actions();
+    const changed = lineOf(theFile({ path: "a.ts" }));
+    findItem(scmRowMenu(changed, rowCtx, act), "diff-tab")!.onSelect!();
+    expect(act.openDiffTab).toHaveBeenCalledWith(changed);
+
+    const staged = lineOf(theFile({ path: "b.ts", staged: true, index: "modified", worktree: "none" }));
+    expect(staged.side).toBe("index");
+    findItem(scmRowMenu(staged, rowCtx, act), "diff-tab")!.onSelect!();
+    expect(act.openDiffTab).toHaveBeenLastCalledWith(staged);
+  });
+
+  it("a conflict opens as a tab too — reading both sides is how it gets resolved", () => {
+    const act = actions();
+    const conflict = lineOf(
+      theFile({ path: "c.ts", status: "conflicted", index: "conflicted", worktree: "conflicted", conflict: "UU" }),
+    );
+    const entry = findItem(scmRowMenu(conflict, rowCtx, act), "diff-tab");
+    expect(entry).toBeDefined();
+    expect(entry?.disabled).toBeFalsy();
   });
 });

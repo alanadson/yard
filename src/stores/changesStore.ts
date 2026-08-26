@@ -41,7 +41,7 @@ const LIVE_CAP = 300;
 /** Minimum interval between `git status` of the same project. */
 const GIT_REFRESH_MS = 1200;
 /** Giant `-U<n>` = the whole file becomes a single hunk. */
-const WHOLE_FILE_CONTEXT = 1_000_000;
+export const WHOLE_FILE_CONTEXT = 1_000_000;
 
 const gitTimers = new Map<
   string,

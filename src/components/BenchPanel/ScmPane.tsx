@@ -56,6 +56,7 @@ import {
   MoreHorizontal,
   Plus,
   RotateCw,
+  SquareArrowOutUpRight,
   Tag,
   Undo2,
   X,
@@ -962,6 +963,13 @@ const FileRow = memo(function FileRow({
       openDiff: () => {
         if (ctx.projectId) useChanges.getState().openViewer(ctx.projectId, row.path);
       },
+      // The same comparison the row expands into, as a tab beside the CLIs —
+      // the row's `side` goes with it, so staged shows HEAD→index and
+      // changes shows index→disk, exactly like here.
+      openDiffTab: (r: ScmRow) =>
+        useEditor
+          .getState()
+          .openDiff(r.path, { source: "tree", side: r.side, origPath: r.origPath }),
       openInEditor: (path: string) => {
         void useEditor
           .getState()
@@ -1012,6 +1020,14 @@ const FileRow = memo(function FileRow({
           )}
         </button>
         <div className="scm-row-acts">
+          <button
+            className="icon-btn"
+            data-tip="Abrir o diff numa aba"
+            aria-label={`Abrir o diff de ${row.path} numa aba`}
+            onClick={() => actions.openDiffTab(row)}
+          >
+            <SquareArrowOutUpRight size={12} />
+          </button>
           {row.canDiscard && (
             <button
               className="icon-btn icon-btn--danger"
@@ -1490,6 +1506,18 @@ function CommitFile({
           <GitStatusBadge status={file.status} />
           <PathLabel path={file.path} deleted={file.status === "deleted"} />
         </button>
+        <div className="scm-row-acts">
+          <button
+            className="icon-btn"
+            data-tip="Abrir o diff deste commit numa aba"
+            aria-label={`Abrir o diff de ${file.path} neste commit numa aba`}
+            onClick={() =>
+              useEditor.getState().openDiff(file.path, { source: "commit", hash })
+            }
+          >
+            <SquareArrowOutUpRight size={11} />
+          </button>
+        </div>
       </div>
       {isOpen && diff && (
         <div className="scm-diff">

@@ -42,6 +42,7 @@ import { noteAsMarkdown } from "./NoteList";
 import { loadLanguage } from "../CodeEditor/cm";
 import { MarkdownPreview } from "../CodeEditor/MarkdownPreview";
 import { MarkdownToolbar } from "../CodeEditor/MarkdownToolbar";
+import type { MdBarSlots } from "../CodeEditor/chrome";
 import { mdKeymap, runMd } from "../CodeEditor/mdCommands";
 import { mdLive } from "../CodeEditor/mdLive";
 import { syntaxFor } from "../CodeEditor/schemeSyntax";
@@ -72,6 +73,13 @@ import { notesOverlayVisible, useNotes, type NotesMdMode } from "../../stores/no
 import { useUI } from "../../stores/uiStore";
 import { useT } from "../../hooks/useT";
 import { locale, t } from "../../lib/i18n";
+
+/**
+ * The note's bar is formatting only: the four ways of looking at the markdown
+ * sit on its meta row, beside the pin, and not inside the capsule the way the
+ * file editor's do.
+ */
+const NOTE_BAR: MdBarSlots = { bar: true, formatting: true, modes: false };
 
 // i18n-scan: tables
 const MODES: { mode: NotesMdMode; icon: React.ReactNode; label: string; hint: string }[] = [
@@ -361,6 +369,7 @@ function OpenNote({ note }: { note: Note }) {
         <MarkdownToolbar
           block={caret.block}
           run={(cmd) => runMd(viewHolder.current, cmd)}
+          slots={NOTE_BAR}
         />
       )}
 

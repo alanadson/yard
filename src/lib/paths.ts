@@ -66,3 +66,16 @@ export function toOsPath(root: string, relative: string): string {
   const rel = relative.replaceAll("/", "\\");
   return rel ? `${base}\\${rel}` : base;
 }
+
+/**
+ * The same cut for a path that already left for the OS (`toOsPath`'s output):
+ * the document header shows the folder chain dimmed and the name lit, and on
+ * Windows the separator is `\`. Whichever separator comes last wins — a
+ * floor's root arrives with `/` and the file with `\`, in the same string.
+ */
+export function splitOsPath(osPath: string): SplitPath {
+  const cut = Math.max(osPath.lastIndexOf("/"), osPath.lastIndexOf("\\"));
+  return cut < 0
+    ? { dir: "", base: osPath }
+    : { dir: osPath.slice(0, cut + 1), base: osPath.slice(cut + 1) };
+}

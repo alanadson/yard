@@ -46,6 +46,7 @@ export function docTabMenu(doc: OpenDoc, docs: readonly OpenDoc[]): MenuEntry[] 
       dirty: isDirty(doc),
       readOnly: isReadOnly(doc),
       missing: doc.missing,
+      comparison: !!doc.diff,
     },
     docs.map((d) => ({ id: d.id, path: d.path })),
     {

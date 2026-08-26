@@ -48,6 +48,7 @@ export default {
 
   // --- scmMenu --------------------------------------------------------------
   "Abrir o diff": "Open the diff",
+  "Abrir o diff numa aba": "Open the diff in a tab",
   "Abrir no editor": "Open in the editor",
   "Ficar com o meu lado": "Keep my side",
   "Ficar com o lado deles": "Keep their side",

@@ -32,6 +32,19 @@ const VISIBLE = [
   // the formatting bar
   "Negrito",
   "Lista de tarefas",
+  // the diff tab (a comparison beside the CLIs)
+  "Visão unificada",
+  "Unificado",
+  "Abrir o arquivo no editor",
+  "Abrir o arquivo para editar",
+  "O que este commit fez neste arquivo",
+  "O que mudou no disco e ainda não foi preparado (índice → disco)",
+  "O que está preparado para o próximo commit (HEAD → índice)",
+  "O disco comparado com o último commit (HEAD → disco)",
+  "Este commit não mudou o texto deste arquivo.",
+  "Preparado",
+  "comparação",
+  "{path} — ações do arquivo",
 ];
 
 describe("the editor in English", () => {

@@ -23,6 +23,7 @@ import {
   type DirEntryInfo,
   type FilesActivity,
 } from "../lib/ipc";
+import { diffDocId, diffSuffix, parseDiffSpec, type DiffSpec } from "../lib/diffTab";
 import { t } from "../lib/i18n";
 import { uiLog } from "../lib/log";
 import { toggleTaskLine } from "../lib/mdedit";
@@ -77,6 +78,14 @@ export interface OpenDoc {
   /** Error from the last write, if any. */
   error: string | null;
   saving: boolean;
+  /**
+   * Set when the tab is a **comparison**, not a file: the diff of `path`
+   * opened beside the CLIs from the Source Control tab. It has no text of its
+   * own (`text`/`saved` stay empty), nothing to save, and the watcher leaves
+   * it alone — what it shows comes from git, and follows the repository
+   * through the changes and scm stores.
+   */
+  diff?: DiffSpec;
 }
 
 /**
@@ -114,9 +123,13 @@ function inScope(d: OpenDoc, scope: DocScope): boolean {
 
 export const isDirty = (d: OpenDoc) => d.text !== d.saved;
 /** Truncated or binary cannot be saved — writing would cut off the rest. */
-export const isReadOnly = (d: OpenDoc) => d.binary || d.truncated || d.lossy;
+export const isReadOnly = (d: OpenDoc) => d.binary || d.truncated || d.lossy || !!d.diff;
 
 export const docId = rootedPathKey;
+
+/** The id this document would have at `path` — a comparison keeps its own kind of id. */
+const idOf = (d: Pick<OpenDoc, "root" | "diff">, path: string) =>
+  d.diff ? diffDocId(d.root, path, d.diff) : docId(d.root, path);
 
 /** Parent directory of a relative path (`""` at the root). */
 export function parentDir(path: string): string {
@@ -168,7 +181,7 @@ function displacedByRename(
   const incoming = new Set(
     docs
       .filter((d) => sameRoot(d.root, root) && movedBy(d, path))
-      .map((d) => docId(d.root, `${newPath}${d.path.slice(path.length)}`)),
+      .map((d) => idOf(d, `${newPath}${d.path.slice(path.length)}`)),
   );
   return new Set(
     docs
@@ -217,6 +230,8 @@ interface StoredDoc {
   bom: boolean;
   /** Present only when the tab had unsaved text. */
   draft?: string;
+  /** Present when the tab is a comparison — it comes back without a read. */
+  diff?: DiffSpec;
 }
 
 export function parseStoredDocs(raw: string | undefined): StoredDoc[] {
@@ -237,6 +252,7 @@ export function parseStoredDocs(raw: string | undefined): StoredDoc[] {
         crlf: d.crlf === true,
         bom: d.bom === true,
         draft: typeof d.draft === "string" ? d.draft : undefined,
+        diff: parseDiffSpec(d.diff) ?? undefined,
       }));
   } catch {
     return [];
@@ -256,6 +272,7 @@ export function serializeDocs(docs: OpenDoc[]): string {
       modifiedAt: d.modifiedAt,
       crlf: d.crlf,
       bom: d.bom,
+      ...(d.diff ? { diff: d.diff } : {}),
     };
     if (!isDirty(d) || isReadOnly(d)) return base;
     if (d.text.length > DRAFT_CAP || d.text.length > budget) {
@@ -338,6 +355,12 @@ interface EditorState {
   refreshTree: () => void;
 
   openFile: (path: string) => Promise<void>;
+  /**
+   * Opens the diff of `path` as a tab beside the CLIs — a comparison, not
+   * the file: read-only, nothing to read from disk, and a second ask for the
+   * same comparison brings the tab forward instead of opening a twin.
+   */
+  openDiff: (path: string, spec: DiffSpec) => void;
   /** Opens the file and asks the surface to land the caret on `line` (1-based). */
   openFileAt: (path: string, line: number) => Promise<void>;
   /** The surface applied (or gave up on) the pending reveal. */
@@ -683,6 +706,54 @@ export const useEditor = create<EditorState>((set, get) => {
       }
     },
 
+    openDiff: (path, spec) => {
+      const { root, projectId, docs } = get();
+      if (!root) return;
+      const id = diffDocId(root, path, spec);
+      const target = tabTarget();
+
+      const isOpen = docs.find((d) => d.id === id);
+      if (isOpen) {
+        showTab(isOpen.groupId, isOpen.slot, id, target);
+        set({ activeId: id, open: target.overlay });
+        return;
+      }
+
+      set((s) => ({
+        docs: [
+          ...s.docs,
+          {
+            id,
+            projectId,
+            groupId: target.groupId,
+            slot: target.slot,
+            root,
+            path,
+            text: "",
+            saved: "",
+            diskVersion: 1,
+            modifiedAt: 0,
+            crlf: false,
+            bom: false,
+            binary: false,
+            truncated: false,
+            lossy: false,
+            size: 0,
+            media: null,
+            stale: false,
+            missing: false,
+            error: null,
+            saving: false,
+            diff: spec,
+          },
+        ],
+        activeId: id,
+        open: target.overlay,
+      }));
+      showTab(target.groupId, target.slot, id, target);
+      get().persist();
+    },
+
     openFileAt: async (path, line) => {
       const { root } = get();
       if (!root) return;
@@ -884,7 +955,8 @@ export const useEditor = create<EditorState>((set, get) => {
 
     reload: async (id) => {
       const doc = get().docs.find((d) => d.id === id);
-      if (!doc) return;
+      // A comparison has no disk to read; it follows git on its own.
+      if (!doc || doc.diff) return;
       try {
         const file = await ipc.fsReadText(doc.root, doc.path);
         patchDoc(id, {
@@ -1060,11 +1132,11 @@ export const useEditor = create<EditorState>((set, get) => {
             .filter((d) => !displaced.has(d.id))
             .map((d) =>
               sameRoot(d.root, root) && d.path === path
-                ? { ...d, id: docId(d.root, newPath), path: newPath }
+                ? { ...d, id: idOf(d, newPath), path: newPath }
                 : sameRoot(d.root, root) && d.path.startsWith(`${path}/`)
                   ? (() => {
                       const nextPath = `${newPath}${d.path.slice(path.length)}`;
-                      return { ...d, id: docId(d.root, nextPath), path: nextPath };
+                      return { ...d, id: idOf(d, nextPath), path: nextPath };
                     })()
                   : d,
             ),
@@ -1075,9 +1147,9 @@ export const useEditor = create<EditorState>((set, get) => {
             // the selection should land.
             if (!active || displaced.has(active.id)) return s.activeId;
             if (!sameRoot(active.root, root)) return s.activeId;
-            if (active.path === path) return docId(root, newPath);
+            if (active.path === path) return idOf(active, newPath);
             if (active.path.startsWith(`${path}/`)) {
-              return docId(root, `${newPath}${active.path.slice(path.length)}`);
+              return idOf(active, `${newPath}${active.path.slice(path.length)}`);
             }
             return s.activeId;
           })(),
@@ -1140,14 +1212,18 @@ export const useEditor = create<EditorState>((set, get) => {
         const dir = parentDir(ev.path);
         if (dirs[dir]) queueDir(dir);
 
-        const doc = docs.find((d) => sameRoot(d.root, p.root) && d.path === ev.path);
-        if (!doc) continue;
-        if (ev.kind === "deleted") {
-          patchDoc(doc.id, { missing: true });
-        } else if (isDirty(doc)) {
-          patchDoc(doc.id, { stale: true, missing: false });
-        } else {
-          void syncDocFromDisk(doc.id);
+        // Every tab of that path, not the first: the file and its comparison
+        // can be open side by side, and the comparison is not the file — it
+        // has no disk to follow, and git (not the watcher) tells it to move.
+        for (const doc of docs) {
+          if (doc.diff || !sameRoot(doc.root, p.root) || doc.path !== ev.path) continue;
+          if (ev.kind === "deleted") {
+            patchDoc(doc.id, { missing: true });
+          } else if (isDirty(doc)) {
+            patchDoc(doc.id, { stale: true, missing: false });
+          } else {
+            void syncDocFromDisk(doc.id);
+          }
         }
       }
     },
@@ -1192,8 +1268,37 @@ export const useEditor = create<EditorState>((set, get) => {
       // the restore say "this changed underneath while you were away".
       const docs: OpenDoc[] = [];
       for (const g of stored) {
-        const id = docId(g.root, g.path);
+        const id = g.diff ? diffDocId(g.root, g.path, g.diff) : docId(g.root, g.path);
         if (docs.some((d) => d.id === id)) continue;
+        if (g.diff) {
+          // Nothing on disk to compare with the record: the tab is the
+          // comparison itself, and it asks git the moment it is drawn.
+          docs.push({
+            id,
+            projectId: g.projectId,
+            groupId: g.groupId,
+            slot: g.slot,
+            root: g.root,
+            path: g.path,
+            text: "",
+            saved: "",
+            diskVersion: 1,
+            modifiedAt: 0,
+            crlf: false,
+            bom: false,
+            binary: false,
+            truncated: false,
+            lossy: false,
+            size: 0,
+            media: null,
+            stale: false,
+            missing: false,
+            error: null,
+            saving: false,
+            diff: g.diff,
+          });
+          continue;
+        }
         try {
           const file = await ipc.fsReadText(g.root, g.path);
           const draft = g.draft ?? null;
@@ -1307,11 +1412,24 @@ export function unsavedWarning(scope: DocScope): string {
  * docs share the same name (`index.tsx` from two components, the most common
  * case here).
  */
-export function tabLabel(doc: Pick<OpenDoc, "id" | "path" | "root">, all: Pick<OpenDoc, "id" | "path" | "root">[]): string {
-  const { base } = splitPath(doc.path);
-  const duplicates = all.filter((d) => d.id !== doc.id && splitPath(d.path).base === base);
-  if (duplicates.length === 0) return base;
+export function tabLabel(doc: TabFace, all: TabFace[]): string {
+  const face = faceOf(doc);
+  const duplicates = all.filter((d) => d.id !== doc.id && faceOf(d) === face);
+  if (duplicates.length === 0) return face;
   const parent = parentDir(doc.path).split("/").pop();
-  const local = parent ? `${parent}/${base}` : base;
+  const local = parent ? `${parent}/${face}` : face;
   return duplicates.some((d) => d.path === doc.path) ? `${local} — ${doc.root}` : local;
+}
+
+type TabFace = Pick<OpenDoc, "id" | "path" | "root" | "diff">;
+
+/**
+ * The name a tab answers to before any disambiguation: the file name, plus
+ * — for a comparison — which comparison. The suffix is part of the name on
+ * purpose: `a.ts` and `a.ts (Alterações)` are two different things, and
+ * neither should make the other spell out its folder.
+ */
+function faceOf(d: TabFace): string {
+  const { base } = splitPath(d.path);
+  return d.diff ? `${base} (${diffSuffix(d.diff)})` : base;
 }

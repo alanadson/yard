@@ -20,8 +20,11 @@ import {
   ArrowDown,
   ArrowUp,
   Bold,
+  BookOpen,
   ChevronDown,
   Code,
+  Code2,
+  Columns2,
   CopyPlus,
   Ellipsis,
   Eraser,
@@ -39,6 +42,7 @@ import {
   ListOrdered,
   ListTodo,
   Minus,
+  Pencil,
   Pilcrow,
   Quote,
   SquareCheckBig,
@@ -49,7 +53,48 @@ import {
 } from "lucide-react";
 
 import type { BlockKind, MdCommand } from "../../lib/mdedit";
+import type { MdMode } from "../../stores/editorStore";
+import type { MdBarSlots } from "./chrome";
 import { useT } from "../../hooks/useT";
+
+/**
+ * The four ways to look at a markdown file, in the order of how much of the
+ * source they show — from "drawn like the page" to "read only the page".
+ *
+ * They sit on this bar and no longer on the path row: choosing the face of
+ * the text belongs with the buttons that shape it. Kept as their own
+ * instrument at the end — the app's segmented control, a recessed track with
+ * the active segment raised — so nobody reads a *view* as one more formatting
+ * command.
+ */
+const MODES: { mode: MdMode; icon: React.ReactNode; label: string; hint: string }[] = [
+  {
+    mode: "live",
+    icon: <Pencil size={14} />,
+    label: "Editar", // i18n-ok — a key, rendered through t()
+    hint: "escreve markdown já desenhado", // i18n-ok
+  },
+  {
+    mode: "source",
+    icon: <Code2 size={14} />,
+    // "Fonte do markdown", not "Fonte": the bare word is the *font* everywhere
+    // else in the app, and one Portuguese key carries one English line.
+    label: "Fonte do markdown", // i18n-ok
+    hint: "o texto cru, como o agente lê", // i18n-ok
+  },
+  {
+    mode: "split",
+    icon: <Columns2 size={14} />,
+    label: "Dividido", // i18n-ok
+    hint: "fonte de um lado, página do outro", // i18n-ok
+  },
+  {
+    mode: "read",
+    icon: <BookOpen size={14} />,
+    label: "Ler", // i18n-ok
+    hint: "só a página, largura toda", // i18n-ok
+  },
+];
 
 interface Btn {
   cmd: MdCommand;
@@ -156,11 +201,35 @@ interface Props {
   /** Block the caret is inside — which button shows pressed. */
   block: BlockKind;
   run: (cmd: MdCommand) => void;
+  /** Which slots this file and mode ask for — see `mdBar`. */
+  slots: MdBarSlots;
+  /**
+   * The face the file is showing, and how to change it — passed by the host
+   * whose bar carries the modes (`slots.modes`). The note's does not: its
+   * meta row already has them, next to the pin.
+   */
+  mode?: MdMode;
+  onMode?: (mode: MdMode) => void;
   /** Read-only file: the bar stays visible, greyed, instead of disappearing. */
   disabled?: boolean;
 }
 
-export function MarkdownToolbar({ block, run, disabled }: Props) {
+/**
+ * The row as groups — what the "sep" markers delimit. A group wraps as one
+ * piece: in a narrow pane the bar breaks between families (headings,
+ * emphasis, lists, inserts), never leaving one orphan slot on a line of its
+ * own.
+ */
+const GROUPS: Btn[][] = MAIN.reduce<Btn[][]>(
+  (acc, b) => {
+    if (b === "sep") acc.push([]);
+    else acc[acc.length - 1].push(b);
+    return acc;
+  },
+  [[]],
+);
+
+export function MarkdownToolbar({ block, run, slots, mode, onMode, disabled }: Props) {
   const t = useT();
   const [more, setMore] = useState(false);
 
@@ -182,28 +251,57 @@ export function MarkdownToolbar({ block, run, disabled }: Props) {
     <div
       className="md-bar"
       role="toolbar"
-      aria-label={t("Formatação do markdown")}
+      // On the reading page the capsule is only the mode switch: naming it
+      // "formatting" there would announce buttons that are not on it.
+      aria-label={slots.formatting ? t("Formatação do markdown") : t("Como mostrar o markdown")}
       // The command edits whatever the caret was on: the press must not take
       // focus away from the editor first.
       onMouseDown={(e) => e.preventDefault()}
     >
       <div className="md-bar-row">
-        {MAIN.map((b, i) => (b === "sep" ? <span key={`s${i}`} className="md-bar-sep" /> : renderButton(b)))}
-        <span className="md-bar-sep" />
-        <button
-          className={`icon-btn ${more ? "is-active" : ""}`}
-          data-tip={more ? t("Menos comandos") : t("Mais comandos")}
-          aria-label={more ? t("Menos comandos") : t("Mais comandos")}
-          aria-expanded={more}
-          onClick={() => setMore((v) => !v)}
-        >
-          {more ? <ChevronDown size={14} /> : <Ellipsis size={14} />}
-        </button>
+        {slots.formatting && (
+          <>
+            {GROUPS.map((group, i) => (
+              <span key={i} className="md-bar-group" role="group">
+                {group.map(renderButton)}
+              </span>
+            ))}
+            <span className="md-bar-group">
+              <button
+                className={`icon-btn ${more ? "is-active" : ""}`}
+                data-tip={more ? t("Menos comandos") : t("Mais comandos")}
+                aria-label={more ? t("Menos comandos") : t("Mais comandos")}
+                aria-expanded={more}
+                onClick={() => setMore((v) => !v)}
+              >
+                {more ? <ChevronDown size={14} /> : <Ellipsis size={14} />}
+              </button>
+            </span>
+          </>
+        )}
+        {slots.modes && mode && onMode && (
+          <span className="md-bar-group">
+            <div className="md-modes" role="group" aria-label={t("Como mostrar o markdown")}>
+              {MODES.map((m) => (
+                <button
+                  key={m.mode}
+                  className={mode === m.mode ? "is-active" : ""}
+                  data-tip={`${t(m.label)} — ${t(m.hint)}`}
+                  aria-label={t(m.label)}
+                  aria-pressed={mode === m.mode}
+                  onClick={() => onMode(m.mode)}
+                >
+                  {m.icon}
+                </button>
+              ))}
+            </div>
+          </span>
+        )}
       </div>
 
       {/* A second row inside the bar, not a menu hanging off it: a dropdown
           would cover the first lines of the very text being formatted. */}
-      {more && (
+      {slots.formatting && more && (
         <div className="md-bar-extra" role="group" aria-label={t("Mais comandos")}>
           {MORE.map((b) => (
             <button

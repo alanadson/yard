@@ -33,6 +33,8 @@ export interface EditorTabMenuTarget {
   readOnly: boolean;
   /** Vanished from disk externally. */
   missing: boolean;
+  /** A comparison (the diff opened as a tab), not a file: nothing on disk to reload. */
+  comparison?: boolean;
 }
 
 /** The tabs in bar order — what gives "to the right" its meaning. */
@@ -76,7 +78,7 @@ export function editorTabMenu(
     {
       id: "recarregar",
       label: t("Recarregar do disco"),
-      disabled: target.missing,
+      disabled: target.missing || !!target.comparison,
       onSelect: () => act.reload(target.id),
     },
     { kind: "sep" },
