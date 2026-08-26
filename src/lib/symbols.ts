@@ -67,7 +67,7 @@ const FAMILIES: { ext: string[]; patterns: Pattern[] }[] = [
       { re: /^(?:pub(?:\([^)]*\))?\s+)?struct\s+([A-Za-z_]\w*)/, tag: "struct" },
       { re: /^(?:pub(?:\([^)]*\))?\s+)?enum\s+([A-Za-z_]\w*)/, tag: "enum" },
       { re: /^(?:pub(?:\([^)]*\))?\s+)?trait\s+([A-Za-z_]\w*)/, tag: "trait" },
-      { re: /^impl(?:\s*<[^>]*>)?\s+(?:[A-Za-z_][\w:]*(?:\s*<[^>]*>)?\s+for\s+)?([A-Za-z_][\w:]*)/, tag: "impl" },
+      { re: /^impl(?:\s*<[^>]*>)?\s+(?:[A-Za-z_][\w:]*(?:\s*<[^>]*>)?\s+for\s+)?([A-Za-z_][\w:]*)/, tag: "impl" }, // i18n-ok — not a sentence
       { re: /^(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_]\w*)/, tag: "mod" },
       { re: /^macro_rules!\s+([A-Za-z_]\w*)/, tag: "macro" },
     ],

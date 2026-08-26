@@ -57,7 +57,9 @@ import {
   noteName,
   type CardRole,
   type RoutineDef,
+  type TriggerDef,
 } from "./canvas";
+import { parseTriggerCreate, TRIGGER_CREATE_USAGE, triggerSummary } from "./triggers";
 import {
   deleteGlobalRole,
   findSaved,
@@ -256,6 +258,8 @@ export async function handleBridgeRequest(req: BridgeRequest): Promise<BridgeRes
       return import("./bridgePortal").then(({ cmdPortal }) =>
         cmdPortal(ctx, argv.slice(1)),
       );
+    case "trigger":
+      return cmdTrigger(ctx, argv.slice(1), req);
     default:
       return err(`yard: comando desconhecido "${cmd}". Rode \`yard help\`.\n`);
   }
@@ -1587,6 +1591,118 @@ function describeFlowRun(ctx: Ctx, run: FlowRun): string {
   return `  "${run.name}" em "${location}" — ${state}\n${stages}`;
 }
 
+// --- trigger ----------------------------------------------------------------
+
+/**
+ * `yard trigger` — the event-driven twin of `routine`. The same gate as
+ * `ask`: the source and the target must be you or someone wired to you, and a
+ * flow must be reachable by cable — an agent cannot arm an automation on a
+ * terminal it could not talk to directly.
+ */
+function cmdTrigger(ctx: Ctx, args: string[], req: BridgeRequest): BridgeResponse {
+  const sub = args[0]?.toLowerCase() ?? "list";
+  const triggers = ctx.canvas.triggers ?? [];
+  const nameOf = (id: string) => ctx.nameOf.get(id) ?? "(removida)";
+  const flowNameOf = (id: string) => findFlow(ctx.canvas, id)?.name;
+
+  if (sub === "list") {
+    if (!triggers.length) {
+      return ok(
+        "Nenhum gatilho neste grupo. Crie com:\n" +
+          '  yard trigger create --when finished --on "Agente" --ask "Alvo" "prompt"\n',
+      );
+    }
+    let out = "Gatilhos do grupo:\n";
+    for (const t of triggers) {
+      const last = t.lastRunAt ? ` último: ${new Date(t.lastRunAt).toLocaleTimeString()}` : "";
+      const extra = [
+        t.enabled ? "" : "(pausado)",
+        t.once ? "(uma vez)" : "",
+        t.cooldownSec ? `(mín. ${t.cooldownSec} s)` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const text = t.action.kind === "notify" || t.action.kind === "ask" || t.action.kind === "flow"
+        ? t.action.text.split("\n")[0].slice(0, 70)
+        : "";
+      out += `  [${t.id}] ${triggerSummary(t, nameOf, flowNameOf)} ${extra}${last}\n      ${text}\n`;
+    }
+    return ok(out);
+  }
+
+  if (sub === "create") {
+    const parsed = parseTriggerCreate(args.slice(1), req.stdin ?? undefined);
+    if (!parsed.ok) return err(parsed.usage);
+    const { spec } = parsed;
+    const me = ctx.nameOf.get(ctx.caller.id)!;
+    const resolve = (name: string): TerminalRow | null =>
+      name.trim().toLowerCase() === me.toLowerCase() ? ctx.caller : findAgent(ctx, name);
+
+    let sourceId = "*";
+    if (spec.source !== "*") {
+      const source = resolve(spec.source);
+      if (!source) return err(`yard: "${spec.source}" não está conectado a você.\n`);
+      sourceId = source.id;
+    }
+
+    let action: TriggerDef["action"];
+    if (spec.action.kind === "ask") {
+      const target = resolve(spec.action.target);
+      if (!target) return err(`yard: "${spec.action.target}" não está conectado a você.\n`);
+      action = { kind: "ask", targetId: target.id, text: spec.action.text };
+    } else if (spec.action.kind === "flow") {
+      const flow = findFlow(ctx.canvas, spec.action.flow);
+      if (!flow) return err(`yard: fluxo "${spec.action.flow}" não existe neste grupo.\n`);
+      if (!flowReach(ctx, flow.id)) {
+        return err(
+          `yard: você não está conectado ao cartão do fluxo "${flow.name}" — ` +
+            "peça o cabo ao usuário (ou `yard connect`).\n",
+        );
+      }
+      action = { kind: "flow", flowId: flow.id, text: spec.action.text };
+    } else {
+      action = { kind: "notify", text: spec.action.text };
+    }
+
+    const fresh: TriggerDef = {
+      id: nanoid(6),
+      sourceId,
+      event: spec.event,
+      action,
+      enabled: true,
+      once: spec.once,
+      ...(spec.cooldownSec ? { cooldownSec: spec.cooldownSec } : {}),
+      createdAt: Date.now(),
+    };
+    commitCanvas(ctx.groupId, (c) => ({ ...c, triggers: [...(c.triggers ?? []), fresh] }));
+    return ok(
+      `Gatilho [${fresh.id}] criado: ${triggerSummary(fresh, nameOf, flowNameOf)}. ` +
+        "Um prompt só é entregue com o alvo rodando e ocioso.\n",
+    );
+  }
+
+  if (sub === "delete" || sub === "pause" || sub === "resume") {
+    const id = args[1];
+    const target = triggers.find((t) => t.id === id);
+    if (!target) return err(`yard: gatilho "${id ?? ""}" não existe (\`trigger list\`).\n`);
+    if (sub === "delete") {
+      commitCanvas(ctx.groupId, (c) => ({
+        ...c,
+        triggers: (c.triggers ?? []).filter((t) => t.id !== id),
+      }));
+      return ok(`Gatilho [${id}] removido.\n`);
+    }
+    const enabled = sub === "resume";
+    commitCanvas(ctx.groupId, (c) => ({
+      ...c,
+      triggers: (c.triggers ?? []).map((t) => (t.id === id ? { ...t, enabled } : t)),
+    }));
+    return ok(`Gatilho [${id}] ${enabled ? "retomado" : "pausado"}.\n`);
+  }
+
+  return err("uso: yard trigger list|create|delete|pause|resume …\n" + TRIGGER_CREATE_USAGE);
+}
+
 /** The flow gate: only a CLI wired by cable to the card reaches it. */
 function flowReach(ctx: Ctx, flowId: string): boolean {
   return isConnected(ctx.canvas, ctx.caller.id, flowId);
@@ -1859,6 +1975,11 @@ const HELP = `yard — ponte entre agentes, notas e o canvas do Yard
   yard routine list                            prompts agendados do grupo
   yard routine create "Agente" "prompt" --every 30 [--once]
   yard routine pause|resume|delete <id>
+  yard trigger list                            gatilhos (quando X acontecer → faça Y) do grupo
+  yard trigger create --when finished|blocked|exited --on "Agente"|any
+                      --ask "Alvo" "prompt" | --notify "texto" | --flow "Fluxo" "tarefa"
+                      [--once] [--cooldown 60]   ({name} e {ask} viram quem disparou e a pergunta)
+  yard trigger pause|resume|delete <id>
   yard flow list                               fluxos (correntes de agentes) do grupo
   yard flow run "Fluxo" "tarefa"               dispara a corrente etapa por etapa
   yard flow stage                              briefing da etapa em execução NESTA CLI

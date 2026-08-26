@@ -197,6 +197,39 @@ From the deepest surface to the highest (elevation is tonal as well as shadowed)
 - **Hairlines** (`--border-soft` 4%, `--border` 8%, `--border-strong` 16%): borders are always translucent white, as in a dark glass theme — never opaque grey.
 - **Text** (`--text` #e2e2e6, `--text-dim` #9e9ea6, `--text-bright` #f7f7f9): all ≥ 4.5:1 over `--bg` and `--bg-raised`. `--text-bright` marks what is active/focused; `--text-dim` is the resting default for icons and metadata.
 
+### Light theme
+
+The dark world above is the product's identity and the CSS that paints with
+no help. **Configurações → Interface → Tema** offers *Escuro · Claro ·
+Sistema*; light and system stamp `<html data-theme="light">` (`lib/theme.ts`,
+`stores/themeStore.ts`), and `src/theme-light.css` — loaded on boot right
+after `styles.css` — redefines the same tokens for paper. Dark is the
+*absence* of the attribute: nothing changes for whoever never opens the
+setting.
+
+- **What stays:** the system blue (`--accent`, `--accent-fill`, the
+  gradients), the radii, the materials' blur, the semantic hues' meaning.
+- **Paper** (`--bg` #eceef3 → `--bg-panel` #f7f8fb → `--bg-raised`/`--bg-overlay`
+  #ffffff), the ambient with the same three blooms over a light gradient.
+- **Ink** (`--text` #1d1d22, `--text-dim` #5c5d66, `--text-bright` #0a0a0c):
+  all ≥ 4.5:1 over every paper; `--accent-text` deepens to #0b5ec2 for the
+  same reason.
+- **Veils and lines are black on paper** (`--bg-hover` black 5%, `--border`
+  black 9%): a white veil vanishes on a light surface, so every white relief
+  the dark sheet paints by hand has a black twin in the light sheet, same
+  selector. Shadows get shorter and lighter (daylight, not a spotlight).
+- **Semantic inks one step deeper** (`--green` #1a7f37, `--red` #c8352b at
+  4.5:1; `--yellow` #b07a00 at the 3:1 floor of a state color).
+- **The terminal well** has its own palette (`lib/termTheme.ts`,
+  `LIGHT_TERM`: paper #fafafc, body text 7:1, every ANSI hue ≥ 3:1); the
+  editor's `yardHighlight` reads `--syn-*` tokens with the dark values as
+  fallbacks, and the canvas keeps its elevation steps with daylight values.
+- A color-scheme extension still wins over both palettes: it is the user's
+  explicit choice.
+
+`src/theme-light.test.ts` locks the boot order and the contrast floors
+against the real CSS; `lib/termTheme.test.ts` does the same for the well.
+
 ### Named Rules
 
 **The Semantic Chroma Rule.** Green, yellow and red mean process state

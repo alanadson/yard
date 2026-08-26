@@ -7,14 +7,17 @@ import { fileName } from "./paths";
 import type { MenuEntry } from "../components/ContextMenu";
 import { isDirty, isReadOnly, useEditor, type OpenDoc } from "../stores/editorStore";
 import { useUI } from "../stores/uiStore";
+import { t } from "./i18n";
 
 /** Closes an editor tab, preserving the same unsaved-draft guard in every host. */
 export async function closeDocTab(id: string): Promise<void> {
   const doc = useEditor.getState().docs.find((candidate) => candidate.id === id);
   if (doc && isDirty(doc) && !isReadOnly(doc)) {
     const sure = await ask(
-      `“${fileName(doc.path)}” tem alterações não salvas. Fechar a aba descarta o que você escreveu.`,
-      { title: "Fechar sem salvar?", kind: "warning" },
+      t("“{name}” tem alterações não salvas. Fechar a aba descarta o que você escreveu.", {
+        name: fileName(doc.path),
+      }),
+      { title: t("Fechar sem salvar?"), kind: "warning" },
     );
     if (!sure) return;
   }
@@ -66,7 +69,7 @@ export function docTabMenu(doc: OpenDoc, docs: readonly OpenDoc[]): MenuEntry[] 
       },
       copyPath: (theText) => {
         void copyText(theText).then((ok) =>
-          toast(ok ? "Caminho copiado." : "Não consegui copiar.", ok ? "info" : "error"),
+          toast(ok ? t("Caminho copiado.") : t("Não consegui copiar."), ok ? "info" : "error"),
         );
       },
       reveal: (osPath) => {

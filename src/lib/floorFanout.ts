@@ -16,6 +16,7 @@ import { deliverBriefing } from "./roleBrief";
 import type { AgentInfo } from "./ipc";
 import { useAgentDefaults } from "../stores/agentDefaultsStore";
 import { useProjects } from "../stores/projectsStore";
+import { t } from "./i18n";
 
 export interface FanoutAgent {
   id: string;
@@ -70,9 +71,9 @@ export interface FanoutResult {
 export async function fanOutTask(input: FanoutInput): Promise<FanoutResult> {
   const name = input.name.trim();
   const prompt = input.prompt.trim();
-  if (!name) throw new Error("dê um nome à tarefa");
-  if (!prompt) throw new Error("escreva o pedido que os agentes vão receber");
-  if (input.agents.length === 0) throw new Error("escolha pelo menos um agente");
+  if (!name) throw new Error(t("dê um nome à tarefa"));
+  if (!prompt) throw new Error(t("escreva o pedido que os agentes vão receber"));
+  if (input.agents.length === 0) throw new Error(t("escolha pelo menos um agente"));
 
   const task: FloorTask = {
     id: nanoid(10),
@@ -102,7 +103,7 @@ export async function fanOutTask(input: FanoutInput): Promise<FanoutResult> {
     } catch (e) {
       // This agent's floor was not born; the others carry on. Aborting here
       // left behind the ones already created, without saying anything.
-      failures.push(`${agent.name}: não consegui criar o andar (${e})`);
+      failures.push(t("{agent}: não consegui criar o andar ({e})", { agent: agent.name, e: String(e) }));
       continue;
     }
     if (created.provision.kind !== "isolated") {
@@ -111,7 +112,7 @@ export async function fanOutTask(input: FanoutInput): Promise<FanoutResult> {
       // carrying on would be worse, because the agents would trample each
       // other in the same folder.
       throw new Error(
-        "esta pasta não é um repositório git — a tarefa precisa de um andar isolado por agente",
+        t("esta pasta não é um repositório git — a tarefa precisa de um andar isolado por agente"),
       );
     }
     const cwd = created.provision.path;
@@ -147,14 +148,16 @@ export async function fanOutTask(input: FanoutInput): Promise<FanoutResult> {
         title: agent.name,
       });
       const briefing =
-        `[Yard · Tarefa "${name}"]\n\n${prompt}\n\n` +
-        "Trabalhe só neste worktree. Quando terminar, faça commit das mudanças.";
+        `[Yard · Tarefa "${name}"]\n\n${prompt}\n\n` + // i18n-ok — typed into the agent
+        "Trabalhe só neste worktree. Quando terminar, faça commit das mudanças."; // i18n-ok
       void deliverBriefing(terminalId, briefing);
     } catch (e) {
       // The card stays. The user (or ▶) starts it; a spawn that failed
       // mid-fleet must not abort the agents that have not been created yet —
       // but now it is counted, instead of vanishing in silence.
-      failures.push(`${agent.name}: o andar existe, mas o processo não subiu (${e})`);
+      failures.push(
+        t("{agent}: o andar existe, mas o processo não subiu ({e})", { agent: agent.name, e: String(e) }),
+      );
       notStarted.push({
         groupId: created.groupId,
         terminalId,

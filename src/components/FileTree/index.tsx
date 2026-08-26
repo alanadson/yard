@@ -1,3 +1,4 @@
+// i18n-scan: tables
 /**
  * The project's file tree — the same one that appears in the bench's "Files"
  * tab and in the editor's left rail.
@@ -40,6 +41,8 @@ import { ipc, type DirEntryInfo, type GitFileStatus } from "../../lib/ipc";
 import { ancestors, joinPath, parentDir, useEditor } from "../../stores/editorStore";
 import { useChanges } from "../../stores/changesStore";
 import { useUI } from "../../stores/uiStore";
+import { useT } from "../../hooks/useT";
+import { t as tl } from "../../lib/i18n";
 
 /** Where a new item is being named (parent directory + kind). */
 interface Drafting {
@@ -171,7 +174,7 @@ function buildRows(args: {
         kind: "note",
         key: `empty:${dir}`,
         depth,
-        text: visible ? "nada com esse nome aqui" : "pasta vazia",
+        text: visible ? tl("nada com esse nome aqui") : tl("pasta vazia"),
       });
     } else {
       entries.forEach((entry, i) => {
@@ -197,7 +200,7 @@ function buildRows(args: {
         kind: "note",
         key: `dropped:${dir}`,
         depth,
-        text: `+${dropped} item(ns) além do teto desta pasta — não listados`,
+        text: tl("+{n} item(ns) além do teto desta pasta — não listados", { n: dropped }),
       });
     }
   };
@@ -217,6 +220,7 @@ export function FileTree({
   onDraftStart,
   onDraftEnd,
 }: Props) {
+  const t = useT();
   const root = useEditor((s) => s.root);
   const dirs = useEditor((s) => s.dirs);
   const expanded = useEditor((s) => s.expanded);
@@ -351,8 +355,8 @@ export function FileTree({
     return (
       <div className="bench-empty">
         <FolderOpen size={20} aria-hidden="true" />
-        Nenhum projeto ativo.
-        <small>Escolha um projeto na barra lateral para ver os arquivos.</small>
+        {t("Nenhum projeto ativo.")}
+        <small>{t("Escolha um projeto na barra lateral para ver os arquivos.")}</small>
       </div>
     );
   }
@@ -369,7 +373,7 @@ export function FileTree({
       <ul
         className="ftree"
         role="tree"
-        aria-label="Arquivos do projeto"
+        aria-label={t("Arquivos do projeto")}
         // The space below the last file — in a small project, half the pane.
         // The rows stop propagation; what is left is the project.
         onContextMenu={(e) => {
@@ -414,7 +418,7 @@ export function FileTree({
                   type="button"
                   onClick={() => void useEditor.getState().loadDir(row.dir, true)}
                 >
-                  tentar de novo
+                  {t("tentar de novo")}
                 </button>
               </li>
             );
@@ -465,14 +469,16 @@ export function FileTree({
             remove: (entry) => {
               void (async () => {
                 const sure = await ask(
-                  `Excluir “${entry.name}”${entry.dir ? " e tudo que está dentro" : ""}? Não dá para desfazer.`,
-                  { title: "Excluir do disco", kind: "warning" },
+                  entry.dir
+                    ? t("Excluir “{name}” e tudo que está dentro? Não dá para desfazer.", { name: entry.name })
+                    : t("Excluir “{name}”? Não dá para desfazer.", { name: entry.name }),
+                  { title: t("Excluir do disco"), kind: "warning" },
                 );
                 if (!sure) return;
                 try {
                   await useEditor.getState().deleteEntry(entry.path);
                 } catch (e) {
-                  showToast(`Não consegui excluir: ${e}`, "error");
+                  showToast(t("Não consegui excluir: {e}", { e: String(e) }), "error");
                 }
               })();
             },
@@ -516,6 +522,7 @@ function TreeRow({
   onMenu,
   showToast,
 }: RowProps) {
+  const t = useT();
   const { entry, depth, expanded } = row;
 
   const status = marks.byPath.get(entry.path);
@@ -538,7 +545,7 @@ function TreeRow({
     void useEditor
       .getState()
       .renameEntry(entry.path, next)
-      .catch((e) => showToast(`Não consegui renomear: ${e}`, "error"));
+      .catch((e) => showToast(t("Não consegui renomear: {e}", { e: String(e) }), "error"));
   };
 
   return (
@@ -590,7 +597,7 @@ function TreeRow({
 
         {dirChanged && !status && <span className="ftree-dot" aria-hidden="true" />}
         {status && (
-          <span className="ftree-mark" aria-label={GIT_LABEL[status]}>
+          <span className="ftree-mark" aria-label={t(GIT_LABEL[status])}>
             {GIT_LETTER[status]}
           </span>
         )}
@@ -612,6 +619,7 @@ function DraftRow({
   onEnd: () => void;
 }) {
   const showToast = useUI((s) => s.showToast);
+  const t = useT();
   return (
     <li role="none">
       <div className="ftree-row is-draft" style={{ paddingLeft: 4 + depth * 12 }}>
@@ -626,7 +634,7 @@ function DraftRow({
             void useEditor
               .getState()
               .createEntry(dir, name, isDir)
-              .catch((e) => showToast(`Não consegui criar: ${e}`, "error"));
+              .catch((e) => showToast(t("Não consegui criar: {e}", { e: String(e) }), "error"));
           }}
           onCancel={onEnd}
         />

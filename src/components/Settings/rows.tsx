@@ -130,7 +130,7 @@ export function PickerRow({
 /** Numeric preferences: the only ones with a range worth enforcing. */
 type NumPref = Extract<
   keyof Prefs,
-  "fontSize" | "scrollback" | "codeFontSize" | "codeLineHeight" | "codeTabSize"
+  "fontSize" | "scrollback" | "codeFontSize" | "codeLineHeight" | "codeTabSize" | "autoBackupKeep"
 >;
 
 /**

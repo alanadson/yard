@@ -145,9 +145,12 @@ export function parseStoredRuns(raw: string | undefined): FlowRun[] {
  * agent is doing on the other side, because the process is still there and the
  * user is the only one who can pick the work back up.
  */
+// Kept Portuguese on purpose: it is a *marker* — persisted in the run, compared
+// by identity at boot — so the render site says `t(run.error)`; the English
+// line lives in `i18n/en/stores.ts` under this exact text.
 export const INTERRUPTED =
-  "a interface foi recarregada no meio da esteira — as etapas seguintes não " +
-  "foram enviadas. A CLI continua com o que já recebeu; rode o fluxo de novo " +
+  "a interface foi recarregada no meio da esteira — as etapas seguintes não " + // i18n-ok
+  "foram enviadas. A CLI continua com o que já recebeu; rode o fluxo de novo " + // i18n-ok
   "a partir daqui se ainda fizer sentido.";
 
 /** Marks a run the engine can no longer be walking. */

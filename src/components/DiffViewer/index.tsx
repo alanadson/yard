@@ -52,6 +52,9 @@ import { GitStatusBadge, PathLabel } from "../FileMarks";
 import { Select } from "../Select";
 import { injectAndConfirm } from "../../lib/inject";
 
+import { useT } from "../../hooks/useT";
+import { locale, tn } from "../../lib/i18n";
+
 const HIGHLIGHT_MAX_BYTES = 320_000;
 const HIGHLIGHT_MAX_LINES = 5_000;
 
@@ -102,6 +105,7 @@ function orderedFiles(git: ChangesSummary | undefined): ChangedFile[] {
 }
 
 function ViewerInner({ target }: { target: ViewerTarget }) {
+  const t = useT();
   const { projectId, path } = target;
   const project = useProjects((s) => s.projects.find((p) => p.id === projectId));
   // Watched root (the active floor's worktree) — the diff comes from the same
@@ -185,7 +189,7 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
         // The cap used to drop the *oldest* note instead, with nothing on
         // screen saying so — in a feature whose whole point is not losing what
         // you wrote.
-        if (!id) showToast(REVIEW_FULL, "error");
+        if (!id) showToast(t(REVIEW_FULL), "error");
         setDraft(null);
       },
       edit: (id, body) => useReview.getState().edit(id, body),
@@ -340,7 +344,9 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
       .getState()
       .openFile(file.path)
       .then(close)
-      .catch((e) => useUI.getState().showToast(`Não consegui abrir: ${e}`, "error"));
+      .catch((e) =>
+        useUI.getState().showToast(t("Não consegui abrir: {e}", { e: String(e) }), "error"),
+      );
   };
 
   if (!project) return null;
@@ -367,11 +373,11 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
           void useEditor
             .getState()
             .openFile(p)
-            .catch((err) => toast(`Não consegui abrir: ${err}`, "error"));
+            .catch((err) => toast(t("Não consegui abrir: {e}", { e: String(err) }), "error"));
         },
         copyPath: (theText) => {
           void copyText(theText).then((ok) =>
-            toast(ok ? "Caminho copiado." : "Não consegui copiar.", ok ? "info" : "error"),
+            toast(ok ? t("Caminho copiado.") : t("Não consegui copiar."), ok ? "info" : "error"),
           );
         },
         reveal: (osPath) => {
@@ -401,7 +407,7 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
         className="viewer"
         role="dialog"
         aria-modal="true"
-        aria-label={`Diff de ${file.path}`}
+        aria-label={t("Diff de {path}", { path: file.path })}
         onMouseDown={(e) => e.stopPropagation()}
         onContextMenu={openMenu}
       >
@@ -428,13 +434,13 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
                 <span
                   className="review-chip"
                   data-tip-wrap=""
-                  data-tip="O agente tocou este arquivo, mas ele não está no repositório — não há com o que comparar"
+                  data-tip={t("O agente tocou este arquivo, mas ele não está no repositório — não há com o que comparar")}
                 >
-                  fora do repositório
+                  {t("fora do repositório")}
                 </span>
               )}
               {!external && git?.branch && (
-                <span className="review-chip" data-tip="Branch atual">
+                <span className="review-chip" data-tip={t("Branch atual")}>
                   <GitBranch size={11} aria-hidden="true" />
                   {git.branch}
                 </span>
@@ -454,20 +460,20 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
           </div>
 
           <div className="viewer-tools">
-            <div className="viewer-seg" role="group" aria-label="Modo de exibição">
+            <div className="viewer-seg" role="group" aria-label={t("Modo de exibição")}>
               <button
                 className={mode === "unified" ? "is-active" : ""}
                 onClick={() => setMode("unified")}
-                data-tip="Visão unificada"
+                data-tip={t("Visão unificada")}
               >
-                Unificado
+                {t("Unificado")}
               </button>
               <button
                 className={mode === "split" ? "is-active" : ""}
                 onClick={() => setMode("split")}
-                data-tip="Antes e depois lado a lado"
+                data-tip={t("Antes e depois lado a lado")}
               >
-                Lado a lado
+                {t("Lado a lado")}
               </button>
             </div>
             {/* Outside the repository it already IS the whole file. */}
@@ -475,16 +481,16 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
               <button
                 className={`viewer-toggle ${whole ? "is-active" : ""}`}
                 onClick={() => setWhole(!whole)}
-                data-tip-wrap="" data-tip="Mostrar o arquivo inteiro com as mudanças marcadas, não só os trechos"
+                data-tip-wrap="" data-tip={t("Mostrar o arquivo inteiro com as mudanças marcadas, não só os trechos")}
               >
-                Arquivo inteiro
+                {t("Arquivo inteiro")}
               </button>
             )}
             <button
               className={`icon-btn ${wrap ? "is-active" : ""}`}
               onClick={() => setWrap(!wrap)}
-              data-tip="Quebra de linha"
-              aria-label="Quebra de linha"
+              data-tip={t("Quebra de linha")}
+              aria-label={t("Quebra de linha")}
               aria-pressed={wrap}
             >
               <WrapText size={14} />
@@ -493,16 +499,16 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
             <button
               className="icon-btn"
               onClick={() => jumpHunk(-1)}
-              data-tip="Mudança anterior"
-              aria-label="Ir para a mudança anterior"
+              data-tip={t("Mudança anterior")}
+              aria-label={t("Ir para a mudança anterior")}
             >
               <ArrowUp size={14} />
             </button>
             <button
               className="icon-btn"
               onClick={() => jumpHunk(1)}
-              data-tip="Próxima mudança"
-              aria-label="Ir para a próxima mudança"
+              data-tip={t("Próxima mudança")}
+              aria-label={t("Ir para a próxima mudança")}
             >
               <ArrowDown size={14} />
             </button>
@@ -511,16 +517,16 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
               className="icon-btn"
               onClick={() => review.open(null, false, "")}
               data-tip-wrap=""
-              data-tip="Anotar o arquivo inteiro (nas linhas, use o + que aparece ao passar o mouse)"
-              aria-label="Anotar este arquivo"
+              data-tip={t("Anotar o arquivo inteiro (nas linhas, use o + que aparece ao passar o mouse)")}
+              aria-label={t("Anotar este arquivo")}
             >
               <MessageSquarePlus size={14} />
             </button>
             <button
               className="icon-btn"
               onClick={() => void copyDiff()}
-              data-tip="Copiar o diff"
-              aria-label="Copiar o diff"
+              data-tip={t("Copiar o diff")}
+              aria-label={t("Copiar o diff")}
             >
               {copied ? <Check size={14} /> : <Copy size={14} />}
             </button>
@@ -531,8 +537,8 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
                   <button
                     className="icon-btn"
                     onClick={editIt}
-                    data-tip="Abrir no editor"
-                    aria-label="Abrir este arquivo no editor"
+                    data-tip={t("Abrir no editor")}
+                    aria-label={t("Abrir este arquivo no editor")}
                   >
                     <SquarePen size={14} />
                   </button>
@@ -540,8 +546,8 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
                 <button
                   className="icon-btn"
                   onClick={reveal}
-                  data-tip="Mostrar no Explorer"
-                  aria-label="Mostrar este arquivo no Explorer"
+                  data-tip={t("Mostrar no Explorer")}
+                  aria-label={t("Mostrar este arquivo no Explorer")}
                 >
                   <FolderOpen size={14} />
                 </button>
@@ -552,8 +558,8 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
               className="icon-btn"
               onClick={close}
               data-tip-at="right"
-              data-tip="Fechar (Esc)"
-              aria-label="Fechar o visualizador"
+              data-tip={t("Fechar (Esc)")}
+              aria-label={t("Fechar o visualizador")}
             >
               <X size={15} />
             </button>
@@ -580,51 +586,51 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
             {error ? (
               <div className="viewer-note viewer-note--error">{error}</div>
             ) : !diff ? (
-              <div className="viewer-note">carregando diff…</div>
+              <div className="viewer-note">{t("carregando diff…")}</div>
             ) : diff.isBinary ? (
               <div className="viewer-note">
-                Arquivo binário — sem diff em texto.
+                {t("Arquivo binário — sem diff em texto.")}
               </div>
             ) : diffProfile.large ? (
               <>
                 {external && (
                   <div className="viewer-note">
-                    Fora do repositório — conteúdo atual do arquivo, sem comparação.
+                    {t("Fora do repositório — conteúdo atual do arquivo, sem comparação.")}
                   </div>
                 )}
                 {diff.truncated && (
                   <div className="viewer-note">
                     {external
-                      ? "Arquivo truncado — passa do teto de leitura."
-                      : "Diff truncado — o arquivo passa do teto de leitura."}
+                      ? t("Arquivo truncado — passa do teto de leitura.")
+                      : t("Diff truncado — o arquivo passa do teto de leitura.")}
                   </div>
                 )}
                 <div className="viewer-note">
-                  Diff grande ({diffProfile.lines.toLocaleString("pt-BR")} linhas) — exibido
-                  como texto contínuo para limitar o DOM; realce, comparação intralinha e
-                  comentários por linha ficam suspensos.
+                  {t(
+                    "Diff grande ({n} linhas) — exibido como texto contínuo para limitar o DOM; realce, comparação intralinha e comentários por linha ficam suspensos.",
+                    { n: diffProfile.lines.toLocaleString(locale()) },
+                  )}
                 </div>
                 <pre className="diff-large-raw">{diff.text}</pre>
               </>
             ) : !parsed || parsed.hunks.length === 0 ? (
               <div className="viewer-note">
                 {external
-                  ? "Arquivo vazio."
-                  : "Sem diferenças em relação ao último commit."}
+                  ? t("Arquivo vazio.")
+                  : t("Sem diferenças em relação ao último commit.")}
               </div>
             ) : (
               <>
                 {external && (
                   <div className="viewer-note">
-                    Fora do repositório — conteúdo atual do arquivo, sem
-                    comparação.
+                    {t("Fora do repositório — conteúdo atual do arquivo, sem comparação.")}
                   </div>
                 )}
                 {diff.truncated && (
                   <div className="viewer-note">
                     {external
-                      ? "Arquivo truncado — passa do teto de leitura."
-                      : "Diff truncado — o arquivo passa do teto de leitura."}
+                      ? t("Arquivo truncado — passa do teto de leitura.")
+                      : t("Diff truncado — o arquivo passa do teto de leitura.")}
                   </div>
                 )}
                 {mode === "unified" ? (
@@ -670,7 +676,7 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
         <footer className="viewer-footer">
           <span>
             {files.length > 0 && idx >= 0
-              ? `arquivo ${idx + 1} de ${files.length}`
+              ? t("arquivo {i} de {n}", { i: idx + 1, n: files.length })
               : file.path}
           </span>
           <span className="viewer-keys">
@@ -679,23 +685,23 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
                 <button
                   className="icon-btn"
                   onClick={() => nav(-1)}
-                  data-tip="Anterior (Alt+←)"
-                  aria-label="Arquivo anterior"
+                  data-tip={t("Anterior (Alt+←)")}
+                  aria-label={t("Arquivo anterior")}
                 >
                   <ChevronLeft size={13} />
                 </button>
                 <button
                   className="icon-btn"
                   onClick={() => nav(1)}
-                  data-tip="Próximo (Alt+→)"
-                  aria-label="Próximo arquivo"
+                  data-tip={t("Próximo (Alt+→)")}
+                  aria-label={t("Próximo arquivo")}
                 >
                   <ChevronRight size={13} />
                 </button>
               </>
             )}
-            <kbd>Alt</kbd>+<kbd>←</kbd>/<kbd>→</kbd> troca de arquivo ·{" "}
-            <kbd>Esc</kbd> fecha
+            <kbd>Alt</kbd>+<kbd>←</kbd>/<kbd>→</kbd> {t("troca de arquivo")} ·{" "}
+            <kbd>Esc</kbd> {t("fecha")}
           </span>
         </footer>
       </div>
@@ -716,8 +722,9 @@ function FileRail({
   current: string;
   onPick: (path: string) => void;
 }) {
+  const t = useT();
   return (
-    <nav className="viewer-rail" aria-label="Arquivos alterados">
+    <nav className="viewer-rail" aria-label={t("Arquivos alterados")}>
       <ul>
         {files.map((f) => {
           const name = fileName(f.path);
@@ -1033,12 +1040,13 @@ function NoteButton({
   onOld: boolean;
   code: string;
 }) {
+  const t = useT();
   if (line == null) return null;
   return (
     <button
       className="dnote-add"
-      aria-label={`Anotar a linha ${line}`}
-      data-tip="Anotar esta linha"
+      aria-label={t("Anotar a linha {line}", { line })}
+      data-tip={t("Anotar esta linha")}
       onClick={() => review.open(line, onOld, code)}
     >
       <MessageSquarePlus size={11} />
@@ -1079,6 +1087,7 @@ function ReviewCard({
   comment: ReviewComment;
   review: ReviewApi;
 }) {
+  const t = useT();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(comment.body);
 
@@ -1105,16 +1114,16 @@ function ReviewCard({
       <div className="dnote-tools">
         <button
           className="icon-btn"
-          data-tip="Editar"
-          aria-label="Editar esta anotação"
+          data-tip={t("Editar")}
+          aria-label={t("Editar esta anotação")}
           onClick={() => setEditing(true)}
         >
           <SquarePen size={12} />
         </button>
         <button
           className="icon-btn"
-          data-tip="Apagar"
-          aria-label="Apagar esta anotação"
+          data-tip={t("Apagar")}
+          aria-label={t("Apagar esta anotação")}
           onClick={() => review.remove(comment.id)}
         >
           <Trash2 size={12} />
@@ -1139,6 +1148,7 @@ function ReviewDraft({
   onCommit?: (body: string) => void;
   onCancel?: () => void;
 }) {
+  const t = useT();
   const [text, setText] = useState(initial);
   const areaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -1160,8 +1170,8 @@ function ReviewDraft({
         rows={2}
         spellCheck={false}
         value={text}
-        placeholder="O que precisa mudar aqui?"
-        aria-label="Texto da anotação"
+        placeholder={t("O que precisa mudar aqui?")}
+        aria-label={t("Texto da anotação")}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -1176,13 +1186,13 @@ function ReviewDraft({
       />
       <div className="dnote-foot">
         <span className="dnote-hint">
-          <kbd>Ctrl</kbd>+<kbd>Enter</kbd> guarda · <kbd>Esc</kbd> cancela
+          <kbd>Ctrl</kbd>+<kbd>Enter</kbd> {t("guarda")} · <kbd>Esc</kbd> {t("cancela")}
         </span>
         <button className="btn btn--ghost" onClick={cancel}>
-          Cancelar
+          {t("Cancelar")}
         </button>
         <button className="btn btn--primary" disabled={!text.trim()} onClick={commit}>
-          Guardar
+          {t("Guardar")}
         </button>
       </div>
     </div>
@@ -1211,6 +1221,7 @@ function ReviewBar({
   branch: string | null;
   currentPath: string;
 }) {
+  const t = useT();
   const terminals = useProjects((s) => s.terminals);
   const groups = useProjects((s) => s.groups);
   const runtimes = useTerminals((s) => s.byId);
@@ -1267,22 +1278,25 @@ function ReviewBar({
    */
   const sendIt = async () => {
     if (!chosen || sending) return;
-    const itemName = options.find((o) => o.value === chosen)?.label ?? "o agente";
+    const itemName = options.find((o) => o.value === chosen)?.label ?? t("o agente");
 
     const ready = sendability(chosen);
     if (!ready.ok && ready.reason !== "busy") {
-      showToast(ready.message ?? `${itemName} não pode receber a revisão agora.`, "error");
+      showToast(
+        ready.message ?? t("{name} não pode receber a revisão agora.", { name: itemName }),
+        "error",
+      );
       return;
     }
 
     setSending(true);
     try {
       if (!ready.ok) {
-        showToast(`Esperando ${itemName} ficar livre para receber a revisão…`);
+        showToast(t("Esperando {name} ficar livre para receber a revisão…", { name: itemName }));
         const after = await waitUntilSendable(chosen);
         if (!after.ok) {
           showToast(
-            `${after.message ?? `${itemName} continua ocupado.`} As anotações continuam aqui.`,
+            `${after.message ?? t("{name} continua ocupado.", { name: itemName })} ${t("As anotações continuam aqui.")}`, // i18n-ok
             "error",
           );
           return;
@@ -1293,8 +1307,10 @@ function ReviewBar({
       const delivered = await injectAndConfirm(chosen, text);
       if (!delivered) {
         showToast(
-          `Enviei para ${itemName}, mas ele não deu sinal de ter recebido. ` +
-            "Confira a CLI — guardei as anotações para você não perdê-las.",
+          t(
+            "Enviei para {name}, mas ele não deu sinal de ter recebido. Confira a CLI — guardei as anotações para você não perdê-las.",
+            { name: itemName },
+          ),
           "error",
         );
         return;
@@ -1309,11 +1325,12 @@ function ReviewBar({
       // deleting it would lose work nobody sent.
       useReview.getState().removeMany(comments.map((c) => c.id));
       showToast(
-        `${comments.length} ${comments.length === 1 ? "anotação enviada" : "anotações enviadas"} para ${itemName}.` +
-          (copied ? " Uma cópia ficou na área de transferência." : ""),
+        tn(comments.length, "{n} anotação enviada para {name}.", "{n} anotações enviadas para {name}.", {
+          name: itemName,
+        }) + (copied ? ` ${t("Uma cópia ficou na área de transferência.")}` : ""), // i18n-ok
       );
     } catch (e) {
-      showToast(`Falha ao enviar a revisão: ${e}`, "error");
+      showToast(t("Falha ao enviar a revisão: {e}", { e: String(e) }), "error");
     } finally {
       setSending(false);
     }
@@ -1322,11 +1339,11 @@ function ReviewBar({
   return (
     <div className="viewer-review">
       <span className="viewer-review-count">
-        {comments.length} {comments.length === 1 ? "anotação" : "anotações"}
+        {tn(comments.length, "{n} anotação", "{n} anotações")}
         {others > 0 && (
           <span className="viewer-review-elsewhere">
             {" "}
-            ({others} em outros arquivos)
+            {t("({n} em outros arquivos)", { n: others })}
           </span>
         )}
       </span>
@@ -1335,24 +1352,27 @@ function ReviewBar({
         disabled={comments.length === 0 && others === 0}
         // The label said "Limpar" next to a count of *this file*, and wiped
         // the whole project's review — one tab stop away from "Enviar".
-        aria-label={`Apagar as ${comments.length + others} anotações desta revisão`}
+        aria-label={t("Apagar as {n} anotações desta revisão", { n: comments.length + others })}
         onClick={() => {
           const total = comments.length + others;
           void ask(
             others > 0
-              ? `Apagar as ${total} anotações desta revisão? ${others} está(ão) em outros arquivos, fora do que você vê aqui.`
-              : `Apagar as ${total} anotações desta revisão?`,
-            { title: "Limpar revisão", kind: "warning" },
+              ? t(
+                  "Apagar as {total} anotações desta revisão? {others} está(ão) em outros arquivos, fora do que você vê aqui.",
+                  { total, others },
+                )
+              : t("Apagar as {total} anotações desta revisão?", { total }),
+            { title: t("Limpar revisão"), kind: "warning" },
           ).then((ok) => {
             if (ok) useReview.getState().clearScope(projectId, root);
           });
         }}
       >
-        Limpar tudo
+        {t("Limpar tudo")}
       </button>
       {options.length === 0 ? (
         <span className="viewer-review-empty">
-          Nenhum agente rodando para receber a revisão.
+          {t("Nenhum agente rodando para receber a revisão.")}
         </span>
       ) : (
         <>
@@ -1361,14 +1381,14 @@ function ReviewBar({
             value={chosen}
             options={options}
             onChange={setTarget}
-            label="Agente que recebe a revisão"
+            label={t("Agente que recebe a revisão")}
           />
           <button
             className="btn btn--primary"
             disabled={sending}
             onClick={() => void sendIt()}
           >
-            <Send size={13} /> Enviar
+            <Send size={13} /> {t("Enviar")}
           </button>
         </>
       )}

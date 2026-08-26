@@ -10,6 +10,7 @@
  */
 import type { ModalKind } from "../stores/uiStore";
 import type { MenuEntry } from "../components/ContextMenu";
+import { t } from "./i18n";
 
 export interface TitleBarMenuActions {
   toggleSidebar: () => void;
@@ -36,7 +37,7 @@ export function titleBarMenu(
   return [
     {
       id: "sidebar",
-      label: "Barra lateral",
+      label: t("Barra lateral"),
       // Checked, not hidden: the menu is the indicator of what is open.
       checked: ctx.sidebar,
       shortcut: "Ctrl+B",
@@ -44,31 +45,31 @@ export function titleBarMenu(
     },
     {
       id: "changes",
-      label: "Arquivos e alterações",
+      label: t("Arquivos e alterações"),
       checked: ctx.changes,
       shortcut: "Ctrl+Shift+D",
       onSelect: act.toggleChanges,
     },
     {
       id: "bench",
-      label: "Bancada",
+      label: t("Bancada"),
       checked: ctx.bench,
       shortcut: "Ctrl+Shift+B",
       onSelect: act.toggleBench,
     },
     {
       id: "notes",
-      label: "Anotações",
+      label: t("Anotações"),
       checked: ctx.notes,
       shortcut: "Ctrl+Shift+N",
       onSelect: act.toggleNotes,
     },
     { kind: "sep" },
-    { id: "prefs", label: "Preferências…", shortcut: "Ctrl+,", onSelect: () => act.openModal("preferences") },
-    { id: "extensions", label: "Extensões…", onSelect: () => act.openModal("extensions") },
+    { id: "prefs", label: t("Preferências…"), shortcut: "Ctrl+,", onSelect: () => act.openModal("preferences") },
+    { id: "extensions", label: t("Extensões…"), onSelect: () => act.openModal("extensions") },
     {
       id: "shortcuts",
-      label: "Atalhos",
+      label: t("Atalhos"),
       shortcut: "Ctrl+Shift+H",
       onSelect: () => act.openModal("shortcuts"),
     },
@@ -76,9 +77,9 @@ export function titleBarMenu(
     {
       id: "maximize",
       // Saying "Maximize" on a maximized window lies about the click.
-      label: ctx.maximized ? "Restaurar" : "Maximizar",
+      label: ctx.maximized ? t("Restaurar") : t("Maximizar"),
       onSelect: act.toggleMaximize,
     },
-    { id: "minimize", label: "Minimizar", onSelect: act.minimize },
+    { id: "minimize", label: t("Minimizar"), onSelect: act.minimize },
   ];
 }

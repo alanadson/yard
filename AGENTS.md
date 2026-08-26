@@ -142,9 +142,12 @@ no `tests/` folder in this project, and you are not to create one.
   temporary folder before any write — a test must **never** write to
   `%APPDATA%\Yard`, which is where the user's real work lives.
 - **Language:** everything developer-facing in the repository — docs, comments,
-  test names, identifiers, commit messages — is English. The product UI (the
-  strings rendered to the end user) is intentionally Brazilian Portuguese and
-  stays that way, and tests that assert on UI text keep those strings verbatim.
+  test names, identifiers, commit messages — is English. The product UI is
+  written in Brazilian Portuguese, and that text is the key: every
+  user-visible sentence goes through `t("…")` (`src/lib/i18n.ts`;
+  components use `useT()`), with the English line added to the area
+  dictionary under `src/i18n/en/`. Tests that assert on UI text keep
+  asserting the Portuguese verbatim — the default language never changes.
 
 ---
 

@@ -39,6 +39,7 @@ import {
 import { Modal } from "./Modal";
 import { Select } from "../Select";
 import { BrandIcon } from "../BrandIcon";
+import { useT } from "../../hooks/useT";
 import { defaultRoleOf, pickableAgents, titleFor } from "../../lib/agentDefaults";
 import { brandById } from "../../lib/brands";
 import { commitCanvasExternal, placeCard } from "../../lib/canvasWrite";
@@ -65,6 +66,9 @@ interface Payload {
  * One mark in the grid: a CLI detected on the machine, a shell — or the
  * embedded browser. The grid is "what this tab can be", not "which CLI":
  * that is what lets other kinds land here later without another dialog.
+ *
+ * `label` and `detail` are kept in Portuguese and translated where the tile
+ * is drawn, so the list is built once and still follows the language.
  */
 interface Choice {
   kind: "shell" | "agent" | "browser" | "notes";
@@ -81,20 +85,24 @@ interface Choice {
 const BROWSER: Choice = {
   kind: "browser",
   id: "browser",
-  label: "Navegador",
+  label: "Navegador", // i18n-ok — translated where drawn
   program: "",
-  detail: "página embutida na barra de abas — o mesmo motor dos portais",
+  detail: "página embutida na barra de abas — o mesmo motor dos portais", // i18n-ok — translated where drawn
   available: true,
 };
 
 const NOTES: Choice = {
   kind: "notes",
   id: "notes",
-  label: "Anotações",
+  label: "Anotações", // i18n-ok — translated where drawn
   program: "",
-  detail: "o caderno de notas markdown vira uma aba deste painel",
+  detail: "o caderno de notas markdown vira uma aba deste painel", // i18n-ok — translated where drawn
   available: true,
 };
+
+/** Reasons a tile cannot open — Portuguese keys, translated where drawn. */
+const NOT_INSTALLED = "não instalado — instale a CLI e detecte de novo"; // i18n-ok — translated where drawn
+const NOT_FOUND = "não encontrado nesta máquina"; // i18n-ok — translated where drawn
 
 function ChoiceMark({ choice }: { choice: Choice }) {
   if (choice.kind === "browser") return <Globe size={19} />;
@@ -105,6 +113,7 @@ function ChoiceMark({ choice }: { choice: Choice }) {
 }
 
 export function NewTerminalModal() {
+  const t = useT();
   const closeModal = useUI((s) => s.closeModal);
   const openModal = useUI((s) => s.openModal);
   const showToast = useUI((s) => s.showToast);
@@ -189,9 +198,7 @@ export function NewTerminalModal() {
       id: a.id,
       label: a.name,
       program: a.bin ?? a.id,
-      detail: a.installed
-        ? (a.version ?? a.bin ?? "")
-        : "não instalado — instale a CLI e detecte de novo",
+      detail: a.installed ? (a.version ?? a.bin ?? "") : NOT_INSTALLED,
       available: a.installed,
     });
     const fromShell = (s: ShellOption): Choice => ({
@@ -199,7 +206,7 @@ export function NewTerminalModal() {
       id: s.id,
       label: s.label,
       program: s.program,
-      detail: s.available ? s.program : "não encontrado nesta máquina",
+      detail: s.available ? s.program : NOT_FOUND,
       available: s.available,
     });
     // Agents first, and within each family what can actually run comes first:
@@ -268,8 +275,12 @@ export function NewTerminalModal() {
       if (group && projectsState.layoutOf(group.id).surface === "canvas") {
         showToast(
           onBoard
-            ? "Um quadro não tem barra de abas — encaixe o caderno num painel de um grupo, ou use o caderno em tela."
-            : "Esse grupo está mostrando o canvas, que não tem barra de abas — volte para os painéis antes de encaixar o caderno.",
+            ? t(
+                "Um quadro não tem barra de abas — encaixe o caderno num painel de um grupo, ou use o caderno em tela.",
+              )
+            : t(
+                "Esse grupo está mostrando o canvas, que não tem barra de abas — volte para os painéis antes de encaixar o caderno.",
+              ),
           "error",
         );
         return;
@@ -294,7 +305,7 @@ export function NewTerminalModal() {
       // nobody would ever see.
       if (onBoard) {
         showToast(
-          "Num quadro o navegador é um portal: use a ferramenta de portal na barra do quadro.",
+          t("Num quadro o navegador é um portal: use a ferramenta de portal na barra do quadro."),
           "error",
         );
         return;
@@ -316,7 +327,10 @@ export function NewTerminalModal() {
     const folder = targetProject!.path.trim();
     if (!folder) {
       showToast(
-        `O projeto "${targetProject!.name}" não tem pasta cadastrada — informe o caminho nas configurações do projeto.`,
+        t(
+          'O projeto "{name}" não tem pasta cadastrada — informe o caminho nas configurações do projeto.',
+          { name: targetProject!.name },
+        ),
         "error",
       );
       return;
@@ -329,7 +343,7 @@ export function NewTerminalModal() {
       // project while the UI kept showing the path that was configured.
       if (!(await ipc.isDirectory(folder))) {
         showToast(
-          `A pasta "${folder}" não existe — confira o caminho do projeto.`,
+          t('A pasta "{folder}" não existe — confira o caminho do projeto.', { folder }),
           "error",
         );
         return;
@@ -401,7 +415,7 @@ export function NewTerminalModal() {
       goToTarget(target, surface);
       closeModal();
     } catch (e) {
-      showToast(`Não consegui abrir: ${e}`, "error");
+      showToast(t("Não consegui abrir: {e}", { e: String(e) }), "error");
     } finally {
       setBusy(false);
     }
@@ -414,10 +428,10 @@ export function NewTerminalModal() {
   // With 8+ CLIs the flat grid was a wall of 12–16 equal tiles; the three
   // families give the eye (and the screen reader) somewhere to start.
   const familias: { title: string; items: Choice[] }[] = [
-    { title: "Agentes", items: choices.filter((c) => c.kind === "agent") },
-    { title: "Shells", items: choices.filter((c) => c.kind === "shell") },
+    { title: t("Agentes"), items: choices.filter((c) => c.kind === "agent") },
+    { title: t("Shells"), items: choices.filter((c) => c.kind === "shell") },
     {
-      title: "Outros",
+      title: t("Outros"),
       items: choices.filter((c) => c.kind === "browser" || c.kind === "notes"),
     },
   ].filter((f) => f.items.length > 0);
@@ -442,7 +456,7 @@ export function NewTerminalModal() {
 
   return (
     <Modal
-      title="Nova aba"
+      title={t("Nova aba")}
       onClose={closeModal}
       wide
       // The first tile, so `Enter` opens what the eye is already on.
@@ -451,14 +465,16 @@ export function NewTerminalModal() {
         <div className="modal-foot-row">
           <span className="hint grow">
             {busy
-              ? "Abrindo…"
-              : "Um clique abre. Como cada CLI abre — flags, papel, nome — fica em Configurações › Agentes."}
+              ? t("Abrindo…")
+              : t(
+                  "Um clique abre. Como cada CLI abre — flags, papel, nome — fica em Configurações › Agentes.",
+                )}
           </span>
           <button
             className="btn btn--sm"
             onClick={() => openModal("preferences", "agentes")}
           >
-            <Settings2 size={12} aria-hidden="true" /> Configurar agentes
+            <Settings2 size={12} aria-hidden="true" /> {t("Configurar agentes")}
           </button>
         </div>
       }
@@ -466,11 +482,10 @@ export function NewTerminalModal() {
       {projects.length === 0 && (
         <div className="hint new-term-noproject">
           <span>
-            Tudo aqui nasce dentro de um projeto (uma pasta do disco) — e ainda
-            não há nenhum.
+            {t("Tudo aqui nasce dentro de um projeto (uma pasta do disco) — e ainda não há nenhum.")}
           </span>
           <button className="btn btn--sm" onClick={() => openModal("new-project")}>
-            <FolderPlus size={12} /> Adicionar projeto…
+            <FolderPlus size={12} /> {t("Adicionar projeto…")}
           </button>
         </div>
       )}
@@ -482,11 +497,11 @@ export function NewTerminalModal() {
           // On a board the answer is not inferable — it is what lets one board
           // hold cards from three projects at once.
           <span className="new-term-where">
-            Abrir em
+            {t("Abrir em")}
             <Select
               value={targetProject?.id ?? ""}
-              label="Pasta da CLI"
-              tip="Em qual projeto esta CLI vai rodar"
+              label={t("Pasta da CLI")}
+              tip={t("Em qual projeto esta CLI vai rodar")}
               options={projects.map((p) => ({ value: p.id, label: p.name }))}
               onChange={setPicked}
             />
@@ -494,16 +509,16 @@ export function NewTerminalModal() {
         ) : (
           <span>
             {loadingAgents
-              ? "Procurando CLIs…"
+              ? t("Procurando CLIs…")
               : targetProject
-                ? `Abrir em ${targetProject.name}`
-                : "Início rápido"}
+                ? t("Abrir em {name}", { name: targetProject.name })
+                : t("Início rápido")}
           </span>
         )}
         <button
           className={`icon-btn ${loadingAgents ? "is-busy" : ""}`}
-          data-tip="Detectar de novo"
-          aria-label="Detectar CLIs de novo"
+          data-tip={t("Detectar de novo")}
+          aria-label={t("Detectar CLIs de novo")}
           onClick={() => detect(true)}
         >
           <RefreshCw size={13} />
@@ -513,7 +528,7 @@ export function NewTerminalModal() {
       <div
         ref={gridRef}
         className="quick-grid"
-        aria-label="O que vai rodar"
+        aria-label={t("O que vai rodar")}
         aria-busy={busy}
         onKeyDown={onGridKey}
       >
@@ -537,11 +552,11 @@ export function NewTerminalModal() {
                     aria-disabled={!c.available}
                     className={`quick-tile ${c.available ? "" : "is-off"}`}
                     data-tip-wrap=""
-                    data-tip={c.detail}
+                    data-tip={t(c.detail)}
                     onClick={() => void createIt(c)}
                   >
                     <ChoiceMark choice={c} />
-                    <span className="quick-tile-label">{c.label}</span>
+                    <span className="quick-tile-label">{t(c.label)}</span>
                   </button>
                 ))}
               </div>
@@ -550,19 +565,19 @@ export function NewTerminalModal() {
 
       {shellsError && (
         <p className="hint hint--error">
-          Não consegui listar os shells desta máquina: {shellsError}
+          {t("Não consegui listar os shells desta máquina: {error}", { error: shellsError })}
         </p>
       )}
       {agentsError && (
         <p className="hint hint--error">
-          A detecção falhou: {agentsError}. Clique em detectar de novo.
+          {t("A detecção falhou: {error}. Clique em detectar de novo.", { error: agentsError })}
         </p>
       )}
       {noAgent && (
         <p className="hint">
-          Nenhuma CLI de agente encontrada no PATH nem nas pastas do npm. Instale
-          uma (ex.: <code>npm i -g @anthropic-ai/claude-code</code>) e clique em
-          detectar de novo.
+          {t("Nenhuma CLI de agente encontrada no PATH nem nas pastas do npm. Instale uma (ex.: ")}
+          <code>npm i -g @anthropic-ai/claude-code</code>
+          {t(") e clique em detectar de novo.")}
         </p>
       )}
     </Modal>

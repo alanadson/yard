@@ -19,8 +19,10 @@ import type { GroupRow, LandPreview } from "../../lib/ipc";
 import { parseLayout, useProjects } from "../../stores/projectsStore";
 import { isLive, useTerminals } from "../../stores/terminalsStore";
 import { useUI } from "../../stores/uiStore";
+import { useT } from "../../hooks/useT";
 
 export function CompareModal() {
+  const t = useT();
   const closeModal = useUI((s) => s.closeModal);
   const showToast = useUI((s) => s.showToast);
   const payload = useUI((s) => s.modalPayload) as { projectId?: string } | null;
@@ -80,12 +82,12 @@ export function CompareModal() {
     const floor = parseLayout(chosen.layoutJson).floor;
     const siblings = siblingFloors(project.id, chosen.id, floor?.task?.id);
     const ok = await ask(
-      `Aterrissar “${chosen.name}” no chão` +
+      t("Aterrissar “{name}” no chão", { name: chosen.name }) +
         (siblings.length
-          ? ` e encerrar os ${siblings.length} outro(s) andar(es) desta tarefa`
+          ? t(" e encerrar os {n} outro(s) andar(es) desta tarefa", { n: siblings.length })
           : "") +
-        "? O merge entra na branch do chão; as branches dos perdedores são apagadas.",
-      { title: "Ficar com este", kind: "warning" },
+        t("? O merge entra na branch do chão; as branches dos perdedores são apagadas."),
+      { title: t("Ficar com este"), kind: "warning" },
     );
     if (!ok) return;
     setBusy(true);
@@ -94,7 +96,7 @@ export function CompareModal() {
       if (!result.ok) {
         showToast(
           result.conflicted
-            ? `Conflito — o chão não foi alterado. ${result.conflictPaths.join(", ")}`
+            ? t("Conflito — o chão não foi alterado. {paths}", { paths: result.conflictPaths.join(", ") })
             : result.message,
           "error",
         );
@@ -112,7 +114,7 @@ export function CompareModal() {
       );
       closeModal();
     } catch (e) {
-      showToast(`Não consegui aterrissar: ${e}`, "error");
+      showToast(t("Não consegui aterrissar: {e}", { e: String(e) }), "error");
     } finally {
       setBusy(false);
     }
@@ -120,14 +122,14 @@ export function CompareModal() {
 
   return (
     <Modal
-      title={`Comparar andares — ${project.name}`}
+      title={t("Comparar andares — {name}", { name: project.name })}
       onClose={closeModal}
       wide
       headerExtra={
         <button
           className="icon-btn"
-          data-tip="Atualizar os diffs"
-          aria-label="Atualizar os diffs"
+          data-tip={t("Atualizar os diffs")}
+          aria-label={t("Atualizar os diffs")}
           onClick={() => setTick((n) => n + 1)}
         >
           <RefreshCw size={13} />
@@ -137,11 +139,11 @@ export function CompareModal() {
         <div className="modal-foot-row">
           <span className="hint grow">
             {floors.length === 0
-              ? "Nenhum andar isolado neste projeto."
-              : "Escolha o vencedor. Os outros da mesma tarefa são encerrados."}
+              ? t("Nenhum andar isolado neste projeto.")
+              : t("Escolha o vencedor. Os outros da mesma tarefa são encerrados.")}
           </span>
           <button className="btn" onClick={closeModal}>
-            Fechar
+            {t("Fechar")}
           </button>
           <button
             className="btn btn--primary"
@@ -149,16 +151,16 @@ export function CompareModal() {
             onClick={() => void keepChosen()}
           >
             <GitMerge size={13} aria-hidden="true" />
-            {busy ? "Aterrissando…" : "Ficar com este"}
+            {busy ? t("Aterrissando…") : t("Ficar com este")}
           </button>
         </div>
       }
     >
       {floors.length === 0 ? (
-        <p className="hint">Crie um andar (ou uma tarefa com vários agentes) para comparar.</p>
+        <p className="hint">{t("Crie um andar (ou uma tarefa com vários agentes) para comparar.")}</p>
       ) : (
         <div className="floors-compare">
-          <ul className="floors-compare-list" role="listbox" aria-label="Andares">
+          <ul className="floors-compare-list" role="listbox" aria-label={t("Andares")}>
             {floors.map((g) => (
               <CompareRow
                 key={g.id}
@@ -176,7 +178,7 @@ export function CompareModal() {
             {chosen && preview && typeof preview !== "string" && (
               <LandPreviewBody preview={preview} />
             )}
-            {chosen && !preview && <p className="hint">Lendo o diff…</p>}
+            {chosen && !preview && <p className="hint">{t("Lendo o diff…")}</p>}
           </div>
         </div>
       )}
@@ -195,6 +197,7 @@ function CompareRow({
   selected: boolean;
   onSelect: () => void;
 }) {
+  const t = useT();
   const floor = parseLayout(group.layoutJson).floor;
   const aliveCount = useProjects
     .getState()
@@ -204,11 +207,11 @@ function CompareRow({
     !preview
       ? "…"
       : typeof preview === "string"
-        ? "erro"
+        ? t("erro")
         : preview.alreadyMerged
-          ? "já no chão"
+          ? t("já no chão")
           : !preview.clean
-            ? `${preview.conflictPaths.length} conflito(s)`
+            ? t("{n} conflito(s)", { n: preview.conflictPaths.length })
             : `+${preview.additions} −${preview.deletions}`;
 
   return (

@@ -13,6 +13,8 @@
  * "Em espera" while in "Todas" and getting a note without a status would be
  * the wrong thing, and a silent one.
  */
+// i18n-scan: tables
+import { locale, t } from "./i18n";
 import { NOTE_SORTS, STATUS_META, type Collection, type NoteSort } from "./notes";
 import type { MenuEntry } from "../components/ContextMenu";
 
@@ -65,16 +67,16 @@ function acceptsNewNote(c: Collection): boolean {
  */
 function asAdjective(c: Collection): string | null {
   if (c.kind !== "status") return null;
-  return STATUS_META[c.status].label.toLocaleLowerCase("pt-BR");
+  return t(STATUS_META[c.status].label).toLocaleLowerCase(locale());
 }
 
 function sortEntry(ctx: NotesMenuContext, act: NotesMenuActions): MenuEntry {
   return {
     id: "ordenar",
-    label: "Ordenar por",
+    label: t("Ordenar por"),
     submenu: NOTE_SORTS.map((s) => ({
       id: `ordenar-${s}`,
-      label: SORT_LABEL[s],
+      label: t(SORT_LABEL[s]),
       checked: ctx.sort === s,
       onSelect: () => act.setSort(s),
     })),
@@ -85,8 +87,8 @@ function resolvedEntry(ctx: NotesMenuContext, act: NotesMenuActions): MenuEntry 
   return {
     id: "resolvidas",
     label: ctx.showResolved
-      ? "Esconder concluídas e descartadas"
-      : "Mostrar concluídas e descartadas",
+      ? t("Esconder concluídas e descartadas")
+      : t("Mostrar concluídas e descartadas"),
     checked: ctx.showResolved,
     onSelect: () => act.setShowResolved(!ctx.showResolved),
   };
@@ -96,7 +98,7 @@ function foldEntry(ctx: NotesMenuContext, act: NotesMenuActions): MenuEntry | nu
   if (ctx.foldableCount === 0) return null;
   return {
     id: "dobrar",
-    label: ctx.allFolded ? "Expandir todos os cadernos" : "Recolher todos os cadernos",
+    label: ctx.allFolded ? t("Expandir todos os cadernos") : t("Recolher todos os cadernos"),
     onSelect: () => act.setFolded(!ctx.allFolded),
   };
 }
@@ -104,7 +106,7 @@ function foldEntry(ctx: NotesMenuContext, act: NotesMenuActions): MenuEntry | nu
 function emptyTrashEntry(ctx: NotesMenuContext, act: NotesMenuActions): MenuEntry {
   return {
     id: "esvaziar",
-    label: "Esvaziar lixeira",
+    label: t("Esvaziar lixeira"),
     danger: true,
     // Disabled, not absent: it is the same entry in the same place when the
     // trash fills up — the hand does not have to relearn where it is.
@@ -127,7 +129,7 @@ export function notesRailRowMenu(
     const adjective = asAdjective(target);
     entries.push({
       id: "nova-nota",
-      label: adjective ? `Nova nota ${adjective}` : "Nova nota aqui",
+      label: adjective ? t("Nova nota {adjective}", { adjective }) : t("Nova nota aqui"),
       onSelect: () => {
         // The order is the behaviour: `createNote` reads the open collection.
         act.select(target);
@@ -137,7 +139,7 @@ export function notesRailRowMenu(
   }
   entries.push({
     id: "novo-caderno",
-    label: "Novo caderno",
+    label: t("Novo caderno"),
     onSelect: () => act.newNotebook(null),
   });
   entries.push({ kind: "sep" }, sortEntry(ctx, act));
@@ -157,8 +159,8 @@ export function notesRailBackgroundMenu(
   act: NotesMenuActions,
 ): MenuEntry[] {
   const entries: MenuEntry[] = [
-    { id: "nova-nota", label: "Nova nota", onSelect: act.createNote },
-    { id: "novo-caderno", label: "Novo caderno", onSelect: () => act.newNotebook(null) },
+    { id: "nova-nota", label: t("Nova nota"), onSelect: act.createNote },
+    { id: "novo-caderno", label: t("Novo caderno"), onSelect: () => act.newNotebook(null) },
   ];
   const foldItem = foldEntry(ctx, act);
   if (foldItem) entries.push({ kind: "sep" }, foldItem);
@@ -175,7 +177,7 @@ export function notesListMenu(
   const inTrash = collection.kind === "trash";
   const entries: MenuEntry[] = [];
   if (!inTrash) {
-    entries.push({ id: "nova-nota", label: "Nova nota", onSelect: act.createNote });
+    entries.push({ id: "nova-nota", label: t("Nova nota"), onSelect: act.createNote });
     entries.push({ kind: "sep" });
   }
   entries.push(sortEntry(ctx, act));
@@ -184,10 +186,10 @@ export function notesListMenu(
   }
   entries.push(
     { kind: "sep" },
-    { id: "buscar", label: "Buscar nas anotações", shortcut: "Ctrl+Shift+F", onSelect: act.focusSearch },
+    { id: "buscar", label: t("Buscar nas anotações"), shortcut: "Ctrl+Shift+F", onSelect: act.focusSearch },
     {
       id: "limpar",
-      label: "Limpar a busca",
+      label: t("Limpar a busca"),
       disabled: ctx.query.trim() === "",
       onSelect: act.clearQuery,
     },

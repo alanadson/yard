@@ -233,6 +233,7 @@ import {
   type ResizeDir,
   type StrokeSize,
 } from "../../lib/canvas";
+import { useT } from "../../hooks/useT";
 
 interface Props {
   groupId: string;
@@ -269,14 +270,14 @@ const GRID = 26;
 
 /** Stroke-width/body rows shown in the item context menus. */
 const MENU_STROKES = [
-  { id: "s", dot: 3, label: "Traço fino" },
-  { id: "m", dot: 5, label: "Traço médio" },
-  { id: "l", dot: 8, label: "Traço grosso" },
+  { id: "s", dot: 3, label: "Traço fino" }, // i18n-ok — wrapped with t() at the menu
+  { id: "m", dot: 5, label: "Traço médio" }, // i18n-ok
+  { id: "l", dot: 8, label: "Traço grosso" }, // i18n-ok
 ] as const;
 const MENU_FONTS = [
-  { id: "s", dot: 3, label: "Texto pequeno" },
-  { id: "m", dot: 5, label: "Texto médio" },
-  { id: "l", dot: 8, label: "Texto grande" },
+  { id: "s", dot: 3, label: "Texto pequeno" }, // i18n-ok — wrapped with t() at the menu
+  { id: "m", dot: 5, label: "Texto médio" }, // i18n-ok
+  { id: "l", dot: 8, label: "Texto grande" }, // i18n-ok
 ] as const;
 
 function randSeed(): number {
@@ -311,6 +312,7 @@ let clipFallback: CanvasItem[] = [];
 const PREF_MINIMAP = "canvas.minimap";
 
 export function CanvasView({ groupId, terminals, canvas }: Props) {
+  const t = useT();
   const updateCanvas = useProjects((s) => s.updateCanvas);
   const focusedTerminalId = useUI((s) => s.focusedTerminalId);
   const focusTerminal = useUI((s) => s.focusTerminal);
@@ -714,7 +716,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   }, []);
 
   const boxesOf = useCallback(
-    (ids: Iterable<string>): Record<string, Box> => {
+    (ids: Iterable<string>): Record<string, Box> => { // i18n-ok
       const m: Record<string, Box> = {};
       for (const id of ids) {
         const b = boxOf(id);
@@ -1328,21 +1330,24 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       deleteSelection();
       return;
     }
-    const parts = [`${targets.length} item(ns) do canvas`];
+    const parts = [t("{n} item(ns) do canvas", { n: targets.length })];
     if (portals > 0) {
       parts.push(
-        `${portals} portal(is) — a sessão do navegador (histórico e cookies) não volta com o desfazer`,
+        t("{n} portal(is) — a sessão do navegador (histórico e cookies) não volta com o desfazer", {
+          n: portals,
+        }),
       );
     }
     if (running.length > 0) {
       parts.push(
-        `${running.length} fluxo(s) em execução (${running
-          .map((r) => `"${r.name}"`)
-          .join(", ")}) — a esteira é cancelada na etapa atual`,
+        t("{n} fluxo(s) em execução ({names}) — a esteira é cancelada na etapa atual", {
+          n: running.length,
+          names: running.map((r) => `"${r.name}"`).join(", "),
+        }),
       );
     }
-    void ask(`Excluir ${parts.join("; ")}?`, {
-      title: "Excluir seleção",
+    void ask(t("Excluir {what}?", { what: parts.join("; ") }), {
+      title: t("Excluir seleção"),
       kind: "warning",
     }).then((ok) => {
       if (ok) deleteSelection();
@@ -1432,7 +1437,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     if (!box) return;
     const id = nanoid(8);
     commit((c) => addFrame(c, frameItem(id, box)));
-    announce(`Grupo criado com ${sel.size} item(ns)`);
+    announce(t("Grupo criado com {n} item(ns)", { n: sel.size }));
   }, [announce, boxesOf, commit]);
 
   /**
@@ -1449,11 +1454,11 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       const inside = withGroupMembers(new Set([id]), frameRefs(), allBoxes());
       inside.delete(id);
       if (!inside.size) {
-        announce("Grupo vazio");
+        announce(t("Grupo vazio"));
         return;
       }
       setSelection(inside);
-      announce(`${inside.size} item(ns) do grupo selecionado(s)`);
+      announce(t("{n} item(ns) do grupo selecionado(s)", { n: inside.size }));
     },
     [allBoxes, announce, frameRefs],
   );
@@ -1462,7 +1467,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     (id: string, name: string) => {
       // Blank falls back rather than clearing: an unnamed frame renders as an
       // empty bar, which reads as a bug. `sanitizeItem` says the same on load.
-      const next = name.trim().slice(0, GROUP_NAME_MAX) || GROUP_DEFAULT_NAME;
+      const next = name.trim().slice(0, GROUP_NAME_MAX) || t(GROUP_DEFAULT_NAME);
       commit((c) => patchItemOfType(c, id, "group", { name: next }));
     },
     [commit],
@@ -1524,7 +1529,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     (noteId: string) => {
       commit((c) => removeFromBinder(c, noteId));
       selectOnly(noteId);
-      announce("Nota de volta ao canvas");
+      announce(t("Nota de volta ao canvas"));
     },
     [announce, commit, selectOnly],
   );
@@ -1534,7 +1539,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     (noteId: string, binderId: string) => {
       commit((c) => fileIntoBinder(c, binderId, noteId));
       selectOnly(binderId);
-      announce("Nota arquivada no fichário");
+      announce(t("Nota arquivada no fichário"));
     },
     [announce, commit, selectOnly],
   );
@@ -1600,8 +1605,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       selectOnly(id);
       announce(
         notes.length
-          ? `Fichário com ${notes.length} nota(s)`
-          : "Fichário vazio criado",
+          ? t("Fichário com {n} nota(s)", { n: notes.length })
+          : t("Fichário vazio criado"),
       );
     },
     [announce, color, commit, currentData, selectOnly],
@@ -1620,7 +1625,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       const chosen = await openFileDialog({
         multiple: false,
         directory: false,
-        title: "Colocar um arquivo no canvas",
+        title: t("Colocar um arquivo no canvas"),
         ...(projectRoot ? { defaultPath: projectRoot } : {}),
       });
       if (typeof chosen !== "string") return;
@@ -1638,7 +1643,9 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         }),
       );
       selectOnly(id);
-      announce(`${mediaNodeName({ id, type: "media", ...box, path, color: "" })} no canvas`);
+      announce(
+        t("{name} no canvas", { name: mediaNodeName({ id, type: "media", ...box, path, color: "" }) }),
+      );
     },
     [announce, commit, projectRoot, selectOnly],
   );
@@ -1655,7 +1662,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       const chosen = await openFileDialog({
         multiple: false,
         directory: false,
-        title: "Trocar o arquivo do cartão",
+        title: t("Trocar o arquivo do cartão"),
         ...(projectRoot ? { defaultPath: projectRoot } : {}),
       });
       if (typeof chosen !== "string") return;
@@ -1671,7 +1678,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         .getState()
         .openFile(path)
         .catch((e) =>
-          useUI.getState().showToast(`Não consegui abrir: ${e}`, "error"),
+          useUI.getState().showToast(t("Não consegui abrir: {e}", { e: String(e) }), "error"),
         );
     },
     [],
@@ -1693,7 +1700,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           y: at.y,
           w: FLOW_DEFAULT_W,
           h: flowCardHeight(0),
-          name: `Fluxo ${flowsOf(c).length + 1}`,
+          name: t("Fluxo {n}", { n: flowsOf(c).length + 1 }),
           stages: [],
           color: CANVAS_COLORS[0],
         }),
@@ -1858,7 +1865,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     const box = boxOf(target);
     useUI.getState().clearCanvasReveal();
     if (!box) {
-      useUI.getState().showToast("Isso não está mais no canvas deste grupo.", "error");
+      useUI.getState().showToast(t("Isso não está mais no canvas deste grupo."), "error");
       return;
     }
     if (binder) showBinderTab(binder.id, reveal.id);
@@ -2648,7 +2655,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             // a connection is the product's access rule, so "already linked"
             // is a useful answer. The cable lights up instead of the silence.
             selectOnly(exists.id);
-            useUI.getState().showToast("Esses dois já estão conectados.");
+            useUI.getState().showToast(t("Esses dois já estão conectados."));
           }
           if (!exists) {
             // Connecting a CLI to a flow card is silent on purpose: nothing is
@@ -3431,43 +3438,43 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   const arrangeEntries = (): MenuEntry[] => [
     {
       id: "align",
-      label: "Alinhar",
+      label: t("Alinhar"),
       icon: <AlignStartVertical size={13} />,
       submenu: [
         {
           id: "left",
-          label: "À esquerda",
+          label: t("À esquerda"),
           icon: <AlignStartVertical size={13} />,
           onSelect: () => alignSelection("left"),
         },
         {
           id: "hcenter",
-          label: "Centro (horizontal)",
+          label: t("Centro (horizontal)"),
           icon: <AlignCenterVertical size={13} />,
           onSelect: () => alignSelection("hcenter"),
         },
         {
           id: "right",
-          label: "À direita",
+          label: t("À direita"),
           icon: <AlignEndVertical size={13} />,
           onSelect: () => alignSelection("right"),
         },
         { kind: "sep" },
         {
           id: "top",
-          label: "Pelo topo",
+          label: t("Pelo topo"),
           icon: <AlignStartHorizontal size={13} />,
           onSelect: () => alignSelection("top"),
         },
         {
           id: "vcenter",
-          label: "Centro (vertical)",
+          label: t("Centro (vertical)"),
           icon: <AlignCenterHorizontal size={13} />,
           onSelect: () => alignSelection("vcenter"),
         },
         {
           id: "bottom",
-          label: "Pela base",
+          label: t("Pela base"),
           icon: <AlignEndHorizontal size={13} />,
           onSelect: () => alignSelection("bottom"),
         },
@@ -3475,19 +3482,19 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     },
     {
       id: "distribute",
-      label: "Distribuir",
+      label: t("Distribuir"),
       icon: <AlignHorizontalDistributeCenter size={13} />,
       disabled: selection.size < 3,
       submenu: [
         {
           id: "dh",
-          label: "Na horizontal",
+          label: t("Na horizontal"),
           icon: <AlignHorizontalDistributeCenter size={13} />,
           onSelect: () => distributeSelection("h"),
         },
         {
           id: "dv",
-          label: "Na vertical",
+          label: t("Na vertical"),
           icon: <AlignVerticalDistributeCenter size={13} />,
           onSelect: () => distributeSelection("v"),
         },
@@ -3495,7 +3502,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     },
     {
       id: "tidy",
-      label: "Organizar em grade",
+      label: t("Organizar em grade"),
       icon: <LayoutGrid size={13} />,
       shortcut: "Ctrl+Shift+T",
       onSelect: tidySelection,
@@ -3520,7 +3527,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       return [
         {
           id: "group",
-          label: "Agrupar",
+          label: t("Agrupar"),
           icon: <GroupIcon size={13} />,
           shortcut: "Ctrl+G",
           onSelect: groupSelection,
@@ -3529,7 +3536,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           ? [
               {
                 id: "binder",
-                label: `Transformar ${notesInSel} notas em fichário`,
+                label: t("Transformar {n} notas em fichário", { n: notesInSel }),
                 icon: <NotebookTabs size={13} />,
                 onSelect: () => binderFromSelection(),
               } as MenuEntry,
@@ -3540,14 +3547,14 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         { kind: "sep" },
         {
           id: "copy",
-          label: "Copiar",
+          label: t("Copiar"),
           icon: <Copy size={13} />,
           shortcut: "Ctrl+C",
           onSelect: () => void copySelection(),
         },
         {
           id: "cut",
-          label: "Recortar",
+          label: t("Recortar"),
           icon: <Scissors size={13} />,
           shortcut: "Ctrl+X",
           onSelect: () =>
@@ -3557,7 +3564,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         },
         {
           id: "dup",
-          label: "Duplicar",
+          label: t("Duplicar"),
           icon: <Copy size={13} />,
           shortcut: "Ctrl+D",
           onSelect: duplicateSelection,
@@ -3565,7 +3572,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         { kind: "sep" },
         {
           id: "fitsel",
-          label: "Enquadrar a seleção",
+          label: t("Enquadrar a seleção"),
           icon: <ScanSearch size={13} />,
           shortcut: "Shift+2",
           onSelect: fitSelection,
@@ -3573,7 +3580,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         { kind: "sep" },
         {
           id: "delete",
-          label: "Excluir",
+          label: t("Excluir"),
           icon: <Trash2 size={13} />,
           danger: true,
           shortcut: "Del",
@@ -3588,12 +3595,12 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       return [
         {
           id: "add",
-          label: "Adicionar",
+          label: t("Adicionar"),
           icon: <Plus size={13} />,
           submenu: [
             {
               id: "cli",
-              label: "Terminal",
+              label: t("Terminal"),
               icon: <TerminalIcon size={13} />,
               shortcut: "Ctrl+T",
               // The coordinates travel with the payload instead of being read
@@ -3604,7 +3611,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             },
             {
               id: "note",
-              label: "Nota",
+              label: t("Nota"),
               icon: <StickyNote size={13} />,
               onSelect: () => {
                 const id = nanoid(8);
@@ -3627,32 +3634,32 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             },
             {
               id: "tree",
-              label: "Árvore de arquivos",
+              label: t("Árvore de arquivos"),
               icon: <FolderTree size={13} />,
               onSelect: () => createTreeAt(w.x, w.y),
             },
             {
               id: "binder",
-              label: "Fichário (notas em abas)",
+              label: t("Fichário (notas em abas)"),
               icon: <NotebookTabs size={13} />,
               onSelect: () => binderFromSelection({ x: w.x, y: w.y }),
             },
             {
               id: "portal",
-              label: "Portal",
+              label: t("Portal"),
               icon: <Globe size={13} />,
               shortcut: "W",
               onSelect: () => openModal("new-portal", { groupId, x: w.x, y: w.y }),
             },
             {
               id: "media",
-              label: "Arquivo (imagem, vídeo, PDF)",
+              label: t("Arquivo (imagem, vídeo, PDF)"),
               icon: <ImageIcon size={13} />,
               onSelect: () => void addMediaAt(w.x, w.y),
             },
             {
               id: "text",
-              label: "Texto",
+              label: t("Texto"),
               icon: <Type size={13} />,
               onSelect: () => {
                 const id = nanoid(8);
@@ -3674,7 +3681,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             },
             {
               id: "flow",
-              label: "Fluxo de agentes",
+              label: t("Fluxo de agentes"),
               icon: <Workflow size={13} />,
               shortcut: "F",
               onSelect: () => createFlowAt(w),
@@ -3683,7 +3690,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         },
         {
           id: "paste",
-          label: "Colar aqui",
+          label: t("Colar aqui"),
           icon: <ClipboardPaste size={13} />,
           shortcut: "Ctrl+V",
           onSelect: () => void pasteClipboard(),
@@ -3691,28 +3698,28 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         { kind: "sep" },
         {
           id: "selectall",
-          label: "Selecionar tudo",
+          label: t("Selecionar tudo"),
           icon: <SquareDashedMousePointer size={13} />,
           shortcut: "Ctrl+A",
           onSelect: selectAll,
         },
         {
           id: "fit",
-          label: "Enquadrar tudo",
+          label: t("Enquadrar tudo"),
           icon: <Expand size={13} />,
           shortcut: "Shift+1",
           onSelect: fitView,
         },
         {
           id: "zoom100",
-          label: "Zoom 100%",
+          label: t("Zoom 100%"),
           icon: <Maximize2 size={13} />,
           shortcut: "Ctrl+0",
           onSelect: zoomTo100,
         },
         {
           id: "minimap",
-          label: minimap ? "Esconder o minimapa" : "Mostrar o minimapa",
+          label: minimap ? t("Esconder o minimapa") : t("Mostrar o minimapa"),
           icon: <MapIcon size={13} />,
           shortcut: "Ctrl+Shift+M",
           onSelect: toggleMinimap,
@@ -3728,7 +3735,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     };
     const del: MenuEntry = {
       id: "delete",
-      label: "Excluir",
+      label: t("Excluir"),
       icon: <Trash2 size={13} />,
       danger: true,
       shortcut: "Del",
@@ -3736,20 +3743,20 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     };
     const dup: MenuEntry = {
       id: "dup",
-      label: "Duplicar",
+      label: t("Duplicar"),
       icon: <Copy size={13} />,
       onSelect: () => duplicateItem(it.id),
     };
     const order: MenuEntry[] = [
       {
         id: "front",
-        label: "Trazer para a frente",
+        label: t("Trazer para a frente"),
         icon: <BringToFront size={13} />,
         onSelect: () => reorderItem(it.id, "front"),
       },
       {
         id: "back",
-        label: "Enviar para trás",
+        label: t("Enviar para trás"),
         icon: <SendToBack size={13} />,
         onSelect: () => reorderItem(it.id, "back"),
       },
@@ -3762,10 +3769,10 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           // only here — the swatch rows are captioned. Both offer the same
           // palette: the note is a single object, and a strip whose tones do
           // not exist on the block reads as two things glued together.
-          { ...swatches, label: "Faixa" },
+          { ...swatches, label: t("Faixa") },
           {
             kind: "swatches",
-            label: "Fundo",
+            label: t("Fundo"),
             colors: CANVAS_COLORS,
             active: it.fill,
             onPick: (c) =>
@@ -3777,11 +3784,11 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           },
           {
             kind: "stepper",
-            label: "Fonte",
+            label: t("Tamanho da fonte"),
             value: `${it.fontSize ?? NOTE_FONT_DEFAULT}px`,
             // Dimmed while it is still the default and not this note's own.
             muted: it.fontSize == null,
-            mutedTip: "Tamanho padrão da nota",
+            mutedTip: t("Tamanho padrão da nota"),
             onStep: (d) =>
               patchItem(it.id, (i) =>
                 i.type === "note"
@@ -3803,18 +3810,18 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
                     patchItem(it.id, (i) =>
                       i.type === "note" ? { ...i, fontSize: undefined } : i,
                     ),
-            resetTip: "Voltar ao tamanho padrão",
+            resetTip: t("Voltar ao tamanho padrão"),
           },
           { kind: "sep" },
           ...(binderItems.length
             ? [
                 {
                   id: "file",
-                  label: "Arquivar em",
+                  label: t("Arquivar em"),
                   icon: <NotebookTabs size={13} />,
                   submenu: binderItems.map((b, i) => ({
                     id: b.id,
-                    label: b.name || `Fichário ${i + 1}`,
+                    label: b.name || t("Fichário {n}", { n: i + 1 }),
                     icon: <NotebookTabs size={13} />,
                     onSelect: () => fileNote(it.id, b.id),
                   })),
@@ -3823,7 +3830,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             : []),
           {
             id: "edit",
-            label: "Editar nota",
+            label: t("Editar nota"),
             icon: <Pencil size={13} />,
             onSelect: () => {
               selectOnly(it.id);
@@ -3832,7 +3839,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           },
           {
             id: "lock",
-            label: it.locked ? "Destravar para agentes" : "Travar contra agentes",
+            label: it.locked ? t("Destravar para agentes") : t("Travar contra agentes"),
             icon: it.locked ? <Unlock size={13} /> : <Lock size={13} />,
             onSelect: () => toggleLock(it.id),
           },
@@ -3847,7 +3854,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           swatches,
           {
             kind: "sizes",
-            options: MENU_FONTS,
+            options: MENU_FONTS.map((o) => ({ ...o, label: t(o.label) })),
             active: (Object.keys(TEXT_PX) as StrokeSize[]).find(
               (k) => TEXT_PX[k] === it.fontSize,
             ),
@@ -3861,7 +3868,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           // region of the board, and no preset reaches that.
           {
             kind: "stepper",
-            label: "Fonte",
+            label: t("Tamanho da fonte"),
             value: `${it.fontSize}px`,
             onStep: (d) =>
               patchItem(it.id, (i) =>
@@ -3884,12 +3891,12 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
                     patchItem(it.id, (i) =>
                       i.type === "text" ? { ...i, fontSize: TEXT_FONT_DEFAULT } : i,
                     ),
-            resetTip: "Voltar ao tamanho padrão",
+            resetTip: t("Voltar ao tamanho padrão"),
           },
           { kind: "sep" },
           {
             id: "edit",
-            label: "Editar texto",
+            label: t("Editar texto"),
             icon: <Pencil size={13} />,
             onSelect: () => {
               selectOnly(it.id);
@@ -3908,7 +3915,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           { kind: "sep" },
           {
             id: "mute",
-            label: it.muted ? "Ativar som" : "Silenciar",
+            label: it.muted ? t("Ativar som") : t("Silenciar"),
             onSelect: () => {
               // The state alone is not the sound: the webview keeps playing
               // until the backend is told. Patching without the IPC made the
@@ -3921,7 +3928,9 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
                 useUI
                   .getState()
                   .showToast(
-                    `Não consegui ${muted ? "silenciar" : "reativar o som d"}o portal: ${e}`,
+                    muted
+                      ? t("Não consegui silenciar o portal: {e}", { e: String(e) })
+                      : t("Não consegui reativar o som do portal: {e}", { e: String(e) }),
                     "error",
                   );
                 // The sound did not change — put the state back so the icon
@@ -3943,7 +3952,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         return [
           {
             id: "edit",
-            label: "Editar fluxo",
+            label: t("Editar fluxo"),
             icon: <Pencil size={13} />,
             onSelect: () => editFlow(it.id),
           },
@@ -3959,7 +3968,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         return [
           {
             id: "flip",
-            label: "Inverter direção",
+            label: t("Inverter direção"),
             icon: <ArrowLeftRight size={13} />,
             onSelect: () =>
               patchItem(it.id, (i) =>
@@ -3973,7 +3982,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           swatches,
           {
             id: "root",
-            label: "Voltar à raiz do projeto",
+            label: t("Voltar à raiz do projeto"),
             icon: <FolderTree size={13} />,
             disabled: !it.path,
             onSelect: () => patchTree(it.id, { path: "", expanded: [] }),
@@ -3989,7 +3998,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           swatches,
           {
             id: "newnote",
-            label: "Nova nota aqui",
+            label: t("Nova nota aqui"),
             icon: <StickyNote size={13} />,
             onSelect: () => newNoteInBinder(it.id),
           },
@@ -3997,12 +4006,12 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             ? [
                 {
                   id: "tabs",
-                  label: "Ordem das abas",
+                  label: t("Ordem das abas"),
                   icon: <NotebookTabs size={13} />,
                   submenu: [
                     {
                       id: "left",
-                      label: "Mover a aba atual para a esquerda",
+                      label: t("Mover a aba atual para a esquerda"),
                       icon: <ChevronLeft size={13} />,
                       disabled: (it.active ?? 0) === 0,
                       onSelect: () =>
@@ -4012,7 +4021,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
                     },
                     {
                       id: "right",
-                      label: "Mover a aba atual para a direita",
+                      label: t("Mover a aba atual para a direita"),
                       icon: <ChevronRight size={13} />,
                       disabled: (it.active ?? 0) >= it.notes.length - 1,
                       onSelect: () =>
@@ -4023,7 +4032,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
                     { kind: "sep" },
                     {
                       id: "first",
-                      label: "Trazer a aba atual para o início",
+                      label: t("Trazer a aba atual para o início"),
                       icon: <BringToFront size={13} />,
                       disabled: (it.active ?? 0) === 0,
                       onSelect: () =>
@@ -4042,8 +4051,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             // nobody wants five notes gone either. They come back to the board.
             id: "delete",
             label: it.notes.length
-              ? `Excluir o fichário (${it.notes.length} nota(s) voltam ao canvas)`
-              : "Excluir o fichário",
+              ? t("Excluir o fichário ({n} nota(s) voltam ao canvas)", { n: it.notes.length })
+              : t("Excluir o fichário"),
             icon: <Trash2 size={13} />,
             danger: true,
             shortcut: "Del",
@@ -4058,14 +4067,14 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             : [
                 {
                   id: "open",
-                  label: "Abrir no editor",
+                  label: t("Abrir no editor"),
                   icon: <PenSquare size={13} />,
                   onSelect: () => openMediaInEditor(it.path),
                 } as MenuEntry,
               ]),
           {
             id: "swap",
-            label: "Trocar o arquivo…",
+            label: t("Trocar o arquivo…"),
             icon: <ImageIcon size={13} />,
             onSelect: () => void replaceMediaFile(it.id),
           },
@@ -4080,13 +4089,13 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           swatches,
           {
             id: "rename",
-            label: "Renomear",
+            label: t("Renomear"),
             icon: <Pencil size={13} />,
             onSelect: () => beginTextEdit(it.id),
           },
           {
             id: "pick",
-            label: "Selecionar o conteúdo",
+            label: t("Selecionar o conteúdo"),
             icon: <SquareDashedMousePointer size={13} />,
             onSelect: () => selectGroupContents(it.id),
           },
@@ -4099,7 +4108,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             // "Desagrupar" is the one that says what actually happens — the
             // moldura goes, the cards stay exactly where they are.
             id: "ungroup",
-            label: "Desagrupar",
+            label: t("Desagrupar"),
             icon: <GroupIcon size={13} />,
             shortcut: "Del",
             onSelect: () => deleteItem(it.id),
@@ -4111,7 +4120,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           swatches,
           {
             kind: "sizes",
-            options: MENU_STROKES,
+            options: MENU_STROKES.map((o) => ({ ...o, label: t(o.label) })),
             active: it.size,
             onPick: (s) =>
               patchItem(it.id, (i) =>
@@ -4273,6 +4282,21 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     }
     return m;
   }, [data.routines]);
+
+  // Same reading for the triggers: a `*` source counts for every card, since
+  // every card is the one it may fire on.
+  const triggerCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const t of data.triggers ?? []) {
+      if (!t.enabled) continue;
+      if (t.sourceId === "*") {
+        for (const term of sorted) m[term.id] = (m[term.id] ?? 0) + 1;
+      } else {
+        m[t.sourceId] = (m[t.sourceId] ?? 0) + 1;
+      }
+    }
+    return m;
+  }, [data.triggers, sorted]);
 
   /**
    * The camera cluster (map + zoom) floats over the board like the toolbar:
@@ -4715,6 +4739,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             onPick={pickNode}
             role={data.roles?.[t.id]}
             routineCount={routineCounts[t.id] ?? 0}
+            triggerCount={triggerCounts[t.id] ?? 0}
             connectRole={
               tool === "connect"
                 ? connectFrom === t.id
@@ -4759,22 +4784,23 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
 
       {empty && (
         <div className="cv-hint">
-          <p>Canvas vazio.</p>
+          <p>{t("Canvas vazio.")}</p>
           <p>
-            <kbd>Ctrl</kbd> + <kbd>T</kbd> abre um terminal; <kbd>W</kbd> um
-            portal (navegador). Caneta, notas e formas ficam na barra à esquerda.
+            <kbd>Ctrl</kbd> + <kbd>T</kbd> {t("abre um terminal;")} <kbd>W</kbd>{" "}
+            {t("um portal (navegador). Caneta, notas e formas ficam na barra à esquerda.")}
           </p>
           <p>
-            Clique com o botão direito em qualquer ponto vazio para criar coisas
-            aqui mesmo. Arrastar o fundo faz um laço de seleção.
+            {t(
+              "Clique com o botão direito em qualquer ponto vazio para criar coisas aqui mesmo. Arrastar o fundo faz um laço de seleção.",
+            )}
           </p>
           {/* The product's central rule was not stated anywhere in the
               interface — only in the README and the CLI manual. This is where
               it has to appear: before the first cable exists. */}
           <p>
-            <kbd>C</kbd> liga um cartão a outro — e o cabo é o que{" "}
-            <strong>autoriza um agente a falar com o outro</strong> (e a ler as
-            notas ligadas a ele). Sem cabo, cada um só enxerga a si mesmo.
+            <kbd>C</kbd> {t("liga um cartão a outro — e o cabo é o que")}{" "}
+            <strong>{t("autoriza um agente a falar com o outro")}</strong>{" "}
+            {t("(e a ler as notas ligadas a ele). Sem cabo, cada um só enxerga a si mesmo.")}
           </p>
         </div>
       )}
@@ -4810,14 +4836,14 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           items={[
             {
               id: "fit",
-              label: "Enquadrar tudo",
+              label: t("Enquadrar tudo"),
               icon: <Expand size={13} />,
               shortcut: "Shift+1",
               onSelect: fitView,
             },
             {
               id: "fitsel",
-              label: "Enquadrar a seleção",
+              label: t("Enquadrar a seleção"),
               icon: <ScanSearch size={13} />,
               shortcut: "Shift+2",
               disabled: selection.size === 0,
@@ -4825,7 +4851,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             },
             {
               id: "minimap",
-              label: minimap ? "Esconder o minimapa" : "Mostrar o minimapa",
+              label: minimap ? t("Esconder o minimapa") : t("Mostrar o minimapa"),
               icon: <MapIcon size={13} />,
               shortcut: "Ctrl+Shift+M",
               onSelect: toggleMinimap,
@@ -4845,15 +4871,14 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       {tool === "connect" && (
         <div className="cv-status">
           {connectFrom
-            ? "Clique no destino — terminal, nota ou portal (Esc cancela)"
-            : "Clique na origem — terminal, nota ou portal. Ligado, o agente dirige o site (`yard portal`)."}
+            ? t("Clique no destino — terminal, nota ou portal (Esc cancela)")
+            : t("Clique na origem — terminal, nota ou portal. Ligado, o agente dirige o site (`yard portal`).")}
         </div>
       )}
 
       {tool === "flow" && (
         <div className="cv-status">
-          Clique onde o cartão do fluxo deve nascer — depois conecte uma CLI a
-          ele (tecla C) para armá-lo.
+          {t("Clique onde o cartão do fluxo deve nascer — depois conecte uma CLI a ele (tecla C) para armá-lo.")}
         </div>
       )}
 
@@ -4899,15 +4924,15 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         <div className="cv-zoomctl">
           <button
             className="icon-btn"
-            data-tip-side="top" data-tip="Afastar"
-            aria-label="Afastar"
+            data-tip-side="top" data-tip={t("Afastar")}
+            aria-label={t("Afastar")}
             onClick={() => zoomBy(1 / 1.25)}
           >
             <ZoomOut size={13} />
           </button>
           <button
             className="cv-zoom-pct"
-            data-tip-side="top" data-tip-wrap="" data-tip="Voltar a 100% — o zoom em que o terminal é nítido. Botão direito: mais opções."
+            data-tip-side="top" data-tip-wrap="" data-tip={t("Voltar a 100% — o zoom em que o terminal é nítido. Botão direito: mais opções.")}
             aria-haspopup="menu"
             onClick={zoomTo100}
             onContextMenu={(e) => {
@@ -4921,8 +4946,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           </button>
           <button
             className="icon-btn"
-            data-tip-side="top" data-tip="Aproximar"
-            aria-label="Aproximar"
+            data-tip-side="top" data-tip={t("Aproximar")}
+            aria-label={t("Aproximar")}
             onClick={() => zoomBy(1.25)}
           >
             <ZoomIn size={13} />
@@ -4932,16 +4957,16 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           <span className="cv-zoom-sep" aria-hidden="true" />
           <button
             className="icon-btn"
-            data-tip-side="top" data-tip="Enquadrar tudo (Shift+1)"
-            aria-label="Enquadrar tudo"
+            data-tip-side="top" data-tip={t("Enquadrar tudo (Shift+1)")}
+            aria-label={t("Enquadrar tudo")}
             onClick={fitView}
           >
             <Expand size={13} />
           </button>
           <button
             className={`icon-btn ${minimap ? "is-active" : ""}`}
-            data-tip-side="top" data-tip="Minimapa (Ctrl+Shift+M)"
-            aria-label="Minimapa"
+            data-tip-side="top" data-tip={t("Minimapa (Ctrl+Shift+M)")}
+            aria-label={t("Minimapa")}
             aria-pressed={minimap}
             onClick={toggleMinimap}
           >

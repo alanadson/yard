@@ -78,6 +78,26 @@ src/
     └── bridge.ts            # the brains of the agent↔app bridge (see §4.1)
 ```
 
+### 3.1 Strings and language
+
+The UI's source language is Brazilian Portuguese, and the Portuguese
+sentence is the dictionary key: `t("Salvar")` (`src/lib/i18n.ts`) returns
+"Salvar" in pt-BR and the line `src/i18n/en/<area>.ts` holds for it in
+English — or the Portuguese again, recorded once, when that line does not
+exist yet. No invented ids: the source stays readable and the tests keep
+asserting the Portuguese text. `stores/langStore.ts` resolves the `lang`
+preference (`pt-BR` | `en` | `system`) against `navigator.language`, is
+the only writer of the active language and of `<html lang>`, and
+`hooks/useT.ts` gives components the same `t` plus the subscription that
+re-renders them. `tn(count, singular, plural)` handles plurals with both
+Portuguese forms as keys; `locale()` replaces hard-coded `"pt-BR"` in
+`toLocale*` calls. Module-level tables (shortcuts, settings categories,
+palette rows, menu builders) keep their Portuguese and are translated at
+the point of rendering. The `yard` CLI's own output is not translated: it
+is read by agents. `scripts/i18n-scan.mjs` lists the sentences not yet
+wrapped, per area; `src/i18n/en/index.test.ts` refuses empty lines, lines
+equal to their key and the same key translated two ways.
+
 ## 4. IPC contract (commands + events)
 
 A single file of truth on each side (`events.rs` ↔ `lib/ipc.ts`). The core's

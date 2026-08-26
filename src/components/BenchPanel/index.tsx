@@ -1,3 +1,4 @@
+// i18n-scan: tables
 /**
  * Bench — the right-edge utility panel (Ctrl+Shift+B), mirror of the left
  * sidebar: it disappears entirely when closed and comes back at the width it
@@ -95,6 +96,8 @@ import { useChanges } from "../../stores/changesStore";
 import { useEditor } from "../../stores/editorStore";
 import { projectIcon } from "../../lib/projectStyle";
 import { useProjects } from "../../stores/projectsStore";
+import { useT } from "../../hooks/useT";
+import { locale, t as tl } from "../../lib/i18n";
 import {
   useUI,
   BENCH_MAX,
@@ -103,6 +106,7 @@ import {
 } from "../../stores/uiStore";
 
 export function BenchPanel() {
+  const t = useT();
   const tab = useBench((s) => s.tab);
   const setTab = useBench((s) => s.setTab);
   const toggle = useBench((s) => s.toggle);
@@ -163,7 +167,7 @@ export function BenchPanel() {
       0,
     ),
     scopeName:
-      scope === "project" ? (project?.name ?? "") : scope === "global" ? "Globais" : "Todas",
+      scope === "project" ? (project?.name ?? "") : scope === "global" ? t("Globais") : t("Todas"),
     unsaved: unsavedCount,
     promptCount,
     projectName: project?.name ?? null,
@@ -180,7 +184,7 @@ export function BenchPanel() {
     <aside
       className="bench"
       style={{ width }}
-      aria-label="Bancada — arquivos, controle de versão, tarefas e prompts"
+      aria-label={t("Bancada — arquivos, controle de versão, tarefas e prompts")}
     >
       <Resizer
         side="left"
@@ -188,7 +192,7 @@ export function BenchPanel() {
         min={BENCH_MIN}
         max={BENCH_MAX}
         defaultWidth={DEFAULT_PREFS.benchWidth}
-        label="Largura da bancada"
+        label={t("Largura da bancada")}
         onResize={(w) => setPrefLocal("benchWidth", w)}
         onCommit={(w) => setPref("benchWidth", w)}
       />
@@ -202,8 +206,8 @@ export function BenchPanel() {
           <button
             className="bench-close"
             data-tip-at="right"
-            data-tip="Fechar (Ctrl+Shift+B)"
-            aria-label="Fechar a bancada"
+            data-tip={t("Fechar (Ctrl+Shift+B)")}
+            aria-label={t("Fechar a bancada")}
             onClick={toggle}
           >
             <X size={12} />
@@ -215,20 +219,20 @@ export function BenchPanel() {
             lives *inside* Files, so the folder stays lit while searching. The
             strip is a capsule segmented control — the same instrument as the
             scope filter below it, one shape language down the whole panel. */}
-        <div className="bench-tabs" role="tablist" aria-label="Seções da bancada">
+        <div className="bench-tabs" role="tablist" aria-label={t("Seções da bancada")}>
           <button
             role="tab"
             aria-selected={tab === "files" || tab === "search"}
             className={tab === "files" || tab === "search" ? "is-active" : ""}
             data-tip={
               unsavedCount > 0
-                ? `Arquivos — ${unsavedCount} não salvo(s) (Ctrl+Shift+E)`
-                : "Arquivos (Ctrl+Shift+E)"
+                ? t("Arquivos — {n} não salvo(s) (Ctrl+Shift+E)", { n: unsavedCount })
+                : t("Arquivos (Ctrl+Shift+E)")
             }
             aria-label={
               unsavedCount > 0
-                ? `Arquivos, ${unsavedCount} com alteração não salva`
-                : "Arquivos"
+                ? t("Arquivos, {n} com alteração não salva", { n: unsavedCount })
+                : t("Arquivos")
             }
             onClick={() => pickTab("files")}
           >
@@ -245,13 +249,13 @@ export function BenchPanel() {
             className={tab === "scm" ? "is-active" : ""}
             data-tip={
               changedCount > 0
-                ? `Controle — ${changedCount} arquivo(s) mexido(s) (Ctrl+Shift+R)`
-                : "Controle de versão (Ctrl+Shift+R)"
+                ? t("Controle — {n} arquivo(s) mexido(s) (Ctrl+Shift+R)", { n: changedCount })
+                : t("Controle de versão (Ctrl+Shift+R)")
             }
             aria-label={
               changedCount > 0
-                ? `Controle de versão, ${changedCount} arquivo(s) mexido(s)`
-                : "Controle de versão"
+                ? t("Controle de versão, {n} arquivo(s) mexido(s)", { n: changedCount })
+                : t("Controle de versão")
             }
             onClick={() => pickTab("scm")}
           >
@@ -266,9 +270,11 @@ export function BenchPanel() {
             role="tab"
             aria-selected={tab === "tasks"}
             className={tab === "tasks" ? "is-active" : ""}
-            data-tip={pendingCount > 0 ? `Tarefas — ${pendingCount} pendente(s)` : "Tarefas"}
+            data-tip={
+              pendingCount > 0 ? t("Tarefas — {n} pendente(s)", { n: pendingCount }) : t("Tarefas")
+            }
             aria-label={
-              pendingCount > 0 ? `Tarefas, ${pendingCount} pendente(s)` : "Tarefas"
+              pendingCount > 0 ? t("Tarefas, {n} pendente(s)", { n: pendingCount }) : t("Tarefas")
             }
             onClick={() => pickTab("tasks")}
           >
@@ -283,9 +289,11 @@ export function BenchPanel() {
             role="tab"
             aria-selected={tab === "prompts"}
             className={tab === "prompts" ? "is-active" : ""}
-            data-tip={promptCount > 0 ? `Prompts — ${promptCount} na biblioteca` : "Prompts"}
+            data-tip={
+              promptCount > 0 ? t("Prompts — {n} na biblioteca", { n: promptCount }) : t("Prompts")
+            }
             aria-label={
-              promptCount > 0 ? `Prompts, ${promptCount} na biblioteca` : "Prompts"
+              promptCount > 0 ? t("Prompts, {n} na biblioteca", { n: promptCount }) : t("Prompts")
             }
             onClick={() => pickTab("prompts")}
           >
@@ -360,7 +368,7 @@ async function injectIntoFocused(text: string): Promise<boolean> {
   const target = useProjects.getState().terminals.find((t) => t.id === targetId);
   if (!targetId || !target) {
     showToast(
-      "Clique num terminal primeiro — o texto vai para o que estiver em foco.",
+      tl("Clique num terminal primeiro — o texto vai para o que estiver em foco."),
       "error",
     );
     return false;
@@ -371,20 +379,21 @@ async function injectIntoFocused(text: string): Promise<boolean> {
   // still in the card either way, so refusing costs the user nothing.
   const ready = sendability(targetId);
   if (!ready.ok) {
-    showToast(ready.message ?? "O terminal em foco não pode receber agora.", "error");
+    showToast(ready.message ?? tl("O terminal em foco não pode receber agora."), "error");
     return false;
   }
   try {
     await injectPrompt(targetId, text);
   } catch (e) {
-    showToast(`Falha ao enviar: ${e}`, "error");
+    showToast(tl("Falha ao enviar: {e}", { e: String(e) }), "error");
     return false;
   }
-  showToast(`Enviado para ${target.title ?? target.program}.`);
+  showToast(tl("Enviado para {name}.", { name: target.title ?? target.program }));
   return true;
 }
 
 function TasksPane({ focusTick }: { focusTick: number }) {
+  const t = useT();
   const tasks = useBench((s) => s.tasks);
   const filter = useBench((s) => s.taskFilter);
   const setFilter = useBench((s) => s.setTaskFilter);
@@ -506,17 +515,17 @@ function TasksPane({ focusTick }: { focusTick: number }) {
             id: "project" as TaskFilter,
             label: project.name,
             count: counts.project,
-            tip: `Só as tarefas de ${project.name}`,
+            tip: t("Só as tarefas de {name}", { name: project.name }),
           },
         ]
       : []),
     {
       id: "global",
-      label: "Globais",
+      label: t("Globais"),
       count: counts.global,
-      tip: "Tarefas que seguem você em todos os projetos",
+      tip: t("Tarefas que seguem você em todos os projetos"),
     },
-    { id: "all", label: "Todas", count: counts.all, tip: "Tudo, de todos os projetos" },
+    { id: "all", label: t("Todas"), count: counts.all, tip: t("Tudo, de todos os projetos") },
   ];
 
   const ScopeIcon = projectIcon(project?.icon);
@@ -542,8 +551,8 @@ function TasksPane({ focusTick }: { focusTick: number }) {
               return;
             }
             void ask(
-              `Apagar ${done.length} tarefas concluídas desta lista? Não dá para desfazer.`,
-              { title: "Limpar concluídas", kind: "warning" },
+              t("Apagar {n} tarefas concluídas desta lista? Não dá para desfazer.", { n: done.length }),
+              { title: t("Limpar concluídas"), kind: "warning" },
             ).then((ok) => {
               if (ok) clearDone(done.map((t) => t.id));
             });
@@ -557,7 +566,7 @@ function TasksPane({ focusTick }: { focusTick: number }) {
     <div
       className="bench-body bench-body--tasks"
       role="tabpanel"
-      aria-label="Tarefas"
+      aria-label={t("Tarefas")}
       onContextMenu={openPaneMenu}
     >
       <form
@@ -573,10 +582,14 @@ function TasksPane({ focusTick }: { focusTick: number }) {
           value={text}
           placeholder={
             newGlobal
-              ? "Nova tarefa global… Enter adiciona"
-              : `Nova tarefa em ${project?.name ?? ""}… Enter adiciona`
+              ? t("Nova tarefa global… Enter adiciona")
+              : t("Nova tarefa em {name}… Enter adiciona", { name: project?.name ?? "" })
           }
-          aria-label={newGlobal ? "Nova tarefa global" : `Nova tarefa em ${project?.name}`}
+          aria-label={
+            newGlobal
+              ? t("Nova tarefa global")
+              : t("Nova tarefa em {name}", { name: project?.name ?? "" })
+          }
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Escape") {
@@ -591,10 +604,12 @@ function TasksPane({ focusTick }: { focusTick: number }) {
             className={`task-scope ${newGlobal ? "is-global" : ""}`}
             data-tip={
               newGlobal
-                ? `Global — clique para guardar em ${project.name}`
-                : `${project.name} — clique para guardar como global`
+                ? t("Global — clique para guardar em {name}", { name: project.name })
+                : t("{name} — clique para guardar como global", { name: project.name })
             }
-            aria-label={`Destino da nova tarefa: ${newGlobal ? "global" : project.name}`}
+            aria-label={t("Destino da nova tarefa: {scope}", {
+              scope: newGlobal ? t("global") : project.name,
+            })}
             onClick={() => setWantGlobal(!newGlobal)}
           >
             {newGlobal ? <Globe size={14} /> : <ScopeIcon size={14} />}
@@ -603,7 +618,7 @@ function TasksPane({ focusTick }: { focusTick: number }) {
       </form>
 
       {projects.length > 0 && (
-        <div className="task-seg" role="group" aria-label="Escopo das tarefas">
+        <div className="task-seg" role="group" aria-label={t("Escopo das tarefas")}>
           {chips.map((c) => (
             <button
               key={c.id}
@@ -628,8 +643,8 @@ function TasksPane({ focusTick }: { focusTick: number }) {
           <input
             ref={searchRef}
             value={q}
-            placeholder="Filtrar tarefas"
-            aria-label="Filtrar tarefas"
+            placeholder={t("Filtrar tarefas")}
+            aria-label={t("Filtrar tarefas")}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
@@ -641,7 +656,7 @@ function TasksPane({ focusTick }: { focusTick: number }) {
           {q && (
             <button
               className="icon-btn"
-              aria-label="Limpar o filtro"
+              aria-label={t("Limpar o filtro")}
               onClick={() => {
                 setQ("");
                 searchRef.current?.focus();
@@ -657,29 +672,28 @@ function TasksPane({ focusTick }: { focusTick: number }) {
         <div className="bench-empty">
           <ListTodo size={20} aria-hidden="true" />
           {q.trim() ? (
-            <>Nada encontrado para “{q.trim()}”.</>
+            <>{t("Nada encontrado para “{q}”.", { q: q.trim() })}</>
           ) : scope === "project" ? (
             <>
-              Nada por fazer em {project?.name}.
+              {t("Nada por fazer em {name}.", { name: project?.name ?? "" })}
               <small>
-                O que você anotar aqui só aparece com este projeto aberto — use
-                o botão ao lado do campo para guardar uma tarefa global.
+                {t(
+                  "O que você anotar aqui só aparece com este projeto aberto — use o botão ao lado do campo para guardar uma tarefa global.",
+                )}
               </small>
             </>
           ) : scope === "global" ? (
             <>
-              Nenhuma tarefa global.
+              {t("Nenhuma tarefa global.")}
               <small>
-                Globais seguem você em todos os projetos — bom para o que não é
-                de um código só.
+                {t("Globais seguem você em todos os projetos — bom para o que não é de um código só.")}
               </small>
             </>
           ) : (
             <>
-              Nada por fazer.
+              {t("Nada por fazer.")}
               <small>
-                Anote aqui os próximos passos enquanto os agentes trabalham — a
-                lista sobrevive ao fechar o Yard.
+                {t("Anote aqui os próximos passos enquanto os agentes trabalham — a lista sobrevive ao fechar o Yard.")}
               </small>
             </>
           )}
@@ -707,7 +721,7 @@ function TasksPane({ focusTick }: { focusTick: number }) {
               />
             ))}
             {pending.length === 0 && (
-              <li className="task-list-note">Tudo concluído.</li>
+              <li className="task-list-note">{t("Tudo concluído.")}</li>
             )}
           </ul>
 
@@ -727,12 +741,12 @@ function TasksPane({ focusTick }: { focusTick: number }) {
                   >
                     <ChevronDown size={11} strokeWidth={2.5} />
                   </span>
-                  Concluídas
+                  {t("Concluídas")}
                   <span className="task-done-count">{done.length}</span>
                 </button>
                 <button
                   className="task-done-clear"
-                  data-tip={`Apagar ${done.length} tarefa(s) concluída(s) desta lista`}
+                  data-tip={t("Apagar {n} tarefa(s) concluída(s) desta lista", { n: done.length })}
                   // Only what is on screen: the button sits under a filtered
                   // section and must not reach another project's history.
                   //
@@ -746,14 +760,16 @@ function TasksPane({ focusTick }: { focusTick: number }) {
                       return;
                     }
                     void ask(
-                      `Apagar ${done.length} tarefas concluídas desta lista? Não dá para desfazer.`,
-                      { title: "Limpar concluídas", kind: "warning" },
+                      t("Apagar {n} tarefas concluídas desta lista? Não dá para desfazer.", {
+                        n: done.length,
+                      }),
+                      { title: t("Limpar concluídas"), kind: "warning" },
                     ).then((ok) => {
                       if (ok) clearDone(done.map((t) => t.id));
                     });
                   }}
                 >
-                  Limpar
+                  {t("Limpar")}
                 </button>
               </div>
               {showDone && (
@@ -801,12 +817,12 @@ function taskMenu(
   return [
     {
       id: "due",
-      label: t.dueAt ? `Prazo: ${dueLabel(t.dueAt).text}` : "Definir prazo",
+      label: t.dueAt ? tl("Prazo: {due}", { due: dueLabel(t.dueAt).text }) : tl("Definir prazo"),
       icon: <CalendarClock size={13} />,
       submenu: [
         ...DUE_QUICK.map((o) => ({
           id: `due-${o.id}`,
-          label: o.label,
+          label: tl(o.label),
           icon:
             t.dueAt === inDays(o.days) ? <Check size={13} /> : <span aria-hidden />,
           onSelect: () => bench().setTaskDue(t.id, inDays(o.days)),
@@ -814,7 +830,7 @@ function taskMenu(
         { kind: "sep" as const },
         {
           id: "due-none",
-          label: "Sem prazo",
+          label: tl("Sem prazo"),
           icon: <CalendarX size={13} />,
           disabled: t.dueAt === null,
           onSelect: () => bench().setTaskDue(t.id, null),
@@ -823,23 +839,23 @@ function taskMenu(
     },
     {
       id: "prio",
-      label: PRIO_LABEL[t.priority],
+      label: tl(PRIO_LABEL[t.priority]),
       icon: <Flag size={13} />,
       submenu: ([0, 1, 2, 3] as const).map((p) => ({
         id: `prio-${p}`,
-        label: PRIO_LABEL[p],
+        label: tl(PRIO_LABEL[p]),
         icon: t.priority === p ? <Check size={13} /> : <span aria-hidden />,
         onSelect: () => bench().setPriority(t.id, p),
       })),
     },
     {
       id: "scope",
-      label: "Mover para",
+      label: tl("Mover para"),
       icon: <Globe size={13} />,
       submenu: [
         {
           id: "scope-global",
-          label: "Global (todos os projetos)",
+          label: tl("Global (todos os projetos)"),
           icon: t.projectId === null ? <Check size={13} /> : <Globe size={13} />,
           onSelect: () => bench().setTaskProject(t.id, null),
         },
@@ -855,27 +871,27 @@ function taskMenu(
     { kind: "sep" },
     {
       id: "send",
-      label: "Enviar ao terminal em foco",
+      label: tl("Enviar ao terminal em foco"),
       icon: <Send size={13} />,
       disabled: !hasTarget,
       onSelect: () => void injectIntoFocused(t.text),
     },
     {
       id: "composer",
-      label: "Abrir no compositor",
+      label: tl("Abrir no compositor"),
       icon: <MessageSquarePlus size={13} />,
       onSelect: () => useUI.getState().sendToComposer(t.text),
     },
     {
       id: "dup",
-      label: "Duplicar",
+      label: tl("Duplicar"),
       icon: <CopyPlus size={13} />,
       onSelect: () => bench().duplicateTask(t.id),
     },
     { kind: "sep" },
     {
       id: "del",
-      label: "Excluir",
+      label: tl("Excluir"),
       icon: <Trash2 size={13} />,
       danger: true,
       onSelect: () => bench().removeTask(t.id),
@@ -906,6 +922,7 @@ function TaskRow({
   onKeyMove: (id: string, dir: -1 | 1) => void;
   onMenu: (anchor: MenuAnchor) => void;
 }) {
+  const tr = useT();
   const toggleTask = useBench((s) => s.toggleTask);
   const renameTask = useBench((s) => s.renameTask);
   const cyclePriority = useBench((s) => s.cyclePriority);
@@ -1009,7 +1026,7 @@ function TaskRow({
       {!t.done && (
         <span
           className="task-grip"
-          data-tip="Arrastar para reordenar"
+          data-tip={tr("Arrastar para reordenar")}
           aria-hidden="true"
           onPointerDown={() => setArmed(true)}
         >
@@ -1020,7 +1037,9 @@ function TaskRow({
         className={`task-check ${t.done ? "is-done" : ""}`}
         role="checkbox"
         aria-checked={t.done}
-        aria-label={t.done ? `Reabrir “${t.text}”` : `Concluir “${t.text}”`}
+        aria-label={
+          t.done ? tr("Reabrir “{text}”", { text: t.text }) : tr("Concluir “{text}”", { text: t.text })
+        }
         onClick={() => toggleTask(t.id)}
       >
         {t.done && <Check size={12} strokeWidth={3} aria-hidden="true" />}
@@ -1040,7 +1059,7 @@ function TaskRow({
             className="task-edit"
             value={draft}
             autoFocus
-            aria-label="Editar tarefa"
+            aria-label={tr("Editar tarefa")}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") commitEdit();
@@ -1054,8 +1073,8 @@ function TaskRow({
             type="date"
             className="task-date"
             value={t.dueAt ? toDateField(t.dueAt) : ""}
-            data-tip="Prazo"
-            aria-label={`Prazo de “${t.text}”`}
+            data-tip={tr("Prazo")}
+            aria-label={tr("Prazo de “{text}”", { text: t.text })}
             // Applies on the spot: the date is its own decision, and losing it
             // to an Esc meant for the text would be a trap.
             onChange={(e) => setTaskDue(t.id, fromDateField(e.target.value))}
@@ -1067,7 +1086,7 @@ function TaskRow({
       ) : (
         <button
           className={`task-text ${t.done ? "task-text--done" : ""}`}
-          data-tip={t.done ? undefined : "Clique para editar · Alt+↑/↓ reordena"}
+          data-tip={t.done ? undefined : tr("Clique para editar · Alt+↑/↓ reordena")}
           aria-keyshortcuts={t.done ? undefined : "Alt+ArrowUp Alt+ArrowDown"}
           onClick={t.done ? () => toggleTask(t.id) : startEdit}
         >
@@ -1075,8 +1094,8 @@ function TaskRow({
             {t.priority > 0 && (
               <span
                 className="task-prio"
-                data-tip={PRIO_LABEL[t.priority]}
-                aria-label={PRIO_LABEL[t.priority]}
+                data-tip={tr(PRIO_LABEL[t.priority])}
+                aria-label={tr(PRIO_LABEL[t.priority])}
               >
                 {"!".repeat(t.priority)}
               </span>
@@ -1091,10 +1110,10 @@ function TaskRow({
               {showScope && (
                 <span
                   className="task-scope-tag"
-                  data-tip={project ? `Tarefa de ${project.name}` : "Tarefa global"}
+                  data-tip={project ? tr("Tarefa de {name}", { name: project.name }) : tr("Tarefa global")}
                   style={project?.color ? { color: project.color } : undefined}
                 >
-                  {project?.name ?? "global"}
+                  {project?.name ?? tr("global")}
                 </span>
               )}
             </span>
@@ -1105,8 +1124,10 @@ function TaskRow({
       {!t.done && !editing && (
         <button
           className={`icon-btn ${t.priority > 0 ? "is-flagged" : ""}`}
-          data-tip={`${PRIO_LABEL[t.priority]} — clique alterna`}
-          aria-label={`Alternar prioridade (atual: ${PRIO_LABEL[t.priority].toLowerCase()})`}
+          data-tip={tr("{prio} — clique alterna", { prio: tr(PRIO_LABEL[t.priority]) })}
+          aria-label={tr("Alternar prioridade (atual: {prio})", {
+            prio: tr(PRIO_LABEL[t.priority]).toLowerCase(),
+          })}
           onClick={() => cyclePriority(t.id)}
         >
           <Flag size={12} />
@@ -1114,8 +1135,8 @@ function TaskRow({
       )}
       <button
         className="icon-btn"
-        data-tip="Prazo, prioridade, escopo…"
-        aria-label={`Mais ações de “${t.text}”`}
+        data-tip={tr("Prazo, prioridade, escopo…")}
+        aria-label={tr("Mais ações de “{text}”", { text: t.text })}
         onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           onMenu({ x: r.right, y: r.bottom + 4 });
@@ -1158,6 +1179,7 @@ const ACTION_LABEL: Record<PromptAction, string> = {
 };
 
 function PromptsPane({ focusTick }: { focusTick: number }) {
+  const t = useT();
   const prompts = useBench((s) => s.prompts);
   const markUsed = useBench((s) => s.markUsed);
   const showToast = useUI((s) => s.showToast);
@@ -1191,7 +1213,7 @@ function PromptsPane({ focusTick }: { focusTick: number }) {
   const allTags = useMemo(
     () =>
       [...new Set(prompts.flatMap((p) => p.tags))].sort((a, b) =>
-        a.localeCompare(b, "pt-BR"),
+        a.localeCompare(b, locale()),
       ),
     [prompts],
   );
@@ -1225,7 +1247,7 @@ function PromptsPane({ focusTick }: { focusTick: number }) {
     if (action === "copy") {
       const ok = await copyText(text);
       if (!ok) {
-        showToast("Não consegui copiar para a área de transferência.", "error");
+        showToast(t("Não consegui copiar para a área de transferência."), "error");
         return;
       }
       setCopiedId(p.id);
@@ -1253,8 +1275,8 @@ function PromptsPane({ focusTick }: { focusTick: number }) {
   };
 
   const confirmDelete = async (p: BenchPrompt) => {
-    const sure = await ask(`Excluir o prompt “${p.title}”? Não dá para desfazer.`, {
-      title: "Excluir prompt",
+    const sure = await ask(t("Excluir o prompt “{title}”? Não dá para desfazer.", { title: p.title }), {
+      title: t("Excluir prompt"),
       kind: "warning",
     });
     if (sure) useBench.getState().removePrompt(p.id);
@@ -1286,7 +1308,7 @@ function PromptsPane({ focusTick }: { focusTick: number }) {
     <div
       className="bench-body"
       role="tabpanel"
-      aria-label="Prompts"
+      aria-label={t("Prompts")}
       onContextMenu={openPaneMenu}
     >
       <div className="prompt-bar">
@@ -1295,8 +1317,8 @@ function PromptsPane({ focusTick }: { focusTick: number }) {
           <input
             ref={searchRef}
             value={q}
-            placeholder="Buscar por título, texto ou tag"
-            aria-label="Buscar prompts"
+            placeholder={t("Buscar por título, texto ou tag")}
+            aria-label={t("Buscar prompts")}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
@@ -1308,7 +1330,7 @@ function PromptsPane({ focusTick }: { focusTick: number }) {
           {q && (
             <button
               className="icon-btn"
-              aria-label="Limpar a busca"
+              aria-label={t("Limpar a busca")}
               onClick={() => {
                 setQ("");
                 searchRef.current?.focus();
@@ -1320,15 +1342,15 @@ function PromptsPane({ focusTick }: { focusTick: number }) {
         </div>
         <button
           className="btn btn--ghost btn--sm"
-          data-tip="Guardar um prompt novo"
+          data-tip={t("Guardar um prompt novo")}
           onClick={() => setEditingId((id) => (id === "new" ? null : "new"))}
         >
-          <Plus size={12} aria-hidden="true" /> Novo
+          <Plus size={12} aria-hidden="true" /> {t("Novo")}
         </button>
       </div>
 
       {allTags.length > 0 && (
-        <div className="bench-chips" role="group" aria-label="Filtrar por tag">
+        <div className="bench-chips" role="group" aria-label={t("Filtrar por tag")}>
           {allTags.map((name) => (
             <button
               key={name}
@@ -1349,20 +1371,20 @@ function PromptsPane({ focusTick }: { focusTick: number }) {
       {prompts.length === 0 && editingId !== "new" ? (
         <div className="bench-empty">
           <BookMarked size={20} aria-hidden="true" />
-          Nenhum prompt guardado.
+          {t("Nenhum prompt guardado.")}
           <small>
-            Guarde aqui os prompts que você reutiliza — com título, tags e
-            variáveis <code>{"{{assim}}"}</code> para preencher na hora de usar.
+            {t("Guarde aqui os prompts que você reutiliza — com título, tags e variáveis")}{" "}
+            <code>{"{{assim}}"}</code> {t("para preencher na hora de usar.")}
           </small>
           <button className="btn btn--sm" onClick={() => setEditingId("new")}>
-            <Plus size={12} aria-hidden="true" /> Guardar o primeiro
+            <Plus size={12} aria-hidden="true" /> {t("Guardar o primeiro")}
           </button>
         </div>
       ) : visible.length === 0 && editingId !== "new" ? (
         <div className="bench-empty">
-          Nada encontrado
-          {q.trim() && <> para “{q.trim()}”</>}
-          {tag && <> na tag “{tag}”</>}.
+          {t("Nada encontrado")}
+          {q.trim() && <> {t("para “{q}”", { q: q.trim() })}</>}
+          {tag && <> {t("na tag “{tag}”", { tag })}</>}.
         </div>
       ) : (
         <ul className="prompt-list">
@@ -1413,7 +1435,7 @@ function PromptsPane({ focusTick }: { focusTick: number }) {
           items={[
             {
               id: "edit",
-              label: "Editar",
+              label: t("Editar"),
               icon: <SquarePen size={13} />,
               onSelect: () => {
                 setFill(null);
@@ -1422,20 +1444,20 @@ function PromptsPane({ focusTick }: { focusTick: number }) {
             },
             {
               id: "composer",
-              label: "Abrir no compositor",
+              label: t("Abrir no compositor"),
               icon: <MessageSquarePlus size={13} />,
               onSelect: () => requestAction(menu.prompt, "composer"),
             },
             { kind: "sep" },
             {
               id: "pin",
-              label: menu.prompt.pinned ? "Desafixar" : "Fixar no topo",
+              label: menu.prompt.pinned ? t("Desafixar") : t("Fixar no topo"),
               icon: <Pin size={13} />,
               onSelect: () => useBench.getState().togglePin(menu.prompt.id),
             },
             {
               id: "dup",
-              label: "Duplicar",
+              label: t("Duplicar"),
               icon: <CopyPlus size={13} />,
               onSelect: () => {
                 const id = useBench.getState().duplicatePrompt(menu.prompt.id);
@@ -1445,7 +1467,7 @@ function PromptsPane({ focusTick }: { focusTick: number }) {
             { kind: "sep" },
             {
               id: "del",
-              label: "Excluir…",
+              label: t("Excluir…"),
               icon: <Trash2 size={13} />,
               danger: true,
               onSelect: () => void confirmDelete(menu.prompt),
@@ -1478,8 +1500,9 @@ function PromptCard({
   onCancelFill: () => void;
   onMenu: (anchor: MenuAnchor) => void;
 }) {
+  const t = useT();
   const vars = promptVars(p.body);
-  const noTargetTip = "Clique num terminal primeiro";
+  const noTargetTip = t("Clique num terminal primeiro");
 
   return (
     <li
@@ -1495,35 +1518,35 @@ function PromptCard({
         <button
           className="prompt-card-open"
           data-tip-wrap=""
-          data-tip={`“${p.title}” — clique para ver e editar`}
+          data-tip={t("“{title}” — clique para ver e editar", { title: p.title })}
           onClick={onOpen}
         >
           {p.pinned && (
-            <Pin size={10} className="prompt-pin" aria-label="Fixado" />
+            <Pin size={10} className="prompt-pin" aria-label={t("Fixado")} />
           )}
           <strong>{p.title}</strong>
         </button>
         <div className="prompt-card-actions">
           <button
             className={`icon-btn ${copied ? "is-copied" : ""}`}
-            data-tip={copied ? "Copiado!" : "Copiar"}
-            aria-label={`Copiar “${p.title}”`}
+            data-tip={copied ? t("Copiado!") : t("Copiar")}
+            aria-label={t("Copiar “{title}”", { title: p.title })}
             onClick={() => onAction("copy")}
           >
             {copied ? <Check size={12} /> : <Copy size={12} />}
           </button>
           <button
             className="icon-btn"
-            data-tip="Editar"
-            aria-label={`Editar “${p.title}”`}
+            data-tip={t("Editar")}
+            aria-label={t("Editar “{title}”", { title: p.title })}
             onClick={onOpen}
           >
             <SquarePen size={12} />
           </button>
           <button
             className="icon-btn icon-btn--go"
-            data-tip={hasTarget ? "Enviar para o terminal em foco" : noTargetTip}
-            aria-label={`Enviar “${p.title}” para o terminal em foco`}
+            data-tip={hasTarget ? t("Enviar para o terminal em foco") : noTargetTip}
+            aria-label={t("Enviar “{title}” para o terminal em foco", { title: p.title })}
             disabled={!hasTarget}
             onClick={() => onAction("send")}
           >
@@ -1531,8 +1554,8 @@ function PromptCard({
           </button>
           <button
             className="icon-btn"
-            data-tip="Mais ações"
-            aria-label={`Mais ações de “${p.title}”`}
+            data-tip={t("Mais ações")}
+            aria-label={t("Mais ações de “{title}”", { title: p.title })}
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect();
               onMenu({ x: r.right, y: r.bottom + 4 });
@@ -1564,7 +1587,7 @@ function PromptCard({
                 <span
                   key={v}
                   className="prompt-var"
-                  data-tip="Variável — preenchida na hora de usar"
+                  data-tip={t("Variável — preenchida na hora de usar")}
                 >
                   {"{{"}
                   {v}
@@ -1574,9 +1597,9 @@ function PromptCard({
               {p.uses > 0 && (
                 <span
                   className="prompt-uses"
-                  data-tip={`Usado ${p.uses} vez(es)`}
+                  data-tip={t("Usado {n} vez(es)", { n: p.uses })}
                   role="img"
-                  aria-label={`Usado ${p.uses} vez(es)`}
+                  aria-label={t("Usado {n} vez(es)", { n: p.uses })}
                 >
                   {p.uses}×
                 </span>
@@ -1601,6 +1624,7 @@ function VarFill({
   onCancel: () => void;
   onRun: (values: Record<string, string>) => void;
 }) {
+  const t = useT();
   const [values, setValues] = useState<Record<string, string>>({});
   const firstRef = useRef<HTMLInputElement>(null);
 
@@ -1621,7 +1645,7 @@ function VarFill({
 
   return (
     <div className="prompt-fill">
-      <span className="prompt-fill-title">Preencha as variáveis</span>
+      <span className="prompt-fill-title">{t("Preencha as variáveis")}</span>
       {vars.map((v, i) => (
         <label key={v} className="prompt-fill-row">
           <span>{v}</span>
@@ -1636,10 +1660,10 @@ function VarFill({
       ))}
       <div className="prompt-fill-foot">
         <button className="btn btn--ghost btn--sm" onClick={onCancel}>
-          Cancelar
+          {t("Cancelar")}
         </button>
         <button className="btn btn--primary btn--sm" onClick={() => onRun(values)}>
-          {ACTION_LABEL[action]}
+          {t(ACTION_LABEL[action])}
         </button>
       </div>
     </div>
@@ -1662,6 +1686,7 @@ function PromptEditor({
   onClose: () => void;
   onDelete?: () => void;
 }) {
+  const t = useT();
   const [title, setTitle] = useState(prompt?.title ?? "");
   const [body, setBody] = useState(prompt?.body ?? "");
   const [tagsText, setTagsText] = useState(prompt?.tags.join(", ") ?? "");
@@ -1723,7 +1748,7 @@ function PromptEditor({
     doneRef.current = true;
     // Saving an untouched editor is just a close — no write, no toast.
     if ((dirty() || !prompt) && commit(stateRef.current)) {
-      useUI.getState().showToast("Prompt salvo.");
+      useUI.getState().showToast(t("Prompt salvo."));
     }
     onClose();
   };
@@ -1752,7 +1777,7 @@ function PromptEditor({
     <div
       className="prompt-editor"
       role="group"
-      aria-label={prompt ? `Editar “${prompt.title}”` : "Novo prompt"}
+      aria-label={prompt ? t("Editar “{title}”", { title: prompt.title }) : t("Novo prompt")}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
           e.stopPropagation();
@@ -1766,15 +1791,15 @@ function PromptEditor({
     >
       <div className="prompt-editor-head">
         <span className="prompt-editor-title">
-          {prompt ? "Editar prompt" : "Novo prompt"}
+          {prompt ? t("Editar prompt") : t("Novo prompt")}
         </span>
-        <span className="bench-hint">Ctrl+Enter salva</span>
+        <span className="bench-hint">{t("Ctrl+Enter salva")}</span>
       </div>
       <input
         ref={titleRef}
         value={title}
-        placeholder="Título do prompt"
-        aria-label="Título do prompt"
+        placeholder={t("Título do prompt")}
+        aria-label={t("Título do prompt")}
         onChange={(e) => setTitle(e.target.value)}
         onKeyDown={(e) => {
           // Enter in the title means "next": down into the text, not submit.
@@ -1789,19 +1814,19 @@ function PromptEditor({
         value={body}
         rows={6}
         spellCheck={false}
-        placeholder={"O texto do prompt…\nUse {{variável}} para campos a preencher na hora de usar."}
-        aria-label="Texto do prompt"
+        placeholder={t("O texto do prompt…\nUse {{variável}} para campos a preencher na hora de usar.")}
+        aria-label={t("Texto do prompt")}
         onChange={(e) => setBody(e.target.value)}
       />
       {/* Live echo of the variables the body defines — proof the syntax took. */}
       {vars.length > 0 && (
-        <div className="prompt-editor-vars" aria-label="Variáveis detectadas">
-          <span className="prompt-editor-vars-label">Variáveis</span>
+        <div className="prompt-editor-vars" aria-label={t("Variáveis detectadas")}>
+          <span className="prompt-editor-vars-label">{t("Variáveis")}</span>
           {vars.map((v) => (
             <span
               key={v}
               className="prompt-var"
-              data-tip="Vira um campo a preencher na hora de usar"
+              data-tip={t("Vira um campo a preencher na hora de usar")}
             >
               {"{{"}
               {v}
@@ -1812,8 +1837,8 @@ function PromptEditor({
       )}
       <input
         value={tagsText}
-        placeholder="tags separadas por vírgula (git, revisão, deploy…)"
-        aria-label="Tags, separadas por vírgula"
+        placeholder={t("tags separadas por vírgula (git, revisão, deploy…)")}
+        aria-label={t("Tags, separadas por vírgula")}
         onChange={(e) => setTagsText(e.target.value)}
         onKeyDown={(e) => {
           // Tags are the last field — here Enter does mean "done".
@@ -1827,18 +1852,18 @@ function PromptEditor({
         {onDelete && (
           <button
             className="icon-btn icon-btn--danger"
-            data-tip="Excluir este prompt"
-            aria-label="Excluir este prompt"
+            data-tip={t("Excluir este prompt")}
+            aria-label={t("Excluir este prompt")}
             onClick={onDelete}
           >
             <Trash2 size={13} />
           </button>
         )}
         <button className="btn btn--ghost btn--sm prompt-editor-cancel" onClick={cancel}>
-          Cancelar
+          {t("Cancelar")}
         </button>
         <button className="btn btn--primary btn--sm" onClick={save}>
-          Salvar
+          {t("Salvar")}
         </button>
       </div>
     </div>

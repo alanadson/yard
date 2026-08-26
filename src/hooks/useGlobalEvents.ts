@@ -15,6 +15,7 @@ import {
 import { classifyPrompt, TAIL_CAP } from "../lib/blocked";
 import { AsyncDisposer } from "../lib/disposables";
 import { isFrontOnScreen } from "../lib/frontTab";
+import { t } from "../lib/i18n";
 import { ipc, on } from "../lib/ipc";
 import { shouldNotify } from "../lib/notifyAgent";
 import { useChanges } from "../stores/changesStore";
@@ -135,17 +136,21 @@ export function useGlobalEvents() {
           const project = term
             ? useProjects.getState().projectOfGroup(term.groupId)
             : undefined;
-          const where = project ? ` em ${project.name}` : "";
+          // Four whole sentences rather than one with a hole: "em <project>"
+          // sits somewhere else in another language.
+          const vars = { title: p.title, project: project?.name ?? "", ask: asking?.ask ?? "" };
+          const body = asking
+            ? project
+              ? t("{title} está esperando você em {project}: {ask}", vars)
+              : t("{title} está esperando você: {ask}", vars)
+            : project
+              ? t("{title} terminou em {project}.", vars)
+              : t("{title} terminou.", vars);
           try {
             let ok = await isPermissionGranted();
             if (!ok) ok = (await requestPermission()) === "granted";
             if (ok) {
-              sendNotification({
-                title: "Yard",
-                body: asking
-                  ? `${p.title} está esperando você${where}: ${asking.ask}`
-                  : `${p.title} terminou${where}.`,
-              });
+              sendNotification({ title: "Yard", body });
             }
           } catch (e) {
             console.warn("[yard] notificacao indisponivel", e);

@@ -78,9 +78,13 @@ function inRoot(c: ReviewComment, projectId: string, root: string): boolean {
   return c.root === "" || sameRoot(c.root, root);
 }
 
-/** What `add` says when the review is already at the cap. */
+/**
+ * What `add` says when the review is already at the cap. A constant, so the
+ * caller shows it with `t(REVIEW_FULL)` — the English line in
+ * `i18n/en/stores.ts` is keyed by this exact sentence, cap included.
+ */
 export const REVIEW_FULL =
-  `A revisão já tem ${CAP} anotações neste worktree — envie ou limpe antes de anotar mais.`;
+  `A revisão já tem ${CAP} anotações neste worktree — envie ou limpe antes de anotar mais.`; // i18n-ok
 
 interface ReviewState {
   comments: ReviewComment[];

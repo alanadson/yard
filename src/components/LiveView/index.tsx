@@ -51,12 +51,22 @@ import {
 } from "../../stores/liveStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
+import { useT } from "../../hooks/useT";
+import { locale } from "../../lib/i18n";
 
-const compact = new Intl.NumberFormat("pt-BR", {
-  notation: "compact",
-  maximumFractionDigits: 1,
-});
+/** One compact formatter per interface language — the overlay renders every second. */
+const compactByLocale = new Map<string, Intl.NumberFormat>();
+function compact(): Intl.NumberFormat {
+  const l = locale();
+  let f = compactByLocale.get(l);
+  if (!f) {
+    f = new Intl.NumberFormat(l, { notation: "compact", maximumFractionDigits: 1 });
+    compactByLocale.set(l, f);
+  }
+  return f;
+}
 
+// i18n-scan: tables
 const LANES: { id: PlanCard["status"]; label: string }[] = [
   { id: "pending", label: "A fazer" },
   { id: "in_progress", label: "Fazendo" },
@@ -93,6 +103,7 @@ function RowMark({ e }: { e: LiveEntry }) {
 }
 
 function RowBody({ e }: { e: LiveEntry }) {
+  const t = useT();
   if (e.kind !== "tool") {
     return <span className="live-row-text">{e.text}</span>;
   }
@@ -118,7 +129,7 @@ function RowBody({ e }: { e: LiveEntry }) {
           {e.detail}
         </span>
       )}
-      {e.side && <span className="live-side" data-tip="Feito por um sub-agent">sub</span>}
+      {e.side && <span className="live-side" data-tip={t("Feito por um sub-agent")}>sub</span>}
     </span>
   );
 }
@@ -131,10 +142,11 @@ function RowBody({ e }: { e: LiveEntry }) {
  * overlay's 1 s tick used to re-render all of it to move a "4s ago" elsewhere.
  */
 const Timeline = memo(function Timeline({ entries }: { entries: LiveEntry[] }) {
+  const t = useT();
   return (
     <>
       {entries.length === 0 && (
-        <div className="live-feed-empty">ainda nada por aqui…</div>
+        <div className="live-feed-empty">{t("ainda nada por aqui…")}</div>
       )}
       {entries.map((e) => (
         <TimelineRow key={e.id} e={e} />
@@ -186,6 +198,7 @@ export function LiveView() {
   const switchSession = useLive((s) => s.switchSession);
   const error = useLive((s) => s.error);
   const retry = useLive((s) => s.retry);
+  const t = useT();
 
   const activeProjectId = useProjects((s) => s.activeProjectId);
   const openViewer = useChanges((s) => s.openViewer);
@@ -291,14 +304,14 @@ export function LiveView() {
     // from the keyboard and never said why. Without a repository, the click
     // answers with the reason.
     if (activeProjectId && isRepo) openViewer(activeProjectId, path);
-    else useUI.getState().showToast(NO_REPO, "info");
+    else useUI.getState().showToast(t(NO_REPO), "info");
   };
 
   const statusLabel = !working
-    ? "ocioso"
+    ? t("ocioso")
     : lastNoteKind === "think" && pendingTools === 0
-      ? "pensando"
-      : "trabalhando";
+      ? t("pensando")
+      : t("trabalhando");
 
   return (
     <div
@@ -320,7 +333,7 @@ export function LiveView() {
         className="live"
         role="dialog"
         aria-modal="true"
-        aria-label={`Ao vivo: ${terminalTitle}`}
+        aria-label={t("Ao vivo: {title}", { title: terminalTitle })}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="live-head">
@@ -334,17 +347,17 @@ export function LiveView() {
             </strong>
             <span className="live-sub">
               {phase === "finding"
-                ? "procurando a sessão…"
+                ? t("procurando a sessão…")
                 : phase === "none"
-                  ? "esperando a primeira sessão…"
+                  ? t("esperando a primeira sessão…")
                   : (session?.title ?? session?.externalId ?? "")}
             </span>
           </div>
           <span className={`live-status ${working ? "live-status--on" : ""}`}>
             {phase === "backfill" ? (
               <>
-                <Loader2 size={11} className="spin" aria-hidden="true" /> carregando
-                histórico…
+                <Loader2 size={11} className="spin" aria-hidden="true" />{" "}
+                {t("carregando histórico…")}
               </>
             ) : (
               statusLabel
@@ -353,7 +366,7 @@ export function LiveView() {
 
           <div className="live-stats">
             {usage.model && (
-              <span className="live-stat" data-tip="Modelo da sessão">
+              <span className="live-stat" data-tip={t("Modelo da sessão")}>
                 {usage.model.replace(/^claude-/, "")}
               </span>
             )}
@@ -361,14 +374,18 @@ export function LiveView() {
               <span
                 className="live-stat"
                 data-tip-wrap=""
-                data-tip={`Tokens — entrada ${usage.inTokens.toLocaleString("pt-BR")} · saída ${usage.outTokens.toLocaleString("pt-BR")} · cache ${usage.cacheRead.toLocaleString("pt-BR")}`}
+                data-tip={t("Tokens — entrada {input} · saída {output} · cache {cache}", {
+                  input: usage.inTokens.toLocaleString(locale()),
+                  output: usage.outTokens.toLocaleString(locale()),
+                  cache: usage.cacheRead.toLocaleString(locale()),
+                })}
               >
-                ↑{compact.format(usage.inTokens + usage.cacheWrite)} ↓
-                {compact.format(usage.outTokens)}
+                ↑{compact().format(usage.inTokens + usage.cacheWrite)} ↓
+                {compact().format(usage.outTokens)}
               </span>
             )}
             {usage.costUsd != null && (
-              <span className="live-stat" data-tip="Custo estimado (tabela pública)">
+              <span className="live-stat" data-tip={t("Custo estimado (tabela pública)")}>
                 US$ {usage.costUsd.toFixed(usage.costUsd < 1 ? 3 : 2)}
               </span>
             )}
@@ -377,9 +394,9 @@ export function LiveView() {
           {sessions.length > 1 && (
             <button
               className="icon-btn"
-              aria-label="Trocar de sessão"
+              aria-label={t("Trocar de sessão")}
               aria-haspopup="menu"
-              data-tip="Trocar de sessão"
+              data-tip={t("Trocar de sessão")}
               onClick={(e) => {
                 const r = e.currentTarget.getBoundingClientRect();
                 setSessMenu({ x: r.right - 260, y: r.bottom + 4 });
@@ -390,9 +407,9 @@ export function LiveView() {
           )}
           <button
             className="icon-btn"
-            aria-label="Fechar o Ao Vivo (Esc)"
+            aria-label={t("Fechar o Ao Vivo (Esc)")}
             data-tip-at="left"
-            data-tip="Fechar (Esc)"
+            data-tip={t("Fechar (Esc)")}
             onClick={close}
           >
             <X size={13} />
@@ -415,7 +432,7 @@ export function LiveView() {
         {phase === "finding" && (
           <div className="live-empty" role="status" aria-live="polite">
             <Loader2 size={20} className="spin" aria-hidden="true" />
-            <span>procurando a sessão do agente…</span>
+            <span>{t("procurando a sessão do agente…")}</span>
           </div>
         )}
 
@@ -424,13 +441,13 @@ export function LiveView() {
         {phase === "error" && (
           <div className="live-empty live-empty--error" role="alert">
             <AlertCircle size={22} aria-hidden="true" />
-            <span>Não consegui ler as sessões deste agente.</span>
+            <span>{t("Não consegui ler as sessões deste agente.")}</span>
             <small>
               {error ??
-                "O Yard lê os rastros que a CLI grava em disco; algo impediu essa leitura."}
+                t("O Yard lê os rastros que a CLI grava em disco; algo impediu essa leitura.")}
             </small>
             <button className="btn btn--sm" onClick={() => void retry()}>
-              <RotateCw size={11} aria-hidden="true" /> Tentar de novo
+              <RotateCw size={11} aria-hidden="true" /> {t("Tentar de novo")}
             </button>
           </div>
         )}
@@ -438,10 +455,9 @@ export function LiveView() {
         {phase === "none" && (
           <div className="live-empty">
             <Bot size={22} aria-hidden="true" />
-            <span>Esperando o primeiro turno do agente…</span>
+            <span>{t("Esperando o primeiro turno do agente…")}</span>
             <small>
-              O rastro nasce quando a conversa começa. Assim que a CLI
-              escrever qualquer coisa, ele aparece aqui sozinho.
+              {t("O rastro nasce quando a conversa começa. Assim que a CLI escrever qualquer coisa, ele aparece aqui sozinho.")}
             </small>
             <Loader2 size={14} className="spin" aria-hidden="true" />
           </div>
@@ -450,13 +466,13 @@ export function LiveView() {
         {(phase === "backfill" || phase === "live") && (
           <div className="live-body">
             {/* ---- timeline ---- */}
-            <section className="live-col live-col--feed" aria-label="Linha do tempo">
+            <section className="live-col live-col--feed" aria-label={t("Linha do tempo")}>
               <header className="live-col-head">
-                <span>Linha do tempo</span>
+                <span>{t("Linha do tempo")}</span>
                 <span className="live-col-meta">
-                  {counts.edits > 0 && `${counts.edits} ed`}
-                  {counts.runs > 0 && ` · ${counts.runs} cmd`}
-                  {counts.reads > 0 && ` · ${counts.reads} leit`}
+                  {counts.edits > 0 && t("{n} ed", { n: counts.edits })}
+                  {counts.runs > 0 && ` · ${t("{n} cmd", { n: counts.runs })}`}
+                  {counts.reads > 0 && ` · ${t("{n} leit", { n: counts.reads })}`}
                 </span>
               </header>
               <div
@@ -478,20 +494,20 @@ export function LiveView() {
                     if (el) el.scrollTop = el.scrollHeight;
                   }}
                 >
-                  seguir ao vivo ↓
+                  {t("seguir ao vivo ↓")}
                 </button>
               )}
             </section>
 
             {/* ---- touched files ---- */}
-            <section className="live-col live-col--files" aria-label="Arquivos tocados">
+            <section className="live-col live-col--files" aria-label={t("Arquivos tocados")}>
               <header className="live-col-head">
-                <span>Arquivos tocados</span>
+                <span>{t("Arquivos tocados")}</span>
                 <span className="live-col-meta">{fileList.length}</span>
               </header>
               <div className="live-files">
                 {fileList.length === 0 && (
-                  <div className="live-feed-empty">nenhum arquivo tocado ainda</div>
+                  <div className="live-feed-empty">{t("nenhum arquivo tocado ainda")}</div>
                 )}
                 {fileList.map((f) => {
                   const p = splitPath(f.path);
@@ -536,21 +552,21 @@ export function LiveView() {
             </section>
 
             {/* ---- board: plan + sub-agents ---- */}
-            <section className="live-col live-col--board" aria-label="Plano e sub-agents">
+            <section className="live-col live-col--board" aria-label={t("Plano e sub-agents")}>
               <header className="live-col-head">
-                <span>Plano do agente</span>
+                <span>{t("Plano do agente")}</span>
                 <span className="live-col-meta">
                   {byLane.completed.length}/{planCards.length}
                 </span>
               </header>
               {planCards.length === 0 ? (
-                <div className="live-feed-empty">o agente ainda não montou um plano</div>
+                <div className="live-feed-empty">{t("o agente ainda não montou um plano")}</div>
               ) : (
                 <div className="live-kanban">
                   {LANES.map((lane) => (
                     <div className="live-lane" key={lane.id}>
                       <span className="live-lane-head">
-                        {lane.label}
+                        {t(lane.label)}
                         <em>{byLane[lane.id].length}</em>
                       </span>
                       {byLane[lane.id].map((c) => (
@@ -575,23 +591,23 @@ export function LiveView() {
               <header className="live-col-head live-col-head--gap">
                 <span>Sub-agents</span>
                 <span className="live-col-meta">
-                  {runningAgents.length > 0 && `${runningAgents.length} rodando`}
+                  {runningAgents.length > 0 && t("{n} rodando", { n: runningAgents.length })}
                 </span>
               </header>
               {agents.length === 0 ? (
-                <div className="live-feed-empty">nenhum sub-agent nesta sessão</div>
+                <div className="live-feed-empty">{t("nenhum sub-agent nesta sessão")}</div>
               ) : (
                 <div className="live-kanban live-kanban--two">
                   <div className="live-lane">
                     <span className="live-lane-head">
-                      Rodando <em>{runningAgents.length}</em>
+                      {t("Rodando")} <em>{runningAgents.length}</em>
                     </span>
                     {runningAgents.map((a: AgentCard) => (
                       <div className="live-card live-card--agent" key={a.toolId}>
                         <span className="live-agent-top">
                           <Bot size={11} aria-hidden="true" />
                           {a.agentType && <span className="live-chip">{a.agentType}</span>}
-                          {a.bg && <span className="live-chip live-chip--dim">fundo</span>}
+                          {a.bg && <span className="live-chip live-chip--dim">{t("fundo")}</span>}
                           <Loader2 size={11} className="spin" aria-hidden="true" />
                         </span>
                         {a.detail && <span>{a.detail}</span>}
@@ -601,7 +617,7 @@ export function LiveView() {
                   </div>
                   <div className="live-lane">
                     <span className="live-lane-head">
-                      Concluídos <em>{doneAgents.length}</em>
+                      {t("Concluídos")} <em>{doneAgents.length}</em>
                     </span>
                     {doneShown.map((a) => (
                       <div

@@ -40,7 +40,7 @@ function parseColor(css: string): Color {
           : Number(raw);
     return { r, g, b, a };
   }
-  throw new Error(`cor que não sei ler: ${css}`);
+  throw new Error(`cor que não sei ler: ${css}`); // i18n-ok
 }
 
 function toHex({ r, g, b }: Color): string {

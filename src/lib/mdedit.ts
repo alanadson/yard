@@ -11,6 +11,7 @@
  * left it, continuing a list on Enter) is the kind of thing that only breaks
  * at the third edge case.
  */
+import { t } from "./i18n";
 
 export type MdCommand =
   // block
@@ -340,7 +341,7 @@ function fenceAround(lines: string[], a: number, b: number): [number, number] | 
       open = i;
       continue;
     }
-    if (a >= open && b <= i) return [open, i];
+    if (a >= open && b <= i) return [open, i]; // i18n-ok — not a sentence
     open = -1;
   }
   return null;
@@ -388,20 +389,21 @@ function rule(s: MdSel): MdSel {
 function table(s: MdSel): MdSel {
   const to = lineEnd(s.value, s.end);
   const cur = s.value.slice(lineStart(s.value, s.end), to);
-  const head = (s.value.slice(s.start, s.end).split("\n")[0] || "Coluna 1").trim();
+  const col1 = t("Coluna 1");
+  const head = (s.value.slice(s.start, s.end).split("\n")[0] || col1).trim();
   const rows = [
-    `| ${head} | Coluna 2 | Coluna 3 |`,
+    `| ${head} | ${t("Coluna 2")} | ${t("Coluna 3")} |`,
     "| --- | --- | --- |",
     "|  |  |  |",
     "|  |  |  |",
   ];
   const out = `${cur.trim() ? "\n\n" : ""}${rows.join("\n")}\n`;
   // Over the header cell: the selection *is* the text that now titles it.
-  const at = to + out.indexOf(head) + (head === "Coluna 1" ? 0 : head.length);
+  const at = to + out.indexOf(head) + (head === col1 ? 0 : head.length);
   return {
     value: s.value.slice(0, to) + out + s.value.slice(to),
     start: at,
-    end: head === "Coluna 1" ? at + head.length : at,
+    end: head === col1 ? at + head.length : at,
   };
 }
 

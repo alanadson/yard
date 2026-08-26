@@ -244,7 +244,7 @@ pub fn resolve_launch(program: &str, args: &[String]) -> (String, Vec<String>) {
 
 /// Runs `<bin> --version` with a timeout. An installed-but-broken agent
 /// cannot hold up the entire detection.
-fn probe_version(program: &str, version_args: &[&str]) -> Option<String> {
+pub(crate) fn probe_version(program: &str, version_args: &[&str]) -> Option<String> {
     let owned: Vec<String> = version_args.iter().map(|s| s.to_string()).collect();
     let (prog, args) = resolve_launch(program, &owned);
 

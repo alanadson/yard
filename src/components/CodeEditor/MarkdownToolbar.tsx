@@ -11,6 +11,9 @@
  * It never owns the text. Every button asks the editor's view to run a
  * command (`runMd`), so the caret, the undo history and the draft all stay in
  * exactly one place — CodeMirror.
+ *
+ * i18n-scan: tables — the labels below are keys; `t()` runs where they are
+ * rendered.
  */
 import { useState } from "react";
 import {
@@ -46,6 +49,7 @@ import {
 } from "lucide-react";
 
 import type { BlockKind, MdCommand } from "../../lib/mdedit";
+import { useT } from "../../hooks/useT";
 
 interface Btn {
   cmd: MdCommand;
@@ -157,14 +161,15 @@ interface Props {
 }
 
 export function MarkdownToolbar({ block, run, disabled }: Props) {
+  const t = useT();
   const [more, setMore] = useState(false);
 
   const renderButton = (b: Btn) => (
     <button
       key={b.cmd}
       className={`icon-btn ${b.on && block === b.on ? "is-active" : ""}`}
-      data-tip={`${b.label} (${b.keys})`}
-      aria-label={b.label}
+      data-tip={`${t(b.label)} (${b.keys})`}
+      aria-label={t(b.label)}
       aria-pressed={b.on ? block === b.on : undefined}
       disabled={disabled}
       onClick={() => run(b.cmd)}
@@ -177,7 +182,7 @@ export function MarkdownToolbar({ block, run, disabled }: Props) {
     <div
       className="md-bar"
       role="toolbar"
-      aria-label="Formatação do markdown"
+      aria-label={t("Formatação do markdown")}
       // The command edits whatever the caret was on: the press must not take
       // focus away from the editor first.
       onMouseDown={(e) => e.preventDefault()}
@@ -187,8 +192,8 @@ export function MarkdownToolbar({ block, run, disabled }: Props) {
         <span className="md-bar-sep" />
         <button
           className={`icon-btn ${more ? "is-active" : ""}`}
-          data-tip={more ? "Menos comandos" : "Mais comandos"}
-          aria-label={more ? "Menos comandos" : "Mais comandos"}
+          data-tip={more ? t("Menos comandos") : t("Mais comandos")}
+          aria-label={more ? t("Menos comandos") : t("Mais comandos")}
           aria-expanded={more}
           onClick={() => setMore((v) => !v)}
         >
@@ -199,18 +204,18 @@ export function MarkdownToolbar({ block, run, disabled }: Props) {
       {/* A second row inside the bar, not a menu hanging off it: a dropdown
           would cover the first lines of the very text being formatted. */}
       {more && (
-        <div className="md-bar-extra" role="group" aria-label="Mais comandos">
+        <div className="md-bar-extra" role="group" aria-label={t("Mais comandos")}>
           {MORE.map((b) => (
             <button
               key={b.cmd}
               className={`md-chip ${b.on && block === b.on ? "is-active" : ""}`}
-              data-tip={`${b.label} (${b.keys})`}
+              data-tip={`${t(b.label)} (${b.keys})`}
               aria-pressed={b.on ? block === b.on : undefined}
               disabled={disabled}
               onClick={() => run(b.cmd)}
             >
               {b.icon}
-              <span>{b.short}</span>
+              <span>{t(b.short ?? b.label)}</span>
             </button>
           ))}
         </div>

@@ -19,6 +19,7 @@ import { nanoid } from "nanoid";
 
 import { ipc, type NotesData } from "../lib/ipc";
 import { runBackground } from "../lib/background";
+import { t } from "../lib/i18n";
 import { persistPref, readPrefs, type PrefsSnapshot } from "../lib/prefs";
 import { useBrowsers } from "./browsersStore";
 import { useEditor } from "./editorStore";
@@ -553,14 +554,16 @@ export const useNotes = create<NotesState>((set, get) => {
       const projects = useProjects.getState();
       const groupId = projects.activeGroupId;
       if (!groupId) {
-        useUI.getState().showToast("Abra um grupo antes de pôr as anotações numa aba.");
+        useUI.getState().showToast(t("Abra um grupo antes de pôr as anotações numa aba."));
         return false;
       }
       if (projects.layoutOf(groupId).surface === "canvas") {
         useUI
           .getState()
           .showToast(
-            "Este grupo está mostrando o canvas, que não tem barra de abas — volte para os painéis ou use a área central.",
+            t(
+              "Este grupo está mostrando o canvas, que não tem barra de abas — volte para os painéis ou use a área central.",
+            ),
           );
         return false;
       }
@@ -714,7 +717,7 @@ export const useNotes = create<NotesState>((set, get) => {
       const copy: Note = {
         ...src,
         id: nanoid(12),
-        title: src.title ? `${src.title} (cópia)` : "",
+        title: src.title ? t("{title} (cópia)", { title: src.title }) : "",
         pinned: false,
         createdAt: now,
         updatedAt: now,
@@ -783,7 +786,7 @@ export const useNotes = create<NotesState>((set, get) => {
       const siblings = get().notebooks.filter((n) => n.parentId === parentId);
       const nb: Notebook = {
         id: nanoid(10),
-        name: name.trim() || "Novo caderno",
+        name: name.trim() || t("Novo caderno"),
         parentId,
         icon: null,
         sort: siblings.reduce((m, n) => Math.max(m, n.sort), -1) + 1,

@@ -8,6 +8,7 @@
  */
 import type { SearchQuery } from "@codemirror/search";
 import type { Text } from "@codemirror/state";
+import { t, tn } from "../../lib/i18n";
 
 /**
  * How many matches the bar is willing to walk on a keystroke. A 20k-line file
@@ -59,9 +60,10 @@ export function matchStats(
 /** The badge's text: short enough to live inside the field. */
 export function matchLabel(s: MatchStats): string {
   if (s.status === "idle") return "";
-  if (s.status === "invalid") return "regex inválida";
-  if (s.total === 0) return "sem ocorrências";
+  if (s.status === "invalid") return t("regex inválida");
+  if (s.total === 0) return t("sem ocorrências");
   const total = `${s.total}${s.capped ? "+" : ""}`;
-  if (s.current > 0) return `${s.current} de ${total}`;
-  return `${total} ${s.total === 1 && !s.capped ? "ocorrência" : "ocorrências"}`;
+  if (s.current > 0) return t("{current} de {total}", { current: s.current, total });
+  // A capped count is never "one": the plural form carries the "+".
+  return tn(s.capped ? 2 : s.total, "{n} ocorrência", "{n} ocorrências", { n: total });
 }

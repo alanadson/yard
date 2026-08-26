@@ -127,7 +127,7 @@ export async function spawnPortalNear(opts: {
   const base = near ?? autoNodeRect(terminals.length + (canvas?.items.length ?? 0));
   // Portals already beside the anchor step down, instead of stacking exactly.
   const stacked = (canvas?.items ?? []).filter(
-    (i) => i.type === "portal" && Math.abs(i.x - (base.x + base.w + 48)) < 4,
+    (i) => i.type === "portal" && Math.abs(i.x - (base.x + base.w + 48)) < 4, // i18n-ok
   ).length;
 
   const id = nanoid(8);

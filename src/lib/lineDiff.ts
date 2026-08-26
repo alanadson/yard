@@ -80,7 +80,7 @@ function backtrack(
   trace: Int32Array[],
   a: number[],
   b: number[],
-): { dels: Set<number>; adds: Set<number> } {
+): { dels: Set<number>; adds: Set<number> } { // i18n-ok
   const n = a.length;
   const m = b.length;
   const offset = Math.min(n + m, MAX_EDITS);

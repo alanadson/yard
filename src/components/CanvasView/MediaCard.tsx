@@ -25,6 +25,7 @@ import { ipc } from "../../lib/ipc";
 import { fileSize, mediaKind, mediaUrl, type MediaKind } from "../../lib/media";
 import { mediaNodeName, type MediaItem } from "../../lib/mediaNode";
 import type { ResizeDir } from "../../lib/canvas";
+import { useT } from "../../hooks/useT";
 
 interface Props {
   it: MediaItem;
@@ -72,6 +73,7 @@ function MediaCardImpl({
   onResizeMove,
   onResizeEnd,
 }: Props) {
+  const t = useT();
   const root = it.root || projectRoot;
   const [facts, setFacts] = useState<FileFacts | null>(null);
 
@@ -81,7 +83,7 @@ function MediaCardImpl({
         kind: null,
         size: 0,
         version: 0,
-        error: "sem projeto: este cartão precisa de um caminho completo",
+        error: t("sem projeto: este cartão precisa de um caminho completo"),
       });
       return;
     }
@@ -150,8 +152,8 @@ function MediaCardImpl({
         {!it.root && (
           <button
             className="cv-media-btn"
-            data-tip="Abrir no editor"
-            aria-label={`Abrir ${name} no editor`}
+            data-tip={t("Abrir no editor")}
+            aria-label={t("Abrir {name} no editor", { name })}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
@@ -173,7 +175,7 @@ function MediaCardImpl({
         onPointerUp={onItemUp}
       >
         {!facts ? (
-          <span className="cv-media-msg">carregando…</span>
+          <span className="cv-media-msg">{t("carregando…")}</span>
         ) : facts.error ? (
           <span className="cv-media-msg is-error">
             <FileQuestion size={14} />
@@ -182,7 +184,7 @@ function MediaCardImpl({
         ) : broken ? (
           <span className="cv-media-msg is-error">
             <FileQuestion size={14} />
-            não consegui desenhar este arquivo
+            {t("não consegui desenhar este arquivo")}
           </span>
         ) : facts.kind === "image" && url ? (
           <img

@@ -10,6 +10,7 @@
  */
 import type { ScmCounts } from "./scmGroups";
 import type { ScmInfo } from "./ipc";
+import { t, tn } from "./i18n";
 
 export interface CommitAction {
   /** "Commit", "Commit de tudo" or "Emendar". */
@@ -31,7 +32,7 @@ export function commitAction(
   amend: boolean,
 ): CommitAction {
   const base = {
-    label: amend ? "Emendar" : "Commit",
+    label: amend ? t("Emendar") : t("Commit"),
     stageAll: false,
     warning: null as string | null,
   };
@@ -42,33 +43,37 @@ export function commitAction(
     reason,
   });
 
-  if (!info?.isRepo) return refused("Esta pasta não é um repositório git");
-  if (amend && !info.hasHead) return refused("Ainda não há commit para emendar");
+  if (!info?.isRepo) return refused(t("Esta pasta não é um repositório git"));
+  if (amend && !info.hasHead) return refused(t("Ainda não há commit para emendar"));
   if (counts.conflicts > 0) {
     return refused(
-      counts.conflicts === 1
-        ? "Resolva o conflito antes de commitar"
-        : `Resolva os ${counts.conflicts} conflitos antes de commitar`,
+      tn(
+        counts.conflicts,
+        "Resolva o conflito antes de commitar",
+        "Resolva os {n} conflitos antes de commitar",
+      ),
     );
   }
-  if (!message.trim()) return refused("Escreva a mensagem do commit");
+  if (!message.trim()) return refused(t("Escreva a mensagem do commit"));
 
   const stageAll = !amend && counts.staged === 0 && counts.changes > 0;
   if (!amend && counts.staged === 0 && counts.changes === 0) {
-    return refused("Não há nada para commitar");
+    return refused(t("Não há nada para commitar"));
   }
 
   const warning = info.detached
-    ? "HEAD solto: este commit não vai pertencer a nenhuma branch"
+    ? t("HEAD solto: este commit não vai pertencer a nenhuma branch")
     : null;
 
   if (amend) {
     return {
-      label: "Emendar",
+      label: t("Emendar"),
       tip:
         counts.staged > 0
-          ? `Reescreve o último commit, levando junto ${plural(counts.staged, "arquivo preparado", "arquivos preparados")}`
-          : "Reescreve o último commit (só a mensagem)",
+          ? t("Reescreve o último commit, levando junto {files}", {
+              files: tn(counts.staged, "{n} arquivo preparado", "{n} arquivos preparados"),
+            })
+          : t("Reescreve o último commit (só a mensagem)"),
       disabled: false,
       reason: null,
       stageAll: false,
@@ -77,8 +82,10 @@ export function commitAction(
   }
   if (stageAll) {
     return {
-      label: "Commit de tudo",
-      tip: `Prepara e grava ${plural(counts.changes, "alteração", "alterações")}`,
+      label: t("Commit de tudo"),
+      tip: t("Prepara e grava {changes}", {
+        changes: tn(counts.changes, "{n} alteração", "{n} alterações"),
+      }),
       disabled: false,
       reason: null,
       stageAll: true,
@@ -86,17 +93,15 @@ export function commitAction(
     };
   }
   return {
-    label: "Commit",
-    tip: `Grava ${plural(counts.staged, "arquivo preparado", "arquivos preparados")}`,
+    label: t("Commit"),
+    tip: t("Grava {files}", {
+      files: tn(counts.staged, "{n} arquivo preparado", "{n} arquivos preparados"),
+    }),
     disabled: false,
     reason: null,
     stageAll: false,
     warning,
   };
-}
-
-function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
 }
 
 /** Where the subject stops fitting in a `git log --oneline` and a PR title. */
@@ -111,10 +116,13 @@ const SUBJECT_MAX = 72;
 export function messageHint(message: string): string | null {
   const lines = message.split("\n");
   if (lines[0].length > SUBJECT_MAX) {
-    return `O assunto tem ${lines[0].length} caracteres — acima de ${SUBJECT_MAX} ele sai cortado no histórico`;
+    return t("O assunto tem {len} caracteres — acima de {max} ele sai cortado no histórico", {
+      len: lines[0].length,
+      max: SUBJECT_MAX,
+    });
   }
   if (lines.length > 1 && lines[1].trim() !== "") {
-    return "Deixe uma linha em branco entre o assunto e o corpo";
+    return t("Deixe uma linha em branco entre o assunto e o corpo");
   }
   return null;
 }

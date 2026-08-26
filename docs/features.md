@@ -82,13 +82,24 @@ and environment. Per agent:
   for anything else (`--model opus`, `--add-dir ../api`; quotes group, as in a
   terminal). A flag the caller already spelled is not repeated: a role's
   `--append-system-prompt` wins over the fixed line's.
-- **Where it runs: Windows or WSL.** In WSL the card is spawned as
+- **Where it runs: Windows, WSL or SSH.** In WSL the card is spawned as
   `wsl.exe [-d <distro>] --cd <windows path> -- <cli> …` — the bare command,
   because the `claude.cmd` shim npm installed on Windows does not exist inside
   the distro, and the project folder handed over as a Windows path for WSL
   itself to translate. The choice is only clickable when `wsl.exe` answers with
   at least one registered distro (`wsl_status`, which decodes the **UTF-16**
   output of `wsl -l -q`); the CLI still has to be installed inside that distro.
+  Over SSH the card is spawned as
+  `ssh.exe -tt <host> "cd '<remote folder>' && exec <cli> <args…>"` — the same
+  bare command, the folder now the *remote* one typed in Settings (empty = the
+  login shell's home), every argument single-quoted for the POSIX shell on the
+  other side (a role brief with spaces stays one argument), `-tt` because a
+  ConPTY is a pipe from ssh's point of view and the CLIs want a tty, and `exec`
+  so the exit banner means the CLI and not a shell that outlived it. The host
+  is whatever `ssh` itself reads — an alias from `~/.ssh/config` (offered in
+  the field; `ssh_status` reads the `Host` lines, skipping wildcards, `Match`
+  blocks and `Include`) or `user@host`. The choice is only clickable when an
+  `ssh.exe` exists on this machine.
 - **The conversation cache.** How long the already-processed context survives a
   pause: one hour keeps coming back cheap and makes each cache write dearer,
   five minutes is the opposite, and off reprocesses everything each turn. Those
@@ -310,6 +321,10 @@ environment (details in
   instructions on the spot.
 - `routine` — scheduled prompts, delivered only while the target is running and
   idle.
+- `trigger` — "when X happens to a CLI, do Y": `--when finished|blocked|exited
+  --on "Agent"|any`, then `--ask "Target" "prompt"`, `--notify "text"` or
+  `--flow "Flow" "task"`; `{name}` and `{ask}` in the text become who fired and
+  the question it stopped at. Same gate as `ask`.
 - `score` — save and reapply a group's entire arrangement (scores).
 - `notify` / `debug` / `help`.
 
@@ -398,6 +413,304 @@ debounced per note), the trash holds what was deleted until you decide, and
 a section of their own, and the palette opens straight onto the note it found —
 even if a filter would have hidden it.
 
+**Links in the output.** Ctrl+click on what a process prints: a web address
+(`http://…`, `localhost:5173/…`, `127.0.0.1:8080`) or a file path
+(`src/lib/x.ts:42:7`, tsc's `src/x.ts(12,3)`, rustc's `--> src/x.rs:12:3`,
+`C:\…`, `./…`, `../…`, the Git Bash `/c/…`, a bare `README.md`). An address
+opens beside the terminal — a browser tab in the same pane, or a portal wired
+to the card on the canvas, the same object the globe creates. A file opens as
+an editor tab at that line; the path is resolved against the **process's own
+folder** first (a `cargo` inside `src-tauri/` says `src/pty/mod.rs`), then
+said from the group's root, and a file outside every root goes to the system's
+default application, because the editor only reads inside a root. The matcher
+(`src/lib/termLinks.ts`) is deliberately conservative — `12:30:45`, `v7.0.4`,
+`and/or`, `e.g.`, an e-mail and `github.com` are not links — and only hover
+asks it anything; a plain click keeps focusing and selecting. Limits, on
+purpose: one buffer row at a time (a path wrapped over two rows is not
+matched), the spawn folder rather than a shell's later `cd`, and POSIX
+absolute paths (`/home/…` from WSL), which the app cannot place on this
+machine.
+
+**Keyboard broadcast** (`Ctrl+Shift+U`). What you type into one CLI goes to
+every other **live** CLI of the same group — tabs and canvas cards alike —
+for the moments a team waits on the same answer: the `y` after a fan-out, a
+`/clear` before the next task, one short instruction to five recruits. One
+group is armed at a time, and the mode is **session-only on purpose**: it is
+never written to `kv`, because a broadcast that came back on at boot would
+type into terminals nobody was looking at. It also follows the group out of
+the workspace (a floor closed, a group deleted). While armed, every terminal
+of the group wears a yellow strip — `⇶ Transmitindo para N CLIs ·
+Ctrl+Shift+U desliga` — that counts the receivers and says so when the count
+is zero; the palette has the same toggle ("Transmitir teclado para o grupo").
+The receiver rule is pure in `src/lib/broadcast.ts`; the extra `write_pty`
+per target happens in `XTermView`'s `onData`, after the flow intercept, so a
+pipeline still owns its Enter.
+
+**Save a terminal's output.** "Salvar saída…" in the CLI's menu (and "Salvar
+saída do terminal em foco…" in Search) writes the scrollback to a file — the
+in-memory ring of a live terminal after a flush of what the reader thread had
+not written yet (the `.bin` may hold more history than the 4 MB ring), or the
+`.bin` alone for a terminal that already died, which is usually the one whose
+output someone wants. The extension chosen in the save dialog decides the
+shape (`src/lib/termExport.ts`): `.txt` is what a human reads — escapes gone,
+a carriage return keeping only the last frame of its line so a spinner becomes
+its final word, backspaces applied, CRLF line endings on the way out
+(`pty_export::strip_ansi`) — and `.ansi` keeps every byte for whoever wants
+to replay it with the colors. An empty scrollback is refused before any file
+is created: a zero-byte `.txt` looks like a bug. Cursor movements that reach
+other lines (`ESC[2A`, `ESC[K`) are dropped, not replayed — this is a
+transcript, not a screen recording.
+
+**Light appearance** (2026-08-26). The app was dark-only by design, and dark
+is still the default — the product's identity, and the CSS that paints with no
+help. **Configurações → Interface → Tema** now offers *Escuro · Claro ·
+Sistema* (kv `theme`), and Search has "Alternar tema claro/escuro". Light and
+system stamp `<html data-theme="light">` (`lib/theme.ts` is the pure rule,
+`stores/themeStore.ts` owns the OS query and is where the terminal well reads
+the resolved value); `src/theme-light.css`, loaded on boot right after
+`styles.css`, redefines the same tokens for paper. Dark is the *absence* of the
+attribute, so whoever never opens the setting keeps the exact CSS they had.
+What changes is the paper, the ink and the veils — white veils vanish on a
+light surface, so each hand-painted white relief in the dark sheet has a
+black twin — never the system blue, the radii or the semantic hues' meaning.
+The terminal gets a second ANSI palette (`lib/termTheme.ts`: paper well,
+body text at 7:1, every hue at 3:1), the editor's syntax reads `--syn-*`
+tokens with the dark values as fallbacks, and the canvas keeps its elevation
+steps with daylight values; a color-scheme extension still wins over both.
+Details and the token table in [DESIGN.md](./DESIGN.md#light-theme).
+**Tray icon, summon hotkey, close to the tray.** Yard runs for hours behind
+other windows, so it gained the two things a background app owes its user. An
+icon in the notification area (`src-tauri/src/tray.rs`): a left click brings
+the window back, the right button opens *Mostrar o Yard* / *Sair*, and the
+tooltip is the only place the agents' state still shows while nobody is
+looking — `Yard — 1 agente bloqueado · 2 rodando`, pushed from the runtime
+mirror through `hooks/useTray.ts` (debounced, only when the numbers change;
+the wording is the pure `tooltip` in Rust). A **global hotkey** (`Ctrl+Alt+Y`
+by default, editable in **Configurações → Atalhos** with inline validation —
+`lib/tray.ts` turns the user's spelling into the accelerator the
+global-shortcut plugin accepts and refuses a bare key, which would take that
+key from every application) that brings the window from anywhere in Windows,
+and hides it when it is already in front — the decision is `summon_action`:
+only *visible and focused and not minimized* hides, so a window behind a game
+comes forward instead of vanishing. And **Fechar para a bandeja**
+(**Configurações → Comportamento**, off by default): the X hides the window
+and the CLIs go on; quitting is then *Sair* in the tray menu or in Search,
+which run the window's own exit flow — save the workspace, ask about live
+agents — through `lib/quit.ts`, so leaving from the tray saves exactly what
+the X does.
+
+**First run.** A fresh install used to open on an empty workspace and say
+nothing. Now the first boot with no project and no `onboarding.done` in `kv`
+opens a welcome sheet, once: the CLIs the app found on this machine (with
+their versions, the missing ones greyed), the folder of the first project —
+the same door as "Novo projeto", `src/lib/projectCreate.ts`, so the two never
+drift — and the six shortcuts worth learning on day one, plus one line saying
+`yard` is on the PATH of every terminal. Every way out (Começar, Pular, Esc,
+the ×, the backdrop) writes the key; an install that already had projects
+when it upgraded is marked done silently instead of being greeted as a
+newcomer (`firstRunDecision` in `src/lib/onboarding.ts`). The sheet comes back
+from Search as "Boas-vindas".
+
+**Relatar um problema — the support bundle.** The log in `%APPDATA%\Yard\logs`
+only ever helped the author. **Configurações → Dados e backup** now has
+*Relatar um problema*: *Gerar pacote…* writes a `.zip` with the log files of
+the last two days (today and yesterday — a crash at 00:05 lives in
+yesterday's file), `about.json` (build version, OS, data directory, whether
+`YARD_DATA_DIR` is set) and `agents.json` (the CLIs detected on the machine,
+with versions) — and **nothing else**: no database, no scrollback, no `kv`,
+no notes, no session files, nothing from the projects. The screen lists the
+zip's entries afterwards, because the contents *are* the privacy contract.
+*Copiar link do rastreador* puts the tracker's new-issue URL and a short
+skeleton (version, what happened, steps, "attach the bundle") on the
+clipboard — copied, never opened: nothing in the app launches a browser.
+Backend in `src-tauri/src/support.rs` (`bundle_in`, tested against a fake
+data dir that also holds an `app.db` and a scrollback, to prove they stay
+out); the pure text in `src/lib/support.ts`.
+
+**Updates that install themselves** (2026-08-26). The app asks GitHub for a
+newer release half a minute after boot and every six hours after that — never
+on the boot's critical path, never a toast when there is nothing — and what it
+finds shows up as a thin blue bar over the workspace and as a card in
+**Configurações → Dados e backup**: *Instalar e reiniciar* or *Ignorar esta
+versão* (per version: the next one is offered again). Only what the updater
+key signed is installed: the public key sits in `tauri.conf.json`, a Rust test
+fails the build if it goes missing, and the release workflow signs the
+artifacts and writes the `latest.json` the app reads. Installing over live
+agents asks first, in the exit confirmation's words, because the restart takes
+them along. The rules — is it newer (a pre-release is older than its release),
+is it due, was it ignored, what the progress line says — are pure in
+`src/lib/updater.ts`; the store (`updaterStore.ts`) is the only caller of the
+plugin. *Verificar agora* also lives in the palette.
+
+**Automatic backups.** The `.zip` export in Configurações → Dados e backup
+used to be something to remember; now it can be a calendar: *Desligado /
+Diário / Semanal*, how many copies to keep (7 by default) and where (the
+`backups` folder of the data directory unless another one is chosen). A
+minute after boot and then once an hour the app asks one pure question —
+`backupDue`, in `src/lib/autoBackup.ts` — and, when the period has elapsed
+since the stamp kept in the kv (`backup.lastAutoAt`), writes
+`yard-auto-<date-time>.zip` through the same path as the manual export (same
+WAL checkpoint, same database lock) and then prunes the oldest **automatic**
+copies beyond the retention. Manual exports and anything else in that folder
+are never touched: the retention rule only matches names it wrote itself
+(`persistence/autobackup.rs`). Success is silent, a failure is an error toast
+(nobody is watching a timer), and "Fazer agora" writes a copy even while the
+schedule is off.
+
+**Custos e uso** (`Ctrl+Alt+U`, 2026-08-26). The per-session estimate and the
+usage-window meter never answered the question that decides whether a fan-out
+was worth it: *how much did I spend today, and on what*. The panel reads the
+same trail the session list reads — Claude Code's `~/.claude/projects/**/*.jsonl`
+(usage counted once per `message.id`, like the live tail) and Codex's
+`~/.codex/sessions/**/*.jsonl` (`token_count` events, the turn's
+`last_token_usage`, the model from the preceding `turn_context`) — and buckets
+it by **local day × agent × project × model** (`src-tauri/src/costs.rs`; each
+file parsed once per `(len, mtime)` and cached). Three windows (Hoje · 7 dias ·
+30 dias), a totals strip, one bar per day (cost, or tokens when nothing in the
+window has a price) and three tables: por projeto, por agente, por modelo. The
+folding is pure in `src/lib/costs.ts` and carries the honesty rule of the
+estimate one step further: a bucket that mixes priced and unpriced rows shows
+its cost as a **floor** (`≥`) rather than pretending the Codex tokens were free,
+and a model outside the price table shows tokens and no number. OpenCode is not
+scanned — its per-message usage is not in a file whose format could be verified.
+
+**Ombro (Shoulder) and the transcript** (`Ctrl+Shift+O`). "Ao Vivo" follows
+one agent as it works; the Ombro is the glance over the shoulder at all of
+them *after the fact*: one sheet per group, one row per agent CLI, read from
+the session the CLI keeps on disk — the last thing it said, the files it
+touched (edits, writes and reads told apart), the commands it ran, sub-agents,
+failed tool calls, the plan's progress and the estimated cost. The numbers are
+the overlay's own: the feed reducer moved out of `liveStore` into
+`src/lib/liveModel.ts` and both read through it, so the digest and Ao Vivo can
+never disagree on a count (`src/lib/shoulder.ts` adds the few a summary needs).
+A CLI that writes no session to disk says so instead of waiting; a folder with
+no trail says so; a session that cannot be read spoils its own row and never
+the sheet. Which trail is the terminal's is `src/lib/sessionFind.ts`: the id a
+resumed terminal carries in its command line wins, otherwise the newest — the
+same rule the overlay starts from.
+
+The **transcript** reads a session from the start as a document, without
+resuming the process: prompts as cards, the assistant's text as text, the
+tools between them as compact rows (each call glued to its result by id,
+consecutive calls in one block), thinking folded, a search field at the top
+that counts and steps with Enter (accent-insensitive, like the rest of the
+app), and *Copiar como markdown*. It opens from the Ombro, from the Sessões
+sheet (beside *Retomar*), from the tab and card menus of any agent that keeps
+a session, and from Search. The backend command `session_events` reads the
+whole file once with the **same parser the tail uses** (`agents/read.rs` over
+`tail::parse_line`) and refuses anything above 64 MB with a sentence that
+says so. The blocks and the search are `src/lib/transcript.ts`.
+**Gatilhos (triggers) — when X happens, do Y** (2026-08-26). Routines fire by
+the clock and `yard wait` blocks on the agent's side; nothing on the app's side
+said "when Claude finishes, send the review prompt to Codex", "when anyone
+stops at a question, notify me", "when the test agent exits, run flow F". A
+trigger is that sentence, stored in the group's canvas next to the routines
+(`TriggerDef` in `src/lib/canvas.ts`, `normalizeCanvas` drops a crooked one on
+load): a source (one CLI or `*`, any CLI of the group), an event and an
+action — type a prompt into another CLI, a native notification plus a toast, or
+a flow started on the terminal that fired, with the text as the task. `{name}`
+and `{ask}` in the text become who fired and the question it stopped at.
+
+What decides is pure and lives in `src/lib/triggers.ts`; the delivery is
+`hooks/useTriggers.ts`, a subscription to the runtime mirror. Two rules keep
+it honest. **Edges, not states**: the mirror repeats `finished: true` until the
+terminal is read, so a fire needs the flag to go up (or `finishedAt` to move —
+a second idle without the flag ever dropping is a second finish), a stop at a
+question is `blocked` and never `finished`, and `exited` needs a process that
+was live in this session (a dead terminal found at boot never "went down"
+now). **A prompt goes through the same gate as a routine** (`lib/sendable`):
+alive, idle, not frozen on a question — it waits up to 12 s and reports the
+failure as a toast instead of typing into a busy agent. The stamp
+(`lastRunAt`, off after a one-shot) is written *before* the delivery, so a
+second edge meanwhile finds the trigger spent; `--cooldown` is the floor
+between two fires, and a trigger whose `ask` lands on its own source waits at
+least a minute (`SELF_ASK_MIN_COOLDOWN_SEC`) — the loop guard for "when I
+finish, tell me to go on".
+
+On screen they share the routines' sheet — "Rotinas e gatilhos…" in the card
+menu (with the armed count) and in Search for the CLI in focus: a second
+section with the list (`Quando … → …`, pause/remove) and a form (Quando ·
+Origem: esta CLI ou qualquer CLI do grupo · Então: mandar prompt a / notificar /
+rodar fluxo · só uma vez · intervalo mínimo). From the CLI: `yard trigger
+list|create|pause|resume|delete`, with the `ask` gate — source and target must
+be you or someone wired to you, and a flow must be reachable by cable.
+**Servidores MCP, num lugar só.** Each CLI keeps its MCP servers in a file
+of its own and a shape of its own — `~/.claude.json` (user scope at the top,
+local scope under `projects[<path>]`) and `<project>/.mcp.json` for Claude
+Code; `[mcp_servers.<name>]` in `~/.codex/config.toml` for Codex; `mcpServers`
+in `~/.gemini/settings.json` / `.gemini/settings.json` for Gemini (`httpUrl`
+is HTTP, `url` is SSE); `~/.cursor/mcp.json` / `.cursor/mcp.json` for Cursor;
+`mcp` in `opencode.json` for OpenCode (`command` is an array there). Every one
+of those was checked against the CLI's own documentation, and the CLIs whose
+format was not (aider, goose, Grok, Copilot) say so on screen instead of
+guessing. **Configurações → Servidores MCP** lists them all — one card per
+CLI, the scopes that apply to the active project, a chip for the transport —
+with add, edit, remove, on/off where the CLI has a native flag (Codex,
+OpenCode) and **copy to another CLI**, which is the point: the same entry
+lands in the other file in its dialect, and what the target cannot say (SSE
+in Cursor or Codex, WebSocket anywhere but Claude Code) is said out loud. The
+readers and writers (`src-tauri/src/mcp.rs`) are pure over text and **keep
+what they do not understand** — an entry's `timeout` or `oauth`, the rest of
+the document, and, for TOML, the comments and layout (`toml_edit`). The
+listing never carries env or header values, only their names; the form asks
+for them one server at a time. The neutral model, the validation and the
+screen's order live in `src/lib/mcp.ts`.
+**Agents over SSH — what does not travel.** A CLI told to run on another
+machine is a real card like any other: scrollback on disk, the exit banner,
+suspend and restart, the role typed in as the first message, the cache flags
+on the command line. What stays behind is everything that lives in the
+process environment on *this* machine: the `yard` shim and the `YARD_*`
+variables are not on the remote PATH, so the remote CLI cannot `yard ask` the
+others on the canvas, and the `ENABLE_PROMPT_CACHING_*` variables Claude Code
+reads do not cross either (aider's cache, which is flags, does). The password
+is the other honest limit: with a key that logs in without one, the role and
+the cache reach the CLI as they do locally; with a password prompt, the prompt
+is drawn in the terminal and works, but the role brief typed by Yard arrives
+while ssh is still asking and is lost — the screen says so next to the field.
+The rules are in `lib/agentDefaults.ts` (`sshLaunch`, `shQuote`) and
+`src-tauri/src/ssh.rs`.
+
+**Language servers in the editor (LSP).** The file editor talks to the
+language server of the file's language when one is installed on the
+machine — completion from the project, diagnostics as you type, hover,
+go to definition (`F12`), references (`Shift+F12`), rename (`F2`), format
+(`Shift+Alt+F`) and signature help (`Ctrl+Shift+Space`). The catalog is
+fixed and small: `typescript-language-server` (TypeScript/JavaScript),
+`rust-analyzer`, `pyright-langserver`, `gopls` and the `vscode-*-language-
+server` trio for CSS, HTML and JSON; **Configurações → Editor de código**
+lists which ones this machine has (with version) and, for the missing
+ones, the exact install line (`npm i -g typescript-language-server
+typescript`, `rustup component add rust-analyzer`, `npm i -g pyright`,
+`go install golang.org/x/tools/gopls@latest`, `npm i -g
+vscode-langservers-extracted`), plus a switch to turn the whole thing off.
+Without a server the editor keeps completing words from the file itself,
+as before.
+
+The shape follows the rest of the app: the server is a **process the
+backend owns** (`src-tauri/src/lsp.rs`) — spawned with piped stdio, npm
+`.cmd` shims resolved the way the agent CLIs are, put in a Job Object like
+a PTY and killed on exit, so no `rust-analyzer` outlives the window — and
+the Rust side only decodes the `Content-Length` framing; every message is
+handed to the frontend as bare JSON (`lsp://message`), where
+`@codemirror/lsp-client` owns initialization, capabilities and requests.
+One client per (project root, server) is shared by every file of that
+root the server takes (`src/stores/lspStore.ts`); a server that fails to
+start or dies is reported once and left alone until "Procurar de novo",
+and a root with no file open loses its servers after thirty seconds.
+
+**Language.** The interface is written in Brazilian Portuguese and that
+text is the *key*: every user-visible sentence goes through `t("…")`
+(`src/lib/i18n.ts`) — components through `useT()`, which re-renders them
+when the language flips — and the English line lives in one of the area
+dictionaries under `src/i18n/en/` (`shell`, `canvas`, `modals`,
+`settings`, `bench`, `editor`, `notes`, `lib`). A sentence with no English
+line comes back in Portuguese and is logged once, never blank. Tables such
+as the shortcuts and the settings categories keep their Portuguese and are
+translated where they are rendered. **Configurações → Interface → Idioma**
+offers Português (Brasil), English and Sistema (English only on an English
+Windows; the terminals and the CLIs are untouched — they speak their own
+language). `node scripts/i18n-scan.mjs` lists the sentences still to wrap.
+
 ## Golden rule
 
 The UI is **never** the owner of process state. Mounting an `XTermView` calls
@@ -452,8 +765,6 @@ to do the same.
   CLI's `--ua`) only swap the user-agent string, not the engine — whoever needs
   to reproduce an engine bug still has to open the real browser outside Yard.
   The agent drives it with `yard portal snapshot/click/fill/…`.
-- **"Shoulder"** — a panel that summarizes what each agent did and suggests the
-  next step from the session JSONL that `agents/sessions.rs` already reads.
 - **Inline screenshots in the composer** — a deliberate decision: the CLIs
   expect a file path, and there's no good way to paste an image into a PTY.
 - **F6 — Product.** No signed updater and no code signing yet: `release.yml`
@@ -471,7 +782,9 @@ automatically — only the logic behind it.
 The prices per million tokens are in `agents/sessions.rs` and were checked on
 2026-08-12 (Opus 5: US$ 5/25; Sonnet 5: 3/15; Haiku 4.5: 1/5; cache write 1.25×
 input, read 0.1×). A model outside the table gets no estimate at all — better no
-number than a made-up one. **Check the table when prices change.**
+number than a made-up one. **Check the table when prices change.** The
+"Custos e uso" panel (`Ctrl+Alt+U`) applies the same table per day, project,
+agent and model, and marks a sum with an unpriced part as a floor.
 
 ## Usage-limit meter
 

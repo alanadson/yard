@@ -11,6 +11,7 @@
  * receives it: deterministic, quote-safe, and readable by a human in the
  * terminal scrollback, because that is where it lands.
  */
+import { t, tn } from "./i18n";
 
 export interface ReviewComment {
   id: string;
@@ -93,13 +94,16 @@ export function formatReview(
   }
 
   const files = [...byFile.keys()].sort();
-  const where = [ctx.projectName, ctx.branch ? `branch ${ctx.branch}` : null]
+  const where = [ctx.projectName, ctx.branch ? t("branch {branch}", { branch: ctx.branch }) : null]
     .filter(Boolean)
     .join(", ");
 
   const lines: string[] = [
-    `Revisão do diff — ${plural(comments.length, "anotação", "anotações")} em ` +
-      `${plural(files.length, "arquivo", "arquivos")}${where ? ` (${where})` : ""}.`,
+    t("Revisão do diff — {comments} em {files}{where}.", {
+      comments: tn(comments.length, "{n} anotação", "{n} anotações"),
+      files: tn(files.length, "{n} arquivo", "{n} arquivos"),
+      where: where ? ` (${where})` : "",
+    }),
     "",
   ];
 
@@ -111,8 +115,8 @@ export function formatReview(
     for (const row of rows) {
       const anchor =
         row.line == null
-          ? "**arquivo**"
-          : `**linha ${row.line}${row.onOld ? " (removida)" : ""}**`;
+          ? `**${t("arquivo")}**` // i18n-ok
+          : `**${t("linha {line}", { line: row.line })}${row.onOld ? ` ${t("(removida)")}` : ""}**`;
       const code = row.code.trim() ? ` — ${inlineCode(row.code.trim())}` : "";
       lines.push(`- ${anchor}${code}`);
       lines.push(`  ${oneLine(row.body)}`);
@@ -120,14 +124,8 @@ export function formatReview(
     lines.push("");
   }
 
-  lines.push(
-    "Aplique o que está pedido acima e me diga, em uma linha por item, o que mudou.",
-  );
+  lines.push(t("Aplique o que está pedido acima e me diga, em uma linha por item, o que mudou."));
   return lines.join("\n");
-}
-
-function plural(count: number, one: string, many: string): string {
-  return `${count} ${count === 1 ? one : many}`;
 }
 
 /** Key a comment anchors to inside one file's diff. */

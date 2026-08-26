@@ -15,9 +15,17 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["unstable"] }
+# `tray-icon`: the notification-area icon (tray.rs) is a feature of the
+# core crate, not a plugin.
+tauri = { version = "2", features = ["unstable", "tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
+# Signed in-app updates from GitHub Releases (updater.rs) and the restart the
+# updater asks for after installing (`process`).
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+# The summon hotkey that works with the window hidden or behind (tray.rs).
+tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 portable-pty = "0.9"
@@ -47,6 +55,10 @@ ttf-parser = "0.25"
 # Portal screenshots (portal.rs): the files exist to be opened by agents, and
 # PNG is what agent APIs accept — the old BMPs could not be attached at all.
 png = "0.17"
+# MCP manager (mcp.rs): Codex keeps its servers in `~/.codex/config.toml`, and
+# editing that file must keep the user's comments and layout — toml_edit works
+# on the document, not on a value tree. The other CLIs use JSON (serde_json).
+toml_edit = "0.25"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

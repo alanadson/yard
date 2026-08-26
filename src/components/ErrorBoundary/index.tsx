@@ -20,6 +20,7 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 import { AlertTriangle, RefreshCw, RotateCcw } from "lucide-react";
 
 import { crashLine, crashOf } from "../../lib/crash";
+import { t } from "../../lib/i18n";
 import { uiLog } from "../../lib/log";
 
 interface Props {
@@ -59,23 +60,23 @@ export class ErrorBoundary extends Component<Props, State> {
       <div className="crash" role="alert">
         <div className="crash-inner">
           <AlertTriangle size={20} aria-hidden="true" />
-          <h2>Alguma coisa quebrou em {crash.where}</h2>
+          <h2>{t("Alguma coisa quebrou em {where}", { where: crash.where })}</h2>
           {/* The raw message, on purpose: it is what the user pastes when
               they come to report the defect. */}
           <code className="crash-msg">{crash.message}</code>
           <p>
-            O resto do Yard continua funcionando — os outros painéis, a barra e a
-            Busca. O erro completo está no <code>yard.log</code>.
+            {t("O resto do Yard continua funcionando — os outros painéis, a barra e a Busca. O erro completo está no")}{" "}
+            <code>yard.log</code>.
           </p>
           <div className="crash-actions">
             <button
               className="btn btn--sm"
               onClick={() => this.setState({ error: null })}
             >
-              <RotateCcw size={12} /> Tentar de novo
+              <RotateCcw size={12} /> {t("Tentar de novo")}
             </button>
             <button className="btn btn--sm" onClick={() => window.location.reload()}>
-              <RefreshCw size={12} /> Recarregar o Yard
+              <RefreshCw size={12} /> {t("Recarregar o Yard")}
             </button>
           </div>
         </div>

@@ -93,7 +93,7 @@ export function unstack(
   let { x, y } = spot;
   for (let i = 0; i < 12; i += 1) {
     const clash = taken.some(
-      (t) => Math.abs(t.x - x) < SAME && Math.abs(t.y - y) < SAME,
+      (t) => Math.abs(t.x - x) < SAME && Math.abs(t.y - y) < SAME, // i18n-ok
     );
     if (!clash) break;
     x += step;

@@ -20,6 +20,7 @@
  */
 import { buildEdges } from "./bridgeCore";
 import { formatGrab, grabLabel, type GrabPick } from "./grab";
+import { t } from "./i18n";
 import { ipc } from "./ipc";
 import { baseName } from "./terminals";
 import { useProjects } from "../stores/projectsStore";
@@ -53,7 +54,7 @@ export async function deliverGrab(
 
   if (!target) {
     showToast(
-      "Ligue este portal a um agente no canvas — ou foque um terminal — para mandar o elemento.",
+      t("Ligue este portal a um agente no canvas — ou foque um terminal — para mandar o elemento."),
       "error",
     );
     return;
@@ -69,5 +70,7 @@ export async function deliverGrab(
   ui.setComposerDraft(target.id, current ? `${current}\n\n${theText}` : theText);
   ui.focusTerminal(target.id, target.slot);
   ui.setComposerOpen(true);
-  showToast(`${grabLabel(pick)} → ${baseName(target)}. Diga o que muda e envie.`);
+  showToast(
+    t("{what} → {target}. Diga o que muda e envie.", { what: grabLabel(pick), target: baseName(target) }),
+  );
 }

@@ -12,6 +12,7 @@
  */
 import { toOsPath } from "./paths";
 import type { MenuEntry } from "../components/ContextMenu";
+import { t } from "./i18n";
 
 export interface EditorTabMenuActions {
   close: (id: string) => void;
@@ -50,23 +51,23 @@ export function editorTabMenu(
   const rightSide = position < 0 ? [] : tabs.slice(position + 1).map((d) => d.id);
   const absolutePath = toOsPath(target.root, target.path);
   return [
-    { id: "fechar", label: "Fechar", shortcut: "Ctrl+W", onSelect: () => act.close(target.id) },
+    { id: "fechar", label: t("Fechar"), shortcut: "Ctrl+W", onSelect: () => act.close(target.id) },
     {
       id: "outras",
-      label: "Fechar as outras",
+      label: t("Fechar as outras"),
       disabled: others.length === 0,
       onSelect: () => act.closeMany(others),
     },
     {
       id: "direita",
-      label: "Fechar as da direita",
+      label: t("Fechar as da direita"),
       disabled: rightSide.length === 0,
       onSelect: () => act.closeMany(rightSide),
     },
     { kind: "sep" },
     {
       id: "salvar",
-      label: "Salvar",
+      label: t("Salvar"),
       shortcut: "Ctrl+S",
       // Without a draft there is nothing to write; read-only never writes.
       disabled: !target.dirty || target.readOnly,
@@ -74,20 +75,20 @@ export function editorTabMenu(
     },
     {
       id: "recarregar",
-      label: "Recarregar do disco",
+      label: t("Recarregar do disco"),
       disabled: target.missing,
       onSelect: () => act.reload(target.id),
     },
     { kind: "sep" },
-    { id: "copiar", label: "Copiar caminho", onSelect: () => act.copyPath(target.path) },
+    { id: "copiar", label: t("Copiar caminho"), onSelect: () => act.copyPath(target.path) },
     {
       id: "copiar-abs",
-      label: "Copiar caminho completo",
+      label: t("Copiar caminho completo"),
       onSelect: () => act.copyPath(absolutePath),
     },
     {
       id: "revelar",
-      label: "Mostrar na pasta",
+      label: t("Mostrar na pasta"),
       disabled: target.missing,
       onSelect: () => act.reveal(absolutePath),
     },

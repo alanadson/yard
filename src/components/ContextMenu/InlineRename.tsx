@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
+import { useT } from "../../hooks/useT";
+
 interface Props {
   value: string;
   onCommit: (next: string) => void;
@@ -8,6 +10,7 @@ interface Props {
 
 /** In-place rename field on the tree (Enter confirms, Esc cancels). */
 export function InlineRename({ value, onCommit, onCancel }: Props) {
+  const t = useT();
   const [draft, setDraft] = useState(value);
   const cancelled = useRef(false);
   const ref = useRef<HTMLInputElement>(null);
@@ -32,7 +35,7 @@ export function InlineRename({ value, onCommit, onCancel }: Props) {
       ref={ref}
       className="tree-rename"
       value={draft}
-      aria-label="Novo nome"
+      aria-label={t("Novo nome")}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onClick={(e) => e.stopPropagation()}

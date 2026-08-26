@@ -286,3 +286,66 @@ describe("workbench state that survives the boot", () => {
     });
   });
 });
+
+/**
+ * The enum check used to be spelled for `renderer` alone; the table exists so
+ * the next string preference with a fixed vocabulary (theme, language…) is
+ * validated by adding a row, not another `else if`.
+ */
+describe("PREF_ENUMS", () => {
+  it("falls back to the default when a kv value is outside the preference's vocabulary", async () => {
+    await useUI.getState().loadPrefs({ renderer: "opengl" });
+    expect(useUI.getState().prefs.renderer).toBe(DEFAULT_PREFS.renderer);
+    await useUI.getState().loadPrefs({ renderer: "webgl" });
+    expect(useUI.getState().prefs.renderer).toBe("webgl");
+  });
+});
+
+/**
+ * The appearance is the second string preference with a fixed vocabulary.
+ * A `theme: sepia` typed into the kv by hand must not reach `<html>` as an
+ * attribute the CSS knows nothing about — the window would stay dark while
+ * the setting said otherwise.
+ */
+describe("theme preference", () => {
+  it("keeps the three words it knows and falls back to dark for anything else", async () => {
+    await useUI.getState().loadPrefs({ theme: "light" });
+    expect(useUI.getState().prefs.theme).toBe("light");
+    await useUI.getState().loadPrefs({ theme: "system" });
+    expect(useUI.getState().prefs.theme).toBe("system");
+    await useUI.getState().loadPrefs({ theme: "sepia" });
+    expect(useUI.getState().prefs.theme).toBe("dark");
+  });
+});
+
+/**
+ * The updater's automatic check is opt-out: a fresh install looks for a new
+ * release on its own, and the switch in Configurações → Dados turns it off.
+ */
+describe("autoCheckUpdates", () => {
+  it("is on by default and reads a stored 'false' back", async () => {
+    expect(DEFAULT_PREFS.autoCheckUpdates).toBe(true);
+    await useUI.getState().loadPrefs({ autoCheckUpdates: "false" });
+    expect(useUI.getState().prefs.autoCheckUpdates).toBe(false);
+  });
+});
+
+/**
+ * The interface's language is a preference with a fixed vocabulary; an
+ * unknown code in the kv (`fr`, a typo) must fall back to the shipped
+ * Portuguese, never leak into `lib/i18n.ts`.
+ */
+describe("language preference", () => {
+  it("is Portuguese out of the box and accepts en / system", async () => {
+    expect(DEFAULT_PREFS.lang).toBe("pt-BR");
+    await useUI.getState().loadPrefs({ lang: "en" });
+    expect(useUI.getState().prefs.lang).toBe("en");
+    await useUI.getState().loadPrefs({ lang: "system" });
+    expect(useUI.getState().prefs.lang).toBe("system");
+  });
+
+  it("falls back to Portuguese for a language the app does not speak", async () => {
+    await useUI.getState().loadPrefs({ lang: "fr" });
+    expect(useUI.getState().prefs.lang).toBe("pt-BR");
+  });
+});

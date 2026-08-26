@@ -5,6 +5,7 @@
  * Kept apart from the component because this is the part with rules — the
  * component only paints what it gets back.
  */
+// i18n-scan: tables
 import type { ReactNode } from "react";
 
 export type EntryKind =

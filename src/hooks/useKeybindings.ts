@@ -9,12 +9,14 @@
 import { useEffect } from "react";
 
 import { jumpToAttention } from "../lib/attention";
+import { toggleBroadcast } from "../lib/broadcastToggle";
 import { closeDocTab } from "../lib/editorActions";
 import { confirmCloseTerminal } from "../lib/lifecycle";
 import { useBench } from "../stores/benchStore";
 import { useBrowsers } from "../stores/browsersStore";
 import { useChanges } from "../stores/changesStore";
 import { useEditor } from "../stores/editorStore";
+import { useCosts } from "../stores/costsStore";
 import { useLive } from "../stores/liveStore";
 import {
   NOTES_TAB_ID,
@@ -265,6 +267,29 @@ export function useKeybindings() {
         if (list.length < 2) return;
         const idx = list.findIndex((g) => g.id === activeGroupId);
         setActiveGroup(list[(idx + 1) % list.length].id);
+      }
+      // Ctrl+Shift+U — keyboard broadcast to the active group (lib/broadcast.ts).
+      // Reachable from inside the terminal, like Ctrl+Shift+A: it is with the
+      // cursor in a CLI that one decides the next keystrokes go to all of them.
+      if (e.shiftKey && e.code === "KeyU") {
+        e.preventDefault();
+        toggleBroadcast();
+        return;
+      }
+      // Ctrl+Alt+U — Custos e uso (tokens and estimated spend over time).
+      // Alt, not Shift: Ctrl+Shift+U is the keyboard broadcast right above.
+      if (e.altKey && !e.shiftKey && e.code === "KeyU") {
+        e.preventDefault();
+        void useCosts.getState().open();
+        return;
+      }
+      // Ctrl+Shift+O — the Shoulder: what each agent of the group did while
+      // nobody was looking, read from the sessions on disk.
+      if (e.shiftKey && e.code === "KeyO") {
+        e.preventDefault();
+        const groupId = useProjects.getState().activeGroupId;
+        if (groupId) useUI.getState().openModal("shoulder", { groupId });
+        return;
       }
     };
 

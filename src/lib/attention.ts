@@ -10,6 +10,7 @@
  * goes first**, all of them, ahead of anyone who merely finished. An agent
  * stuck on a question burns time; one that finished does not.
  */
+import { t } from "./i18n";
 import { goToTerminal } from "./navigate";
 import { useProjects } from "../stores/projectsStore";
 import { useTerminals } from "../stores/terminalsStore";
@@ -41,7 +42,7 @@ export function jumpToAttention(): void {
   const ofGroup = s.activeGroupId ? queue(s.terminalsOf(s.activeGroupId)) : [];
   const targets = ofGroup.length ? ofGroup : queue(s.terminals);
   if (targets.length === 0) {
-    useUI.getState().showToast("Nenhum agente pedindo atenção agora.");
+    useUI.getState().showToast(t("Nenhum agente pedindo atenção agora."));
     return;
   }
   goToTerminal(targets[step++ % targets.length]);

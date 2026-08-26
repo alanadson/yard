@@ -8,6 +8,7 @@
  * presents itself". The union and the list are one thing, like `MARKS`:
  * adding an entry here is what makes the id exist for the store and the modal.
  */
+// i18n-scan: tables — names, chips and descriptions are translated where the store renders them.
 import { SCHEMES } from "./colorSchemes";
 
 export type ExtensionId =

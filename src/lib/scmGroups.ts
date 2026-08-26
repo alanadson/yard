@@ -1,3 +1,4 @@
+// i18n-scan: tables
 /**
  * From `git status` (a flat list) to the three groups of the Source Control tab.
  *
@@ -13,6 +14,7 @@
  * the other two.
  */
 import type { ChangedFile, GitFileStatus, ScmDiffSide } from "./ipc";
+import { t } from "./i18n";
 
 export type ScmGroupId = "conflicts" | "staged" | "changes";
 
@@ -113,7 +115,7 @@ export function groupChanges(files: ChangedFile[]): ScmGroup[] {
 
   return ORDER.filter((id) => buckets[id].length > 0).map((id) => ({
     id,
-    label: LABELS[id],
+    label: t(LABELS[id]),
     rows: buckets[id].sort((a, b) => nameOrder(a.path, b.path)),
   }));
 }
@@ -193,6 +195,6 @@ const CONFLICTS: Record<string, string> = {
 };
 
 export function conflictKind(pair: string | null | undefined): string {
-  if (!pair) return "conflito";
-  return CONFLICTS[pair] ?? "conflito";
+  if (!pair) return t("conflito");
+  return t(CONFLICTS[pair] ?? "conflito");
 }

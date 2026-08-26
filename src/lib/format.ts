@@ -7,6 +7,8 @@
  * was covered by a test.
  */
 
+import { locale, t, tn } from "./i18n";
+
 /** Compact token count: `1.2k`, `3.4M`. */
 export function compactCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -16,7 +18,7 @@ export function compactCount(n: number): string {
 
 /** Short relative age of an event: `agora`, `12s`, `4min`, `2h`. */
 export function ago(ms: number): string {
-  if (ms < 10_000) return "agora";
+  if (ms < 10_000) return t("agora");
   if (ms < 60_000) return `${Math.floor(ms / 1000)}s`;
   if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}min`;
   return `${Math.floor(ms / 3_600_000)}h`;
@@ -39,14 +41,14 @@ export function since(at: number, now: number): string {
   if (!at) return "";
   const seconds = Math.floor(now / 1000 - at);
   // A skewed clock (the machine's, or the commit author's) does not go negative.
-  if (seconds < 60) return "agora";
+  if (seconds < 60) return t("agora");
   if (seconds < 3600) return `${Math.floor(seconds / 60)}min`;
   if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h`;
   const days = Math.floor(seconds / 86_400);
-  if (days < 30) return `${days} ${days === 1 ? "dia" : "dias"}`;
+  if (days < 30) return tn(days, "{n} dia", "{n} dias");
   const data = new Date(at * 1000);
   const sameYear = data.getFullYear() === new Date(now).getFullYear();
-  return data.toLocaleDateString("pt-BR", {
+  return data.toLocaleDateString(locale(), {
     day: "numeric",
     month: "short",
     ...(sameYear ? {} : { year: "numeric" }),
@@ -54,6 +56,17 @@ export function since(at: number, now: number): string {
 }
 
 /** Duration of something still running: `43s`, `2m07s`. */
+/**
+ * Which shape `since` answered in — for a caller that phrases a sentence
+ * around it ("há 5min" vs "em 12 de jul.") without reading the words back.
+ */
+export function sinceKind(at: number, now: number): "none" | "now" | "duration" | "date" {
+  if (!at) return "none";
+  const seconds = Math.floor(now / 1000 - at);
+  if (seconds < 60) return "now";
+  return seconds < 30 * 86_400 ? "duration" : "date";
+}
+
 export function elapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(s / 60);
@@ -63,7 +76,7 @@ export function elapsed(ms: number): string {
 /** Wall clock of an event, 24h. Empty for a missing timestamp. */
 export function clock(at: number): string {
   if (!at) return "";
-  return new Date(at).toLocaleTimeString("pt-BR", { hour12: false });
+  return new Date(at).toLocaleTimeString(locale(), { hour12: false });
 }
 
 /**

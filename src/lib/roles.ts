@@ -31,6 +31,7 @@ import {
   type RolePreset,
 } from "./canvas";
 import { ipc } from "./ipc";
+import { t } from "./i18n";
 
 /** Where a saved role lives. Group scope wins over global on a name clash. */
 export type RoleScope = "current" | "global";
@@ -178,9 +179,9 @@ export const NO_LAUNCH: RoleLaunch = { args: [], briefing: null };
  */
 export function briefingFor(role: CardRole): string {
   return (
-    `[Yard] Papel deste terminal: "${role.name}".\n\n` +
+    `[Yard] Papel deste terminal: "${role.name}".\n\n` + // i18n-ok — typed into the agent
     `${role.text}\n\n` +
-    "Isso vale para toda a sessão. Responda só \"ok\" e espere o próximo pedido."
+    "Isso vale para toda a sessão. Responda só \"ok\" e espere o próximo pedido." // i18n-ok
   );
 }
 
@@ -216,7 +217,7 @@ export function roleLaunch(
 /** One line for the UI: how this role is going to reach this CLI. */
 export function launchHint(agentId: string | null | undefined): string {
   return agentId && SYSTEM_PROMPT_ARGS[agentId]
-    ? "As instruções entram no prompt de sistema da CLI, na hora de abrir."
-    : "As instruções são enviadas como a primeira mensagem, assim que a CLI subir.";
+    ? t("As instruções entram no prompt de sistema da CLI, na hora de abrir.")
+    : t("As instruções são enviadas como a primeira mensagem, assim que a CLI subir.");
 }
 

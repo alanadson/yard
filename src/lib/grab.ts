@@ -12,6 +12,8 @@
  * across the `eval` boundary, and shaping it into the prompt.
  */
 
+import { t } from "./i18n";
+
 export interface GrabPick {
   url: string;
   title: string;
@@ -156,36 +158,42 @@ export function grabLabel(pick: GrabPick): string {
  */
 export function formatGrab(pick: GrabPick, shot?: string | null): string {
   const lines = [
-    `Elemento apontado no portal — ${grabLabel(pick)}`,
+    t("Elemento apontado no portal — {label}", { label: grabLabel(pick) }),
     "",
-    `**Página:** ${pick.url}`,
+    t("**Página:** {url}", { url: pick.url }),
   ];
   if (shot) {
-    lines.push(`**Recorte da tela:** ${inlineCode(shot)} — abra esta imagem para ver o elemento.`);
+    lines.push(
+      t("**Recorte da tela:** {shot} — abra esta imagem para ver o elemento.", { shot: inlineCode(shot) }),
+    );
   }
-  lines.push(`**Seletor:** ${inlineCode(pick.selector || pick.tag)}`);
+  lines.push(t("**Seletor:** {selector}", { selector: inlineCode(pick.selector || pick.tag) }));
 
   if (pick.classes.length) {
-    lines.push(`**Classes:** ${inlineCode(pick.classes.join(" "))}`);
+    lines.push(t("**Classes:** {classes}", { classes: inlineCode(pick.classes.join(" ")) }));
   }
-  if (pick.parent) lines.push(`**Dentro de:** ${inlineCode(pick.parent)}`);
-  if (pick.text) lines.push(`**Texto:** “${pick.text}”`);
+  if (pick.parent) lines.push(t("**Dentro de:** {parent}", { parent: inlineCode(pick.parent) }));
+  if (pick.text) lines.push(t("**Texto:** “{text}”", { text: pick.text }));
 
   const attrs = Object.entries(pick.attrs).filter(([k]) => k !== "aria-label");
   if (attrs.length) {
     lines.push(
-      `**Atributos:** ${attrs.map(([k, v]) => `${k}=${inlineCode(v)}`).join(", ")}`,
+      t("**Atributos:** {attrs}", { attrs: attrs.map(([k, v]) => `${k}=${inlineCode(v)}`).join(", ") }),
     );
   }
 
   lines.push(
-    `**Caixa:** ${pick.rect.w}×${pick.rect.h} em (${pick.rect.x}, ${pick.rect.y})` +
-      (pick.viewport.w ? ` · viewport ${pick.viewport.w}×${pick.viewport.h}` : ""),
+    t("**Caixa:** {w}×{h} em ({x}, {y})", {
+      w: pick.rect.w,
+      h: pick.rect.h,
+      x: pick.rect.x,
+      y: pick.rect.y,
+    }) + (pick.viewport.w ? ` · viewport ${pick.viewport.w}×${pick.viewport.h}` : ""),
   );
 
   const styles = Object.entries(pick.styles);
   if (styles.length) {
-    lines.push("**Estilo calculado:**");
+    lines.push(t("**Estilo calculado:**"));
     for (const [key, value] of styles) lines.push(`- ${kebab(key)}: ${value}`);
   }
 
@@ -194,7 +202,7 @@ export function formatGrab(pick: GrabPick, shot?: string | null): string {
     lines.push(...fenced("html", pick.html));
   }
 
-  lines.push("", "O que muda aqui: ");
+  lines.push("", t("O que muda aqui: "));
   return lines.join("\n");
 }
 

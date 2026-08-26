@@ -26,6 +26,7 @@ import { useFlows } from "../stores/flowStore";
 import { useProjects } from "../stores/projectsStore";
 import { useTerminals } from "../stores/terminalsStore";
 import { useUI } from "../stores/uiStore";
+import { t } from "./i18n";
 
 /** Text typed since the last submit, per terminal. Never persisted. */
 const buffers = new Map<string, string>();
@@ -95,7 +96,10 @@ export function interceptFlowInput(terminalId: string, data: string): boolean {
   useUI
     .getState()
     .showToast(
-      `Fluxo "${bound.flow.name}" assumiu o pedido — ${bound.flow.stages.length} etapa(s) nesta CLI.`,
+      t('Fluxo "{name}" assumiu o pedido — {n} etapa(s) nesta CLI.', {
+        name: bound.flow.name,
+        n: bound.flow.stages.length,
+      }),
     );
   return true;
 }

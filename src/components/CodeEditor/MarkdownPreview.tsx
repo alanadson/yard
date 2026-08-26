@@ -27,6 +27,7 @@ import { chunkNodes, shineLines } from "./shine";
 import { mediaUrl } from "../../lib/media";
 import { parseDoc, plain, type Block, type Inline } from "../../lib/mddoc";
 import { splitPath } from "../../lib/paths";
+import { useT } from "../../hooks/useT";
 
 interface Props {
   text: string;
@@ -99,6 +100,7 @@ function MdImage({
    * that fetches it, and the same protocol the editor's viewer uses.
    */
   const url = rel ? mediaUrl(root, rel) : src.startsWith("data:") ? src : null;
+  const t = useT();
   const [failed, setFailed] = useState(false);
   // The agent moved the file the document points at: try the new address.
   useEffect(() => setFailed(false), [url]);
@@ -135,9 +137,9 @@ function MdImage({
       }
       data-tip={
         remote
-          ? "Imagem de fora do projeto — abre como portal no canvas"
+          ? t("Imagem de fora do projeto — abre como portal no canvas")
           : failed
-            ? "Não consegui ler o arquivo"
+            ? t("Não consegui ler o arquivo")
             : undefined
       }
     >
@@ -214,7 +216,7 @@ function Parts({ parts, ...rest }: InlineProps) {
                 href={`#nota-${p.id}`}
                 onClick={(e) => {
                   e.preventDefault();
-                  const target = document.getElementById(`nota-${p.id}`);
+                  const target = document.getElementById(`nota-${p.id}`); // i18n-ok — not a sentence
                   target?.scrollIntoView({ block: "center", behavior: "smooth" });
                 }}
               >
@@ -333,6 +335,7 @@ function useShine(text: string, lang?: string): ReactNode {
 }
 
 function CodeBlock({ text, lang }: { text: string; lang?: string }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const shine = useShine(text, lang);
   useEffect(() => {
@@ -347,8 +350,8 @@ function CodeBlock({ text, lang }: { text: string; lang?: string }) {
         <span>{lang ? fenceLabel(lang) : ""}</span>
         <button
           className="icon-btn"
-          data-tip="Copiar o bloco"
-          aria-label="Copiar o bloco de código"
+          data-tip={t("Copiar o bloco")}
+          aria-label={t("Copiar o bloco de código")}
           onClick={() => {
             void navigator.clipboard.writeText(text).then(() => setCopied(true));
           }}
@@ -372,6 +375,7 @@ interface BlocksProps extends Omit<InlineProps, "parts"> {
 }
 
 function Blocks({ blocks, onTask, onGoToLine, top, ...rest }: BlocksProps) {
+  const t = useT();
   const inner = { ...rest, onTask, onGoToLine };
   return (
     <>
@@ -450,7 +454,7 @@ function Blocks({ blocks, onTask, onGoToLine, top, ...rest }: BlocksProps) {
                         role="checkbox"
                         aria-checked={item.task === "done"}
                         aria-label={
-                          item.task === "done" ? "Reabrir a tarefa" : "Concluir a tarefa"
+                          item.task === "done" ? t("Reabrir a tarefa") : t("Concluir a tarefa")
                         }
                         onClick={() => onTask(item.line)}
                       />

@@ -96,3 +96,23 @@ describe("matchLabel", () => {
     );
   });
 });
+
+/**
+ * The counter is the bar's only answer, so it speaks the interface language:
+ * the same numbers, the words in English when the interface is.
+ */
+describe("matchLabel in English", () => {
+  it("says the same thing in English", async () => {
+    const { setActiveLang } = await import("../../lib/i18n");
+    setActiveLang("en");
+    try {
+      expect(matchLabel({ total: 0, current: 0, capped: false, status: "invalid" })).toBe("invalid regex");
+      expect(matchLabel({ total: 0, current: 0, capped: false, status: "ok" })).toBe("no matches");
+      expect(matchLabel({ total: 12, current: 3, capped: false, status: "ok" })).toBe("3 of 12");
+      expect(matchLabel({ total: 1, current: 0, capped: false, status: "ok" })).toBe("1 match");
+      expect(matchLabel({ total: 1000, current: 0, capped: true, status: "ok" })).toBe("1000+ matches");
+    } finally {
+      setActiveLang("pt-BR");
+    }
+  });
+});

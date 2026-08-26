@@ -13,6 +13,9 @@
  * same role an app icon plays in a system's settings), the one agreed
  * exception to the "blue is the chrome's only color" rule — and it holds
  * because the menu is a list of destinations, not of actions.
+ *
+ * The texts are a table: they stay in Portuguese here and go through `t()`
+ * where the menu renders them (`Settings/index.tsx`). // i18n-scan: tables
  */
 export type SettingsCategory =
   | "interface"
@@ -22,6 +25,7 @@ export type SettingsCategory =
   | "comportamento"
   | "atalhos"
   | "dados"
+  | "mcp"
   | "extensoes";
 
 export interface SettingsCategoryEntry {
@@ -92,6 +96,13 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategoryEntry[] = [
     title: "Extensões",
     desc: "Recursos que já vêm com o Yard — ligar é instalar",
     tone: "#0aa1dd",
+  },
+  {
+    id: "mcp",
+    label: "Servidores MCP",
+    title: "Servidores MCP",
+    desc: "Os servidores de ferramentas de cada CLI, num lugar só",
+    tone: "#30b0c7",
   },
 ];
 

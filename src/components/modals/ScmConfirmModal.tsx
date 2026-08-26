@@ -10,6 +10,7 @@
 import { AlertTriangle } from "lucide-react";
 
 import { Modal } from "./Modal";
+import { useT } from "../../hooks/useT";
 import { useUI } from "../../stores/uiStore";
 import type { ScmConfirmSpec } from "../../lib/scmConfirm";
 
@@ -18,6 +19,7 @@ export interface ScmConfirmPayload extends ScmConfirmSpec {
 }
 
 export function ScmConfirmModal() {
+  const t = useT();
   const closeModal = useUI((s) => s.closeModal);
   const payload = useUI((s) => s.modalPayload) as ScmConfirmPayload | null;
   if (!payload) return null;
@@ -37,7 +39,7 @@ export function ScmConfirmModal() {
       footer={
         <div className="modal-foot-row modal-foot-row--end">
           <button className="btn" onClick={closeModal}>
-            Cancelar
+            {t("Cancelar")}
           </button>
           <button className="btn btn--danger" onClick={confirmAction}>
             {payload.confirmLabel}

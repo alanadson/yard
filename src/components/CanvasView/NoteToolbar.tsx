@@ -50,6 +50,7 @@ import {
 
 import type { BlockKind, MdCommand } from "../../lib/mdedit";
 import { useOccluders } from "../../stores/occludersStore";
+import { useT } from "../../hooks/useT";
 
 /**
  * What the note hands the bar. Deliberately three functions and no data:
@@ -74,6 +75,7 @@ interface Btn {
   on?: BlockKind;
 }
 
+// i18n-scan: tables — every label and chip word is wrapped with t() where it is rendered.
 /** In the top row: title, emphasis, structure. */
 const MAIN: (Btn | "sep")[] = [
   { cmd: "h1", icon: <Heading1 size={14} />, label: "Título 1", keys: "Ctrl+1", on: "h1" },
@@ -165,6 +167,7 @@ interface Props {
 const NO_SUB = () => () => {};
 
 export function NoteToolbar({ api }: Props) {
+  const t = useT();
   const [more, setMore] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -197,7 +200,7 @@ export function NoteToolbar({ api }: Props) {
       ref={rootRef}
       className="cv-mdbar"
       role="toolbar"
-      aria-label="Formatação da nota"
+      aria-label={t("Formatação da nota")}
       // Two jobs in one handler. `stopPropagation` keeps the canvas from
       // reading the press as "clicked outside the note, stop editing", and
       // `preventDefault` kills the compatibility mousedown whose focus walk
@@ -216,8 +219,8 @@ export function NoteToolbar({ api }: Props) {
             <button
               key={b.cmd}
               className={`icon-btn ${b.on && block === b.on ? "is-active" : ""}`}
-              data-tip={`${b.label} (${b.keys})`}
-              aria-label={b.label}
+              data-tip={`${t(b.label)} (${b.keys})`}
+              aria-label={t(b.label)}
               aria-pressed={b.on ? block === b.on : undefined}
               onClick={() => run(b.cmd)}
             >
@@ -228,8 +231,8 @@ export function NoteToolbar({ api }: Props) {
         <div className="cv-mdbar-sep" />
         <button
           className={`icon-btn ${more ? "is-active" : ""}`}
-          data-tip={more ? "Menos comandos" : "Mais comandos"}
-          aria-label={more ? "Menos comandos" : "Mais comandos"}
+          data-tip={more ? t("Menos comandos") : t("Mais comandos")}
+          aria-label={more ? t("Menos comandos") : t("Mais comandos")}
           aria-expanded={more}
           onClick={() => setMore((v) => !v)}
         >
@@ -241,16 +244,16 @@ export function NoteToolbar({ api }: Props) {
           bar sits above a note that fills most of the frame, and anything
           that dropped down would cover the text it is meant to format. */}
       {more && (
-        <div className="cv-mdbar-extra" role="group" aria-label="Mais comandos">
+        <div className="cv-mdbar-extra" role="group" aria-label={t("Mais comandos")}>
           {MORE.map((b) => (
             <button
               key={b.cmd}
               className="cv-mdchip"
-              data-tip={`${b.label} (${b.keys})`}
+              data-tip={`${t(b.label)} (${b.keys})`}
               onClick={() => run(b.cmd)}
             >
               {b.icon}
-              <span>{b.short}</span>
+              <span>{b.short ? t(b.short) : null}</span>
             </button>
           ))}
         </div>

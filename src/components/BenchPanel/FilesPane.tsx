@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { FileTree } from "../FileTree";
+import { useT } from "../../hooks/useT";
 import { useEditor } from "../../stores/editorStore";
 import { useUI } from "../../stores/uiStore";
 import { sameRoot } from "../../lib/roots";
@@ -41,6 +42,7 @@ export function FilesPane({
     return active && sameRoot(active.root, s.root) ? active.path : null;
   });
   const showToast = useUI((s) => s.showToast);
+  const t = useT();
 
   const [drafting, setDrafting] = useState<{ dir: string; isDir: boolean } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -53,7 +55,7 @@ export function FilesPane({
     void useEditor
       .getState()
       .openFile(path)
-      .catch((e) => showToast(`Não consegui abrir: ${e}`, "error"));
+      .catch((e) => showToast(t("Não consegui abrir: {e}", { e: String(e) }), "error"));
   };
 
   const collapseAll = () => {
@@ -61,7 +63,7 @@ export function FilesPane({
   };
 
   return (
-    <div className="bench-body bench-body--files" role="tabpanel" aria-label="Arquivos">
+    <div className="bench-body bench-body--files" role="tabpanel" aria-label={t("Arquivos")}>
       <div className="bench-bar">
         <div className="bench-search">
           {/* Funnel, not magnifier: this narrows by name; the magnifier in the
@@ -70,8 +72,8 @@ export function FilesPane({
           <input
             ref={searchRef}
             value={filter}
-            placeholder="Filtrar por nome"
-            aria-label="Filtrar arquivos pelo nome"
+            placeholder={t("Filtrar por nome")}
+            aria-label={t("Filtrar arquivos pelo nome")}
             onChange={(e) => setFilter(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
@@ -83,7 +85,7 @@ export function FilesPane({
           {filter && (
             <button
               className="icon-btn"
-              aria-label="Limpar o filtro"
+              aria-label={t("Limpar o filtro")}
               onClick={() => {
                 setFilter("");
                 searchRef.current?.focus();
@@ -98,8 +100,8 @@ export function FilesPane({
               moves — here it opens the search, there (lit blue) it closes. */}
           <button
             className="icon-btn bench-lens"
-            data-tip="Buscar no projeto (Ctrl+Shift+F)"
-            aria-label="Buscar texto em todo o projeto"
+            data-tip={t("Buscar no projeto (Ctrl+Shift+F)")}
+            aria-label={t("Buscar texto em todo o projeto")}
             aria-pressed={false}
             onClick={onSearch}
           >
@@ -107,8 +109,8 @@ export function FilesPane({
           </button>
           <button
             className="icon-btn"
-            data-tip="Novo arquivo na raiz"
-            aria-label="Novo arquivo na raiz do projeto"
+            data-tip={t("Novo arquivo na raiz")}
+            aria-label={t("Novo arquivo na raiz do projeto")}
             disabled={!root}
             onClick={() => setDrafting({ dir: "", isDir: false })}
           >
@@ -116,8 +118,8 @@ export function FilesPane({
           </button>
           <button
             className="icon-btn"
-            data-tip="Nova pasta na raiz"
-            aria-label="Nova pasta na raiz do projeto"
+            data-tip={t("Nova pasta na raiz")}
+            aria-label={t("Nova pasta na raiz do projeto")}
             disabled={!root}
             onClick={() => setDrafting({ dir: "", isDir: true })}
           >
@@ -125,16 +127,16 @@ export function FilesPane({
           </button>
           <button
             className="icon-btn"
-            data-tip="Recolher tudo"
-            aria-label="Recolher todas as pastas"
+            data-tip={t("Recolher tudo")}
+            aria-label={t("Recolher todas as pastas")}
             onClick={collapseAll}
           >
             <FoldVertical size={13} />
           </button>
           <button
             className="icon-btn"
-            data-tip="Reler do disco"
-            aria-label="Reler o disco"
+            data-tip={t("Reler do disco")}
+            aria-label={t("Reler o disco")}
             disabled={!root}
             onClick={() => useEditor.getState().refreshTree()}
           >
@@ -144,9 +146,7 @@ export function FilesPane({
       </div>
 
       {filter.trim() && (
-        <p className="bench-note">
-          filtrando só as pastas já abertas
-        </p>
+        <p className="bench-note">{t("filtrando só as pastas já abertas")}</p>
       )}
 
       <div className="ftree-scroll">

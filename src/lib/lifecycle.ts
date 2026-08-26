@@ -10,6 +10,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { removeNodeAndEdges } from "./canvasOps";
 import { commitCanvasExternal } from "./canvasWrite";
 import { spawnEnvFor } from "./spawnEnv";
+import { t } from "./i18n";
 import { ipc, type PtyKind } from "./ipc";
 import { retainLivePortals } from "./portalSpawn";
 import { sendability } from "./sendable";
@@ -129,11 +130,18 @@ export async function confirmCloseTerminal(id: string): Promise<boolean> {
   const term = useProjects.getState().terminal(id);
   if (!term) return false;
   const alive = isLive(useTerminals.getState().byId[id]);
+  const name = baseName(term);
   const ok = await ask(
     alive
-      ? `Excluir “${baseName(term)}”? O processo será encerrado e o histórico desta CLI, junto com o cartão e as conexões dela no canvas, vai embora.`
-      : `Excluir “${baseName(term)}”? O histórico desta CLI, o cartão e as conexões dela no canvas e as rotinas dela vão embora. Fechar a aba não apaga nada — só excluir.`,
-    { title: "Excluir CLI", kind: "warning" },
+      ? t(
+          "Excluir “{name}”? O processo será encerrado e o histórico desta CLI, junto com o cartão e as conexões dela no canvas, vai embora.",
+          { name },
+        )
+      : t(
+          "Excluir “{name}”? O histórico desta CLI, o cartão e as conexões dela no canvas e as rotinas dela vão embora. Fechar a aba não apaga nada — só excluir.",
+          { name },
+        ),
+    { title: t("Excluir CLI"), kind: "warning" },
   );
   if (!ok) return false;
   await closeTerminal(id);
@@ -169,20 +177,26 @@ async function confirmInterrupt(
   const name = baseName(term);
   return ask(
     state.reason === "busy"
-      ? `${name} está trabalhando agora. ${verb} interrompe a tarefa em andamento — o que já foi feito no disco fica, o turno não volta.`
-      : `${name} está parado esperando uma resposta sua. ${verb} descarta a pergunta que está na tela.`,
+      ? t(
+          "{name} está trabalhando agora. {verb} interrompe a tarefa em andamento — o que já foi feito no disco fica, o turno não volta.",
+          { name, verb },
+        )
+      : t("{name} está parado esperando uma resposta sua. {verb} descarta a pergunta que está na tela.", {
+          name,
+          verb,
+        }),
     { title: theTitle, kind: "warning" },
   );
 }
 
 /** Restarts the CLI, asking if it is in the middle of something. */
 export async function confirmRestartTerminal(id: string): Promise<boolean> {
-  return confirmInterrupt(id, "Reiniciar CLI", "Reiniciar");
+  return confirmInterrupt(id, t("Reiniciar CLI"), t("Reiniciar"));
 }
 
 /** Kills the process tree, asking if it is in the middle of something. */
 export async function confirmKillTerminal(id: string): Promise<boolean> {
-  return confirmInterrupt(id, "Matar processo", "Matar o processo");
+  return confirmInterrupt(id, t("Matar processo"), t("Matar o processo"));
 }
 
 /**
@@ -195,10 +209,13 @@ export async function confirmKillTerminal(id: string): Promise<boolean> {
  */
 export async function confirmClearTerminal(id: string): Promise<boolean> {
   const term = useProjects.getState().terminal(id);
-  const itemName = term ? baseName(term) : "este terminal";
+  const name = term ? baseName(term) : t("este terminal");
   return ask(
-    `Limpar o histórico de “${itemName}”? Tudo o que já foi escrito nele some daqui e do disco — não dá para desfazer. O processo continua rodando.`,
-    { title: "Limpar terminal", kind: "warning" },
+    t(
+      "Limpar o histórico de “{name}”? Tudo o que já foi escrito nele some daqui e do disco — não dá para desfazer. O processo continua rodando.",
+      { name },
+    ),
+    { title: t("Limpar terminal"), kind: "warning" },
   );
 }
 

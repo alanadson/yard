@@ -42,6 +42,7 @@ import { useFlows, terminalBusyInFlow, type FlowRun } from "../stores/flowStore"
 import { isLive, useTerminals } from "../stores/terminalsStore";
 import { useProjects } from "../stores/projectsStore";
 import { useUI } from "../stores/uiStore";
+import { t } from "./i18n";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -73,7 +74,7 @@ function toast(message: string, kind: "info" | "error" = "info") {
 function notify(body: string) {
   if (!useUI.getState().prefs.notifyOnFinish) return;
   try {
-    sendNotification({ title: "Yard — Fluxo", body });
+    sendNotification({ title: t("Yard — Fluxo"), body });
   } catch {
     // Lacking notification permission is not a flow error.
   }
@@ -104,20 +105,23 @@ export function startFlow(
   const st = useFlows.getState();
   const s = useProjects.getState();
 
-  if (!task.trim()) return { ok: false, message: "A tarefa chegou vazia." };
+  if (!task.trim()) return { ok: false, message: t("A tarefa chegou vazia.") };
   // Anti-loop: the trigger briefing and the stage messages reach the CLI as
   // typed text, and a hasty agent once tried to "forward" its own briefing.
   // Nothing Yard wrote is a user task.
   if (task.trimStart().startsWith("[Yard")) {
     return {
       ok: false,
-      message:
-        "isso é uma mensagem do próprio Yard (configuração ou etapa), não uma " +
-        "tarefa do usuário — nada foi disparado. Encaminhe apenas pedidos digitados pelo usuário.",
+      message: t(
+        "isso é uma mensagem do próprio Yard (configuração ou etapa), não uma tarefa do usuário — nada foi disparado. Encaminhe apenas pedidos digitados pelo usuário.",
+      ),
     };
   }
   if (flow.stages.length === 0) {
-    return { ok: false, message: `O fluxo "${flow.name}" ainda não tem etapas — edite-o no canvas.` };
+    return {
+      ok: false,
+      message: t('O fluxo "{name}" ainda não tem etapas — edite-o no canvas.', { name: flow.name }),
+    };
   }
   // A stage with no prompt has nothing to instruct: the briefing would arrive
   // carrying only the task, and the CLI would spend a whole turn guessing what
@@ -130,26 +134,32 @@ export function startFlow(
   if (util.stages.length === 0) {
     return {
       ok: false,
-      message: `As etapas do fluxo "${flow.name}" estão sem prompt — escreva o que cada uma deve fazer antes de rodá-lo.`,
+      message: t(
+        'As etapas do fluxo "{name}" estão sem prompt — escreva o que cada uma deve fazer antes de rodá-lo.',
+        { name: flow.name },
+      ),
     };
   }
   const live = st.runs[flow.id];
   if (live && !live.finishedAt) {
-    return { ok: false, message: `O fluxo "${flow.name}" já está em execução.` };
+    return { ok: false, message: t('O fluxo "{name}" já está em execução.', { name: flow.name }) };
   }
 
   const term = s.terminal(opts.terminalId);
   if (!term || term.kind !== "agent") {
-    return { ok: false, message: "O executor do fluxo precisa ser um terminal de agente." };
+    return { ok: false, message: t("O executor do fluxo precisa ser um terminal de agente.") };
   }
   if (!isLive(useTerminals.getState().byId[term.id])) {
-    return { ok: false, message: `Inicie "${baseName(term)}" antes de rodar o fluxo.` };
+    return { ok: false, message: t('Inicie "{name}" antes de rodar o fluxo.', { name: baseName(term) }) };
   }
   const other = terminalBusyInFlow(term.id);
   if (other) {
     return {
       ok: false,
-      message: `"${baseName(term)}" já está executando o fluxo "${other.name}" — espere ou cancele-o.`,
+      message: t('"{name}" já está executando o fluxo "{other}" — espere ou cancele-o.', {
+        name: baseName(term),
+        other: other.name,
+      }),
     };
   }
 
@@ -180,7 +190,11 @@ export function startFlow(
   void walk(util, term.id, task, !!opts.typed);
   return {
     ok: true,
-    message: `Fluxo "${flow.name}" iniciado em "${baseName(term)}" — ${util.stages.length} etapa(s).`,
+    message: t('Fluxo "{name}" iniciado em "{term}" — {n} etapa(s).', {
+      name: flow.name,
+      term: baseName(term),
+      n: util.stages.length,
+    }),
   };
 }
 
@@ -238,7 +252,7 @@ async function walk(flow: FlowItem, terminalId: string, task: string, typed: boo
     try {
       baseline = (await ipc.ptyProbe(terminalId)).totalBytes;
     } catch {
-      return endError(flow, i, "não consegui sondar o terminal executor.");
+      return endError(flow, i, t("não consegui sondar o terminal executor."));
     }
     const t0 = Date.now();
     // The full letter stays on the run — `yard flow stage` hands it to the
@@ -272,7 +286,7 @@ async function walk(flow: FlowItem, terminalId: string, task: string, typed: boo
       // as ONE message.
       await injectPrompt(terminalId, joined ? `\n\n${stamp}` : stamp);
     } catch (e) {
-      return endError(flow, i, `não consegui entregar o carimbo da etapa: ${e}`);
+      return endError(flow, i, t("não consegui entregar o carimbo da etapa: {e}", { e: String(e) }));
     }
     st.setStage(flow.id, i, "working");
     uiLog.info(`fluxo "${flow.name}": etapa ${i + 1}/${flow.stages.length} ("${label}") começou`);
@@ -294,8 +308,8 @@ async function walk(flow: FlowItem, terminalId: string, task: string, typed: boo
   }
 
   st.patchRun(flow.id, { current: flow.stages.length, finishedAt: Date.now() });
-  toast(`Fluxo "${flow.name}" concluído — ${flow.stages.length} etapa(s).`);
-  notify(`Fluxo "${flow.name}" concluído.`);
+  toast(t('Fluxo "{name}" concluído — {n} etapa(s).', { name: flow.name, n: flow.stages.length }));
+  notify(t('Fluxo "{name}" concluído.', { name: flow.name }));
   uiLog.info(`fluxo "${flow.name}": concluído`);
 
   // The task was born in a CLI (`yard flow run`); when the caller is not the
@@ -324,7 +338,7 @@ async function waitReady(
     const sb = sendability(terminalId);
     if (sb.ok) return "ok";
     if (sb.reason === "missing" || sb.reason === "dead") {
-      return sb.message ?? "o terminal executor não está mais rodando.";
+      return sb.message ?? t("o terminal executor não está mais rodando.");
     }
     if (sb.reason === "blocked") {
       useFlows.getState().setStage(flowId, index, "blocked");
@@ -332,16 +346,18 @@ async function waitReady(
         toldBlocked = true;
         const run = useFlows.getState().runs[flowId];
         toast(
-          `Fluxo "${run?.name}": a CLI está travada numa pergunta — responda para o fluxo seguir.`,
+          t('Fluxo "{name}": a CLI está travada numa pergunta — responda para o fluxo seguir.', {
+            name: run?.name ?? "",
+          }),
         );
-        notify(`Fluxo "${run?.name}" precisa de você.`);
+        notify(t('Fluxo "{name}" precisa de você.', { name: run?.name ?? "" }));
       }
       deadline = Date.now() + READY_TIMEOUT_MS;
     } else {
       useFlows.getState().setStage(flowId, index, "waiting");
     }
     if (Date.now() >= deadline) {
-      return "a CLI nunca ficou pronta para receber a etapa (ocupada por muito tempo).";
+      return t("a CLI nunca ficou pronta para receber a etapa (ocupada por muito tempo).");
     }
     await sleep(READY_POLL_MS);
   }
@@ -374,10 +390,10 @@ async function waitDone(
     try {
       probe = await ipc.ptyProbe(terminalId);
     } catch (e) {
-      return `perdi o terminal executor no meio da etapa "${label}": ${e}`;
+      return t('perdi o terminal executor no meio da etapa "{label}": {e}', { label, e: String(e) });
     }
     if (!probe.alive) {
-      return `o terminal executor encerrou no meio da etapa "${label}".`;
+      return t('o terminal executor encerrou no meio da etapa "{label}".', { label });
     }
     if (probe.totalBytes > lastSeq) {
       lastSeq = probe.totalBytes;
@@ -395,8 +411,13 @@ async function waitDone(
       if (!toldBlocked) {
         toldBlocked = true;
         const run = useFlows.getState().runs[flowId];
-        toast(`Fluxo "${run?.name}": a etapa "${label}" espera uma resposta sua na CLI.`);
-        notify(`Fluxo "${run?.name}" precisa de você.`);
+        toast(
+          t('Fluxo "{name}": a etapa "{label}" espera uma resposta sua na CLI.', {
+            name: run?.name ?? "",
+            label,
+          }),
+        );
+        notify(t('Fluxo "{name}" precisa de você.', { name: run?.name ?? "" }));
       }
       continue;
     }
@@ -416,7 +437,10 @@ async function waitDone(
     if (grew && rt?.finished && rt.finishedAt >= t0) return "ok";
     if (grew && quiet >= QUIET_POLLS) return "ok";
     if (Date.now() - lastGrowthAt > STAGE_STALL_MS) {
-      return `a etapa "${label}" ficou mais de ${Math.round(STAGE_STALL_MS / 60_000)} min sem produzir saída — interrompida.`;
+      return t('a etapa "{label}" ficou mais de {min} min sem produzir saída — interrompida.', {
+        label,
+        min: Math.round(STAGE_STALL_MS / 60_000),
+      });
     }
   }
 }
@@ -442,9 +466,9 @@ async function deliverResult(terminalId: string, flowName: string, carry: string
     await sleep(READY_POLL_MS);
   }
   const msg =
-    `${FLOW_MSG_TAG} "${flowName}" — concluído]\n\n` +
-    `Resultado final da tarefa que você encaminhou:\n\n${carry.trim()}\n\n` +
-    "Apresente o resultado ao usuário desta CLI de forma clara e curta.";
+    `${FLOW_MSG_TAG} "${flowName}" — concluído]\n\n` + // i18n-ok — typed into the agent
+    `Resultado final da tarefa que você encaminhou:\n\n${carry.trim()}\n\n` + // i18n-ok
+    "Apresente o resultado ao usuário desta CLI de forma clara e curta."; // i18n-ok
   try {
     await injectPrompt(terminalId, msg);
     uiLog.info(`fluxo "${flowName}": resultado entregue ao chamador`);
@@ -457,14 +481,17 @@ function endError(flow: FlowItem, index: number, message: string) {
   const st = useFlows.getState();
   st.setStage(flow.id, index, "error");
   st.patchRun(flow.id, { error: message, finishedAt: Date.now() });
-  toast(`Fluxo "${flow.name}" parou na etapa ${index + 1}: ${message}`, "error");
-  notify(`Fluxo "${flow.name}" falhou na etapa ${index + 1}.`);
+  toast(
+    t('Fluxo "{name}" parou na etapa {n}: {message}', { name: flow.name, n: index + 1, message }),
+    "error",
+  );
+  notify(t('Fluxo "{name}" falhou na etapa {n}.', { name: flow.name, n: index + 1 }));
   uiLog.error(`fluxo "${flow.name}": etapa ${index + 1} falhou — ${message}`);
 }
 
 function endCancelled(flow: FlowItem, index: number) {
   const st = useFlows.getState();
   st.patchRun(flow.id, { cancelled: true, finishedAt: Date.now() });
-  toast(`Fluxo "${flow.name}" cancelado na etapa ${index + 1}.`);
+  toast(t('Fluxo "{name}" cancelado na etapa {n}.', { name: flow.name, n: index + 1 }));
   uiLog.info(`fluxo "${flow.name}": cancelado na etapa ${index + 1}`);
 }

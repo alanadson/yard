@@ -6,7 +6,10 @@
  * project without git and the reason showed up nowhere. See `fileRow.test.ts`.
  */
 
-/** The reason, written once: serves the tooltip and the warning on click. */
+// i18n-scan: tables
+import { t } from "../../lib/i18n";
+
+/** The reason, written once: serves the tooltip and the warning on click. Render it through `t()`. */
 export const NO_REPO = "Sem diff: esta pasta não é um repositório git.";
 
 export interface FileRow {
@@ -17,6 +20,6 @@ export interface FileRow {
 
 export function fileRow(path: string, eRepo: boolean): FileRow {
   return eRepo
-    ? { action: "abre-diff", tip: `${path}\nAbrir o diff` }
-    : { action: "explica", tip: `${path}\n${NO_REPO}` };
+    ? { action: "abre-diff", tip: `${path}\n${t("Abrir o diff")}` }
+    : { action: "explica", tip: `${path}\n${t(NO_REPO)}` };
 }

@@ -13,6 +13,7 @@
 import { memo } from "react";
 
 import type { OutlineEntry } from "../../lib/mddoc";
+import { useT } from "../../hooks/useT";
 
 /**
  * What a row needs — satisfied by a markdown heading (`OutlineEntry`) and by
@@ -30,6 +31,7 @@ interface Props {
 }
 
 function OutlineImpl({ entries, line, onGo, empty }: Props) {
+  const t = useT();
   // The last heading at or above the caret: the section it belongs to.
   let active = -1;
   for (let i = 0; i < entries.length; i++) {
@@ -39,12 +41,14 @@ function OutlineImpl({ entries, line, onGo, empty }: Props) {
 
   if (entries.length === 0) {
     return (
-      <nav className="md-outline" aria-label="Sumário">
+      <nav className="md-outline" aria-label={t("Sumário")}>
         <p className="md-outline-empty">
-          {empty ?? (
+          {empty ? (
+            t(empty)
+          ) : (
             <>
-              Sem títulos ainda. Comece uma linha com <code>#</code> e ela
-              aparece aqui.
+              {t("Sem títulos ainda. Comece uma linha com")} <code>#</code>{" "}
+              {t("e ela aparece aqui.")}
             </>
           )}
         </p>
@@ -53,7 +57,7 @@ function OutlineImpl({ entries, line, onGo, empty }: Props) {
   }
 
   return (
-    <nav className="md-outline" aria-label="Sumário">
+    <nav className="md-outline" aria-label={t("Sumário")}>
       <ul>
         {entries.map((h, i) => (
           <li key={`${h.line}-${i}`}>
@@ -66,7 +70,7 @@ function OutlineImpl({ entries, line, onGo, empty }: Props) {
               aria-current={i === active ? "true" : undefined}
               onClick={() => onGo(h.line)}
             >
-              {h.text || "(sem título)"}
+              {h.text || t("(sem título)")}
             </button>
           </li>
         ))}

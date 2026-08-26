@@ -4,10 +4,12 @@
 import { ask } from "@tauri-apps/plugin-dialog";
 import { RotateCcw } from "lucide-react";
 
+import { useT } from "../../../hooks/useT";
 import { useUI } from "../../../stores/uiStore";
 import { Card, GroupTitle, Row, SwitchRow } from "../rows";
 
 export function SecBehavior() {
+  const t = useT();
   const showToast = useUI((s) => s.showToast);
 
   return (
@@ -15,16 +17,25 @@ export function SecBehavior() {
       <Card>
         <SwitchRow
           pref="confirmOnExit"
-          label="Confirmar ao sair com terminais vivos"
-          desc="Um aviso antes de fechar a janela quando ainda há processos rodando"
+          label={t("Confirmar ao sair com terminais vivos")}
+          desc={t("Um aviso antes de fechar a janela quando ainda há processos rodando")}
+        />
+        <SwitchRow
+          pref="closeToTray"
+          label={t("Fechar para a bandeja")}
+          desc={t(
+            "O X esconde a janela; as CLIs continuam. Sair fica no menu do ícone da bandeja (e na busca).",
+          )}
         />
       </Card>
 
-      <GroupTitle>Restaurar</GroupTitle>
+      <GroupTitle>{t("Restaurar")}</GroupTitle>
       <Card>
         <Row
-          label="Restaurar padrões"
-          desc="Fontes, métricas do editor, renderizador, histórico e larguras dos painéis voltam como vieram. Projetos, terminais e extensões não são tocados."
+          label={t("Restaurar padrões")}
+          desc={t(
+            "Fontes, métricas do editor, renderizador, histórico e larguras dos painéis voltam como vieram. Projetos, terminais e extensões não são tocados.",
+          )}
         >
           {/* The way out that was missing from any experiment with font, size,
               scrollback and renderer. */}
@@ -32,16 +43,18 @@ export function SecBehavior() {
             className="btn"
             onClick={() => {
               void ask(
-                "Restaurar as preferências ao padrão do Yard? Fontes, tamanho e altura da linha do editor, tabulação, numeração, renderizador, linhas de histórico e larguras dos painéis voltam como vieram. Projetos, terminais e extensões não são tocados.",
-                { title: "Restaurar padrões", kind: "warning" },
+                t(
+                  "Restaurar as preferências ao padrão do Yard? Fontes, tamanho e altura da linha do editor, tabulação, numeração, renderizador, linhas de histórico e larguras dos painéis voltam como vieram. Projetos, terminais e extensões não são tocados.",
+                ),
+                { title: t("Restaurar padrões"), kind: "warning" },
               ).then((ok) => {
                 if (!ok) return;
                 useUI.getState().resetPrefs();
-                showToast("Preferências restauradas.");
+                showToast(t("Preferências restauradas."));
               });
             }}
           >
-            <RotateCcw size={13} /> Restaurar
+            <RotateCcw size={13} /> {t("Restaurar")}
           </button>
         </Row>
       </Card>

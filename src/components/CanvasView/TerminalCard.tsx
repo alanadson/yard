@@ -25,6 +25,7 @@ import {
   ClipboardPaste,
   Clock,
   Eraser,
+  FileText,
   Globe,
   Maximize2,
   MessageSquarePlus,
@@ -52,6 +53,7 @@ import { useAction } from "../../hooks/useAction";
 import { useAdvertised } from "../../stores/advertisedStore";
 import { useAgents } from "../../stores/agentsStore";
 import { useFlows, type FlowStageStatus } from "../../stores/flowStore";
+import { openTranscriptFor } from "../../lib/transcriptOpen";
 import { useLive } from "../../stores/liveStore";
 import { useProjects } from "../../stores/projectsStore";
 import { isLive, useTerminals } from "../../stores/terminalsStore";
@@ -70,6 +72,8 @@ import {
   type RectPhase,
   type ResizeDir,
 } from "../../lib/canvas";
+import { useT } from "../../hooks/useT";
+import { t } from "../../lib/i18n";
 
 const XTermView = lazy(() => import("../XTermView"));
 
@@ -98,6 +102,8 @@ interface Props {
   role?: CardRole;
   /** How many active routines point at this terminal (header badge). */
   routineCount: number;
+  /** How many active triggers fire on this terminal (menu label count). */
+  triggerCount: number;
   /** Role during the connect tool (frame highlight). */
   connectRole: "source" | "target" | null;
   onRect: (id: string, rect: CanvasNode, phase: RectPhase) => void;
@@ -129,6 +135,7 @@ interface DragSession {
 
 /** How each run status reads on the card's tooltip. */
 const FLOW_STATUS_LABEL: Record<FlowStageStatus, string> = {
+  // i18n-scan: tables — wrapped with t() where the badge renders it.
   pending: "aguardando a vez",
   waiting: "preparando a etapa",
   working: "trabalhando agora",
@@ -146,13 +153,13 @@ function hudKind(rt: { state: string; blocked?: boolean; finished?: boolean } | 
 }
 
 function hudLabel(rt: { state: string; blocked?: boolean; finished?: boolean } | undefined): string {
-  if (rt?.blocked) return "Travado — precisa de você";
-  if (rt?.finished) return "Pronto";
-  if (rt?.state === "starting") return "Iniciando";
-  if (rt?.state === "running") return "Trabalhando";
-  if (rt?.state === "error") return "Erro";
-  if (rt?.state === "exited") return "Encerrado";
-  return "Parado";
+  if (rt?.blocked) return t("Travado — precisa de você");
+  if (rt?.finished) return t("Pronto");
+  if (rt?.state === "starting") return t("Iniciando");
+  if (rt?.state === "running") return t("Trabalhando");
+  if (rt?.state === "error") return t("Erro");
+  if (rt?.state === "exited") return t("Encerrado");
+  return t("Parado");
 }
 
 function TerminalCardImpl({
@@ -164,6 +171,7 @@ function TerminalCardImpl({
   onPick,
   role,
   routineCount,
+  triggerCount,
   connectRole,
   onRect,
   onColor,
@@ -172,6 +180,7 @@ function TerminalCardImpl({
   registerHandle,
   onMenuOpen,
 }: Props) {
+  const t = useT();
   const rt = useTerminals((s) => s.byId[term.id]);
   // The card's place in a *running* flow. Subscribed straight from the store
   // (not threaded through CanvasView): a run advancing should repaint the two
@@ -217,7 +226,7 @@ function TerminalCardImpl({
         url,
         nearTerminalId: term.id,
       }).catch((e) =>
-        useUI.getState().showToast(`Não consegui abrir o portal: ${e}`, "error"),
+        useUI.getState().showToast(t("Não consegui abrir o portal: {e}", { e: String(e) }), "error"),
       );
     },
     [term.groupId, term.id],
@@ -320,7 +329,7 @@ function TerminalCardImpl({
     },
     {
       kind: "stepper",
-      label: "Fonte",
+      label: t("Tamanho da fonte"),
       value: `${fontPx}px`,
       // Dimmed while it is still the preference's number and not this card's.
       muted: rect.fontSize == null,
@@ -333,7 +342,7 @@ function TerminalCardImpl({
     },
     {
       id: "fitfont",
-      label: `Encaixar fonte (~${FIT_COLS} colunas)`,
+      label: t("Encaixar fonte (~{n} colunas)", { n: FIT_COLS }),
       icon: <Type size={13} />,
       onSelect: () => {
         // Glyph width scales linearly with font size, so the size that lands
@@ -356,21 +365,30 @@ function TerminalCardImpl({
       ? ([
           {
             id: "live",
-            label: "Ao Vivo — acompanhar o agente",
+            label: t("Ao Vivo — acompanhar o agente"),
             icon: <Activity size={13} />,
             onSelect: () => void useLive.getState().openFor(term),
+          },
+          {
+            id: "transcript",
+            label: t("Transcrição da sessão…"),
+            icon: <FileText size={13} />,
+            onSelect: () => void openTranscriptFor(term),
           },
         ] satisfies MenuEntry[])
       : []),
     {
       id: "role",
-      label: role ? `Papel: ${role.name}…` : "Definir papel…",
+      label: role ? t("Papel: {name}…", { name: role.name }) : t("Definir papel…"),
       icon: <Bot size={13} />,
       onSelect: () => openModal("role", { terminalId: term.id }),
     },
     {
       id: "routines",
-      label: routineCount > 0 ? `Rotinas… (${routineCount})` : "Rotinas…",
+      label:
+        routineCount + triggerCount > 0
+          ? t("Rotinas e gatilhos… ({n})", { n: routineCount + triggerCount })
+          : t("Rotinas e gatilhos…"),
       icon: <Clock size={13} />,
       onSelect: () =>
         openModal("routines", { groupId: term.groupId, terminalId: term.id }),
@@ -386,7 +404,7 @@ function TerminalCardImpl({
             .filter((f) => isConnected(canvas, f.id, term.id))
             .map<MenuEntry>((f) => ({
               id: `flow-${f.id}`,
-              label: `Fluxo "${f.name}"…`,
+              label: t('Fluxo "{name}"…', { name: f.name }),
               icon: <Workflow size={13} />,
               onSelect: () =>
                 openModal("flow", { groupId: term.groupId, itemId: f.id }),
@@ -395,13 +413,13 @@ function TerminalCardImpl({
       : []),
     {
       id: "center",
-      label: "Centralizar em 100%",
+      label: t("Centralizar em 100%"),
       icon: <Maximize2 size={13} />,
       onSelect: () => onFocusZoom(term.id),
     },
     {
       id: "paste",
-      label: "Colar no terminal",
+      label: t("Colar no terminal"),
       icon: <ClipboardPaste size={13} />,
       shortcut: "Ctrl+V",
       disabled: !running,
@@ -409,7 +427,7 @@ function TerminalCardImpl({
     },
     {
       id: "clear",
-      label: "Limpar terminal",
+      label: t("Limpar terminal"),
       icon: <Eraser size={13} />,
       danger: true,
       onSelect: () => {
@@ -494,7 +512,7 @@ function TerminalCardImpl({
           <span
             className="cv-card-role"
             data-tip-wrap=""
-            data-tip={`${role.text ?? role.name}\n\n(duplo clique edita)`}
+            data-tip={t("{text}\n\n(duplo clique edita)", { text: role.text ?? role.name })}
             onDoubleClick={(e) => {
               e.stopPropagation();
               openModal("role", { terminalId: term.id });
@@ -506,9 +524,9 @@ function TerminalCardImpl({
         {routineCount > 0 && (
           <span
             className="cv-card-routine"
-            data-tip-wrap="" data-tip={`${routineCount} rotina(s) ativa(s) neste terminal`}
+            data-tip-wrap="" data-tip={t("{n} rotina(s) ativa(s) neste terminal", { n: routineCount })}
             role="img"
-            aria-label={`${routineCount} rotina(s) ativa(s) neste terminal`}
+            aria-label={t("{n} rotina(s) ativa(s) neste terminal", { n: routineCount })}
           >
             <Clock size={10} />
           </span>
@@ -517,9 +535,19 @@ function TerminalCardImpl({
           <span
             className={`cv-card-flow is-${flowMark.status}`}
             data-tip-wrap=""
-            data-tip={`Fluxo "${flowMark.name}" — etapa ${flowMark.step}/${flowMark.total}: ${FLOW_STATUS_LABEL[flowMark.status]}`}
+            data-tip={t('Fluxo "{name}" — etapa {step}/{total}: {status}', {
+              name: flowMark.name,
+              step: flowMark.step,
+              total: flowMark.total,
+              status: t(FLOW_STATUS_LABEL[flowMark.status]),
+            })}
             role="img"
-            aria-label={`Fluxo "${flowMark.name}" — etapa ${flowMark.step}/${flowMark.total}: ${FLOW_STATUS_LABEL[flowMark.status]}`}
+            aria-label={t('Fluxo "{name}" — etapa {step}/{total}: {status}', {
+              name: flowMark.name,
+              step: flowMark.step,
+              total: flowMark.total,
+              status: t(FLOW_STATUS_LABEL[flowMark.status]),
+            })}
           >
             <Workflow size={9} />
             {flowMark.step}/{flowMark.total}
@@ -529,27 +557,27 @@ function TerminalCardImpl({
           <span
             className="badge-blocked"
             data-tip-wrap=""
-            data-tip={rt.blockedAsk ?? "Esperando uma resposta sua"}
+            data-tip={rt.blockedAsk ?? t("Esperando uma resposta sua")}
             role="img"
-            aria-label={rt.blockedAsk ?? "Esperando uma resposta sua"}
+            aria-label={rt.blockedAsk ?? t("Esperando uma resposta sua")}
           />
         ) : rt?.finished ? (
           <span
             className="badge-finished"
-            data-tip="Terminou de trabalhar"
+            data-tip={t("Terminou de trabalhar")}
             role="img"
-            aria-label="Terminou de trabalhar"
+            aria-label={t("Terminou de trabalhar")}
           />
         ) : rt?.unread ? (
-          <span className="badge-unread" data-tip="Saída nova" role="img" aria-label="Saída nova" />
+          <span className="badge-unread" data-tip={t("Saída nova")} role="img" aria-label={t("Saída nova")} />
         ) : null}
         <span className="cv-card-actions">
           {rt && rt.rssMb > 0 && (
             <span
               className="pane-stat"
-              data-tip="RAM da árvore de processos"
+              data-tip={t("RAM da árvore de processos")}
               role="img"
-              aria-label={`RAM da árvore de processos: ${rt.rssMb.toFixed(0)} MB`}
+              aria-label={t("RAM da árvore de processos: {mb} MB", { mb: rt.rssMb.toFixed(0) })}
             >
               {rt.rssMb.toFixed(0)} MB
             </span>
@@ -560,10 +588,10 @@ function TerminalCardImpl({
               data-tip-wrap=""
               data-tip={
                 served.length === 1
-                  ? `Servindo em ${served[0].origin} — abrir num portal`
-                  : `${served.length} endereços anunciados — abrir num portal`
+                  ? t("Servindo em {origin} — abrir num portal", { origin: served[0].origin })
+                  : t("{n} endereços anunciados — abrir num portal", { n: served.length })
               }
-              aria-label="Abrir num portal o que este terminal está servindo"
+              aria-label={t("Abrir num portal o que este terminal está servindo")}
               onClick={(e) => {
                 if (served.length === 1) {
                   openPortal(served[0].origin);
@@ -580,8 +608,8 @@ function TerminalCardImpl({
             <button
               className="icon-btn live-launch"
               data-tip-wrap=""
-              data-tip="Ao Vivo — arquivos, plano e sub-agents em tempo real"
-              aria-label="Abrir o Ao Vivo deste agente"
+              data-tip={t("Ao Vivo — arquivos, plano e sub-agents em tempo real")}
+              aria-label={t("Abrir o Ao Vivo deste agente")}
               data-working={running || undefined}
               onClick={() => void useLive.getState().openFor(term)}
             >
@@ -590,8 +618,8 @@ function TerminalCardImpl({
           )}
           <button
             className="icon-btn"
-            data-tip="Compositor de prompts (Ctrl+Enter)"
-            aria-label="Abrir o compositor de prompts para este terminal"
+            data-tip={t("Compositor de prompts (Ctrl+Enter)")}
+            aria-label={t("Abrir o compositor de prompts para este terminal")}
             onClick={() => {
               focusTerminal(term.id, term.slot);
               setComposerOpen(true);
@@ -602,17 +630,17 @@ function TerminalCardImpl({
           {running ? (
             <button
               className="icon-btn"
-              data-tip-wrap="" data-tip="Suspender — encerra o processo e guarda o histórico"
-              aria-label="Suspender"
-              onClick={() => void act(() => ipc.suspendPty(term.id), "falha ao suspender")}
+              data-tip-wrap="" data-tip={t("Suspender — encerra o processo e guarda o histórico")}
+              aria-label={t("Suspender")}
+              onClick={() => void act(() => ipc.suspendPty(term.id), t("falha ao suspender"))}
             >
               <PauseCircle size={13} />
             </button>
           ) : (
             <button
               className="icon-btn icon-btn--go"
-              data-tip="Iniciar ou retomar"
-              aria-label="Iniciar ou retomar"
+              data-tip={t("Iniciar ou retomar")}
+              aria-label={t("Iniciar ou retomar")}
               onClick={() => void handleRef.current?.start()}
             >
               <Play size={13} />
@@ -620,8 +648,8 @@ function TerminalCardImpl({
           )}
           <button
             className="icon-btn"
-            data-tip-at="right" data-tip="Mais ações"
-            aria-label="Mais ações deste terminal"
+            data-tip-at="right" data-tip={t("Mais ações")}
+            aria-label={t("Mais ações deste terminal")}
             aria-haspopup="menu"
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect();

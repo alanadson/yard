@@ -27,7 +27,9 @@ pub fn export(conn: &Connection, dest: &Path) -> anyhow::Result<PathBuf> {
     export_in(&crate::paths::app_dir(), conn, dest)
 }
 
-fn export_in(app_dir: &Path, conn: &Connection, dest: &Path) -> anyhow::Result<PathBuf> {
+/// `pub(super)`: the automatic backup (`autobackup.rs`) writes through the
+/// same path, so a WAL checkpoint is never skipped by the scheduled copy.
+pub(super) fn export_in(app_dir: &Path, conn: &Connection, dest: &Path) -> anyhow::Result<PathBuf> {
     // The database is in WAL, so a commit lives in `app.db-wal` until a
     // checkpoint moves it into `app.db` — and only `app.db` goes into the zip.
     // This line used to be a comment claiming a checkpoint had happened;

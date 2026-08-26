@@ -15,7 +15,7 @@ import type { EditorView } from "@codemirror/view";
 
 import { useExtensions } from "../../stores/extensionsStore";
 
-type PluginLoader = () => Promise<unknown[]>;
+type PluginLoader = () => Promise<unknown[]>; // i18n-ok — not a sentence
 
 const babel: PluginLoader = () =>
   Promise.all([import("prettier/plugins/babel"), import("prettier/plugins/estree")]);

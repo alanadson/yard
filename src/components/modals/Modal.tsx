@@ -10,6 +10,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import "./modal.css";
 
+import { useT } from "../../hooks/useT";
 import { isTopLayer } from "../../lib/layers";
 import { exitGesture, focusAfterTab } from "./modalGestures";
 
@@ -61,6 +62,7 @@ export function Modal({
   initialFocus,
   dirty,
 }: Props) {
+  const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
   /** Set for the length of the "no, you have something typed" flash. */
@@ -178,8 +180,8 @@ export function Modal({
           <button
             className="icon-btn"
             onClick={exit}
-            aria-label="Fechar"
-            data-tip="Fechar (Esc)"
+            aria-label={t("Fechar")}
+            data-tip={t("Fechar (Esc)")}
           >
             <X size={14} />
           </button>
@@ -188,8 +190,9 @@ export function Modal({
         <div className="modal-body">{children}</div>
         {notice && (
           <div className="modal-esc-hint" role="status">
-            Você tem algo preenchido aqui — fechar de novo (<kbd>Esc</kbd>, o ×
-            ou um clique fora) descarta.
+            {t("Você tem algo preenchido aqui — fechar de novo (")}
+            <kbd>Esc</kbd>
+            {t(", o × ou um clique fora) descarta.")}
           </div>
         )}
         {footer && <div className="modal-footer">{footer}</div>}

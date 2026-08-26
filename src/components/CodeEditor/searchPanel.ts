@@ -35,6 +35,7 @@ import { EditorView, runScopeHandlers, type Panel, type ViewUpdate } from "@code
 import type { Extension } from "@codemirror/state";
 
 import { matchLabel, matchStats } from "./searchCore";
+import { t } from "../../lib/i18n";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -142,14 +143,16 @@ class YardSearchPanel implements Panel {
 
     this.wrap = box("ysearch-field", [glyph(GLYPH.search, 13), this.field, this.counter]);
 
-    this.caseBtn = this.toggle("Aa", "Diferenciar maiúsculas de minúsculas", () =>
+    // The bar is built when it opens and reads the language then: a switch
+    // of language reaches it on the next Ctrl+F, which is soon enough.
+    this.caseBtn = this.toggle("Aa", t("Diferenciar maiúsculas de minúsculas"), () =>
       this.turn({ caseSensitive: !this.query.caseSensitive }),
     );
-    this.wordBtn = this.toggle("ab", "Somente palavras inteiras", () =>
+    this.wordBtn = this.toggle("ab", t("Somente palavras inteiras"), () =>
       this.turn({ wholeWord: !this.query.wholeWord }),
     );
     this.wordBtn.firstElementChild?.classList.add("ysearch-word");
-    this.reBtn = this.toggle(".*", "Expressão regular", () =>
+    this.reBtn = this.toggle(".*", t("Expressão regular"), () =>
       this.turn({ regexp: !this.query.regexp }),
     );
 
@@ -159,7 +162,7 @@ class YardSearchPanel implements Panel {
     const next = button("ysearch-step", glyph(GLYPH.down), `${say("next")} (Enter)`, () =>
       findNext(view),
     );
-    const all = button("ysearch-text", "Todas", "Selecionar todas as ocorrências", () =>
+    const all = button("ysearch-text", t("Todas"), t("Selecionar todas as ocorrências"), () =>
       selectMatches(view),
     );
     this.onMatches.push(prev, next, all);
@@ -191,7 +194,7 @@ class YardSearchPanel implements Panel {
       const one = button("ysearch-text", say("Replace"), `${say("replace")} (Enter)`, () =>
         replaceNext(view),
       );
-      const every = button("ysearch-text", "Tudo", `${say("replace all")} (Ctrl+Enter)`, () =>
+      const every = button("ysearch-text", t("Tudo"), `${say("replace all")} (Ctrl+Enter)`, () =>
         replaceAll(view),
       );
       this.onMatches.push(one, every);
@@ -202,7 +205,7 @@ class YardSearchPanel implements Panel {
         every,
       ]);
 
-      this.twist = button("ysearch-twist", glyph(GLYPH.right, 13), "Substituir (Ctrl+H)", () =>
+      this.twist = button("ysearch-twist", glyph(GLYPH.right, 13), t("Substituir (Ctrl+H)"), () =>
         this.setReplace(this.replaceRow?.hidden ?? true),
       );
       head.prepend(this.twist);

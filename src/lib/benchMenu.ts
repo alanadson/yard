@@ -1,3 +1,4 @@
+// i18n-scan: tables
 /**
  * What the background of each bench tab offers on right-click.
  *
@@ -12,6 +13,7 @@
  */
 import type { MenuEntry } from "../components/ContextMenu";
 import type { TaskFilter } from "../stores/benchStore";
+import { t, tn } from "./i18n";
 
 // ---------------------------------------------------------------------------
 // tasks
@@ -47,14 +49,14 @@ export function benchTasksPaneMenu(
   act: BenchTasksMenuActions,
 ): MenuEntry[] {
   return [
-    { id: "nova", label: "Nova tarefa", onSelect: act.newTask },
+    { id: "nova", label: t("Nova tarefa"), onSelect: act.newTask },
     { kind: "sep" },
     {
       id: "escopo",
-      label: "Mostrar",
+      label: t("Mostrar"),
       submenu: SCOPES.map((s) => ({
         id: `escopo-${s}`,
-        label: SCOPE_LABEL[s],
+        label: t(SCOPE_LABEL[s]),
         checked: ctx.scope === s,
         // With no project open, "this project" is an empty list that looks
         // like data loss. Dimmed, not absent, because the segment is still in
@@ -66,7 +68,7 @@ export function benchTasksPaneMenu(
     { kind: "sep" },
     {
       id: "concluidas",
-      label: ctx.showDone ? "Esconder concluídas" : "Mostrar concluídas",
+      label: ctx.showDone ? t("Esconder concluídas") : t("Mostrar concluídas"),
       checked: ctx.showDone,
       disabled: ctx.doneCount === 0,
       onSelect: () => act.setShowDone(!ctx.showDone),
@@ -75,8 +77,8 @@ export function benchTasksPaneMenu(
       id: "limpar-concluidas",
       label:
         ctx.doneCount > 0
-          ? `Limpar ${ctx.doneCount} concluída${ctx.doneCount === 1 ? "" : "s"}`
-          : "Limpar concluídas",
+          ? tn(ctx.doneCount, "Limpar {n} concluída", "Limpar {n} concluídas")
+          : t("Limpar concluídas"),
       danger: true,
       disabled: ctx.doneCount === 0,
       onSelect: act.clearDone,
@@ -106,18 +108,18 @@ export function benchPromptsPaneMenu(
   act: BenchPromptsMenuActions,
 ): MenuEntry[] {
   const entries: MenuEntry[] = [
-    { id: "novo", label: "Novo prompt", onSelect: act.newPrompt },
+    { id: "novo", label: t("Novo prompt"), onSelect: act.newPrompt },
   ];
   if (ctx.tags.length > 0) {
     entries.push(
       { kind: "sep" },
       {
         id: "etiqueta",
-        label: "Filtrar por etiqueta",
+        label: t("Filtrar por etiqueta"),
         submenu: [
           {
             id: "etiqueta-todas",
-            label: "Todas",
+            label: t("Todas"),
             checked: ctx.tag === null,
             onSelect: () => act.setTag(null),
           },
@@ -138,7 +140,7 @@ export function benchPromptsPaneMenu(
     { kind: "sep" },
     {
       id: "limpar",
-      label: "Limpar a busca",
+      label: t("Limpar a busca"),
       disabled: ctx.query.trim() === "",
       onSelect: act.clearQuery,
     },

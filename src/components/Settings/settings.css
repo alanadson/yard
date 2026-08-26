@@ -404,6 +404,18 @@
   width: 148px;
 }
 
+/* The SSH host and the remote folder sit where the distro picker would: two
+   narrow fields, the folder in the code face like the command line. */
+.set-agent-pair .set-agent-field {
+  width: 148px;
+  min-width: 0;
+}
+
+.set-agent-pair .set-agent-field--path {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
 /* A setting that is on but cannot work is a warning, not a hint. */
 .hint--warn {
   color: var(--yellow);
@@ -444,4 +456,89 @@
   .set-main {
     padding: 22px 18px 44px;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Servidores MCP — one row per server, the form inside the same card
+   --------------------------------------------------------------------------- */
+.set-mcp-row.is-off .set-row-label,
+.set-mcp-row.is-off .set-mcp-line {
+  color: var(--text-dim);
+}
+.set-mcp-row .set-row-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.set-mcp-line,
+.set-mcp-path {
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
+}
+.set-mcp-path {
+  opacity: 0.7;
+}
+.set-mcp-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.set-mcp-copy {
+  width: 150px;
+}
+.set-mcp-foot {
+  justify-content: flex-end;
+}
+.set-mcp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-top: 1px solid var(--border-soft);
+  background: rgb(255 255 255 / 2%);
+}
+.set-mcp-field {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.set-mcp-field > .set-row-text {
+  flex: 0 0 200px;
+}
+.set-mcp-field > input,
+.set-mcp-field > textarea {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+.set-mcp-field > textarea {
+  resize: vertical;
+  min-height: 48px;
+}
+.set-mcp-field .hint {
+  margin: 2px 0 0;
+}
+.set-mcp-scope {
+  width: 100%;
+  max-width: 360px;
+}
+.set-mcp-form-actions {
+  justify-content: flex-end;
+}
+
+/* Language-server catalog (sections/LspServers.tsx): the status ink of a row. */
+.set-lsp-status--ok {
+  color: var(--green);
+}
+.set-lsp-status--missing {
+  color: var(--yellow);
+}
+.set-lsp-status--failed {
+  color: var(--red);
 }

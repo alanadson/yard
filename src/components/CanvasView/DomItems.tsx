@@ -25,6 +25,7 @@ import {
 } from "../../lib/canvas";
 import { changedSpan } from "../../lib/diff";
 import { applyMd, blockOf, enterKey, type MdCommand, type MdSel } from "../../lib/mdedit";
+import { useT } from "../../hooks/useT";
 
 type TextData = Extract<CanvasItem, { type: "text" }>;
 type NoteData = Extract<CanvasItem, { type: "note" }>;
@@ -405,6 +406,7 @@ function NoteItemImpl({
   onResizeMove,
   onResizeEnd,
 }: NoteItemProps) {
+  const t = useT();
   /**
    * Where the press on the body started, to tell a click from a drag — and
    * whether the note **was already selected** when it began.
@@ -590,10 +592,10 @@ function NoteItemImpl({
         aria-pressed={!!it.locked}
         data-tip-wrap="" data-tip={
           it.locked
-            ? "Travada: a CLI yard não escreve nem apaga esta nota. Clique para destravar."
-            : "Travar contra escrita de agentes (você continua editando)"
+            ? t("Travada: a CLI yard não escreve nem apaga esta nota. Clique para destravar.")
+            : t("Travar contra escrita de agentes (você continua editando)")
         }
-        aria-label={it.locked ? "Destravar nota" : "Travar nota"}
+        aria-label={it.locked ? t("Destravar nota") : t("Travar nota")}
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation();
@@ -606,7 +608,7 @@ function NoteItemImpl({
         <textarea
           className="cv-note-text"
           value={draft}
-          placeholder="Anote aqui… a barra acima formata; markdown é renderizado ao sair."
+          placeholder={t("Anote aqui… a barra acima formata; markdown é renderizado ao sair.")}
           ref={setArea}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
@@ -683,7 +685,7 @@ function NoteItemImpl({
         >
           <NoteBody
             text={it.text}
-            placeholder="Anote aqui…"
+            placeholder={t("Anote aqui…")}
             root={root}
             onTask={toggleTask}
             onLink={onOpenLink}

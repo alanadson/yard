@@ -14,6 +14,7 @@
  * it goes first because it is the answer of whoever opened the picker not
  * knowing what to choose.
  */
+import { t } from "./i18n";
 import type { FontFamilyInfo } from "./ipc";
 import type { SelectOption } from "../components/Select";
 
@@ -32,7 +33,7 @@ export function fontOptions(
           .filter((f) => !monoOnly || f.mono)
           .map((f) => ({ value: f.family, label: f.family }));
   if (fonts !== null && currentValue && !opts.some((o) => o.value === currentValue)) {
-    opts.unshift({ value: currentValue, label: `${currentValue} (não encontrada)` });
+    opts.unshift({ value: currentValue, label: t("{font} (não encontrada)", { font: currentValue }) });
   }
   if (defaultLabel !== undefined) opts.unshift({ value: "", label: defaultLabel });
   return opts;

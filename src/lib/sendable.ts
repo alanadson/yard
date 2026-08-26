@@ -20,6 +20,7 @@
  */
 import { getActivity, isLive, useTerminals } from "../stores/terminalsStore";
 import { useProjects } from "../stores/projectsStore";
+import { t } from "./i18n";
 import { baseName } from "./terminals";
 
 /**
@@ -48,7 +49,7 @@ const READY: Sendability = { ok: true };
 export function sendability(terminalId: string, now = Date.now()): Sendability {
   const row = useProjects.getState().terminal(terminalId);
   if (!row) {
-    return { ok: false, reason: "missing", message: "Esse terminal não existe mais." };
+    return { ok: false, reason: "missing", message: t("Esse terminal não existe mais.") };
   }
   const name = baseName(row);
   const rt = useTerminals.getState().byId[terminalId];
@@ -56,17 +57,22 @@ export function sendability(terminalId: string, now = Date.now()): Sendability {
     return {
       ok: false,
       reason: "dead",
-      message: `${name} não está rodando — inicie antes de enviar.`,
+      message: t("{name} não está rodando — inicie antes de enviar.", { name }),
     };
   }
   if (rt?.blocked) {
     return {
       ok: false,
       reason: "blocked",
-      message:
-        `${name} está travado esperando o usuário` +
-        `${rt.blockedAsk ? ` (${rt.blockedAsk})` : ""} — o texto viraria a resposta ` +
-        "dessa pergunta. Responda na CLI antes.",
+      message: rt.blockedAsk
+        ? t(
+            "{name} está travado esperando o usuário ({ask}) — o texto viraria a resposta dessa pergunta. Responda na CLI antes.",
+            { name, ask: rt.blockedAsk },
+          )
+        : t(
+            "{name} está travado esperando o usuário — o texto viraria a resposta dessa pergunta. Responda na CLI antes.",
+            { name },
+          ),
     };
   }
   const { lastByteAt } = getActivity(terminalId);
@@ -75,7 +81,7 @@ export function sendability(terminalId: string, now = Date.now()): Sendability {
     return {
       ok: false,
       reason: "busy",
-      message: `${name} está trabalhando agora — um prompt no meio da tarefa chega partido.`,
+      message: t("{name} está trabalhando agora — um prompt no meio da tarefa chega partido.", { name }),
     };
   }
   return READY;

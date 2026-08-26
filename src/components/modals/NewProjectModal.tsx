@@ -4,15 +4,14 @@ import { FolderOpen } from "lucide-react";
 
 import { Modal } from "./Modal";
 import { ProjectStylePicker } from "./ProjectStylePicker";
-import { ipc } from "../../lib/ipc";
+import { useT } from "../../hooks/useT";
+import { createProject } from "../../lib/projectCreate";
 import { DEFAULT_PROJECT_ICON } from "../../lib/projectStyle";
-import { sameRoot } from "../../lib/roots";
-import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
 
 export function NewProjectModal() {
+  const t = useT();
   const closeModal = useUI((s) => s.closeModal);
-  const addProject = useProjects((s) => s.addProject);
 
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
@@ -47,40 +46,13 @@ export function NewProjectModal() {
     // folder — and each one registers its own watcher, because the backend
     // deduplicates by id, not by root.
     if (busy) return;
-
-    // Really trimmed, not just for the emptiness check: a pasted path with a
-    // trailing space was stored as-is, and `rootKey` normalizes separator and
-    // case but not whitespace — so the root never matched the canonical one
-    // again.
-    const stripped = path.trim();
-    if (!stripped) {
-      fail("Escolha uma pasta.");
-      return;
-    }
-
-    const duplicates = useProjects
-      .getState()
-      .projects.find((p) => sameRoot(p.path, stripped));
-    if (duplicates) {
-      fail(`Essa pasta já está no workspace como “${duplicates.name}”.`);
-      return;
-    }
-
     setBusy(true);
     try {
-      if (!(await ipc.isDirectory(stripped))) {
-        fail("Esse caminho não existe ou não é uma pasta.");
-        return;
-      }
-      // The store checks the folder again — the `await` above is a window in
-      // which the same path could have been added from elsewhere.
-      const id = addProject(
-        name.trim() || stripped.split(/[\\/]/).filter(Boolean).pop() || stripped,
-        stripped,
-        { icon, color },
-      );
-      if (!id) {
-        fail("Essa pasta já está no workspace.");
+      // Trim, dedupe by root, ask the disk, add — the same door the first-run
+      // sheet uses (`lib/projectCreate.ts`), so the two never drift.
+      const result = await createProject({ path, name, style: { icon, color } });
+      if (!result.ok) {
+        fail(result.error);
         return;
       }
       closeModal();
@@ -91,7 +63,7 @@ export function NewProjectModal() {
 
   return (
     <Modal
-      title="Novo projeto"
+      title={t("Novo projeto")}
       onClose={closeModal}
       // Icon and color count too: picking them is work the backdrop must
       // not throw away without the nudge.
@@ -104,26 +76,26 @@ export function NewProjectModal() {
       footer={
         <div className="modal-foot-row modal-foot-row--end">
           <button className="btn" onClick={closeModal}>
-            Cancelar
+            {t("Cancelar")}
           </button>
           <button
             className="btn btn--primary"
             disabled={busy || !path.trim()}
             onClick={() => void submit()}
           >
-            {busy ? "Adicionando…" : "Adicionar"}
+            {busy ? t("Adicionando…") : t("Adicionar")}
           </button>
         </div>
       }
     >
       <div className="form">
         <label>
-          Pasta raiz
+          {t("Pasta raiz")}
           <div className="input-row">
             <input
               ref={pathRef}
               value={path}
-              placeholder="C:\Workspace\meu-projeto"
+              placeholder="C:\Workspace\meu-projeto" // i18n-ok
               aria-invalid={err ? true : undefined}
               aria-describedby={err ? "novo-projeto-erro" : undefined}
               onChange={(e) => {
@@ -135,7 +107,7 @@ export function NewProjectModal() {
               }}
             />
             <button className="btn" onClick={() => void pick()}>
-              <FolderOpen size={13} /> Procurar
+              <FolderOpen size={13} /> {t("Procurar")}
             </button>
           </div>
         </label>
@@ -145,10 +117,10 @@ export function NewProjectModal() {
           </p>
         )}
         <label>
-          Nome
+          {t("Nome")}
           <input
             value={name}
-            placeholder="opcional — usa o nome da pasta"
+            placeholder={t("opcional — usa o nome da pasta")}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") void submit();
@@ -162,8 +134,9 @@ export function NewProjectModal() {
           onColor={setColor}
         />
         <p className="hint">
-          O projeto vira o diretório de trabalho dos terminais e a chave para
-          localizar as sessões que os agentes já gravaram nesta pasta.
+          {t(
+            "O projeto vira o diretório de trabalho dos terminais e a chave para localizar as sessões que os agentes já gravaram nesta pasta.",
+          )}
         </p>
       </div>
     </Modal>

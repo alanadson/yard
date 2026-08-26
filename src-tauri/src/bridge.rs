@@ -426,6 +426,9 @@ be read and written.
 - `yard routine list` — scheduled prompts of this group
 - `yard routine create "Agent Name" "prompt" --every 30 [--once]` — run a prompt every N minutes (only when the target is idle)
 - `yard routine pause|resume|delete <id>` — manage them
+- `yard trigger list` — the group's triggers: "when X happens to a CLI, do Y"
+- `yard trigger create --when finished|blocked|exited --on "Agent Name"|any --ask "Target" "prompt" | --notify "text" | --flow "Flow Name" "task" [--once] [--cooldown 60]` — arm an automation on an edge (a CLI finished a turn, stopped at a question, or exited); `{name}` and `{ask}` in the text become who fired and the question it stopped at. Same gate as `ask`: source and target must be you or someone wired to you
+- `yard trigger pause|resume|delete <id>` — manage them
 - `yard flow list` — the group's flows: cards on the canvas holding an ordered pipeline of prompts (e.g. QA -> TDD). A flow has no agents of its own; the CLI wired to its card is who runs it
 - `yard flow run "Flow Name" --stdin` (or `"task"`) — run the pipeline IN YOUR OWN CLI: each stage arrives here as a one-line `[Yard · Fluxo ...]` stamp. On each stamp, run `yard flow stage` to receive the briefing (the stage's instructions, the task and the previous stage's summary), follow it, and end the turn with the `### RESUMO DA ETAPA` block it asks for. Gate: your terminal must be wired to the flow's card (`yard connect "You" "Flow Name"` works)
 - `yard flow stage` — the current stage's briefing for the run executing in your CLI; rerun it anytime you need the briefing again mid-stage

@@ -18,6 +18,9 @@
 // model
 // ---------------------------------------------------------------------------
 
+// i18n-scan: tables
+import { activeLang, t } from "./i18n";
+
 export type NoteStatus = "none" | "active" | "paused" | "done" | "dropped";
 
 export interface Note {
@@ -541,24 +544,33 @@ export function taskProgress(body: string): { done: number; total: number } {
   return { done, total };
 }
 
-const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]; // i18n-ok
+const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]; // i18n-ok
 
-/** "agora" · "há 12 min" · "há 3 h" · "ontem" · "há 5 dias" · "12/mai" · "3/fev/25". */
+/**
+ * "agora" · "há 12 min" · "há 3 h" · "ontem" · "há 5 dias" · "12/mai" · "3/fev/25".
+ * In English the date reads the other way round ("May 12", "Feb 3, 25").
+ */
 export function whenLabel(ts: number, now: number = Date.now()): string {
   const delta = now - ts;
-  if (delta < 60_000) return "agora";
-  if (delta < 3_600_000) return `há ${Math.floor(delta / 60_000)} min`;
+  if (delta < 60_000) return t("agora");
+  if (delta < 3_600_000) return t("há {n} min", { n: Math.floor(delta / 60_000) });
   if (delta < 86_400_000 && new Date(ts).getDate() === new Date(now).getDate()) {
-    return `há ${Math.floor(delta / 3_600_000)} h`;
+    return t("há {n} h", { n: Math.floor(delta / 3_600_000) });
   }
   const d = new Date(ts);
   const n = new Date(now);
   const yesterday = new Date(now - 86_400_000);
   if (d.getDate() === yesterday.getDate() && d.getMonth() === yesterday.getMonth() && d.getFullYear() === yesterday.getFullYear()) {
-    return "ontem";
+    return t("ontem");
   }
-  if (delta < 7 * 86_400_000) return `há ${Math.round(delta / 86_400_000)} dias`;
-  if (d.getFullYear() === n.getFullYear()) return `${d.getDate()}/${MONTHS[d.getMonth()]}`;
+  if (delta < 7 * 86_400_000) return t("há {n} dias", { n: Math.round(delta / 86_400_000) });
+  const sameYear = d.getFullYear() === n.getFullYear();
+  if (activeLang() === "en") {
+    const md = `${MONTHS_EN[d.getMonth()]} ${d.getDate()}`;
+    return sameYear ? md : `${md}, ${String(d.getFullYear()).slice(2)}`;
+  }
+  if (sameYear) return `${d.getDate()}/${MONTHS[d.getMonth()]}`;
   return `${d.getDate()}/${MONTHS[d.getMonth()]}/${String(d.getFullYear()).slice(2)}`;
 }
 
@@ -568,5 +580,5 @@ export function fallbackTitle(body: string): string {
     const s = stripMd(raw);
     if (s) return s.slice(0, 80);
   }
-  return "Sem título";
+  return t("Sem título");
 }

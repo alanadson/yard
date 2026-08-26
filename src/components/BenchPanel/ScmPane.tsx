@@ -1,3 +1,4 @@
+// i18n-scan: tables
 /**
  * The **Source control** tab — version control for the open project, inside
  * the bench.
@@ -116,6 +117,8 @@ import { useChanges } from "../../stores/changesStore";
 import { useEditor } from "../../stores/editorStore";
 import { useScm, type ScmSection } from "../../stores/scmStore";
 import { useUI } from "../../stores/uiStore";
+import { useT } from "../../hooks/useT";
+import { tn } from "../../lib/i18n";
 
 /** Read context, built once and handed down to the sections. */
 interface Ctx {
@@ -145,6 +148,7 @@ export function ScmPane({ focusTick }: { focusTick: number }) {
   const root = useEditor((s) => s.root);
   const projectId = useEditor((s) => s.projectId);
   const showToast = useUI((s) => s.showToast);
+  const t = useT();
 
   const section = useScm((s) => s.section);
   const setSection = useScm((s) => s.setSection);
@@ -211,11 +215,11 @@ export function ScmPane({ focusTick }: { focusTick: number }) {
 
   if (!root) {
     return (
-      <div className="bench-body" role="tabpanel" aria-label="Controle">
+      <div className="bench-body" role="tabpanel" aria-label={t("Controle")}>
         <div className="bench-empty">
           <FolderGit2 size={22} aria-hidden="true" />
-          Nenhum projeto aberto
-          <small>Abra um projeto para ver o controle de versão dele.</small>
+          {t("Nenhum projeto aberto")}
+          <small>{t("Abra um projeto para ver o controle de versão dele.")}</small>
         </div>
       </div>
     );
@@ -228,19 +232,20 @@ export function ScmPane({ focusTick }: { focusTick: number }) {
 
   if (isRepo === false) {
     return (
-      <div className="bench-body" role="tabpanel" aria-label="Controle">
+      <div className="bench-body" role="tabpanel" aria-label={t("Controle")}>
         <div className="bench-empty">
           <FolderGit2 size={22} aria-hidden="true" />
-          Esta pasta não é um repositório git
+          {t("Esta pasta não é um repositório git")}
           <small>
-            Sem repositório não há o que preparar nem o que commitar. Dá para criar um
-            agora — nada do que está no disco é alterado.
+            {t(
+              "Sem repositório não há o que preparar nem o que commitar. Dá para criar um agora — nada do que está no disco é alterado.",
+            )}
           </small>
           <button
             className="btn btn--primary"
-            onClick={() => void run("iniciando", () => ipc.scmInit(root))}
+            onClick={() => void run(t("iniciando"), () => ipc.scmInit(root))}
           >
-            Iniciar um repositório
+            {t("Iniciar um repositório")}
           </button>
         </div>
       </div>
@@ -251,7 +256,7 @@ export function ScmPane({ focusTick }: { focusTick: number }) {
   const sync = syncState(info);
 
   return (
-    <div className="bench-body bench-body--scm" role="tabpanel" aria-label="Controle">
+    <div className="bench-body bench-body--scm" role="tabpanel" aria-label={t("Controle")}>
       <ScmToolbar
         ctx={ctx}
         run={run}
@@ -269,31 +274,31 @@ export function ScmPane({ focusTick }: { focusTick: number }) {
           </div>
           <div className="scm-banner-acts">
             {banner.canContinue && (
-              <button className="btn btn--sm" onClick={() => void run("continuando", () => ipc.scmContinue(root))}>
-                Continuar
+              <button className="btn btn--sm" onClick={() => void run(t("continuando"), () => ipc.scmContinue(root))}>
+                {t("Continuar")}
               </button>
             )}
             {banner.canAbort && (
               <button
                 className="btn btn--sm btn--danger"
-                onClick={() => void run("abortando", () => ipc.scmAbort(root))}
+                onClick={() => void run(t("abortando"), () => ipc.scmAbort(root))}
               >
-                Abortar
+                {t("Abortar")}
               </button>
             )}
           </div>
         </div>
       )}
 
-      <div className="task-seg scm-seg" role="tablist" aria-label="Seções do controle">
+      <div className="task-seg scm-seg" role="tablist" aria-label={t("Seções do controle")}>
         {SECTIONS.map((s) => (
           <button
             key={s.id}
             role="tab"
             aria-selected={section === s.id}
             className={section === s.id ? "is-active" : ""}
-            data-tip={`${s.label} — ${s.tip}`}
-            aria-label={s.label}
+            data-tip={t("{label} — {tip}", { label: t(s.label), tip: t(s.tip) })}
+            aria-label={t(s.label)}
             onClick={() => setSection(s.id)}
           >
             <s.Icon size={13} aria-hidden="true" />
@@ -334,7 +339,9 @@ export function ScmPane({ focusTick }: { focusTick: number }) {
 
       {sync.kind !== "none" && section === "changes" && (
         <p className="scm-foot" aria-hidden="true">
-          {info?.upstream ? `Rastreando ${info.upstream}` : "Branch ainda não publicada"}
+          {info?.upstream
+            ? t("Rastreando {upstream}", { upstream: info.upstream })
+            : t("Branch ainda não publicada")}
         </p>
       )}
 
@@ -370,24 +377,25 @@ function ScmToolbar({
   const setSection = useScm((s) => s.setSection);
   const info = repo.info;
   const sync = syncState(info);
+  const t = useT();
   const [ask, setAsk] = useState<AskSpec | null>(null);
 
   const remote = info?.remotes[0]?.name ?? "origin";
 
   const synchronize = () => {
     if (sync.kind === "publish") {
-      void run("publicando", () =>
+      void run(t("publicando"), () =>
         ipc.scmPush(ctx.root, remote, info?.branch ?? null, true, false),
       );
       return;
     }
     if (sync.kind === "fetch") {
-      void run("buscando", () => ipc.scmFetch(ctx.root, null, false));
+      void run(t("buscando"), () => ipc.scmFetch(ctx.root, null, false));
       return;
     }
     // Syncing is pull and then push, in that order: pushing first is what
     // produces the "updates were rejected" refusal nobody knows how to read.
-    void run("sincronizando", async () => {
+    void run(t("sincronizando"), async () => {
       if ((info?.behind ?? 0) > 0) await ipc.scmPull(ctx.root, false);
       if ((info?.ahead ?? 0) > 0) await ipc.scmPush(ctx.root, remote, null, false, false);
     });
@@ -399,34 +407,34 @@ function ScmToolbar({
     return [
       {
         id: "fetch",
-        label: "Buscar do servidor",
+        label: t("Buscar do servidor"),
         disabled: noRemote,
-        onSelect: () => void run("buscando", () => ipc.scmFetch(ctx.root, null, false)),
+        onSelect: () => void run(t("buscando"), () => ipc.scmFetch(ctx.root, null, false)),
       },
       {
         id: "fetch-prune",
-        label: "Buscar e limpar branches que sumiram",
+        label: t("Buscar e limpar branches que sumiram"),
         disabled: noRemote,
-        onSelect: () => void run("buscando", () => ipc.scmFetch(ctx.root, null, true)),
+        onSelect: () => void run(t("buscando"), () => ipc.scmFetch(ctx.root, null, true)),
       },
       {
         id: "pull",
-        label: "Trazer (pull)",
+        label: t("Trazer (pull)"),
         disabled: noRemote || !info?.upstream,
-        onSelect: () => void run("trazendo", () => ipc.scmPull(ctx.root, false)),
+        onSelect: () => void run(t("trazendo"), () => ipc.scmPull(ctx.root, false)),
       },
       {
         id: "pull-rebase",
-        label: "Trazer reaplicando o meu por cima (pull --rebase)",
+        label: t("Trazer reaplicando o meu por cima (pull --rebase)"),
         disabled: noRemote || !info?.upstream,
-        onSelect: () => void run("trazendo", () => ipc.scmPull(ctx.root, true)),
+        onSelect: () => void run(t("trazendo"), () => ipc.scmPull(ctx.root, true)),
       },
       {
         id: "push",
-        label: "Enviar (push)",
+        label: t("Enviar (push)"),
         disabled: noRemote,
         onSelect: () =>
-          void run("enviando", () =>
+          void run(t("enviando"), () =>
             ipc.scmPush(ctx.root, remote, info?.upstream ? null : (info?.branch ?? null), !info?.upstream, false),
           ),
       },
@@ -435,63 +443,63 @@ function ScmToolbar({
         // Always `--force-with-lease` in the backend: it refuses if the server
         // moved since the last fetch, which is the difference between
         // rewriting my own work and erasing somebody else's.
-        label: "Enviar forçando (com verificação)",
+        label: t("Enviar forçando (com verificação)"),
         disabled: noRemote || !info?.upstream,
         danger: true,
         onSelect: () =>
-          void run("enviando", () => ipc.scmPush(ctx.root, remote, null, false, true)),
+          void run(t("enviando"), () => ipc.scmPush(ctx.root, remote, null, false, true)),
       },
       { kind: "sep" },
       {
         id: "stash",
-        label: "Guardar tudo (stash)",
+        label: t("Guardar tudo (stash)"),
         disabled: nothing,
         onSelect: () =>
           setAsk({
-            title: "Guardar o quê?",
-            placeholder: "Uma descrição (opcional)",
-            confirm: "Guardar",
+            title: t("Guardar o quê?"),
+            placeholder: t("Uma descrição (opcional)"),
+            confirm: t("Guardar"),
             onConfirm: (theText) =>
-              void run("guardando", () => ipc.scmStashPush(ctx.root, theText || null, true, false)),
+              void run(t("guardando"), () => ipc.scmStashPush(ctx.root, theText || null, true, false)),
           }),
       },
       {
         id: "stash-keep",
-        label: "Guardar, mantendo o que está preparado",
+        label: t("Guardar, mantendo o que está preparado"),
         disabled: counts.changes === 0,
         onSelect: () =>
-          void run("guardando", () => ipc.scmStashPush(ctx.root, null, true, true)),
+          void run(t("guardando"), () => ipc.scmStashPush(ctx.root, null, true, true)),
       },
       { kind: "sep" },
       {
         id: "branch",
-        label: "Criar uma branch…",
+        label: t("Criar uma branch…"),
         onSelect: () =>
           setAsk({
-            title: "Nome da nova branch",
-            placeholder: "feature/algo",
-            confirm: "Criar e trocar",
+            title: t("Nome da nova branch"),
+            placeholder: t("feature/algo"),
+            confirm: t("Criar e trocar"),
             onConfirm: (itemName) =>
-              itemName && void run("criando", () => ipc.scmBranchCreate(ctx.root, itemName, null, true)),
+              itemName && void run(t("criando"), () => ipc.scmBranchCreate(ctx.root, itemName, null, true)),
           }),
       },
       {
         id: "tag",
-        label: "Criar uma etiqueta aqui…",
+        label: t("Criar uma etiqueta aqui…"),
         disabled: !info?.hasHead,
         onSelect: () =>
           setAsk({
-            title: "Nome da etiqueta",
-            placeholder: "v1.0.0",
-            confirm: "Criar",
+            title: t("Nome da etiqueta"),
+            placeholder: t("v1.0.0"),
+            confirm: t("Criar"),
             onConfirm: (name) =>
-              name && void run("etiquetando", () => ipc.scmTagCreate(ctx.root, name, null, null)),
+              name && void run(t("etiquetando"), () => ipc.scmTagCreate(ctx.root, name, null, null)),
           }),
       },
       { kind: "sep" },
       {
         id: "discard-all",
-        label: "Descartar todas as alterações",
+        label: t("Descartar todas as alterações"),
         disabled: nothing,
         danger: true,
         onSelect: () =>
@@ -502,7 +510,7 @@ function ScmToolbar({
               tracked: counts.total - counts.untracked,
               untracked: counts.untracked,
             }),
-            () => void run("descartando", () => ipc.scmDiscardAll(ctx.root, true)),
+            () => void run(t("descartando"), () => ipc.scmDiscardAll(ctx.root, true)),
           ),
       },
     ];
@@ -515,10 +523,10 @@ function ScmToolbar({
           className="scm-branch"
           data-tip={
             info?.upstream
-              ? `Branch atual — rastreia ${info.upstream}`
-              : "Branch atual — clique para ver todas"
+              ? t("Branch atual — rastreia {upstream}", { upstream: info.upstream })
+              : t("Branch atual — clique para ver todas")
           }
-          aria-label={`Branch atual: ${branchLabel(info)}. Abrir a lista de branches`}
+          aria-label={t("Branch atual: {branch}. Abrir a lista de branches", { branch: branchLabel(info) })}
           onClick={() => setSection("branches")}
         >
           <GitBranch size={12} aria-hidden="true" />
@@ -545,8 +553,8 @@ function ScmToolbar({
         <div className="scm-bar-tools">
           <button
             className={`icon-btn${repo.busy ? " is-busy" : ""}`}
-            data-tip={repo.busy ? `${repo.busy}…` : "Atualizar"}
-            aria-label={repo.busy ? `${repo.busy}…` : "Atualizar o estado do repositório"}
+            data-tip={repo.busy ? `${repo.busy}…` : t("Atualizar")}
+            aria-label={repo.busy ? `${repo.busy}…` : t("Atualizar o estado do repositório")}
             disabled={repo.busy !== null}
             onClick={() => void useScm.getState().refresh(ctx.root)}
           >
@@ -554,8 +562,8 @@ function ScmToolbar({
           </button>
           <button
             className="icon-btn"
-            data-tip="Mais ações"
-            aria-label="Mais ações do repositório"
+            data-tip={t("Mais ações")}
+            aria-label={t("Mais ações do repositório")}
             onClick={(e) => onMenu(e, generalMenu())}
           >
             <MoreHorizontal size={13} />
@@ -588,6 +596,7 @@ interface AskSpec {
  */
 function AskLine({ spec, onClose }: { spec: AskSpec; onClose: () => void }) {
   const [value, setValue] = useState(spec.initial ?? "");
+  const t = useT();
   const ref = useRef<HTMLInputElement>(null);
   // The top bar and the branches section can each have one open at the same
   // time; a fixed `id` would make the second label point at the first field.
@@ -622,7 +631,7 @@ function AskLine({ spec, onClose }: { spec: AskSpec; onClose: () => void }) {
         <button className="btn btn--sm btn--primary" onClick={confirmAction}>
           {spec.confirm}
         </button>
-        <button className="icon-btn" aria-label="Cancelar" onClick={onClose}>
+        <button className="icon-btn" aria-label={t("Cancelar")} onClick={onClose}>
           <X size={12} />
         </button>
       </div>
@@ -651,6 +660,7 @@ function ChangesSection({
   const files = useMemo(() => summary?.files ?? [], [summary]);
   const groups = useMemo(() => groupChanges(files), [files]);
   const counts = useMemo(() => scmCounts(files), [files]);
+  const t = useT();
 
   return (
     <>
@@ -658,8 +668,8 @@ function ChangesSection({
       {groups.length === 0 ? (
         <div className="bench-empty">
           <Check size={20} aria-hidden="true" />
-          Nada mexido
-          <small>A árvore está igual ao último commit.</small>
+          {t("Nada mexido")}
+          <small>{t("A árvore está igual ao último commit.")}</small>
         </div>
       ) : (
         groups.map((g) => (
@@ -696,6 +706,7 @@ function CommitBox({
   const setDraft = useScm((s) => s.setDraft);
   const showToast = useUI((s) => s.showToast);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const t = useT();
 
   useEffect(() => {
     if (focusTick > 0) ref.current?.focus();
@@ -738,9 +749,9 @@ function CommitBox({
         rows={3}
         value={draft}
         placeholder={
-          amend ? "Nova mensagem do último commit" : "Mensagem do commit (Ctrl+Enter grava)"
+          amend ? t("Nova mensagem do último commit") : t("Mensagem do commit (Ctrl+Enter grava)")
         }
-        aria-label="Mensagem do commit"
+        aria-label={t("Mensagem do commit")}
         onChange={(e) => setDraft(ctx.root, e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !action.disabled) {
@@ -764,18 +775,18 @@ function CommitBox({
           onClick={() => void doCommit()}
         >
           <Check size={13} aria-hidden="true" />
-          {busy === "commitando" ? "Gravando…" : action.label}
+          {busy === "commitando" ? t("Gravando…") : action.label}
         </button>
         <button
           className={`btn btn--sm${amend ? " is-active" : ""}`}
           aria-pressed={amend}
-          data-tip="Reescrever o último commit em vez de criar outro"
-          aria-label="Emendar o último commit"
+          data-tip={t("Reescrever o último commit em vez de criar outro")}
+          aria-label={t("Emendar o último commit")}
           disabled={!info?.hasHead}
           onClick={() => setAmend(!amend)}
         >
           <Undo2 size={12} aria-hidden="true" />
-          Emendar
+          {t("Emendar")}
         </button>
       </div>
       {action.disabled && action.reason && <p className="scm-hint">{action.reason}</p>}
@@ -784,16 +795,16 @@ function CommitBox({
           <button
             className="btn btn--sm"
             disabled={counts.changes === 0}
-            onClick={() => void run("preparando", () => ipc.scmStageAll(ctx.root))}
+            onClick={() => void run(t("preparando"), () => ipc.scmStageAll(ctx.root))}
           >
-            <Plus size={12} aria-hidden="true" /> Preparar tudo
+            <Plus size={12} aria-hidden="true" /> {t("Preparar tudo")}
           </button>
           <button
             className="btn btn--sm"
             disabled={counts.staged === 0}
-            onClick={() => void run("despreparando", () => ipc.scmUnstageAll(ctx.root))}
+            onClick={() => void run(t("despreparando"), () => ipc.scmUnstageAll(ctx.root))}
           >
-            <Minus size={12} aria-hidden="true" /> Despreparar tudo
+            <Minus size={12} aria-hidden="true" /> {t("Despreparar tudo")}
           </button>
         </div>
       )}
@@ -815,16 +826,17 @@ const GroupBlock = memo(function GroupBlock({
   onMenu: OnMenu;
 }) {
   const [isOpen, setIsOpen] = useState(true);
+  const t = useT();
   const [shown, setShown] = useState(SCM_ROWS_PAGE);
   const page = useMemo(() => pageRows(group.rows, shown), [group.rows, shown]);
 
   const groupActions = {
     stageAll: () =>
-      void run("preparando", () =>
+      void run(t("preparando"), () =>
         ipc.scmStage(ctx.root, group.rows.map((r) => r.path)),
       ),
     unstageAll: () =>
-      void run("despreparando", () =>
+      void run(t("despreparando"), () =>
         ipc.scmUnstage(ctx.root, group.rows.map((r) => r.path)),
       ),
     discardAll: () => {
@@ -832,7 +844,7 @@ const GroupBlock = memo(function GroupBlock({
       const added = group.rows.filter((r) => r.untracked).length;
       confirmAction(
         discardAllSpec({ tracked: paths.length - added, untracked: added }),
-        () => void run("descartando", () => ipc.scmDiscard(ctx.root, paths)),
+        () => void run(t("descartando"), () => ipc.scmDiscard(ctx.root, paths)),
       );
     },
   };
@@ -858,8 +870,8 @@ const GroupBlock = memo(function GroupBlock({
           {group.id === "staged" ? (
             <button
               className="icon-btn"
-              data-tip="Despreparar tudo deste grupo"
-              aria-label="Despreparar todos os arquivos deste grupo"
+              data-tip={t("Despreparar tudo deste grupo")}
+              aria-label={t("Despreparar todos os arquivos deste grupo")}
               onClick={groupActions.unstageAll}
             >
               <Minus size={12} />
@@ -869,8 +881,8 @@ const GroupBlock = memo(function GroupBlock({
               {group.id === "changes" && (
                 <button
                   className="icon-btn icon-btn--danger"
-                  data-tip="Descartar tudo deste grupo"
-                  aria-label="Descartar todas as alterações deste grupo"
+                  data-tip={t("Descartar tudo deste grupo")}
+                  aria-label={t("Descartar todas as alterações deste grupo")}
                   onClick={groupActions.discardAll}
                 >
                   <Undo2 size={12} />
@@ -878,11 +890,13 @@ const GroupBlock = memo(function GroupBlock({
               )}
               <button
                 className="icon-btn"
-                data-tip={group.id === "conflicts" ? "Marcar todos como resolvidos" : "Preparar tudo deste grupo"}
+                data-tip={
+                  group.id === "conflicts" ? t("Marcar todos como resolvidos") : t("Preparar tudo deste grupo")
+                }
                 aria-label={
                   group.id === "conflicts"
-                    ? "Marcar todos os conflitos como resolvidos"
-                    : "Preparar todos os arquivos deste grupo"
+                    ? t("Marcar todos os conflitos como resolvidos")
+                    : t("Preparar todos os arquivos deste grupo")
                 }
                 onClick={groupActions.stageAll}
               >
@@ -909,9 +923,9 @@ const GroupBlock = memo(function GroupBlock({
               className="list-more"
               onClick={() => setShown((n) => n + SCM_ROWS_PAGE)}
             >
-              Mostrar mais {Math.min(page.hidden, SCM_ROWS_PAGE)}
+              {t("Mostrar mais {n}", { n: Math.min(page.hidden, SCM_ROWS_PAGE) })}
               <span className="list-more-rest">
-                {page.hidden} arquivo{page.hidden === 1 ? "" : "s"} sem desenhar
+                {tn(page.hidden, "{n} arquivo sem desenhar", "{n} arquivos sem desenhar")}
               </span>
             </button>
           )}
@@ -939,6 +953,7 @@ const FileRow = memo(function FileRow({
   onMenu: OnMenu;
 }) {
   const [opened, setOpened] = useState(false);
+  const t = useT();
   const info = useScm((s) => s.repoOf(ctx.root).info);
   const showToast = useUI((s) => s.showToast);
 
@@ -951,17 +966,17 @@ const FileRow = memo(function FileRow({
         void useEditor
           .getState()
           .openFile(path)
-          .catch((e) => showToast(`Não consegui abrir: ${e}`, "error"));
+          .catch((e) => showToast(t("Não consegui abrir: {e}", { e: String(e) }), "error"));
       },
-      stage: (path: string) => void run("preparando", () => ipc.scmStage(ctx.root, [path])),
+      stage: (path: string) => void run(t("preparando"), () => ipc.scmStage(ctx.root, [path])),
       unstage: (path: string) =>
-        void run("despreparando", () => ipc.scmUnstage(ctx.root, [path])),
+        void run(t("despreparando"), () => ipc.scmUnstage(ctx.root, [path])),
       discard: (path: string) =>
         confirmAction(discardSpec([path], row.untracked), () =>
-          void run("descartando", () => ipc.scmDiscard(ctx.root, [path])),
+          void run(t("descartando"), () => ipc.scmDiscard(ctx.root, [path])),
         ),
       resolve: (path: string, side: "ours" | "theirs") =>
-        void run("resolvendo", () => ipc.scmResolveConflict(ctx.root, [path], side)),
+        void run(t("resolvendo"), () => ipc.scmResolveConflict(ctx.root, [path], side)),
       fileHistory: (path: string) => {
         useScm.getState().setSection("history");
         void useScm.getState().loadFileLog(ctx.root, path);
@@ -971,7 +986,7 @@ const FileRow = memo(function FileRow({
         void ipc.revealPath(osPath).catch((e) => showToast(String(e), "error"));
       },
     }),
-    [ctx.root, ctx.projectId, row.path, row.untracked, run, confirmAction, showToast],
+    [ctx.root, ctx.projectId, row.path, row.untracked, run, confirmAction, showToast, t],
   );
 
   return (
@@ -1000,8 +1015,12 @@ const FileRow = memo(function FileRow({
           {row.canDiscard && (
             <button
               className="icon-btn icon-btn--danger"
-              data-tip={row.untracked ? "Excluir o arquivo" : "Descartar as alterações"}
-              aria-label={`${row.untracked ? "Excluir" : "Descartar as alterações de"} ${row.path}`}
+              data-tip={row.untracked ? t("Excluir o arquivo") : t("Descartar as alterações")}
+              aria-label={
+                row.untracked
+                  ? t("Excluir {path}", { path: row.path })
+                  : t("Descartar as alterações de {path}", { path: row.path })
+              }
               onClick={() => actions.discard(row.path)}
             >
               <Undo2 size={12} />
@@ -1010,8 +1029,8 @@ const FileRow = memo(function FileRow({
           {row.canUnstage ? (
             <button
               className="icon-btn"
-              data-tip="Despreparar"
-              aria-label={`Despreparar ${row.path}`}
+              data-tip={t("Despreparar")}
+              aria-label={t("Despreparar {path}", { path: row.path })}
               onClick={() => actions.unstage(row.path)}
             >
               <Minus size={12} />
@@ -1019,11 +1038,11 @@ const FileRow = memo(function FileRow({
           ) : (
             <button
               className="icon-btn"
-              data-tip={row.group === "conflicts" ? "Marcar como resolvido" : "Preparar"}
+              data-tip={row.group === "conflicts" ? t("Marcar como resolvido") : t("Preparar")}
               aria-label={
                 row.group === "conflicts"
-                  ? `Marcar ${row.path} como resolvido`
-                  : `Preparar ${row.path}`
+                  ? t("Marcar {path} como resolvido", { path: row.path })
+                  : t("Preparar {path}", { path: row.path })
               }
               onClick={() => actions.stage(row.path)}
             >
@@ -1059,6 +1078,7 @@ function RowDiff({
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selection, setSelection] = useState<Record<number, Set<number>>>({});
+  const t = useT();
   // Re-read on every write: staging a hunk changes the very diff on screen.
   // And it is the store's counter, not the `git status` fingerprint — staging
   // the second hunk of a file that is already `MM` changes nothing the
@@ -1091,10 +1111,10 @@ function RowDiff({
   );
 
   if (error) return <p className="diff-note">{error}</p>;
-  if (!diff) return <p className="diff-note">Lendo o diff…</p>;
-  if (diff.isBinary) return <p className="diff-note">Arquivo binário — sem diff de texto.</p>;
+  if (!diff) return <p className="diff-note">{t("Lendo o diff…")}</p>;
+  if (diff.isBinary) return <p className="diff-note">{t("Arquivo binário — sem diff de texto.")}</p>;
   if (!parsed || parsed.hunks.length === 0)
-    return <p className="diff-note">Sem diferenças neste lado.</p>;
+    return <p className="diff-note">{t("Sem diferenças neste lado.")}</p>;
 
   const staged = row.group === "staged";
 
@@ -1106,7 +1126,7 @@ function RowDiff({
   const discard = (patch: string, spec: ScmConfirmSpec) => {
     if (!patch) return;
     confirmAction(spec, () =>
-      void run("descartando", () => ipc.scmApplyPatch(ctx.root, patch, false, true)),
+      void run(t("descartando"), () => ipc.scmApplyPatch(ctx.root, patch, false, true)),
     );
   };
 
@@ -1142,21 +1162,24 @@ function RowDiff({
           }
           onDiscardHunk={() =>
             discard(patchForHunks(diff.text, [h.index]), {
-              title: "Descartar este pedaço?",
-              detail: `As linhas deste trecho de “${row.path}” voltam ao que estavam. Isso não dá para desfazer.`,
-              confirmLabel: "Descartar o pedaço",
+              title: t("Descartar este pedaço?"),
+              detail: t("As linhas deste trecho de “{path}” voltam ao que estavam. Isso não dá para desfazer.", {
+                path: row.path,
+              }),
+              confirmLabel: t("Descartar o pedaço"),
             })
           }
         />
       ))}
       {drawn.hiddenLines > 0 && (
         <p className="diff-note">
-          Diff grande: {drawn.hiddenLines} linha
-          {drawn.hiddenLines === 1 ? "" : "s"} não desenhada
-          {drawn.hiddenLines === 1 ? "" : "s"}
-          {drawn.hiddenHunks > 0 &&
-            ` (${drawn.hiddenHunks} pedaço${drawn.hiddenHunks === 1 ? "" : "s"} inteiro${drawn.hiddenHunks === 1 ? "" : "s"})`}
-          . Abra no visor para ver o arquivo inteiro.
+          {t("Diff grande: {lines}{hunks}. Abra no visor para ver o arquivo inteiro.", {
+            lines: tn(drawn.hiddenLines, "{n} linha não desenhada", "{n} linhas não desenhadas"),
+            hunks:
+              drawn.hiddenHunks > 0
+                ? ` (${tn(drawn.hiddenHunks, "{n} pedaço inteiro", "{n} pedaços inteiros")})`
+                : "",
+          })}
         </p>
       )}
     </div>
@@ -1183,8 +1206,9 @@ function HunkBlock({
   onApplyLines: () => void;
   onDiscardHunk: () => void;
 }) {
+  const t = useT();
   const hasSelection = selectedLines.size > 0;
-  const verb = staged ? "Despreparar" : "Preparar";
+  const verb = staged ? t("Despreparar") : t("Preparar");
   return (
     <div className="scm-hunk">
       <div className="scm-hunk-head">
@@ -1200,16 +1224,16 @@ function HunkBlock({
           {hasSelection && (
             <button
               className="btn btn--sm"
-              data-tip={`${verb} só as ${selectedLines.size} linha(s) marcadas`}
+              data-tip={t("{verb} só as {n} linha(s) marcadas", { verb, n: selectedLines.size })}
               onClick={onApplyLines}
             >
-              {selectedLines.size} linha{selectedLines.size === 1 ? "" : "s"}
+              {tn(selectedLines.size, "{n} linha", "{n} linhas")}
             </button>
           )}
           <button
             className="icon-btn"
-            data-tip={`${verb} este pedaço`}
-            aria-label={`${verb} este pedaço`}
+            data-tip={t("{verb} este pedaço", { verb })}
+            aria-label={t("{verb} este pedaço", { verb })}
             onClick={onApplyHunk}
           >
             {staged ? <Minus size={11} /> : <Plus size={11} />}
@@ -1217,8 +1241,8 @@ function HunkBlock({
           {!staged && (
             <button
               className="icon-btn icon-btn--danger"
-              data-tip="Descartar este pedaço"
-              aria-label="Descartar este pedaço"
+              data-tip={t("Descartar este pedaço")}
+              aria-label={t("Descartar este pedaço")}
               onClick={onDiscardHunk}
             >
               <Undo2 size={11} />
@@ -1273,6 +1297,7 @@ function HistorySection({
   confirmAction: ConfirmAction;
   onMenu: OnMenu;
 }) {
+  const t = useT();
   const repo = useScm((s) => s.repoOf(ctx.root));
   const info = repo.info;
 
@@ -1280,8 +1305,8 @@ function HistorySection({
     return (
       <div className="bench-empty">
         <GitCommitVertical size={20} aria-hidden="true" />
-        Ainda não há commits
-        <small>O histórico começa no primeiro commit desta branch.</small>
+        {t("Ainda não há commits")}
+        <small>{t("O histórico começa no primeiro commit desta branch.")}</small>
       </div>
     );
   }
@@ -1300,13 +1325,13 @@ function HistorySection({
           />
         ))}
       </div>
-      {repo.commits.length === 0 && <p className="bench-note">Lendo o histórico…</p>}
+      {repo.commits.length === 0 && <p className="bench-note">{t("Lendo o histórico…")}</p>}
       {!repo.logDone && repo.commits.length > 0 && (
         <button
           className="btn btn--sm scm-more"
           onClick={() => void useScm.getState().loadLog(ctx.root, true)}
         >
-          <History size={12} aria-hidden="true" /> Carregar mais
+          <History size={12} aria-hidden="true" /> {t("Carregar mais")}
         </button>
       )}
     </>
@@ -1326,6 +1351,7 @@ function CommitRow({
   confirmAction: ConfirmAction;
   onMenu: OnMenu;
 }) {
+  const t = useT();
   const [isOpen, setIsOpen] = useState(false);
   const [detail, setDetail] = useState<Awaited<ReturnType<typeof ipc.scmCommitDetail>> | null>(
     null,
@@ -1347,31 +1373,31 @@ function CommitRow({
   }, [isOpen, detail, ctx.root, commit.hash, showToast]);
 
   const actions = {
-    checkout: (rev: string) => void run("trocando", () => ipc.scmCheckout(ctx.root, rev)),
+    checkout: (rev: string) => void run(t("trocando"), () => ipc.scmCheckout(ctx.root, rev)),
     createFrom: (start: string) =>
       setAsk({
-        title: "Nome da nova branch",
-        placeholder: "feature/algo",
-        confirm: "Criar e trocar",
+        title: t("Nome da nova branch"),
+        placeholder: t("feature/algo"),
+        confirm: t("Criar e trocar"),
         onConfirm: (name) =>
-          name && void run("criando", () => ipc.scmBranchCreate(ctx.root, name, start, true)),
+          name && void run(t("criando"), () => ipc.scmBranchCreate(ctx.root, name, start, true)),
       }),
     revert: (hash: string) =>
-      void run("revertendo", async () => {
+      void run(t("revertendo"), async () => {
         const res = await ipc.scmRevert(ctx.root, hash);
-        if (res.conflicted) showToast("O revert parou em conflitos — resolva-os na aba Alterações.");
+        if (res.conflicted) showToast(t("O revert parou em conflitos — resolva-os na aba Alterações."));
       }),
     reset: (hash: string, mode: "soft" | "mixed" | "hard") =>
       confirmAction(resetSpec(commit.short, mode), () =>
-        void run("voltando", () => ipc.scmReset(ctx.root, hash, mode)),
+        void run(t("voltando"), () => ipc.scmReset(ctx.root, hash, mode)),
       ),
     tag: (hash: string) =>
       setAsk({
-        title: "Nome da etiqueta",
-        placeholder: "v1.0.0",
-        confirm: "Criar",
+        title: t("Nome da etiqueta"),
+        placeholder: t("v1.0.0"),
+        confirm: t("Criar"),
         onConfirm: (name) =>
-          name && void run("etiquetando", () => ipc.scmTagCreate(ctx.root, name, null, hash)),
+          name && void run(t("etiquetando"), () => ipc.scmTagCreate(ctx.root, name, null, hash)),
       }),
     copyText: (text: string) => void copyText(text),
   };
@@ -1412,11 +1438,11 @@ function CommitRow({
         <div className="scm-commit-detail">
           {commit.body && <pre className="scm-commit-body">{commit.body}</pre>}
           {!detail ? (
-            <p className="diff-note">Lendo o commit…</p>
+            <p className="diff-note">{t("Lendo o commit…")}</p>
           ) : (
             <>
               <p className="diff-note">
-                {detail.files.length} arquivo{detail.files.length === 1 ? "" : "s"} ·{" "}
+                {tn(detail.files.length, "{n} arquivo", "{n} arquivos")} ·{" "}
                 <em className="scm-add">+{detail.additions}</em>{" "}
                 <em className="scm-del">−{detail.deletions}</em>
               </p>
@@ -1495,6 +1521,7 @@ function BranchesSection({
   confirmAction: ConfirmAction;
   onMenu: OnMenu;
 }) {
+  const tr = useT();
   const repo = useScm((s) => s.repoOf(ctx.root));
   const info = repo.info;
   const [filter, setFilter] = useState("");
@@ -1508,50 +1535,50 @@ function BranchesSection({
   const tags = repo.tags.filter((t) => !target || t.name.toLowerCase().includes(target));
 
   const actions = {
-    checkout: (name: string) => void run("trocando", () => ipc.scmCheckout(ctx.root, name)),
+    checkout: (name: string) => void run(tr("trocando"), () => ipc.scmCheckout(ctx.root, name)),
     createFrom: (start: string) =>
       setAsk({
-        title: `Nova branch a partir de ${start}`,
-        placeholder: "feature/algo",
-        confirm: "Criar e trocar",
+        title: tr("Nova branch a partir de {start}", { start }),
+        placeholder: tr("feature/algo"),
+        confirm: tr("Criar e trocar"),
         initial: start.includes("/") ? start.split("/").slice(1).join("/") : "",
         onConfirm: (name) =>
-          name && void run("criando", () => ipc.scmBranchCreate(ctx.root, name, start, true)),
+          name && void run(tr("criando"), () => ipc.scmBranchCreate(ctx.root, name, start, true)),
       }),
     merge: (name: string) =>
-      void run("mesclando", async () => {
+      void run(tr("mesclando"), async () => {
         const res = await ipc.scmMerge(ctx.root, name, false);
         if (res.conflicted) {
           useScm.getState().setSection("changes");
-          showToast("O merge parou em conflitos — resolva-os na aba Alterações.");
+          showToast(tr("O merge parou em conflitos — resolva-os na aba Alterações."));
         }
       }),
     rebase: (name: string) =>
-      void run("reaplicando", async () => {
+      void run(tr("reaplicando"), async () => {
         const res = await ipc.scmRebase(ctx.root, name);
         if (res.conflicted) {
           useScm.getState().setSection("changes");
-          showToast("O rebase parou em conflitos — resolva-os na aba Alterações.");
+          showToast(tr("O rebase parou em conflitos — resolva-os na aba Alterações."));
         }
       }),
     rename: (name: string) =>
       setAsk({
-        title: `Renomear “${name}”`,
-        placeholder: "novo-nome",
-        confirm: "Renomear",
+        title: tr("Renomear “{name}”", { name }),
+        placeholder: tr("novo-nome"),
+        confirm: tr("Renomear"),
         initial: name,
         onConfirm: (next) =>
-          next && void run("renomeando", () => ipc.scmBranchRename(ctx.root, name, next)),
+          next && void run(tr("renomeando"), () => ipc.scmBranchRename(ctx.root, name, next)),
       }),
     deleteBranch: (name: string, force: boolean) =>
       confirmAction(branchDeleteSpec(name, force), () =>
-        void run("apagando", () => ipc.scmBranchDelete(ctx.root, name, force)),
+        void run(tr("apagando"), () => ipc.scmBranchDelete(ctx.root, name, force)),
       ),
     deleteRemote: (name: string) => {
       const remote = info?.remotes[0]?.name ?? "origin";
       const shortOne = name.startsWith(`${remote}/`) ? name.slice(remote.length + 1) : name;
       confirmAction(remoteDeleteSpec(shortOne, remote), () =>
-        void run("apagando no servidor", () => ipc.scmPushDelete(ctx.root, remote, shortOne)),
+        void run(tr("apagando no servidor"), () => ipc.scmPushDelete(ctx.root, remote, shortOne)),
       );
     },
     copyText: (text: string) => void copyText(text),
@@ -1563,22 +1590,22 @@ function BranchesSection({
         <GitBranch size={12} aria-hidden="true" />
         <input
           value={filter}
-          placeholder="Filtrar branches e etiquetas"
-          aria-label="Filtrar branches e etiquetas pelo nome"
+          placeholder={tr("Filtrar branches e etiquetas")}
+          aria-label={tr("Filtrar branches e etiquetas pelo nome")}
           onChange={(e) => setFilter(e.target.value)}
           onKeyDown={(e) => e.key === "Escape" && setFilter("")}
         />
         <button
           className="icon-btn"
-          data-tip="Criar uma branch a partir da atual"
-          aria-label="Criar uma branch"
+          data-tip={tr("Criar uma branch a partir da atual")}
+          aria-label={tr("Criar uma branch")}
           onClick={() =>
             setAsk({
-              title: "Nome da nova branch",
-              placeholder: "feature/algo",
-              confirm: "Criar e trocar",
+              title: tr("Nome da nova branch"),
+              placeholder: tr("feature/algo"),
+              confirm: tr("Criar e trocar"),
               onConfirm: (name) =>
-                name && void run("criando", () => ipc.scmBranchCreate(ctx.root, name, null, true)),
+                name && void run(tr("criando"), () => ipc.scmBranchCreate(ctx.root, name, null, true)),
             })
           }
         >
@@ -1587,16 +1614,16 @@ function BranchesSection({
       </div>
       {ask && <AskLine spec={ask} onClose={() => setAsk(null)} />}
 
-      <BranchList title="Locais" branches={locals} info={info} actions={actions} onMenu={onMenu} />
+      <BranchList title={tr("Locais")} branches={locals} info={info} actions={actions} onMenu={onMenu} />
       {remoteBranches.length > 0 && (
-        <BranchList title="Remotas" branches={remoteBranches} info={info} actions={actions} onMenu={onMenu} />
+        <BranchList title={tr("Remotas")} branches={remoteBranches} info={info} actions={actions} onMenu={onMenu} />
       )}
 
       {tags.length > 0 && (
         <section className="scm-group">
           <div className="scm-group-head">
             <span className="bench-subhead">
-              Etiquetas<span className="scm-group-count">{tags.length}</span>
+              {tr("Etiquetas")}<span className="scm-group-count">{tags.length}</span>
             </span>
           </div>
           <div className="scm-rows">
@@ -1609,16 +1636,16 @@ function BranchesSection({
                 </span>
                 <button
                   className="icon-btn icon-btn--danger"
-                  data-tip="Apagar a etiqueta"
-                  aria-label={`Apagar a etiqueta ${t.name}`}
+                  data-tip={tr("Apagar a etiqueta")}
+                  aria-label={tr("Apagar a etiqueta {name}", { name: t.name })}
                   onClick={() =>
                     confirmAction(
                       {
-                        title: `Apagar a etiqueta “${t.name}”?`,
-                        detail: "Ela some daqui; no servidor, só sai com um push próprio.",
-                        confirmLabel: "Apagar",
+                        title: tr("Apagar a etiqueta “{name}”?", { name: t.name }),
+                        detail: tr("Ela some daqui; no servidor, só sai com um push próprio."),
+                        confirmLabel: tr("Apagar"),
                       },
-                      () => void run("apagando", () => ipc.scmTagDelete(ctx.root, t.name)),
+                      () => void run(tr("apagando"), () => ipc.scmTagDelete(ctx.root, t.name)),
                     )
                   }
                 >
@@ -1646,13 +1673,14 @@ function BranchList({
   actions: Parameters<typeof scmBranchMenu>[2];
   onMenu: OnMenu;
 }) {
+  const t = useT();
   if (branches.length === 0) {
     return (
       <section className="scm-group">
         <div className="scm-group-head">
           <span className="bench-subhead">{theTitle}</span>
         </div>
-        <p className="bench-note">Nenhuma por aqui.</p>
+        <p className="bench-note">{t("Nenhuma por aqui.")}</p>
       </section>
     );
   }
@@ -1674,14 +1702,16 @@ function BranchList({
             <button
               className="scm-row-main"
               data-tip={b.subject}
-              aria-label={`${b.name}${b.current ? " (atual)" : ""}`}
+              aria-label={b.current ? t("{name} (atual)", { name: b.name }) : b.name}
               disabled={b.current}
               onClick={() => (b.remote ? actions.createFrom(b.name) : actions.checkout(b.name))}
             >
               <GitBranch size={11} aria-hidden="true" />
               <span className="scm-branch-name">{b.name}</span>
-              {b.current && <span className="scm-tagline">atual</span>}
-              {b.gone && <span className="scm-tagline scm-tagline--warn">sumiu no servidor</span>}
+              {b.current && <span className="scm-tagline">{t("atual")}</span>}
+              {b.gone && (
+                <span className="scm-tagline scm-tagline--warn">{t("sumiu no servidor")}</span>
+              )}
               {(b.ahead > 0 || b.behind > 0) && (
                 <span className="scm-row-stat">
                   {b.behind > 0 && <em className="scm-del">{b.behind}↓</em>}
@@ -1691,8 +1721,8 @@ function BranchList({
             </button>
             <button
               className="icon-btn"
-              data-tip="Mais ações"
-              aria-label={`Mais ações de ${b.name}`}
+              data-tip={t("Mais ações")}
+              aria-label={t("Mais ações de {name}", { name: b.name })}
               onClick={(e) => onMenu(e, scmBranchMenu(b, { info }, actions))}
             >
               <MoreHorizontal size={12} />
@@ -1719,17 +1749,18 @@ function StashSection({
   confirmAction: ConfirmAction;
   onMenu: OnMenu;
 }) {
+  const t = useT();
   const repo = useScm((s) => s.repoOf(ctx.root));
   const [showing, setShowing] = useState<{ index: number; text: string } | null>(null);
   const showToast = useUI((s) => s.showToast);
 
   const actions = {
     stashApply: (index: number, pop: boolean) =>
-      void run("aplicando", () => ipc.scmStashApply(ctx.root, index, pop)),
+      void run(t("aplicando"), () => ipc.scmStashApply(ctx.root, index, pop)),
     stashDrop: (index: number) => {
       const target = repo.stashes.find((s) => s.index === index);
       confirmAction(stashDropSpec(target?.message ?? `stash@{${index}}`), () =>
-        void run("descartando", () => ipc.scmStashDrop(ctx.root, index)),
+        void run(t("descartando"), () => ipc.scmStashDrop(ctx.root, index)),
       );
     },
     stashShow: (index: number) => {
@@ -1744,10 +1775,11 @@ function StashSection({
     return (
       <div className="bench-empty">
         <Archive size={20} aria-hidden="true" />
-        Nada guardado
+        {t("Nada guardado")}
         <small>
-          Guardar tira as alterações do caminho sem commitar — útil para trocar de branch no
-          meio de uma coisa. Fica no menu ⋯ lá em cima.
+          {t(
+            "Guardar tira as alterações do caminho sem commitar — útil para trocar de branch no meio de uma coisa. Fica no menu ⋯ lá em cima.",
+          )}
         </small>
       </div>
     );
@@ -1763,7 +1795,7 @@ function StashSection({
           >
             <button
               className="scm-row-main"
-              data-tip="Ver o que tem dentro"
+              data-tip={t("Ver o que tem dentro")}
               onClick={() =>
                 showing?.index === s.index ? setShowing(null) : actions.stashShow(s.index)
               }
@@ -1780,16 +1812,16 @@ function StashSection({
             <div className="scm-row-acts">
               <button
                 className="icon-btn"
-                data-tip="Aplicar e remover da pilha"
-                aria-label={`Aplicar e remover ${s.message}`}
+                data-tip={t("Aplicar e remover da pilha")}
+                aria-label={t("Aplicar e remover {name}", { name: s.message })}
                 onClick={() => actions.stashApply(s.index, true)}
               >
                 <Check size={12} />
               </button>
               <button
                 className="icon-btn"
-                data-tip="Mais ações"
-                aria-label={`Mais ações de ${s.message}`}
+                data-tip={t("Mais ações")}
+                aria-label={t("Mais ações de {name}", { name: s.message })}
                 onClick={(e) => onMenu(e, scmStashMenu(s, actions))}
               >
                 <MoreHorizontal size={12} />

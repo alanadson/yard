@@ -29,6 +29,8 @@ import {
 
 import { ContextMenu, type MenuEntry } from "../ContextMenu";
 import { useGrabMode } from "../../hooks/useGrabMode";
+import { useT } from "../../hooks/useT";
+import { t } from "../../lib/i18n";
 import {
   elementBounds,
   holesOver,
@@ -60,6 +62,7 @@ export function browserLabel(tab: PaneBrowser): string {
 type Veil = "opening" | "failed" | "covered" | "away";
 
 function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
+  const t = useT();
   const showToast = useUI((s) => s.showToast);
   const patch = useBrowsers((s) => s.patch);
   const occluders = useOccluders((s) => s.rects);
@@ -203,8 +206,8 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
       <div className="cv-portal-bar pane-browser-bar">
         <button
           className="icon-btn"
-          data-tip="Voltar"
-          aria-label="Voltar"
+          data-tip={t("Voltar")}
+          aria-label={t("Voltar")}
           onClick={() => void ipc.portalBack(tab.id).catch(() => {})}
         >
           <ArrowLeft size={12} />
@@ -213,16 +216,16 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
             already existed in the backend, with no screen calling it. */}
         <button
           className="icon-btn"
-          data-tip="Avançar"
-          aria-label="Avançar"
+          data-tip={t("Avançar")}
+          aria-label={t("Avançar")}
           onClick={() => void ipc.portalForward(tab.id).catch(() => {})}
         >
           <ArrowRight size={12} />
         </button>
         <button
           className="icon-btn"
-          data-tip="Recarregar"
-          aria-label="Recarregar"
+          data-tip={t("Recarregar")}
+          aria-label={t("Recarregar")}
           onClick={() => void ipc.portalReload(tab.id).catch(() => {})}
         >
           <RefreshCw size={12} />
@@ -233,10 +236,10 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
             data-tip-wrap=""
             data-tip={
               liveOn
-                ? "Ao vivo: recarrega sozinho quando o site muda — clique para desligar"
-                : "Ao vivo desligado — clique para recarregar sozinho quando o site mudar"
+                ? t("Ao vivo: recarrega sozinho quando o site muda — clique para desligar")
+                : t("Ao vivo desligado — clique para recarregar sozinho quando o site mudar")
             }
-            aria-label="Recarregar sozinho quando o site mudar"
+            aria-label={t("Recarregar sozinho quando o site mudar")}
             aria-pressed={liveOn}
             onClick={() => patch(tab.id, { live: !liveOn })}
           >
@@ -248,10 +251,10 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
           data-tip-wrap=""
           data-tip={
             grabbing
-              ? "Clique no elemento dentro da página (Esc cancela)"
-              : "Modo design — apontar um elemento e mandar para o agente"
+              ? t("Clique no elemento dentro da página (Esc cancela)")
+              : t("Modo design — apontar um elemento e mandar para o agente")
           }
-          aria-label="Modo design"
+          aria-label={t("Modo design")}
           aria-pressed={grabbing}
           onClick={toggleGrab}
         >
@@ -267,8 +270,8 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
           <input
             value={urlDraft}
             spellCheck={false}
-            aria-label="Endereço"
-            placeholder="Endereço — http://localhost:5173, exemplo.com…"
+            aria-label={t("Endereço")}
+            placeholder={t("Endereço — http://localhost:5173, exemplo.com…")}
             // A tab born blank exists to receive an address.
             autoFocus={tab.url === "about:blank"}
             onChange={(e) => setUrlDraft(e.target.value)}
@@ -280,19 +283,19 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
         {shownVeil && (
           <div className="cv-portal-ph">
             <Globe size={22} />
-            <strong>{hostnameOf(tab.url) || "Navegador"}</strong>
+            <strong>{hostnameOf(tab.url) || t("Navegador")}</strong>
             {shownVeil !== "away" && (
               <small>
                 {shownVeil === "opening"
-                  ? "Abrindo o navegador…"
+                  ? t("Abrindo o navegador…")
                   : shownVeil === "failed"
-                    ? "Não deu para abrir o navegador"
-                    : "O site volta quando esta tela sair"}
+                    ? t("Não deu para abrir o navegador")
+                    : t("O site volta quando esta tela sair")}
               </small>
             )}
             {shownVeil === "failed" && (
               <button className="btn btn--sm" onClick={retry}>
-                <RotateCw size={12} aria-hidden="true" /> Tentar de novo
+                <RotateCw size={12} aria-hidden="true" /> {t("Tentar de novo")}
               </button>
             )}
           </div>
@@ -307,7 +310,7 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
             { kind: "sep" },
             {
               id: "close",
-              label: "Fechar navegador",
+              label: t("Fechar navegador"),
               icon: <X size={13} />,
               danger: true,
               onSelect: () => useBrowsers.getState().close(tab.id),
@@ -335,8 +338,8 @@ export function browserMenuItems(
     id: tab.id,
     ua: tab.ua,
     storage: tab.storage,
-    instanceLabel: "desta aba",
-    subject: "Navegador",
+    instanceLabel: t("desta aba"),
+    subject: t("Navegador"),
     patch: (change) => patch(tab.id, change),
     showToast,
   });

@@ -32,6 +32,7 @@ import {
   type TreeMode,
 } from "../../lib/treeNode";
 import type { ResizeDir } from "../../lib/canvas";
+import { useT } from "../../hooks/useT";
 
 interface Props {
   it: TreeItem;
@@ -80,6 +81,7 @@ function TreeCardImpl({
   onResizeMove,
   onResizeEnd,
 }: Props) {
+  const t = useT();
   const root = it.root || projectRoot;
   const [dirs, setDirs] = useState<Record<string, DirEntryInfo[]>>({});
   const [error, setError] = useState<string | null>(null);
@@ -209,8 +211,8 @@ function TreeCardImpl({
         {it.path && (
           <button
             className="cv-tree-btn"
-            data-tip="Subir uma pasta"
-            aria-label="Subir uma pasta"
+            data-tip={t("Subir uma pasta")}
+            aria-label={t("Subir uma pasta")}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
@@ -223,8 +225,8 @@ function TreeCardImpl({
         )}
         <button
           className="cv-tree-btn"
-          data-tip="Reler do disco"
-          aria-label="Reler do disco"
+          data-tip={t("Reler do disco")}
+          aria-label={t("Reler do disco")}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
@@ -238,7 +240,7 @@ function TreeCardImpl({
       <div
         className="cv-tree-modes"
         role="tablist"
-        aria-label="Modo da árvore"
+        aria-label={t("Modo da árvore")}
         onPointerDown={(e) => e.stopPropagation()}
       >
         {TREE_MODES.map((m: TreeMode) => (
@@ -252,7 +254,7 @@ function TreeCardImpl({
               onPatch(it.id, { mode: m });
             }}
           >
-            {TREE_MODE_LABEL[m]}
+            {t(TREE_MODE_LABEL[m])}
           </button>
         ))}
       </div>
@@ -269,7 +271,7 @@ function TreeCardImpl({
       >
         {!root ? (
           <span className="cv-tree-msg">
-            Este quadro não tem projeto — abra a pasta pelo menu do cartão.
+            {t("Este quadro não tem projeto — abra a pasta pelo menu do cartão.")}
           </span>
         ) : error ? (
           <span className="cv-tree-msg is-error">{error}</span>
@@ -301,7 +303,7 @@ function TreeCardImpl({
               </button>
             ))
           ) : (
-            <span className="cv-tree-msg">pasta vazia</span>
+            <span className="cv-tree-msg">{t("pasta vazia")}</span>
           )
         ) : it.mode === "grid" ? (
           <div className="cv-tree-grid">
@@ -332,7 +334,7 @@ function TreeCardImpl({
           </div>
         ) : it.mode === "changes" ? (
           changes === null ? (
-            <span className="cv-tree-msg">lendo o git…</span>
+            <span className="cv-tree-msg">{t("lendo o git…")}</span>
           ) : changes.length ? (
             changes.map((file) => (
               <button
@@ -353,14 +355,14 @@ function TreeCardImpl({
               </button>
             ))
           ) : (
-            <span className="cv-tree-msg">nada alterado</span>
+            <span className="cv-tree-msg">{t("nada alterado")}</span>
           )
         ) : log === null ? (
-          <span className="cv-tree-msg">lendo o histórico…</span>
+          <span className="cv-tree-msg">{t("lendo o histórico…")}</span>
         ) : log.length ? (
           <CommitGraph rows={graph} commits={log} />
         ) : (
-          <span className="cv-tree-msg">sem commits</span>
+          <span className="cv-tree-msg">{t("sem commits")}</span>
         )}
       </div>
 

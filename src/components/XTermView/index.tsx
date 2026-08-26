@@ -20,6 +20,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 
+import { broadcastLabel, broadcastTargets } from "../../lib/broadcast";
 import { readClipboardText } from "../../lib/clipboard";
 import {
   pickPastedImage,
@@ -34,13 +35,19 @@ import { ipc, on, type SpawnOptions } from "../../lib/ipc";
 import { ligatureRanges } from "../../lib/ligatures";
 import { uiLog } from "../../lib/log";
 import { baseName } from "../../lib/terminals";
+import { openTermLink } from "../../lib/termLinkOpen";
+import { termLinkProvider } from "../../lib/termLinkProvider";
 import { schemeFor, SCHEME_IDS } from "../../lib/colorSchemes";
 import type { ExtensionId } from "../../lib/extensions";
 import { useExtensions } from "../../stores/extensionsStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useAdvertised } from "../../stores/advertisedStore";
+import { useBroadcast } from "../../stores/broadcastStore";
 import { feedTail, useTerminals } from "../../stores/terminalsStore";
 import { useUI } from "../../stores/uiStore";
+import { resolvedTheme, useResolvedTheme } from "../../stores/themeStore";
+import { t } from "../../lib/i18n";
+import { termThemeFor } from "../../lib/termTheme";
 
 export interface XTermHandle {
   /** Spawns the process (used by the "resume" button). */
@@ -94,34 +101,6 @@ interface Props {
   onContextMenu?: (e: MouseEvent) => void;
   style?: CSSProperties;
 }
-
-// Dark premium theme, matching the chrome (styles.css): the background is the
-// panel's terminal well (#121215), cursor and selection in system blue. ANSI
-// colors keep their semantics (blue stays blue inside the terminal), tuned for
-// the cold ground without shouting over it.
-const THEME = {
-  background: "#121215",
-  foreground: "#d9d9de",
-  cursor: "#8ec2ff",
-  cursorAccent: "#121215",
-  selectionBackground: "#2b446b",
-  black: "#1d1d22",
-  red: "#ff6e64",
-  green: "#5bd57f",
-  yellow: "#eac95c",
-  blue: "#5fa8ff",
-  magenta: "#c98bf2",
-  cyan: "#5fd2d2",
-  white: "#d9d9de",
-  brightBlack: "#7a7a85",
-  brightRed: "#ff958d",
-  brightGreen: "#8ce3a4",
-  brightYellow: "#f2da8a",
-  brightBlue: "#8fc2ff",
-  brightMagenta: "#dcb0f7",
-  brightCyan: "#8ce0e0",
-  brightWhite: "#f7f7f9",
-};
 
 /**
  * Search highlighting in the scrollback.
@@ -255,10 +234,10 @@ function noteDeadWrite(id: string) {
   if (now - last < DEAD_HINT_MS) return;
   deadHintAt.set(id, now);
   const row = useProjects.getState().terminal(id);
-  const name = row ? baseName(row) : "Este CLI";
+  const name = row ? baseName(row) : t("Este CLI");
   useUI
     .getState()
-    .showToast(`${name} não está rodando — use Retomar para iniciar de novo.`);
+    .showToast(t("{name} não está rodando — use Retomar para iniciar de novo.", { name }));
 }
 
 export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
@@ -318,6 +297,34 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
   const termLigatures = useUI((s) => s.prefs.termLigatures);
   const scrollback = useUI((s) => s.prefs.scrollback);
   const cursorBlink = useUI((s) => s.prefs.cursorBlink);
+
+  // --- keyboard broadcast (lib/broadcast.ts) --------------------------------
+  // Three scalars, so nothing here re-renders while the mode is off: the
+  // armed group, whether it is *this* terminal's group, and — only then —
+  // how many other CLIs are alive to receive the keystrokes.
+  const broadcastGroup = useBroadcast((s) => s.groupId);
+  const broadcasting = useProjects((s) =>
+    broadcastGroup !== null &&
+    s.terminals.find((t) => t.id === id)?.groupId === broadcastGroup,
+  );
+  const broadcastCount = useTerminals((s) =>
+    broadcasting && broadcastGroup
+      ? broadcastTargets(useProjects.getState().terminals, s.byId, id, broadcastGroup).length
+      : -1,
+  );
+  // The strip is imperative DOM, not a React child: xterm owns the host's
+  // children (`term.open(host)`), and a React node reconciled next to them
+  // is one re-render away from an `insertBefore` on a node React never made.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || !broadcasting) return;
+    const strip = document.createElement("div");
+    strip.className = "xterm-broadcast";
+    strip.setAttribute("role", "status");
+    strip.textContent = broadcastLabel(broadcastCount);
+    host.appendChild(strip);
+    return () => strip.remove();
+  }, [broadcasting, broadcastCount]);
   const px = fontSize ?? prefFontSize;
 
   // Props that `start` needs without entering the mount-effect
@@ -339,7 +346,7 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
     void saveClipboardImage(image)
       .then((path) => termRef.current?.paste(path))
       .catch((e) => {
-        useUI.getState().showToast(`Não consegui colar a imagem: ${e}`, "error");
+        useUI.getState().showToast(t("Não consegui colar a imagem: {reason}", { reason: String(e) }), "error");
       });
   };
 
@@ -376,8 +383,8 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
         .getState()
         .showToast(
           text == null
-            ? "sem acesso à área de transferência — use Ctrl+V"
-            : "não há texto nem imagem na área de transferência",
+            ? t("sem acesso à área de transferência — use Ctrl+V")
+            : t("não há texto nem imagem na área de transferência"),
           text == null ? "error" : "info",
         );
     });
@@ -489,7 +496,7 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
       const msg = String(e);
       store.markError(id, msg);
       uiLog.error(`falha ao iniciar pty ${id}: ${msg}`);
-      term.write(`\r\n\x1b[31m[yard] falha ao iniciar: ${msg}\x1b[0m\r\n`);
+      term.write(`\r\n\x1b[31m${t("[yard] falha ao iniciar: {reason}", { reason: msg })}\x1b[0m\r\n`); // i18n-ok
     } finally {
       spawningRef.current = false;
     }
@@ -512,7 +519,7 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
         useUI
           .getState()
           .showToast(
-            `Limpei a tela, mas não consegui apagar o histórico no disco: ${e}`,
+            t("Limpei a tela, mas não consegui apagar o histórico no disco: {reason}", { reason: String(e) }),
             "error",
           );
       });
@@ -555,7 +562,7 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
           SCHEME_IDS.find(
             (s) => useExtensions.getState().enabled[s as ExtensionId] === true,
           ),
-        )?.term ?? THEME,
+        )?.term ?? termThemeFor(resolvedTheme()),
       // ConPTY repositions a lot; letting xterm convert \n to \r\n
       // avoids the "staircase" in tools that emit only LF.
       convertEol: false,
@@ -567,6 +574,10 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
     term.loadAddon(search);
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = "11";
+    // Ctrl+click on a printed address or file path (`lib/termLinkProvider.ts`,
+    // matcher in `lib/termLinks.ts`, destination in `lib/termLinkOpen.ts`).
+    // Disposed with the terminal.
+    term.registerLinkProvider(termLinkProvider(term, (match) => openTermLink(id, match)));
 
     term.open(host);
 
@@ -898,6 +909,20 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
       // the pipeline takes over the request and submits it with stage 1
       // attached. Everything else passes untouched (see `lib/flowIntercept.ts`).
       if (interceptFlowInput(id, data)) return;
+      // Keyboard broadcast: the same keystroke goes to every other live CLI
+      // of the armed group (lib/broadcast.ts). Read from the store, not from
+      // a closure — this effect mounts once per terminal and the mode toggles
+      // many times after that.
+      const armed = useBroadcast.getState().groupId;
+      if (armed && useProjects.getState().terminal(id)?.groupId === armed) {
+        const targets = broadcastTargets(
+          useProjects.getState().terminals,
+          useTerminals.getState().byId,
+          id,
+          armed,
+        );
+        for (const target of targets) void ipc.writePty(target, data).catch(() => {});
+      }
       void ipc.writePty(id, data).catch(() => noteDeadWrite(id));
     });
     const onBinary = term.onBinary((data) => {
@@ -990,11 +1015,14 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
   const schemeId = useExtensions((s) =>
     SCHEME_IDS.find((scheme) => s.enabled[scheme as ExtensionId] === true),
   );
+  // The light appearance swaps the well's palette the same way (a scheme
+  // extension still wins over both — it is the user's explicit choice).
+  const resolved = useResolvedTheme();
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    term.options.theme = schemeFor(schemeId)?.term ?? THEME;
-  }, [id, schemeId]);
+    term.options.theme = schemeFor(schemeId)?.term ?? termThemeFor(resolved);
+  }, [id, schemeId, resolved]);
 
   // --- sixel/iTerm images (extension): loaded in place, dropped in place ---
   const termImages = useExtensions((s) => s.enabled["term-images"] === true);

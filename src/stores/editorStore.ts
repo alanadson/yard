@@ -23,6 +23,7 @@ import {
   type DirEntryInfo,
   type FilesActivity,
 } from "../lib/ipc";
+import { t } from "../lib/i18n";
 import { uiLog } from "../lib/log";
 import { toggleTaskLine } from "../lib/mdedit";
 import { splitPath } from "../lib/paths";
@@ -1291,10 +1292,13 @@ export function unsavedWarning(scope: DocScope): string {
     .slice(0, 3)
     .map((d) => splitPath(d.path).base)
     .join(", ");
-  const rest = dirtyDocs.length > 3 ? ` e mais ${dirtyDocs.length - 3}` : "";
+  const rest = dirtyDocs.length > 3 ? t(" e mais {n}", { n: dirtyDocs.length - 3 }) : "";
   return (
-    `\n\nAtenção: ${dirtyDocs.length} arquivo(s) aberto(s) com alterações não salvas ` +
-    `vão junto (${names}${rest}). Salve antes se quiser manter o texto.`
+    "\n\n" +
+    t(
+      "Atenção: {n} arquivo(s) aberto(s) com alterações não salvas vão junto ({names}). Salve antes se quiser manter o texto.",
+      { n: dirtyDocs.length, names: names + rest },
+    )
   );
 }
 

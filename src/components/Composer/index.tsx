@@ -61,6 +61,7 @@ import { useBench } from "../../stores/benchStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useTerminals } from "../../stores/terminalsStore";
 import { COMPOSER_SCRATCH, useUI } from "../../stores/uiStore";
+import { useT } from "../../hooks/useT";
 
 export function Composer() {
   const open = useUI((s) => s.composerOpen);
@@ -71,6 +72,7 @@ export function Composer() {
   const showToast = useUI((s) => s.showToast);
   const focusedTerminalId = useUI((s) => s.focusedTerminalId);
   const composerTargetId = useUI((s) => s.composerTargetId);
+  const t = useT();
   const terminals = useProjects((s) => s.terminals);
   const groups = useProjects((s) => s.groups);
 
@@ -241,7 +243,7 @@ export function Composer() {
           areaRef.current?.setSelectionRange(caret, caret);
         }, 0);
       })
-      .catch((err) => showToast(`Não consegui colar a imagem: ${err}`, "error"));
+      .catch((err) => showToast(t("Não consegui colar a imagem: {err}", { err: String(err) }), "error"));
   };
 
   const applyMention = (itemName: string) => {
@@ -265,8 +267,8 @@ export function Composer() {
     if (!target) {
       showToast(
         destinations.length
-          ? "Escolha o destino no topo do compositor antes de enviar."
-          : "Nenhum terminal para receber — crie um antes de enviar.",
+          ? t("Escolha o destino no topo do compositor antes de enviar.")
+          : t("Nenhum terminal para receber — crie um antes de enviar."),
         "error",
       );
       return;
@@ -277,7 +279,7 @@ export function Composer() {
     // costs the user nothing.
     const ready = sendability(target.id);
     if (!ready.ok) {
-      showToast(ready.message ?? `${baseName(target)} não pode receber agora.`, "error");
+      showToast(ready.message ?? t("{name} não pode receber agora.", { name: baseName(target) }), "error");
       return;
     }
     setSending(true);
@@ -324,22 +326,24 @@ export function Composer() {
       }
 
       const warnings: string[] = [];
-      if (failures.length) warnings.push(`não chegou em ${failures.join(", ")}`);
+      if (failures.length) warnings.push(t("não chegou em {names}", { names: failures.join(", ") }));
       if (notStarted.length) {
         warnings.push(
-          `${notStarted.map((a) => a.name).join(", ")} não estava livre para receber e ficou de fora`,
+          t("{names} não estava livre para receber e ficou de fora", {
+            names: notStarted.map((a) => a.name).join(", "),
+          }),
         );
       }
 
       if (!primaryOk) {
-        showToast(`Falha ao enviar: ${warnings.join("; ")}.`, "error");
+        showToast(t("Falha ao enviar: {details}.", { details: warnings.join("; ") }), "error");
       } else if (warnings.length) {
-        showToast(`Prompt enviado, mas ${warnings.join("; ")}.`, "error");
+        showToast(t("Prompt enviado, mas {details}.", { details: warnings.join("; ") }), "error");
       } else if (targets.length > 1) {
-        showToast(`Prompt enviado para ${targets.length} terminais.`);
+        showToast(t("Prompt enviado para {n} terminais.", { n: targets.length }));
       }
     } catch (e) {
-      showToast(`Falha ao enviar: ${e}`, "error");
+      showToast(t("Falha ao enviar: {e}", { e: String(e) }), "error");
     } finally {
       setSending(false);
     }
@@ -359,8 +363,8 @@ export function Composer() {
     if (!target) {
       showToast(
         destinations.length
-          ? "Escolha o destino no topo do compositor antes."
-          : "Nenhum terminal para receber — crie um antes.",
+          ? t("Escolha o destino no topo do compositor antes.")
+          : t("Nenhum terminal para receber — crie um antes."),
         "error",
       );
       return;
@@ -369,7 +373,7 @@ export function Composer() {
     // its command line — no risk of answering someone else's question. Being
     // alive is enough.
     if (!running) {
-      showToast(`${baseName(target)} não está rodando — inicie antes.`, "error");
+      showToast(t("{name} não está rodando — inicie antes.", { name: baseName(target) }), "error");
       return;
     }
     setSending(true);
@@ -383,7 +387,7 @@ export function Composer() {
       useProjects.getState().setActiveTab(target.groupId, target.slot, target.id);
       useUI.getState().focusTerminal(target.id, target.slot);
     } catch (e) {
-      showToast(`Não consegui escrever na CLI: ${e}`, "error");
+      showToast(t("Não consegui escrever na CLI: {e}", { e: String(e) }), "error");
     } finally {
       setSending(false);
     }
@@ -427,36 +431,36 @@ export function Composer() {
       className="composer"
       role="dialog"
       aria-modal="true"
-      aria-label="Compositor de prompts"
+      aria-label={t("Compositor de prompts")}
       onMouseDown={(e) => e.stopPropagation()}
     >
       <div className="composer-head">
-        <strong>Compositor</strong>
+        <strong>{t("Compositor")}</strong>
         {destinations.length > 0 ? (
           <>
             <Select
               className="composer-target"
               value={target?.id ?? ""}
               options={destinations}
-              placeholder="Escolher destino…"
-              label="Destino do prompt"
-              tip="Para onde este prompt vai"
+              placeholder={t("Escolher destino…")}
+              label={t("Destino do prompt")}
+              tip={t("Para onde este prompt vai")}
               onChange={(id) => setComposerTarget(id)}
             />
             {target && <span className={`dot dot--${runtimeState ?? "idle"}`} />}
           </>
         ) : (
-          <span className="composer-nodest">nenhum terminal ainda</span>
+          <span className="composer-nodest">{t("nenhum terminal ainda")}</span>
         )}
         {mentioned.length > 0 && (
-          <span className="composer-chip" data-tip-side="top" data-tip="Também recebe este prompt">
+          <span className="composer-chip" data-tip-side="top" data-tip={t("Também recebe este prompt")}>
             +{mentioned.join(", +")}
           </span>
         )}
         <button
           className="icon-btn"
-          aria-label="Fechar compositor"
-          data-tip-side="top" data-tip="Fechar (Esc)"
+          aria-label={t("Fechar compositor")}
+          data-tip-side="top" data-tip={t("Fechar (Esc)")}
           onClick={() => setOpen(false)}
         >
           <X size={13} />
@@ -470,13 +474,13 @@ export function Composer() {
           value={draft}
           rows={12}
           spellCheck={false}
-          aria-label="Texto do prompt"
+          aria-label={t("Texto do prompt")}
           placeholder={
             ctx?.agents.length
-              ? "Prompt de várias linhas… use @ para mencionar um agente conectado."
+              ? t("Prompt de várias linhas… use @ para mencionar um agente conectado.")
               : target
-                ? "Prompt de várias linhas. Enter quebra linha; nada sai daqui sozinho."
-                : "Escreva o prompt à vontade — escolha o destino lá em cima quando for entregar."
+                ? t("Prompt de várias linhas. Enter quebra linha; nada sai daqui sozinho.")
+                : t("Escreva o prompt à vontade — escolha o destino lá em cima quando for entregar.")
           }
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
@@ -505,21 +509,21 @@ export function Composer() {
 
       <div className="composer-foot">
         <span className="composer-hint">
-          <kbd>Ctrl</kbd>+<kbd>Enter</kbd> envia · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+
-          <kbd>Enter</kbd> deixa na CLI · <kbd>Esc</kbd> fecha
+          <kbd>Ctrl</kbd>+<kbd>Enter</kbd> {t("envia")} · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+
+          <kbd>Enter</kbd> {t("deixa na CLI")} · <kbd>Esc</kbd> {t("fecha")}
         </span>
         <button
           className="icon-btn composer-save"
           data-tip-side="top"
-          data-tip="Guardar na biblioteca de prompts"
-          aria-label="Guardar este texto na biblioteca de prompts"
+          data-tip={t("Guardar na biblioteca de prompts")}
+          aria-label={t("Guardar este texto na biblioteca de prompts")}
           disabled={!draft.trim()}
           onClick={() => {
             const text = draft.trim();
             if (!text) return;
             const theTitle = text.split("\n")[0].slice(0, 60);
             useBench.getState().addPrompt({ title: theTitle, body: text });
-            showToast(`Guardado na biblioteca: “${theTitle}”.`);
+            showToast(t("Guardado na biblioteca: “{title}”.", { title: theTitle }));
           }}
         >
           <BookmarkPlus size={13} />
@@ -530,23 +534,23 @@ export function Composer() {
           className="btn"
           data-tip-side="top"
           data-tip-wrap=""
-          data-tip="Escreve o texto na linha da CLI e fecha — o Enter fica com você"
+          data-tip={t("Escreve o texto na linha da CLI e fecha — o Enter fica com você")}
           disabled={!draft.trim() || sending}
           onClick={() => void deliver()}
         >
-          <TerminalSquare size={13} /> Deixar na CLI
+          <TerminalSquare size={13} /> {t("Deixar na CLI")}
         </button>
         {/* Stays clickable with no destination on purpose: a dead button
             explains nothing, and the click answers what is missing. */}
         <button
           className="btn btn--primary"
           data-tip-side="top"
-          data-tip={target ? undefined : "Escolha primeiro o destino, lá em cima"}
+          data-tip={target ? undefined : t("Escolha primeiro o destino, lá em cima")}
           disabled={!draft.trim() || sending}
           onClick={() => void send()}
         >
           {sending ? <CornerDownLeft size={13} /> : <Send size={13} />}{" "}
-          {sending ? "Enviando…" : "Enviar"}
+          {sending ? t("Enviando…") : t("Enviar")}
         </button>
       </div>
     </div>

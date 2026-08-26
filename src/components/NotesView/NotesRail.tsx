@@ -37,6 +37,9 @@ import {
   type NoteStatus,
 } from "../../lib/notes";
 import { useNotes } from "../../stores/notesStore";
+import { useT } from "../../hooks/useT";
+
+// i18n-scan: tables
 
 /** Curated notebook glyphs — enough to tell shelves apart, few enough to pick fast. */
 const ICONS = ["📓", "💡", "🧭", "🐛", "🧪", "📚", "🗂️", "⭐", "🔧", "🏠"];
@@ -68,6 +71,7 @@ export function NotesRail() {
   const sort = useNotes((s) => s.sort);
   const showResolved = useNotes((s) => s.showResolved);
   const query = useNotes((s) => s.query);
+  const t = useT();
 
   const counts = useMemo(() => railCounts(notes, notebooks), [notes, notebooks]);
 
@@ -96,8 +100,8 @@ export function NotesRail() {
 
   const askEmptyTrash = () => {
     void ask(
-      `Excluir de vez ${counts.trash} nota(s) da lixeira? Isso não tem volta.`,
-      { title: "Esvaziar a lixeira?", kind: "warning" },
+      t("Excluir de vez {n} nota(s) da lixeira? Isso não tem volta.", { n: counts.trash }),
+      { title: t("Esvaziar a lixeira?"), kind: "warning" },
     ).then((yes) => {
       if (yes) useNotes.getState().emptyTrash();
     });
@@ -149,7 +153,7 @@ export function NotesRail() {
       {opts.chevron !== undefined && opts.chevron !== null ? (
         <button
           className="notes-row-chevron"
-          aria-label={opts.chevron === "open" ? "Recolher" : "Expandir"}
+          aria-label={opts.chevron === "open" ? t("Recolher") : t("Expandir")}
           aria-expanded={opts.chevron === "open"}
           onClick={(e) => {
             e.stopPropagation();
@@ -195,7 +199,7 @@ export function NotesRail() {
   // --- notebooks ------------------------------------------------------------
 
   const newNotebook = (parentId: string | null) => {
-    const id = useNotes.getState().addNotebook("Novo caderno", parentId);
+    const id = useNotes.getState().addNotebook(t("Novo caderno"), parentId);
     if (parentId) {
       setCollapsed((s) => {
         const next = new Set(s);
@@ -209,7 +213,7 @@ export function NotesRail() {
   const notebookMenu = (nb: Notebook): MenuEntry[] => [
     {
       id: "nova-nota",
-      label: "Nova nota aqui",
+      label: t("Nova nota aqui"),
       onSelect: () => {
         select({ kind: "book", id: nb.id });
         useNotes.getState().createNote();
@@ -217,13 +221,13 @@ export function NotesRail() {
     },
     {
       id: "sub",
-      label: "Novo subcaderno",
+      label: t("Novo subcaderno"),
       onSelect: () => newNotebook(nb.id),
     },
-    { id: "renomear", label: "Renomear", onSelect: () => setRenaming(nb.id) },
+    { id: "renomear", label: t("Renomear"), onSelect: () => setRenaming(nb.id) },
     {
       id: "icone",
-      label: "Ícone",
+      label: t("Ícone"),
       submenu: [
         ...ICONS.map((emoji) => ({
           id: `icone-${emoji}`,
@@ -234,7 +238,7 @@ export function NotesRail() {
         { kind: "sep" as const },
         {
           id: "icone-nenhum",
-          label: "Sem ícone",
+          label: t("Sem ícone"),
           checked: nb.icon === null,
           onSelect: () => useNotes.getState().setNotebookIcon(nb.id, null),
         },
@@ -243,7 +247,7 @@ export function NotesRail() {
     { kind: "sep" },
     {
       id: "excluir",
-      label: "Excluir — as notas sobem um nível",
+      label: t("Excluir — as notas sobem um nível"),
       danger: true,
       // Asks with the number up front: the notebook hierarchy is accumulated
       // work, and it has no trash (only notes do).
@@ -254,15 +258,15 @@ export function NotesRail() {
         ).length;
         const children = st.notebooks.filter((n) => n.parentId === nb.id).length;
         const parts = [
-          noteCount > 0 ? `${noteCount} nota(s)` : null,
-          children > 0 ? `${children} subcaderno(s)` : null,
+          noteCount > 0 ? t("{n} nota(s)", { n: noteCount }) : null,
+          children > 0 ? t("{n} subcaderno(s)", { n: children }) : null,
         ].filter(Boolean);
+        const what = parts.length
+          ? t("{parts} sobem um nível — nada é apagado.", { parts: parts.join(` ${t("e")} `) })
+          : t("Ele está vazio.");
         void ask(
-          `Excluir o caderno “${nb.name}”?` +
-            (parts.length
-              ? ` ${parts.join(" e ")} sobem um nível — nada é apagado.`
-              : " Ele está vazio."),
-          { title: "Excluir caderno", kind: "warning" },
+          `${t("Excluir o caderno “{name}”?", { name: nb.name })} ${what}`,
+          { title: t("Excluir caderno"), kind: "warning" },
         ).then((yes) => {
           if (yes) useNotes.getState().deleteNotebook(nb.id);
         });
@@ -316,7 +320,7 @@ export function NotesRail() {
   return (
     <nav
       className="notes-rail-body"
-      aria-label="Coleções de anotações"
+      aria-label={t("Coleções de anotações")}
       // The background, the section titles and the "nothing here yet"
       // sentences: everything that is not a row lands here. The rows stop
       // propagation, so this one only answers for what is left.
@@ -325,7 +329,7 @@ export function NotesRail() {
       <div className="notes-rail-scroll">
         {row({
           key: "all",
-          label: "Todas as notas",
+          label: t("Todas as notas"),
           icon: <Library size={13} />,
           count: counts.all,
           active: collection.kind === "all",
@@ -336,7 +340,7 @@ export function NotesRail() {
         {STATUS_ROWS.map((status) =>
           row({
             key: `status-${status}`,
-            label: STATUS_PLURAL[status],
+            label: t(STATUS_PLURAL[status]),
             icon: (
               <span
                 className="notes-dot"
@@ -352,11 +356,11 @@ export function NotesRail() {
         )}
 
         <div className="notes-rail-head">
-          <span>Cadernos</span>
+          <span>{t("Cadernos")}</span>
           <button
             className="icon-btn icon-btn--xs"
-            data-tip="Novo caderno"
-            aria-label="Novo caderno"
+            data-tip={t("Novo caderno")}
+            aria-label={t("Novo caderno")}
             onClick={() => newNotebook(null)}
           >
             <Plus size={12} />
@@ -366,14 +370,14 @@ export function NotesRail() {
           tree
         ) : (
           <p className="notes-rail-empty">
-            Cadernos agrupam notas por assunto — e aninham à vontade.
+            {t("Cadernos agrupam notas por assunto — e aninham à vontade.")}
           </p>
         )}
 
         {tags.length > 0 && (
           <>
             <div className="notes-rail-head">
-              <span>Etiquetas</span>
+              <span>{t("Etiquetas")}</span>
             </div>
             {tags.map((tag) =>
               row({
@@ -387,12 +391,12 @@ export function NotesRail() {
                   openMenu(e, [
                     {
                       id: "renomear",
-                      label: "Renomear",
+                      label: t("Renomear"),
                       onSelect: () => setRenaming(tag.id),
                     },
                     {
                       kind: "swatches",
-                      label: "Cor da etiqueta",
+                      label: t("Cor da etiqueta"),
                       colors: TAG_COLORS,
                       active: tag.color,
                       onPick: (color) => useNotes.getState().setTagColor(tag.id, color),
@@ -400,7 +404,7 @@ export function NotesRail() {
                     { kind: "sep" },
                     {
                       id: "excluir",
-                      label: "Excluir etiqueta",
+                      label: t("Excluir etiqueta"),
                       danger: true,
                       // Vanishes from every note that used it, with no trash
                       // and no undo: the only protection possible is to ask,
@@ -411,9 +415,9 @@ export function NotesRail() {
                           .notes.filter((n) => n.tags.includes(tag.id)).length;
                         void ask(
                           uses > 0
-                            ? `Excluir a etiqueta “${tag.name}”? Ela sai de ${uses} nota(s) e não tem como desfazer — as notas ficam.`
-                            : `Excluir a etiqueta “${tag.name}”? Ela não está em nenhuma nota.`,
-                          { title: "Excluir etiqueta", kind: "warning" },
+                            ? t("Excluir a etiqueta “{name}”? Ela sai de {n} nota(s) e não tem como desfazer — as notas ficam.", { name: tag.name, n: uses })
+                            : t("Excluir a etiqueta “{name}”? Ela não está em nenhuma nota.", { name: tag.name }),
+                          { title: t("Excluir etiqueta"), kind: "warning" },
                         ).then((yes) => {
                           if (yes) useNotes.getState().deleteTag(tag.id);
                         });
@@ -435,11 +439,11 @@ export function NotesRail() {
         {tags.length === 0 && notebooks.length > 0 && (
           <>
             <div className="notes-rail-head">
-              <span>Etiquetas</span>
+              <span>{t("Etiquetas")}</span>
             </div>
             <p className="notes-rail-empty">
-              <TagIcon size={11} aria-hidden="true" /> Etiquetas nascem na própria
-              nota — o campo fica abaixo do título.
+              <TagIcon size={11} aria-hidden="true" />{" "}
+              {t("Etiquetas nascem na própria nota — o campo fica abaixo do título.")}
             </p>
           </>
         )}
@@ -448,7 +452,7 @@ export function NotesRail() {
       <div className="notes-rail-foot">
         {row({
           key: "trash",
-          label: "Lixeira",
+          label: t("Lixeira"),
           icon: <Trash2 size={13} />,
           count: counts.trash,
           active: collection.kind === "trash",
@@ -457,13 +461,13 @@ export function NotesRail() {
             openMenu(e, [
               {
                 id: "esvaziar",
-                label: "Esvaziar lixeira",
+                label: t("Esvaziar lixeira"),
                 danger: true,
                 disabled: counts.trash === 0,
                 onSelect: () => {
                   void ask(
-                    `Excluir de vez ${counts.trash} nota(s) da lixeira? Isso não tem volta.`,
-                    { title: "Esvaziar a lixeira?", kind: "warning" },
+                    t("Excluir de vez {n} nota(s) da lixeira? Isso não tem volta.", { n: counts.trash }),
+                    { title: t("Esvaziar a lixeira?"), kind: "warning" },
                   ).then((yes) => {
                     if (yes) useNotes.getState().emptyTrash();
                   });

@@ -18,6 +18,7 @@ import {
 import { createPortal } from "react-dom";
 import { Check, ChevronRight, Minus, Plus, RotateCcw } from "lucide-react";
 
+import { useT } from "../../hooks/useT";
 import { useOccluders } from "../../stores/occludersStore";
 
 export type MenuItem = {
@@ -115,6 +116,7 @@ function isItem(entry: MenuEntry): entry is MenuItem {
 }
 
 export function ContextMenu({ anchor, items, onClose }: Props) {
+  const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   /**
    * Callers write `onClose={() => setMenu(null)}` — a new function on every
@@ -332,22 +334,22 @@ export function ContextMenu({ anchor, items, onClose }: Props) {
               <span className="menu-label">{entry.label}</span>
               <button
                 type="button"
-                data-tip={`Diminuir ${entry.label.toLowerCase()}`}
-                aria-label={`Diminuir ${entry.label.toLowerCase()}`}
+                data-tip={t("Diminuir {what}", { what: entry.label.toLowerCase() })}
+                aria-label={t("Diminuir {what}", { what: entry.label.toLowerCase() })}
                 onClick={() => entry.onStep(-1)}
               >
                 <Minus size={12} />
               </button>
               <span
                 className={`menu-stepper-value ${entry.muted ? "is-muted" : ""}`}
-                data-tip={entry.muted ? entry.mutedTip ?? "Herdado das preferências" : undefined}
+                data-tip={entry.muted ? entry.mutedTip ?? t("Herdado das preferências") : undefined}
               >
                 {entry.value}
               </span>
               <button
                 type="button"
-                data-tip={`Aumentar ${entry.label.toLowerCase()}`}
-                aria-label={`Aumentar ${entry.label.toLowerCase()}`}
+                data-tip={t("Aumentar {what}", { what: entry.label.toLowerCase() })}
+                aria-label={t("Aumentar {what}", { what: entry.label.toLowerCase() })}
                 onClick={() => entry.onStep(1)}
               >
                 <Plus size={12} />
@@ -355,8 +357,8 @@ export function ContextMenu({ anchor, items, onClose }: Props) {
               <button
                 type="button"
                 className="menu-stepper-reset"
-                data-tip={entry.resetTip ?? "Voltar ao tamanho das preferências"}
-                aria-label={entry.resetTip ?? "Voltar ao tamanho das preferências"}
+                data-tip={entry.resetTip ?? t("Voltar ao tamanho das preferências")}
+                aria-label={entry.resetTip ?? t("Voltar ao tamanho das preferências")}
                 disabled={!entry.onReset}
                 onClick={() => entry.onReset?.()}
               >

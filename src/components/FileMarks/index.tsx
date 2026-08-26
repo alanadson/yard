@@ -7,6 +7,8 @@
  * which is how "novo (untracked)" ended up worded differently from one panel
  * to the next.
  */
+// i18n-scan: tables
+import { useT } from "../../hooks/useT";
 import { splitPath } from "../../lib/paths";
 import type { FileEventKind, GitFileStatus } from "../../lib/ipc";
 
@@ -28,8 +30,9 @@ const KIND_MARKS: Record<FileEventKind, Mark> = {
 };
 
 function Badge({ mark }: { mark: Mark }) {
+  const t = useT();
   return (
-    <span className={`file-badge ${mark.cls}`} data-tip={mark.tip} role="img" aria-label={mark.tip}>
+    <span className={`file-badge ${mark.cls}`} data-tip={t(mark.tip)} role="img" aria-label={t(mark.tip)}>
       {mark.label}
     </span>
   );

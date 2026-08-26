@@ -83,15 +83,15 @@ export interface LangSpec {
   /** Extra names a ```fence may use (`key` and `ext` already count). */
   fence?: readonly string[];
   /** Absent on purpose for the labeled-but-uncolored ones (Makefile, Zig…). */
-  load?: () => Promise<LanguageSupport>;
+  load?: () => Promise<LanguageSupport>; // i18n-ok — not a sentence
 }
 
 /** Wraps a CodeMirror 5 mode as the same `LanguageSupport` a Lezer one gives. */
 const legacy =
-  (load: () => Promise<StreamParser<unknown>>) => (): Promise<LanguageSupport> =>
+  (load: () => Promise<StreamParser<unknown>>) => (): Promise<LanguageSupport> => // i18n-ok — not a sentence
     load().then((parser) => new LanguageSupport(StreamLanguage.define(parser)));
 
-const NO_LANGUAGE: LangSpec = { key: "text", label: "Texto" };
+const NO_LANGUAGE: LangSpec = { key: "text", label: "Texto" }; // i18n-ok — translated where rendered
 
 /**
  * The table. Ordered by family for the human reading it — the lookups below

@@ -3,15 +3,18 @@
  * "resume that conversation" without memorizing a session id (§F4).
  */
 import { useEffect, useRef, useState } from "react";
-import { Bot, Play, RefreshCw } from "lucide-react";
+import { Bot, FileText, Play, RefreshCw } from "lucide-react";
 
 import { Modal } from "./Modal";
 import { BrandIcon } from "../BrandIcon";
+import { useT } from "../../hooks/useT";
 import { brandById } from "../../lib/brands";
 import { placeCard } from "../../lib/canvasWrite";
 import { AsyncDisposer } from "../../lib/disposables";
 import { compactCount, kb, truncate } from "../../lib/format";
+import { locale } from "../../lib/i18n";
 import { sameRoot } from "../../lib/roots";
+import { transcriptTitle } from "../../lib/transcript";
 import {
   ipc,
   on,
@@ -29,7 +32,9 @@ const AGENTS = [
 ];
 
 export function SessionsModal({ projectPath }: { projectPath: string }) {
+  const t = useT();
   const closeModal = useUI((s) => s.closeModal);
+  const openModal = useUI((s) => s.openModal);
   const showToast = useUI((s) => s.showToast);
   const addTerminal = useProjects((s) => s.addTerminal);
   const addGroup = useProjects((s) => s.addGroup);
@@ -109,12 +114,12 @@ export function SessionsModal({ projectPath }: { projectPath: string }) {
     try {
       const args = await ipc.agentResumeArgs(s.agent, s.externalId);
       if (!args) {
-        showToast(`${s.agent} nao expoe comando de retomada.`, "error");
+        showToast(t("{agent} nao expoe comando de retomada.", { agent: s.agent }), "error");
         return;
       }
       const groupId = targetGroup();
       if (!groupId) {
-        showToast("Cadastre um projeto primeiro.", "error");
+        showToast(t("Cadastre um projeto primeiro."), "error");
         return;
       }
       const detected = await ipc.detectAgents(false);
@@ -138,7 +143,7 @@ export function SessionsModal({ projectPath }: { projectPath: string }) {
         args: born.args,
         cwd,
         kind: "agent",
-        title: s.title ? truncate(s.title, 28) : `${s.agent} (retomado)`,
+        title: s.title ? truncate(s.title, 28) : t("{agent} (retomado)", { agent: s.agent }),
         agentId: s.agent,
         resume: args,
         surface,
@@ -149,7 +154,7 @@ export function SessionsModal({ projectPath }: { projectPath: string }) {
       useProjects.getState().updateTerminal(id, { alive: true });
       closeModal();
     } catch (e) {
-      showToast(`Não consegui retomar: ${e}`, "error");
+      showToast(t("Não consegui retomar: {e}", { e: String(e) }), "error");
     } finally {
       setResuming(null);
     }
@@ -160,12 +165,12 @@ export function SessionsModal({ projectPath }: { projectPath: string }) {
       const u = await ipc.getSessionUsage(s.file);
       setUsage((prev) => ({ ...prev, [s.file]: u }));
     } catch (e) {
-      showToast(`Não consegui ler o uso desta sessão: ${e}`, "error");
+      showToast(t("Não consegui ler o uso desta sessão: {e}", { e: String(e) }), "error");
     }
   };
 
   return (
-    <Modal title="Sessões de agentes" onClose={closeModal} wide>
+    <Modal title={t("Sessões de agentes")} onClose={closeModal} wide>
       {/* Same tab semantics as the other modals: these were plain buttons,
           so nothing announced which agent was selected. */}
       <div className="tabs" role="tablist">
@@ -186,8 +191,8 @@ export function SessionsModal({ projectPath }: { projectPath: string }) {
         })}
         <button
           className="icon-btn tabs-right"
-          data-tip="Recarregar"
-          aria-label="Recarregar a lista de sessões"
+          data-tip={t("Recarregar")}
+          aria-label={t("Recarregar a lista de sessões")}
           onClick={() => void load(agent)}
         >
           <RefreshCw size={13} />
@@ -195,18 +200,19 @@ export function SessionsModal({ projectPath }: { projectPath: string }) {
       </div>
 
       <p className="hint">
-        Lendo de <code>{projectPath || "(todos os projetos)"}</code>
+        {t("Lendo de ")}
+        <code>{projectPath || t("(todos os projetos)")}</code>
       </p>
 
-      {loading && <p className="hint">Carregando…</p>}
+      {loading && <p className="hint">{t("Carregando…")}</p>}
       {err && (
         <p className="hint hint--error">
-          Não consegui ler as sessões: {err}. Use o botão de recarregar.
+          {t("Não consegui ler as sessões: {err}. Use o botão de recarregar.", { err })}
         </p>
       )}
       {!loading && !err && sessions.length === 0 && (
         <p className="hint">
-          Nenhuma sessao encontrada para este agente nesta pasta.
+          {t("Nenhuma sessao encontrada para este agente nesta pasta.")}
         </p>
       )}
 
@@ -218,13 +224,16 @@ export function SessionsModal({ projectPath }: { projectPath: string }) {
               <div className="session-main">
                 <strong>{s.title ?? s.externalId}</strong>
                 <small>
-                  {new Date(s.updatedAt).toLocaleString()} ·{" "}
+                  {new Date(s.updatedAt).toLocaleString(locale())} ·{" "}
                   {kb(s.sizeBytes)} · {s.externalId.slice(0, 8)}
                 </small>
                 {u && (
                   <small className="session-usage">
-                    {u.messages} eventos · {compactCount(u.inputTokens)} entrada ·{" "}
-                    {compactCount(u.outputTokens)} saida
+                    {t("{n} eventos · {input} entrada · {output} saida", {
+                      n: u.messages,
+                      input: compactCount(u.inputTokens),
+                      output: compactCount(u.outputTokens),
+                    })}
                     {u.costUsd != null && ` · ~US$ ${u.costUsd.toFixed(2)}`}
                     {u.models.length > 0 && ` · ${u.models.join(", ")}`}
                   </small>
@@ -233,16 +242,24 @@ export function SessionsModal({ projectPath }: { projectPath: string }) {
               <div className="session-actions">
                 {!u && (
                   <button className="btn" onClick={() => void loadUsage(s)}>
-                    Uso
+                    {t("Uso")}
                   </button>
                 )}
+                <button
+                  className="btn"
+                  data-tip={t("Ler a conversa do começo, sem retomar o processo")}
+                  onClick={() => openModal("transcript", { file: s.file, title: transcriptTitle(s) })}
+                >
+                  <FileText size={12} />
+                  {t("Transcrição")}
+                </button>
                 <button
                   className="btn btn--primary"
                   disabled={resuming !== null}
                   onClick={() => void resume(s)}
                 >
                   <Play size={12} />
-                  {resuming === s.file ? "Retomando…" : "Retomar"}
+                  {resuming === s.file ? t("Retomando…") : t("Retomar")}
                 </button>
               </div>
             </div>

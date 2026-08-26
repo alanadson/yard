@@ -55,6 +55,8 @@ import {
   type LiveEntry,
 } from "../../stores/changesStore";
 import { useProjects } from "../../stores/projectsStore";
+import { useT } from "../../hooks/useT";
+import { locale, tn } from "../../lib/i18n";
 import {
   useUI,
   CHANGES_MAX,
@@ -186,6 +188,7 @@ export function ChangesPanel() {
     null,
   );
   const showToast = useUI.getState().showToast;
+  const t = useT();
 
   /** The menu actions, the same for a row and for the background. */
   const menuActions = {
@@ -194,11 +197,11 @@ export function ChangesPanel() {
       void useEditor
         .getState()
         .openFile(path)
-        .catch((e) => showToast(`Não consegui abrir: ${e}`, "error"));
+        .catch((e) => showToast(t("Não consegui abrir: {e}", { e: String(e) }), "error"));
     },
     copyPath: (theText: string) => {
       void copyText(theText).then((ok) =>
-        showToast(ok ? "Caminho copiado." : "Não consegui copiar.", ok ? "info" : "error"),
+        showToast(ok ? t("Caminho copiado.") : t("Não consegui copiar."), ok ? "info" : "error"),
       );
     },
     reveal: (osPath: string) => {
@@ -240,7 +243,7 @@ export function ChangesPanel() {
     <aside
       className="changes"
       style={{ width }}
-      aria-label="Arquivos e alterações"
+      aria-label={t("Arquivos e alterações")}
       ref={panelRef}
       onContextMenu={openMenu}
     >
@@ -250,22 +253,22 @@ export function ChangesPanel() {
         min={CHANGES_MIN}
         max={CHANGES_MAX}
         defaultWidth={DEFAULT_PREFS.changesWidth}
-        label="Largura do painel de arquivos"
+        label={t("Largura do painel de arquivos")}
         onResize={(w) => setPrefLocal("changesWidth", w)}
         onCommit={(w) => setPref("changesWidth", w)}
       />
 
       <div className="changes-header">
         <span className="changes-title">
-          Arquivos
+          {t("Arquivos")}
           {project && <small data-tip={project.path}>{project.name}</small>}
         </span>
         <div className="changes-actions">
           {tab === "live" ? (
             <button
               className="icon-btn"
-              data-tip-at="right" data-tip="Limpar o feed"
-              aria-label="Limpar o feed"
+              data-tip-at="right" data-tip={t("Limpar o feed")}
+              aria-label={t("Limpar o feed")}
               onClick={() =>
                 activeProjectId && useChanges.getState().clearLive(activeProjectId)
               }
@@ -275,8 +278,8 @@ export function ChangesPanel() {
           ) : (
             <button
               className={`icon-btn ${gitLoading ? "is-busy" : ""}`}
-              data-tip-at="right" data-tip="Atualizar (git status)"
-              aria-label="Atualizar o estado do repositório"
+              data-tip-at="right" data-tip={t("Atualizar (git status)")}
+              aria-label={t("Atualizar o estado do repositório")}
               onClick={() =>
                 project &&
                 root &&
@@ -288,8 +291,8 @@ export function ChangesPanel() {
           )}
           <button
             className="icon-btn"
-            data-tip-at="right" data-tip="Fechar (Ctrl+Shift+D)"
-            aria-label="Fechar o painel de arquivos"
+            data-tip-at="right" data-tip={t("Fechar (Ctrl+Shift+D)")}
+            aria-label={t("Fechar o painel de arquivos")}
             onClick={toggle}
           >
             <X size={13} />
@@ -297,7 +300,7 @@ export function ChangesPanel() {
         </div>
       </div>
 
-      <div className="changes-tabs" role="tablist" aria-label="Visão dos arquivos">
+      <div className="changes-tabs" role="tablist" aria-label={t("Visão dos arquivos")}>
         <button
           role="tab"
           id="changes-tab-live"
@@ -307,7 +310,7 @@ export function ChangesPanel() {
           className={tab === "live" ? "is-active" : ""}
           onClick={() => setTab("live")}
         >
-          Ao vivo
+          {t("Ao vivo")}
           {live.length > 0 && <span className="changes-count">{live.length}</span>}
         </button>
         <button
@@ -319,7 +322,7 @@ export function ChangesPanel() {
           className={tab === "review" ? "is-active" : ""}
           onClick={() => setTab("review")}
         >
-          Alterações
+          {t("Alterações")}
           {git?.isRepo && git.files.length > 0 && (
             <span className="changes-count">{git.files.length}</span>
           )}
@@ -337,8 +340,8 @@ export function ChangesPanel() {
       >
         {!project ? (
           <div className="changes-empty">
-            Nenhum projeto ativo.
-            <small>Escolha um projeto na barra lateral para acompanhar os arquivos.</small>
+            {t("Nenhum projeto ativo.")}
+            <small>{t("Escolha um projeto na barra lateral para acompanhar os arquivos.")}</small>
           </div>
         ) : tab === "live" ? (
           <LiveFeed
@@ -399,14 +402,14 @@ function LiveFeed({
   onHover: (path: string, e: ReactMouseEvent) => void;
   onLeave: () => void;
 }) {
+  const t = useT();
   if (entries.length === 0) {
     return (
       <div className="changes-empty">
         <Activity size={20} aria-hidden="true" />
-        Nenhuma atividade ainda.
+        {t("Nenhuma atividade ainda.")}
         <small>
-          Os arquivos que a CLI criar, editar ou apagar neste projeto aparecem
-          aqui na hora.
+          {t("Os arquivos que a CLI criar, editar ou apagar neste projeto aparecem aqui na hora.")}
         </small>
       </div>
     );
@@ -452,13 +455,14 @@ const FeedRow = memo(function FeedRow({
   onHover: (path: string, e: ReactMouseEvent) => void;
   onLeave: () => void;
 }) {
+  const t = useT();
   return (
     <li
       className={`feed-row ${clickable ? "feed-row--clickable" : ""}`}
       // The panel's menu is delegated: it finds the row through this attribute
       // instead of every level threading an `onMenu` nobody else uses.
       data-changes-path={e.path}
-      data-tip={clickable ? `${e.path} — clique abre o diff completo` : e.path}
+      data-tip={clickable ? t("{path} — clique abre o diff completo", { path: e.path }) : e.path}
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
       onClick={clickable ? () => onOpen(e.path) : undefined}
@@ -507,6 +511,7 @@ function Review({
   live: LiveEntry[];
 } & RowCallbacks) {
   const git = useChanges((s) => s.gitByProject[project.id]);
+  const t = useT();
 
   // One pass instead of three: this runs on every render of the panel, and
   // the panel re-renders whenever the agent touches a file.
@@ -536,8 +541,8 @@ function Review({
     return (
       <div className="changes-empty">
         <Check size={20} aria-hidden="true" />
-        Árvore limpa.
-        <small>Nada mudou desde o último commit.</small>
+        {t("Árvore limpa.")}
+        <small>{t("Nada mudou desde o último commit.")}</small>
       </div>
     );
   }
@@ -546,21 +551,24 @@ function Review({
     <div className="changes-body">
       <div className="review-summary">
         {git.branch && (
-          <span className="review-chip" data-tip="Branch atual">
+          <span className="review-chip" data-tip={t("Branch atual")}>
             <GitBranch size={11} aria-hidden="true" />
             {git.branch}
           </span>
         )}
         <span className="review-chip">
-          {git.files.length} {git.files.length === 1 ? "arquivo" : "arquivos"}
+          {tn(git.files.length, "{n} arquivo", "{n} arquivos")}
         </span>
         <span
           className="review-chip"
           data-tip-wrap=""
           data-tip={
             git.uncounted > 0
-              ? `Linhas somadas e removidas. ${git.uncounted} arquivo(s) novo(s) além do teto de contagem ficaram de fora — o total é um piso.`
-              : "Linhas somadas e removidas"
+              ? t(
+                  "Linhas somadas e removidas. {n} arquivo(s) novo(s) além do teto de contagem ficaram de fora — o total é um piso.",
+                  { n: git.uncounted },
+                )
+              : t("Linhas somadas e removidas")
           }
         >
           {/* The backend stops counting lines of new files past its cap. The
@@ -576,13 +584,12 @@ function Review({
 
       {git.uncounted > 0 && (
         <div className="changes-note">
-          {git.uncounted} arquivo(s) novo(s) além do teto: aparecem na lista, mas
-          as linhas deles não entram no total.
+          {t("{n} arquivo(s) novo(s) além do teto: aparecem na lista, mas as linhas deles não entram no total.", { n: git.uncounted })}
         </div>
       )}
 
       <ReviewSection
-        title="Alterados"
+        title={t("Alterados")}
         files={groups.alterados}
         projectId={project.id}
         root={project.path}
@@ -591,7 +598,7 @@ function Review({
         onLeave={onLeave}
       />
       <ReviewSection
-        title="Novos"
+        title={t("Novos")}
         files={groups.novos}
         projectId={project.id}
         root={project.path}
@@ -600,7 +607,7 @@ function Review({
         onLeave={onLeave}
       />
       <ReviewSection
-        title="Excluídos"
+        title={t("Excluídos")}
         files={groups.excluidos}
         projectId={project.id}
         root={project.path}
@@ -626,6 +633,7 @@ function ReviewSection({
   projectId: string;
   root: string;
 } & RowCallbacks) {
+  const t = useT();
   const [openPaths, setOpenPaths] = useState<Set<string>>(new Set());
   // The same window as the Source Control tab, for the same reason: every row
   // here is two buttons, two SVGs and two `data-tip` balloons, and a repository
@@ -664,9 +672,11 @@ function ReviewSection({
                   className="file-chevron"
                   aria-expanded={open}
                   aria-label={
-                    open ? `Recolher o diff de ${itemName}` : `Expandir o diff de ${itemName}`
+                    open
+                      ? t("Recolher o diff de {name}", { name: itemName })
+                      : t("Expandir o diff de {name}", { name: itemName })
                   }
-                  data-tip={open ? "Recolher o diff inline" : "Expandir o diff inline"}
+                  data-tip={open ? t("Recolher o diff inline") : t("Expandir o diff inline")}
                   onClick={() => toggleInline(f.path)}
                 >
                   {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -676,7 +686,7 @@ function ReviewSection({
                   onClick={() => onOpen(f.path)}
                   onMouseEnter={(e) => onHover(f, e)}
                   onMouseLeave={onLeave}
-                  data-tip-wrap="" data-tip={`${f.path}${f.staged ? " (staged)" : ""} — clique abre o diff completo`}
+                  data-tip-wrap="" data-tip={t("{path} — clique abre o diff completo", { path: `${f.path}${f.staged ? " (staged)" : ""}` })}
                 >
                   <GitStatusBadge status={f.status} />
                   <PathLabel path={f.path} deleted={f.status === "deleted"} />
@@ -704,9 +714,9 @@ function ReviewSection({
       </ul>
       {page.hidden > 0 && (
         <button className="list-more" onClick={() => setShown((n) => n + SCM_ROWS_PAGE)}>
-          Mostrar mais {Math.min(page.hidden, SCM_ROWS_PAGE)}
+          {t("Mostrar mais {n}", { n: Math.min(page.hidden, SCM_ROWS_PAGE) })}
           <span className="list-more-rest">
-            {page.hidden} arquivo{page.hidden === 1 ? "" : "s"} sem desenhar
+            {tn(page.hidden, "{n} arquivo sem desenhar", "{n} arquivos sem desenhar")}
           </span>
         </button>
       )}
@@ -734,6 +744,7 @@ function DiffView({
   root: string;
   file: ChangedFile;
 }) {
+  const t = useT();
   const git = useChanges((s) => s.gitByProject[projectId]);
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -765,20 +776,21 @@ function DiffView({
   }, [projectId, root, file.path, file.status, file.origPath, git]);
 
   if (error) return <div className="diff-note diff-note--error">{error}</div>;
-  if (!diff) return <div className="diff-note">carregando diff…</div>;
-  if (diff.isBinary) return <div className="diff-note">arquivo binário.</div>;
+  if (!diff) return <div className="diff-note">{t("carregando diff…")}</div>;
+  if (diff.isBinary) return <div className="diff-note">{t("arquivo binário.")}</div>;
   if (diff.text.trim() === "")
-    return <div className="diff-note">sem diferenças.</div>;
+    return <div className="diff-note">{t("sem diferenças.")}</div>;
 
   return (
     <div className="diff">
       {diff.truncated && (
-        <div className="diff-note">diff truncado — arquivo grande demais.</div>
+        <div className="diff-note">{t("diff truncado — arquivo grande demais.")}</div>
       )}
       {clipped && (
         <div className="diff-note">
-          Mostrando 1.500 de {lines.length.toLocaleString("pt-BR")} linhas — abra o diff completo
-          para continuar.
+          {t("Mostrando 1.500 de {total} linhas — abra o diff completo para continuar.", {
+            total: lines.length.toLocaleString(locale()),
+          })}
         </div>
       )}
       <pre>
@@ -795,6 +807,7 @@ function DiffView({
 
 /** Without git: groups the session feed itself, so the panel is not silent. */
 function SessionReview({ live }: { live: LiveEntry[] }) {
+  const t = useT();
   const groups = useMemo(
     () => ({
       Alterados: live.filter((e) => e.kind === "modified"),
@@ -808,10 +821,9 @@ function SessionReview({ live }: { live: LiveEntry[] }) {
     return (
       <div className="changes-empty">
         <GitBranch size={20} aria-hidden="true" />
-        Este projeto não é um repositório git.
+        {t("Este projeto não é um repositório git.")}
         <small>
-          Sem baseline para comparar; quando algo for tocado nesta sessão, o
-          resumo aparece aqui.
+          {t("Sem baseline para comparar; quando algo for tocado nesta sessão, o resumo aparece aqui.")}
         </small>
       </div>
     );
@@ -820,13 +832,13 @@ function SessionReview({ live }: { live: LiveEntry[] }) {
   return (
     <div className="changes-body">
       <div className="changes-note">
-        Projeto sem git — resumo do que a sessão tocou, sem diffs.
+        {t("Projeto sem git — resumo do que a sessão tocou, sem diffs.")}
       </div>
       {Object.entries(groups).map(([title, entries]) =>
         entries.length === 0 ? null : (
           <section className="review-section" key={title}>
             <h3 className="review-section-title">
-              {title} <span className="changes-count">{entries.length}</span>
+              {t(title)} <span className="changes-count">{entries.length}</span>
             </h3>
             <ul className="file-list">
               {entries.map((e) => (
@@ -858,6 +870,7 @@ function DiffPeek({
   target: PeekTarget;
   panelLeft: number;
 }) {
+  const t = useT();
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { file } = target;
@@ -914,11 +927,11 @@ function DiffPeek({
         {error ? (
           <div className="diff-note diff-note--error">{error}</div>
         ) : !diff ? (
-          <div className="diff-note">carregando…</div>
+          <div className="diff-note">{t("carregando…")}</div>
         ) : diff.isBinary ? (
-          <div className="diff-note">arquivo binário.</div>
+          <div className="diff-note">{t("arquivo binário.")}</div>
         ) : shown.length === 0 ? (
-          <div className="diff-note">sem diferenças.</div>
+          <div className="diff-note">{t("sem diferenças.")}</div>
         ) : (
           <pre>
             {shown.map((line, i) => (
@@ -932,7 +945,7 @@ function DiffPeek({
       </div>
       {remaining > 0 && (
         <div className="peek-more">
-          +{remaining} linha(s) — clique para abrir o diff completo
+          {t("+{n} linha(s) — clique para abrir o diff completo", { n: remaining })}
         </div>
       )}
     </div>

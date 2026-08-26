@@ -70,7 +70,10 @@ import {
 import { useExtensions } from "../../stores/extensionsStore";
 import { notesOverlayVisible, useNotes, type NotesMdMode } from "../../stores/notesStore";
 import { useUI } from "../../stores/uiStore";
+import { useT } from "../../hooks/useT";
+import { locale, t } from "../../lib/i18n";
 
+// i18n-scan: tables
 const MODES: { mode: NotesMdMode; icon: React.ReactNode; label: string; hint: string }[] = [
   { mode: "live", icon: <Pencil size={14} />, label: "Editar", hint: "escreve markdown já desenhado" },
   { mode: "source", icon: <Code2 size={14} />, label: "Fonte", hint: "o texto cru" },
@@ -88,13 +91,14 @@ export function NoteEditor() {
 }
 
 function EditorEmpty() {
+  const t = useT();
   return (
     <div className="notes-editor-empty">
       <NotebookPen size={26} aria-hidden="true" />
-      <p>Nenhuma nota aberta</p>
+      <p>{t("Nenhuma nota aberta")}</p>
       <p className="notes-empty-hint">
         <kbd>↑</kbd>
-        <kbd>↓</kbd> percorrem a lista · <kbd>Ctrl</kbd>+<kbd>N</kbd> cria uma nova
+        <kbd>↓</kbd> {t("percorrem a lista")} · <kbd>Ctrl</kbd>+<kbd>N</kbd> {t("cria uma nova")}
       </p>
     </div>
   );
@@ -105,6 +109,7 @@ function OpenNote({ note }: { note: Note }) {
   const mdMode = useNotes((s) => s.mdMode);
   const wantsFocus = useNotes((s) => s.wantsFocus);
   const showToast = useUI((s) => s.showToast);
+  const t = useT();
 
   const inTrash = note.deletedAt !== null;
   const mode: NotesMdMode = inTrash ? "read" : mdMode;
@@ -157,7 +162,7 @@ function OpenNote({ note }: { note: Note }) {
    */
   const onOpenUrl = useCallback((href: string) => {
     if (!openWebAddress(href)) {
-      useUI.getState().showToast(`Não sei abrir “${href}”.`, "error");
+      useUI.getState().showToast(t("Não sei abrir “{href}”.", { href }), "error");
       return;
     }
     if (notesOverlayVisible()) useNotes.getState().closeView();
@@ -165,14 +170,14 @@ function OpenNote({ note }: { note: Note }) {
   const onOpenPath = useCallback(() => {
     useUI
       .getState()
-      .showToast("Links de arquivo valem nos documentos do projeto — aqui, use endereços da web.");
+      .showToast(t("Links de arquivo valem nos documentos do projeto — aqui, use endereços da web."));
   }, []);
 
   const copy = () => {
     void navigator.clipboard
       .writeText(noteAsMarkdown(note))
-      .then(() => showToast("Markdown copiado."))
-      .catch(() => showToast("Não consegui copiar.", "error"));
+      .then(() => showToast(t("Markdown copiado.")))
+      .catch(() => showToast(t("Não consegui copiar."), "error"));
   };
 
   const exportIt = () => {
@@ -181,28 +186,29 @@ function OpenNote({ note }: { note: Note }) {
       .slice(0, 60)
       .trim();
     void save({
-      defaultPath: `${itemName || "nota"}.md`,
+      defaultPath: `${itemName || t("nota")}.md`,
       filters: [{ name: "Markdown", extensions: ["md"] }],
     }).then((dest) => {
       if (!dest) return;
       void ipc
         .noteExport(dest, noteAsMarkdown(note))
-        .then(() => showToast("Nota exportada."))
+        .then(() => showToast(t("Nota exportada.")))
         .catch((e) => showToast(String(e), "error"));
     });
   };
 
   const deleteForever = () => {
     void ask(
-      `Excluir "${note.title.trim() || fallbackTitle(note.body)}" de vez? Isso não tem volta.`,
-      { title: "Excluir a nota?", kind: "warning" },
+      t('Excluir "{title}" de vez? Isso não tem volta.', { title: note.title.trim() || fallbackTitle(note.body) }),
+      { title: t("Excluir a nota?"), kind: "warning" },
     ).then((yes) => {
       if (yes) useNotes.getState().deleteForever(note.id);
     });
   };
 
+  const noneLabel = t("Sem caderno");
   const notebookOptions = useMemo(() => {
-    const out = [{ value: "", label: "Sem caderno" }];
+    const out = [{ value: "", label: noneLabel }];
     const listChildren = (parentId: string | null) => {
       for (const nb of childrenOf(notebooks, parentId)) {
         out.push({ value: nb.id, label: notebookPath(notebooks, nb.id) });
@@ -211,7 +217,7 @@ function OpenNote({ note }: { note: Note }) {
     };
     listChildren(null);
     return out;
-  }, [notebooks]);
+  }, [notebooks, noneLabel]);
 
   /**
    * What can be done with the whole note — the "Mais ações" kebab and the
@@ -221,18 +227,18 @@ function OpenNote({ note }: { note: Note }) {
   const noteActions = (): MenuEntry[] => [
     {
       id: "duplicar",
-      label: "Duplicar",
+      label: t("Duplicar"),
       disabled: inTrash,
       onSelect: () => useNotes.getState().duplicateNote(note.id),
     },
-    { id: "copiar", label: "Copiar como markdown", onSelect: copy },
-    { id: "exportar", label: "Exportar .md…", onSelect: exportIt },
+    { id: "copiar", label: t("Copiar como markdown"), onSelect: copy },
+    { id: "exportar", label: t("Exportar .md…"), onSelect: exportIt },
     { kind: "sep" },
     inTrash
-      ? { id: "excluir", label: "Excluir de vez", danger: true, onSelect: deleteForever }
+      ? { id: "excluir", label: t("Excluir de vez"), danger: true, onSelect: deleteForever }
       : {
           id: "lixeira",
-          label: "Mover para a lixeira",
+          label: t("Mover para a lixeira"),
           danger: true,
           onSelect: () => useNotes.getState().trashNote(note.id),
         },
@@ -260,15 +266,15 @@ function OpenNote({ note }: { note: Note }) {
       {inTrash && (
         <div className="notes-trashbar" role="alert">
           <Trash2 size={13} aria-hidden="true" />
-          <span>Esta nota está na lixeira — leitura apenas.</span>
+          <span>{t("Esta nota está na lixeira — leitura apenas.")}</span>
           <button
             className="btn btn--sm"
             onClick={() => useNotes.getState().restoreNote(note.id)}
           >
-            <RotateCcw size={12} aria-hidden="true" /> Restaurar
+            <RotateCcw size={12} aria-hidden="true" /> {t("Restaurar")}
           </button>
           <button className="btn btn--sm btn--danger" onClick={deleteForever}>
-            Excluir de vez
+            {t("Excluir de vez")}
           </button>
         </div>
       )}
@@ -278,8 +284,8 @@ function OpenNote({ note }: { note: Note }) {
           ref={titleRef}
           className="notes-title"
           value={note.title}
-          placeholder="Sem título"
-          aria-label="Título da nota"
+          placeholder={t("Sem título")}
+          aria-label={t("Título da nota")}
           spellCheck={false}
           disabled={inTrash}
           onChange={(e) => useNotes.getState().updateNote(note.id, { title: e.target.value })}
@@ -294,8 +300,8 @@ function OpenNote({ note }: { note: Note }) {
           <Select
             className="notes-meta-book"
             value={note.notebookId ?? ""}
-            label="Caderno da nota"
-            tip="Caderno"
+            label={t("Caderno da nota")}
+            tip={t("Caderno")}
             options={notebookOptions}
             disabled={inTrash}
             onChange={(v) => useNotes.getState().setNoteBook(note.id, v || null)}
@@ -303,16 +309,16 @@ function OpenNote({ note }: { note: Note }) {
           <Select
             className="notes-meta-status"
             value={note.status}
-            label="Status da nota"
-            tip="Status — trate a nota como tarefa"
-            options={STATUSES.map((s) => ({ value: s, label: STATUS_META[s].label }))}
+            label={t("Status da nota")}
+            tip={t("Status — trate a nota como tarefa")}
+            options={STATUSES.map((s) => ({ value: s, label: t(STATUS_META[s].label) }))}
             disabled={inTrash}
             onChange={(v) => useNotes.getState().setNoteStatus(note.id, v as Note["status"])}
           />
           <button
             className={`icon-btn ${note.pinned ? "is-active" : ""}`}
-            data-tip={note.pinned ? "Desafixar do topo" : "Fixar no topo da lista"}
-            aria-label={note.pinned ? "Desafixar do topo" : "Fixar no topo"}
+            data-tip={note.pinned ? t("Desafixar do topo") : t("Fixar no topo da lista")}
+            aria-label={note.pinned ? t("Desafixar do topo") : t("Fixar no topo")}
             aria-pressed={note.pinned}
             disabled={inTrash}
             onClick={() => useNotes.getState().togglePin(note.id)}
@@ -321,8 +327,8 @@ function OpenNote({ note }: { note: Note }) {
           </button>
           <button
             className="icon-btn"
-            data-tip="Mais ações"
-            aria-label="Mais ações da nota"
+            data-tip={t("Mais ações")}
+            aria-label={t("Mais ações da nota")}
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect();
               setMenu({ anchor: { x: r.left, y: r.bottom + 4 }, entries: noteActions() });
@@ -332,13 +338,13 @@ function OpenNote({ note }: { note: Note }) {
           </button>
           <span className="notes-meta-gap" />
           {!inTrash && (
-            <div className="md-modes" role="group" aria-label="Como mostrar o markdown">
+            <div className="md-modes" role="group" aria-label={t("Como mostrar o markdown")}>
               {MODES.map((m) => (
                 <button
                   key={m.mode}
                   className={`icon-btn ${mode === m.mode ? "is-active" : ""}`}
-                  data-tip={`${m.label} — ${m.hint}`}
-                  aria-label={m.label}
+                  data-tip={`${t(m.label)} — ${t(m.hint)}`}
+                  aria-label={t(m.label)}
                   aria-pressed={mode === m.mode}
                   onClick={() => useNotes.getState().setMdMode(m.mode)}
                 >
@@ -387,21 +393,21 @@ function OpenNote({ note }: { note: Note }) {
       <footer className="notes-foot">
         <span className="notes-foot-left">
           {counts.tasks.total > 0 && (
-            <span data-tip="Tarefas concluídas nesta nota">
-              {counts.tasks.done}/{counts.tasks.total} tarefas
+            <span data-tip={t("Tarefas concluídas nesta nota")}>
+              {t("{done}/{total} tarefas", { done: counts.tasks.done, total: counts.tasks.total })}
             </span>
           )}
-          <span data-tip={`${counts.chars} caracteres`}>{counts.words} palavras</span>
-          <span data-tip="Tempo de leitura, a 200 palavras por minuto">
+          <span data-tip={t("{n} caracteres", { n: counts.chars })}>{t("{n} palavras", { n: counts.words })}</span>
+          <span data-tip={t("Tempo de leitura, a 200 palavras por minuto")}>
             {counts.minutes} min
           </span>
         </span>
         <span className="notes-foot-right">
-          <span data-tip={new Date(note.createdAt).toLocaleString("pt-BR")}>
-            criada {whenLabel(note.createdAt)}
+          <span data-tip={new Date(note.createdAt).toLocaleString(locale())}>
+            {t("criada {when}", { when: whenLabel(note.createdAt) })}
           </span>
-          <span data-tip={new Date(note.updatedAt).toLocaleString("pt-BR")}>
-            editada {whenLabel(note.updatedAt)}
+          <span data-tip={new Date(note.updatedAt).toLocaleString(locale())}>
+            {t("editada {when}", { when: whenLabel(note.updatedAt) })}
           </span>
         </span>
       </footer>
@@ -428,6 +434,7 @@ function TagsField({ note }: { note: Note }) {
   const [text, setText] = useState("");
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const t = useT();
 
   const noteTags = note.tags
     .map((id) => tags.find((t) => t.id === id))
@@ -474,7 +481,7 @@ function TagsField({ note }: { note: Note }) {
           {tag.name}
           <button
             className="notes-chip-x"
-            aria-label={`Tirar a etiqueta ${tag.name}`}
+            aria-label={t("Tirar a etiqueta {name}", { name: tag.name })}
             onClick={() => remove(tag.id)}
           >
             <X size={10} />
@@ -485,8 +492,8 @@ function TagsField({ note }: { note: Note }) {
         <input
           ref={inputRef}
           value={text}
-          placeholder={noteTags.length === 0 ? "adicionar etiqueta…" : ""}
-          aria-label="Adicionar etiqueta"
+          placeholder={noteTags.length === 0 ? t("adicionar etiqueta…") : ""}
+          aria-label={t("Adicionar etiqueta")}
           role="combobox"
           aria-expanded={isOpen}
           spellCheck={false}
@@ -515,7 +522,7 @@ function TagsField({ note }: { note: Note }) {
           }}
         />
         {isOpen && (
-          <div className="notes-tags-pop" role="listbox" aria-label="Etiquetas sugeridas">
+          <div className="notes-tags-pop" role="listbox" aria-label={t("Etiquetas sugeridas")}>
             {suggestions.map((tag, i) => (
               <button
                 key={tag.id}
@@ -544,7 +551,7 @@ function TagsField({ note }: { note: Note }) {
                   apply(null);
                 }}
               >
-                criar “{text.trim()}”
+                {t("criar “{name}”", { name: text.trim() })}
               </button>
             )}
           </div>
@@ -643,7 +650,7 @@ function NoteSurface({
               if (file.size > IMG_PASTE_MAX) {
                 useUI
                   .getState()
-                  .showToast("Imagem grande demais para colar aqui (máx. 1,5 MB).", "error");
+                  .showToast(t("Imagem grande demais para colar aqui (máx. 1,5 MB)."), "error");
                 return true;
               }
               const reader = new FileReader();
@@ -652,7 +659,7 @@ function NoteSurface({
                 if (!url.startsWith("data:image/")) return;
                 const sel = view.state.selection.main;
                 view.dispatch({
-                  changes: { from: sel.from, to: sel.to, insert: `![imagem](${url})` },
+                  changes: { from: sel.from, to: sel.to, insert: `![imagem](${url})` }, // i18n-ok
                   selection: EditorSelection.cursor(sel.from + 2),
                   userEvent: "input.paste",
                 });

@@ -30,7 +30,7 @@ const POLL: Duration = Duration::from_millis(350);
 const BATCH: usize = 500;
 /// Line cap. Above this (a pasted binary, a colossal edit) the line is
 /// skipped — losing one event is better than ballooning memory.
-const MAX_LINE: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_LINE: usize = 4 * 1024 * 1024;
 /// Bound each disk read so opening a multi-gigabyte transcript does not need
 /// a same-sized allocation before the first event can be painted.
 const READ_CHUNK: usize = 256 * 1024;

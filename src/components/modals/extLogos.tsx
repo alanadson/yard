@@ -38,6 +38,9 @@ export function SchemeLogo({ scheme }: { scheme: ColorScheme }) {
   );
 }
 
+/** A line of make-believe code for the preview swatch — sample, not UI text. */
+const SAMPLE = { keyword: "const", fn: "soma", op: "=", num: "(2)", str: '"ok"', comment: "// comentário" }; // i18n-ok
+
 export function SchemePreview({ scheme }: { scheme: ColorScheme }) {
   const { term, syntax } = scheme;
   const ansi = [
@@ -56,12 +59,12 @@ export function SchemePreview({ scheme }: { scheme: ColorScheme }) {
         <span key={i} className="ext-swatch" style={{ background: c }} />
       ))}
       <span className="ext-preview-item" style={{ color: term.foreground }}>
-        <span style={{ color: syntax.keyword }}>const</span>
-        <span style={{ color: syntax.function }}>soma</span>
-        <span style={{ color: syntax.operator }}>=</span>
-        <span style={{ color: syntax.number }}>(2)</span>
-        <span style={{ color: syntax.string }}>"ok"</span>
-        <span style={{ color: syntax.comment, fontStyle: "italic" }}>// comentário</span>
+        <span style={{ color: syntax.keyword }}>{SAMPLE.keyword}</span>
+        <span style={{ color: syntax.function }}>{SAMPLE.fn}</span>
+        <span style={{ color: syntax.operator }}>{SAMPLE.op}</span>
+        <span style={{ color: syntax.number }}>{SAMPLE.num}</span>
+        <span style={{ color: syntax.string }}>{SAMPLE.str}</span>
+        <span style={{ color: syntax.comment, fontStyle: "italic" }}>{SAMPLE.comment}</span>
       </span>
     </div>
   );

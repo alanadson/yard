@@ -11,6 +11,7 @@ import { useState } from "react";
 
 import { Modal } from "./Modal";
 import { RoleField } from "./RoleField";
+import { useT } from "../../hooks/useT";
 import { commitCanvasExternal } from "../../lib/canvasWrite";
 import { setEntry } from "../../lib/canvasOps";
 import { applyRoleToProcess } from "../../lib/roleBrief";
@@ -25,6 +26,7 @@ interface Payload {
 }
 
 export function RoleModal() {
+  const t = useT();
   const closeModal = useUI((s) => s.closeModal);
   const showToast = useUI((s) => s.showToast);
   const payload = useUI((s) => s.modalPayload) as Payload | null;
@@ -40,8 +42,8 @@ export function RoleModal() {
 
   if (!term) {
     return (
-      <Modal title="Papel do agente" onClose={closeModal}>
-        <p className="hint hint--error">Este terminal não existe mais.</p>
+      <Modal title={t("Papel do agente")} onClose={closeModal}>
+        <p className="hint hint--error">{t("Este terminal não existe mais.")}</p>
       </Modal>
     );
   }
@@ -60,26 +62,32 @@ export function RoleModal() {
     if (pick?.role.text && term.kind === "agent") {
       showToast(
         running
-          ? `Papel "${pick.role.name}" definido — instruções enviadas ao terminal.`
-          : `Papel "${pick.role.name}" definido — as instruções vão assim que a CLI subir.`,
+          ? t('Papel "{name}" definido — instruções enviadas ao terminal.', {
+              name: pick.role.name,
+            })
+          : t('Papel "{name}" definido — as instruções vão assim que a CLI subir.', {
+              name: pick.role.name,
+            }),
       );
     } else {
-      showToast(pick ? `Papel "${pick.role.name}" definido.` : "Papel removido.");
+      showToast(
+        pick ? t('Papel "{name}" definido.', { name: pick.role.name }) : t("Papel removido."),
+      );
     }
     closeModal();
   };
 
   return (
     <Modal
-      title={`Papel — ${baseName(term)}`}
+      title={t("Papel — {name}", { name: baseName(term) })}
       onClose={closeModal}
       footer={
         <div className="modal-foot-row modal-foot-row--end">
           <button className="btn" onClick={closeModal}>
-            Cancelar
+            {t("Cancelar")}
           </button>
           <button className="btn btn--primary" onClick={save}>
-            Aplicar
+            {t("Aplicar")}
           </button>
         </div>
       }
@@ -92,8 +100,9 @@ export function RoleModal() {
       />
       {term.kind !== "agent" && (
         <p className="hint">
-          Este terminal é um shell: o papel fica no cartão como etiqueta, mas
-          não há agente para receber instruções.
+          {t(
+            "Este terminal é um shell: o papel fica no cartão como etiqueta, mas não há agente para receber instruções.",
+          )}
         </p>
       )}
     </Modal>

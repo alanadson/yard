@@ -13,6 +13,7 @@
  */
 import { isIsolatedFloor, type FloorMeta } from "./floors";
 import type { MenuEntry } from "../components/ContextMenu";
+import { t } from "./i18n";
 
 export interface FloorMenuActions {
   goTo: () => void;
@@ -43,7 +44,7 @@ export function floorRowMenu(ctx: FloorMenuContext, act: FloorMenuActions): Menu
   if (isFloor && isIsolatedFloor(floor)) {
     entries.push({
       id: "land",
-      label: "Aterrissar no chão…",
+      label: t("Aterrissar no chão…"),
       disabled: ctx.busy,
       onSelect: act.land,
     });
@@ -51,14 +52,14 @@ export function floorRowMenu(ctx: FloorMenuContext, act: FloorMenuActions): Menu
   if (floor?.hooks?.run.length) {
     entries.push({
       id: "hooks",
-      label: "Rodar os hooks do andar",
+      label: t("Rodar os hooks do andar"),
       disabled: ctx.busy,
       onSelect: act.runHooks,
     });
   }
   entries.push({
     id: "unload",
-    label: "Descarregar — suspende os terminais",
+    label: t("Descarregar — suspende os terminais"),
     // With nothing alive, suspending sends `suspend` to processes that have
     // already exited, and that comes back as a "failure".
     disabled: ctx.busy || ctx.liveCount === 0,
@@ -69,14 +70,14 @@ export function floorRowMenu(ctx: FloorMenuContext, act: FloorMenuActions): Menu
   if (floor?.branch) {
     copies.push({
       id: "copy-branch",
-      label: "Copiar a branch",
+      label: t("Copiar a branch"),
       onSelect: () => act.copy(floor.branch!),
     });
   }
   if (floor?.worktreePath) {
     copies.push({
       id: "copy-path",
-      label: "Copiar o caminho do worktree",
+      label: t("Copiar o caminho do worktree"),
       onSelect: () => act.copy(floor.worktreePath!),
     });
   }
@@ -87,7 +88,7 @@ export function floorRowMenu(ctx: FloorMenuContext, act: FloorMenuActions): Menu
       { kind: "sep" },
       {
         id: "close",
-        label: "Encerrar o andar…",
+        label: t("Encerrar o andar…"),
         danger: true,
         disabled: ctx.busy,
         onSelect: act.close,

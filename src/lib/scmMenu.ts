@@ -17,6 +17,7 @@ import { toOsPath } from "./paths";
 import type { ScmGroupId, ScmRow } from "./scmGroups";
 import type { ScmBranch, ScmCommit, ScmInfo, ScmStash } from "./ipc";
 import type { MenuEntry } from "../components/ContextMenu";
+import { t } from "./i18n";
 
 export interface ScmRowActions {
   openDiff: (row: ScmRow) => void;
@@ -48,10 +49,10 @@ export function scmRowMenu(
 ): MenuEntry[] {
   const absolutePath = ctx.root ? toOsPath(ctx.root, row.path) : null;
   const entries: MenuEntry[] = [
-    { id: "diff", label: "Abrir o diff", onSelect: () => act.openDiff(row) },
+    { id: "diff", label: t("Abrir o diff"), onSelect: () => act.openDiff(row) },
     {
       id: "editor",
-      label: "Abrir no editor",
+      label: t("Abrir no editor"),
       disabled: !onDisk(row) || row.binary,
       onSelect: () => act.openInEditor(row.path),
     },
@@ -62,17 +63,17 @@ export function scmRowMenu(
     entries.push(
       {
         id: "ours",
-        label: "Ficar com o meu lado",
+        label: t("Ficar com o meu lado"),
         onSelect: () => act.resolve(row.path, "ours"),
       },
       {
         id: "theirs",
-        label: "Ficar com o lado deles",
+        label: t("Ficar com o lado deles"),
         onSelect: () => act.resolve(row.path, "theirs"),
       },
       {
         id: "stage",
-        label: "Marcar como resolvido",
+        label: t("Marcar como resolvido"),
         onSelect: () => act.stage(row.path),
       },
       { kind: "sep" },
@@ -80,13 +81,13 @@ export function scmRowMenu(
   } else if (row.canStage) {
     entries.push({
       id: "stage",
-      label: "Preparar",
+      label: t("Preparar"),
       onSelect: () => act.stage(row.path),
     });
     if (row.canDiscard) {
       entries.push({
         id: "discard",
-        label: row.untracked ? "Excluir o arquivo" : "Descartar as alterações",
+        label: row.untracked ? t("Excluir o arquivo") : t("Descartar as alterações"),
         danger: true,
         onSelect: () => act.discard(row.path),
       });
@@ -96,14 +97,14 @@ export function scmRowMenu(
     // Staged. "Discard" here would be two gestures under one name
     // (unstage *and* drop the change); whoever wants that does both.
     entries.push(
-      { id: "unstage", label: "Despreparar", onSelect: () => act.unstage(row.path) },
+      { id: "unstage", label: t("Despreparar"), onSelect: () => act.unstage(row.path) },
       { kind: "sep" },
     );
   }
 
   entries.push({
     id: "history",
-    label: "Histórico deste arquivo",
+    label: t("Histórico deste arquivo"),
     disabled: !ctx.info?.hasHead,
     onSelect: () => act.fileHistory(row.path),
   });
@@ -111,25 +112,25 @@ export function scmRowMenu(
   entries.push({
     id: "copy",
     // The relative one is how the repository (and the agent) refer to the file.
-    label: "Copiar caminho",
+    label: t("Copiar caminho"),
     onSelect: () => act.copyText(row.path),
   });
   entries.push({
     id: "copy-abs",
-    label: "Copiar caminho completo",
+    label: t("Copiar caminho completo"),
     disabled: absolutePath === null,
     onSelect: () => absolutePath && act.copyText(absolutePath),
   });
   if (row.origPath) {
     entries.push({
       id: "copy-orig",
-      label: "Copiar o caminho de origem",
+      label: t("Copiar o caminho de origem"),
       onSelect: () => act.copyText(row.origPath!),
     });
   }
   entries.push({
     id: "reveal",
-    label: "Mostrar na pasta",
+    label: t("Mostrar na pasta"),
     disabled: !onDisk(row) || absolutePath === null,
     onSelect: () => absolutePath && act.reveal(absolutePath),
   });
@@ -152,7 +153,7 @@ export function scmGroupMenu(
     return [
       {
         id: "unstage-all",
-        label: "Despreparar tudo",
+        label: t("Despreparar tudo"),
         disabled: empty,
         onSelect: act.unstageAll,
       },
@@ -162,17 +163,17 @@ export function scmGroupMenu(
     return [
       {
         id: "stage-all",
-        label: "Marcar todos como resolvidos",
+        label: t("Marcar todos como resolvidos"),
         disabled: empty,
         onSelect: act.stageAll,
       },
     ];
   }
   return [
-    { id: "stage-all", label: "Preparar tudo", disabled: empty, onSelect: act.stageAll },
+    { id: "stage-all", label: t("Preparar tudo"), disabled: empty, onSelect: act.stageAll },
     {
       id: "discard-all",
-      label: "Descartar tudo",
+      label: t("Descartar tudo"),
       disabled: empty,
       danger: true,
       onSelect: act.discardAll,
@@ -204,20 +205,20 @@ export function scmBranchMenu(
     // local one that tracks it — and that is what the entry offers, by that name.
     entries.push({
       id: "create-from",
-      label: "Criar uma branch local a partir dela",
+      label: t("Criar uma branch local a partir dela"),
       disabled: halted,
       onSelect: () => act.createFrom(branch.name),
     });
   } else {
     entries.push({
       id: "checkout",
-      label: "Trocar para esta branch",
+      label: t("Trocar para esta branch"),
       disabled: branch.current || halted,
       onSelect: () => act.checkout(branch.name),
     });
     entries.push({
       id: "create-from",
-      label: "Criar uma branch a partir dela",
+      label: t("Criar uma branch a partir dela"),
       disabled: halted,
       onSelect: () => act.createFrom(branch.name),
     });
@@ -226,13 +227,13 @@ export function scmBranchMenu(
   entries.push({ kind: "sep" });
   entries.push({
     id: "merge",
-    label: `Trazer para ${ctx.info?.branch ?? "a atual"} (merge)`,
+    label: t("Trazer para {branch} (merge)", { branch: ctx.info?.branch ?? t("a atual") }),
     disabled: branch.current || halted,
     onSelect: () => act.merge(branch.name),
   });
   entries.push({
     id: "rebase",
-    label: "Reaplicar a atual em cima dela (rebase)",
+    label: t("Reaplicar a atual em cima dela (rebase)"),
     disabled: branch.current || halted,
     onSelect: () => act.rebase(branch.name),
   });
@@ -241,7 +242,7 @@ export function scmBranchMenu(
   if (!branch.remote) {
     entries.push({
       id: "rename",
-      label: "Renomear…",
+      label: t("Renomear…"),
       onSelect: () => act.rename(branch.name),
     });
     // The upstream vanished (`gone`) = already merged and deleted on the
@@ -249,7 +250,7 @@ export function scmBranchMenu(
     const safe = branch.gone || branch.behind === 0;
     entries.push({
       id: "delete",
-      label: safe ? "Apagar a branch" : "Apagar a branch (forçar)",
+      label: safe ? t("Apagar a branch") : t("Apagar a branch (forçar)"),
       disabled: branch.current,
       danger: true,
       onSelect: () => act.deleteBranch(branch.name, !safe),
@@ -257,7 +258,7 @@ export function scmBranchMenu(
   }
   entries.push({
     id: "delete-remote",
-    label: "Apagar no servidor",
+    label: t("Apagar no servidor"),
     disabled: (ctx.info?.remotes.length ?? 0) === 0,
     danger: true,
     onSelect: () => act.deleteRemote(branch.name),
@@ -266,7 +267,7 @@ export function scmBranchMenu(
   entries.push({ kind: "sep" });
   entries.push({
     id: "copy-name",
-    label: "Copiar o nome",
+    label: t("Copiar o nome"),
     onSelect: () => act.copyText(branch.name),
   });
 
@@ -291,19 +292,19 @@ export function scmCommitMenu(
   return [
     {
       id: "branch-here",
-      label: "Criar uma branch aqui…",
+      label: t("Criar uma branch aqui…"),
       disabled: halted,
       onSelect: () => act.createFrom(commit.hash),
     },
     {
       id: "tag-here",
-      label: "Criar uma etiqueta aqui…",
+      label: t("Criar uma etiqueta aqui…"),
       disabled: halted,
       onSelect: () => act.tag(commit.hash),
     },
     {
       id: "checkout",
-      label: "Ir para este commit (HEAD solto)",
+      label: t("Ir para este commit (HEAD solto)"),
       disabled: halted,
       onSelect: () => act.checkout(commit.hash),
     },
@@ -312,25 +313,25 @@ export function scmCommitMenu(
       id: "revert",
       // Revert records the opposite: it is the only safe undo on a branch
       // other people have already pulled.
-      label: "Reverter este commit",
+      label: t("Reverter este commit"),
       disabled: halted,
       onSelect: () => act.revert(commit.hash),
     },
     {
       id: "reset-soft",
-      label: "Voltar até aqui, mantendo tudo preparado",
+      label: t("Voltar até aqui, mantendo tudo preparado"),
       disabled: halted,
       onSelect: () => act.reset(commit.hash, "soft"),
     },
     {
       id: "reset-mixed",
-      label: "Voltar até aqui, mantendo os arquivos",
+      label: t("Voltar até aqui, mantendo os arquivos"),
       disabled: halted,
       onSelect: () => act.reset(commit.hash, "mixed"),
     },
     {
       id: "reset-hard",
-      label: "Voltar até aqui, jogando fora o resto",
+      label: t("Voltar até aqui, jogando fora o resto"),
       disabled: halted,
       danger: true,
       onSelect: () => act.reset(commit.hash, "hard"),
@@ -340,12 +341,12 @@ export function scmCommitMenu(
       id: "copy-hash",
       // The full hash, not the abbreviated one on screen: it is what gets
       // pasted into a command or a PR comment.
-      label: "Copiar o hash",
+      label: t("Copiar o hash"),
       onSelect: () => act.copyText(commit.hash),
     },
     {
       id: "copy-subject",
-      label: "Copiar a mensagem",
+      label: t("Copiar a mensagem"),
       onSelect: () =>
         act.copyText(commit.body ? `${commit.subject}\n\n${commit.body}` : commit.subject),
     },
@@ -362,20 +363,20 @@ export function scmStashMenu(stash: ScmStash, act: ScmStashActions): MenuEntry[]
   return [
     {
       id: "pop",
-      label: "Aplicar e remover",
+      label: t("Aplicar e remover"),
       onSelect: () => act.stashApply(stash.index, true),
     },
     {
       id: "apply",
-      label: "Aplicar mantendo o guardado",
+      label: t("Aplicar mantendo o guardado"),
       onSelect: () => act.stashApply(stash.index, false),
     },
-    { id: "show", label: "Ver o que tem dentro", onSelect: () => act.stashShow(stash.index) },
+    { id: "show", label: t("Ver o que tem dentro"), onSelect: () => act.stashShow(stash.index) },
     { kind: "sep" },
     {
       id: "drop",
       // There is no way to bring it back from the screen: the `stash@{n}` leaves the list.
-      label: "Descartar o guardado",
+      label: t("Descartar o guardado"),
       danger: true,
       onSelect: () => act.stashDrop(stash.index),
     },

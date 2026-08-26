@@ -19,6 +19,7 @@
  */
 import { create } from "zustand";
 import { nanoid } from "nanoid";
+import { t } from "../lib/i18n";
 import { persistPref, readPrefs, type PrefsSnapshot } from "../lib/prefs";
 
 export type BenchTab = "files" | "search" | "scm" | "tasks" | "prompts";
@@ -123,7 +124,7 @@ export function parsePrompts(raw: string | undefined): BenchPrompt[] {
       .filter((p) => typeof p.id === "string" && typeof p.body === "string")
       .map((p) => ({
         id: p.id as string,
-        title: typeof p.title === "string" ? p.title : "Sem título",
+        title: typeof p.title === "string" ? p.title : t("Sem título"),
         body: p.body as string,
         tags: Array.isArray(p.tags)
           ? p.tags.filter((t): t is string => typeof t === "string")
@@ -190,12 +191,14 @@ export function daysUntil(dueAt: number, now: number): number {
 // Written out instead of `Intl`: the label is three characters wide in a
 // 248px panel, and every ICU version spells the abbreviations its own way
 // ("ago." vs "ago", "sáb." vs "sáb") — the tests would follow the runtime.
-const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+// The tables stay Portuguese; `dueLabel` passes each entry through `t()`,
+// so the English dictionary carries "jan" → "Jan" and "sáb" → "Sat".
+const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]; // i18n-ok
 const MONTHS_FULL = [
-  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
-  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+  "janeiro", "fevereiro", "março", "abril", "maio", "junho", // i18n-ok
+  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro", // i18n-ok
 ];
-const WEEKDAYS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+const WEEKDAYS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"]; // i18n-ok
 
 export interface DueLabel {
   /** Short word for the pill. */
@@ -208,23 +211,27 @@ export interface DueLabel {
 
 export function dueLabel(dueAt: number, now: number = Date.now()): DueLabel {
   const d = new Date(dueAt);
-  const full = `${d.getDate()} de ${MONTHS_FULL[d.getMonth()]} de ${d.getFullYear()}`;
+  const full = t("{day} de {month} de {year}", {
+    day: d.getDate(),
+    month: t(MONTHS_FULL[d.getMonth()]),
+    year: d.getFullYear(),
+  });
   const days = daysUntil(dueAt, now);
   if (days < 0) {
     return {
-      text: days === -1 ? "ontem" : "atrasada",
+      text: days === -1 ? t("ontem") : t("atrasada"),
       state: "late",
-      full: `Venceu em ${full}`,
+      full: t("Venceu em {date}", { date: full }),
     };
   }
-  if (days === 0) return { text: "hoje", state: "today", full: `Vence hoje, ${full}` };
-  if (days === 1) return { text: "amanhã", state: "soon", full: `Vence amanhã, ${full}` };
-  const prefix = `Vence em ${full}`;
+  if (days === 0) return { text: t("hoje"), state: "today", full: t("Vence hoje, {date}", { date: full }) };
+  if (days === 1) return { text: t("amanhã"), state: "soon", full: t("Vence amanhã, {date}", { date: full }) };
+  const prefix = t("Vence em {date}", { date: full });
   // Inside the week the weekday says more than the date: "sex" is a plan,
   // "22/ago" is arithmetic.
-  if (days < 7) return { text: WEEKDAYS[d.getDay()], state: "far", full: prefix };
+  if (days < 7) return { text: t(WEEKDAYS[d.getDay()]), state: "far", full: prefix };
   return {
-    text: `${d.getDate()}/${MONTHS[d.getMonth()]}`,
+    text: t("{day}/{month}", { day: d.getDate(), month: t(MONTHS[d.getMonth()]) }),
     state: "far",
     full: prefix,
   };
@@ -570,7 +577,7 @@ export const useBench = create<BenchState>((set, get) => {
       const now = Date.now();
       const prompt: BenchPrompt = {
         id: nanoid(10),
-        title: title.trim() || "Sem título",
+        title: title.trim() || t("Sem título"),
         body,
         tags: tags ?? [],
         pinned: false,
@@ -598,7 +605,7 @@ export const useBench = create<BenchState>((set, get) => {
       const copy: BenchPrompt = {
         ...src,
         id: nanoid(10),
-        title: `${src.title} (cópia)`,
+        title: t("{title} (cópia)", { title: src.title }),
         pinned: false,
         createdAt: now,
         updatedAt: now,

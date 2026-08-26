@@ -241,7 +241,7 @@ export const GRAB_START_JS = `(() => {
   box.style.cssText = common + "border:2px solid #0a84ff;background:rgba(10,132,255,.14);border-radius:2px;display:none;";
   tag.style.cssText = common + "background:#0a84ff;color:#fff;font:11px/1.5 system-ui,sans-serif;padding:1px 6px;border-radius:4px;display:none;max-width:70vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
   hint.style.cssText = common + "left:50%;bottom:16px;transform:translateX(-50%);background:rgba(20,20,24,.92);color:#f7f7f9;font:12px/1.5 system-ui,sans-serif;padding:6px 12px;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);";
-  hint.textContent = "Clique no elemento que precisa mudar  ·  Esc cancela";
+  hint.textContent = "Clique no elemento que precisa mudar  ·  Esc cancela"; // i18n-ok — script injected into the page, fixed at build
   document.documentElement.appendChild(box);
   document.documentElement.appendChild(tag);
   document.documentElement.appendChild(hint);
@@ -252,7 +252,7 @@ export const GRAB_START_JS = `(() => {
 
   const classesOf = (el) => {
     const raw = typeof el.className === "string" ? el.className : (el.getAttribute("class") || "");
-    return clean(raw).split(" ").filter((c) => c && c.length < 40).slice(0, 4);
+    return clean(raw).split(" ").filter((c) => c && c.length < 40).slice(0, 4); // i18n-ok
   };
 
   const label = (el) => {

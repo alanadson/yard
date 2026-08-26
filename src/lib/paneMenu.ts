@@ -8,7 +8,9 @@
  * the two buttons the empty pane already shows; the difference is that now
  * they also exist when the pane is full.
  */
+// i18n-scan: tables — `MODES` is translated where `paneMenu` builds the rows.
 import type { MenuEntry } from "../components/ContextMenu";
+import { t } from "./i18n";
 import type { LayoutMode } from "../stores/projectsStore";
 import type { Surface } from "./surface";
 
@@ -39,11 +41,11 @@ const MODES: { id: LayoutMode; label: string }[] = [
 export function paneMenu(ctx: PaneMenuContext, act: PaneMenuActions): MenuEntry[] {
   const onBoard = ctx.surface === "canvas";
   return [
-    { id: "cli", label: "Nova CLI aqui", shortcut: "Ctrl+T", onSelect: act.newCli },
-    { id: "browser", label: "Novo navegador aqui", onSelect: act.newBrowser },
+    { id: "cli", label: t("Nova CLI aqui"), shortcut: "Ctrl+T", onSelect: act.newCli },
+    { id: "browser", label: t("Novo navegador aqui"), onSelect: act.newBrowser },
     {
       id: "notas",
-      label: "Anotações aqui",
+      label: t("Anotações aqui"),
       // One notebook, one place: offering to dock where it already is would
       // be an entry that changes nothing on screen.
       disabled: ctx.notesHere,
@@ -55,7 +57,7 @@ export function paneMenu(ctx: PaneMenuContext, act: PaneMenuActions): MenuEntry[
       // it has its own CLIs and its own board, and asking for it says nothing
       // about the Grade/Holofote waiting underneath.
       id: "quadro",
-      label: "Canvas",
+      label: t("Canvas"),
       checked: onBoard,
       onSelect: () => act.showSurface(onBoard ? "grid" : "canvas"),
     },
@@ -63,10 +65,10 @@ export function paneMenu(ctx: PaneMenuContext, act: PaneMenuActions): MenuEntry[
       // Separated from the ones above on purpose: the first three open
       // things in *this* pane; this one changes the shape of the whole group.
       id: "modo",
-      label: "Layout dos painéis",
+      label: t("Layout dos painéis"),
       submenu: MODES.map((m) => ({
         id: `modo-${m.id}`,
-        label: m.label,
+        label: t(m.label),
         checked: ctx.mode === m.id,
         onSelect: () => act.setMode(m.id),
       })),

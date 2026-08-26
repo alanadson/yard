@@ -14,6 +14,7 @@
 import { memo, useCallback, useRef } from "react";
 
 import type { CanvasViewport } from "../../lib/canvas";
+import { useT } from "../../hooks/useT";
 
 export type MiniKind = "terminal" | "note" | "portal" | "draw";
 
@@ -43,6 +44,7 @@ const MAP_H = 118;
 const PAD = 0.06;
 
 function MinimapImpl({ boxes, vp, view, selection, onJump, onClose }: Props) {
+  const t = useT();
   const svgRef = useRef<SVGSVGElement>(null);
   // The rectangle this floater publishes so a portal underneath does not
   // paint the site over it is `.cv-camera`'s, one level up: the map is a
@@ -140,8 +142,8 @@ function MinimapImpl({ boxes, vp, view, selection, onJump, onClose }: Props) {
       <button
         className="cv-mini-close"
         data-tip-side="left"
-        data-tip="Esconder o minimapa (Ctrl+Shift+M)"
-        aria-label="Esconder o minimapa"
+        data-tip={t("Esconder o minimapa (Ctrl+Shift+M)")}
+        aria-label={t("Esconder o minimapa")}
         onClick={onClose}
       >
         ×

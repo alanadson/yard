@@ -39,6 +39,8 @@ import { fileSize, mediaKind, mediaUrl, type MediaKind } from "../../lib/media";
 import { fileName, toOsPath } from "../../lib/paths";
 import { useUI } from "../../stores/uiStore";
 import type { OpenDoc } from "../../stores/editorStore";
+import { useT } from "../../hooks/useT";
+import { t } from "../../lib/i18n";
 
 /** Zoom step per click. */
 const ZOOM_STEP = 1.4;
@@ -50,7 +52,7 @@ function shortType(mime: string | null, path: string): string {
   const itemName = fileName(path);
   const dot = itemName.lastIndexOf(".");
   if (dot > 0) return itemName.slice(dot + 1).toUpperCase();
-  return mime?.split("/")[1]?.toUpperCase() ?? "arquivo";
+  return mime?.split("/")[1]?.toUpperCase() ?? t("arquivo");
 }
 
 function Icon({ kind }: { kind: MediaKind | null }) {
@@ -61,6 +63,7 @@ function Icon({ kind }: { kind: MediaKind | null }) {
 }
 
 export function MediaView({ doc }: { doc: OpenDoc }) {
+  const t = useT();
   const showToast = useUI((s) => s.showToast);
   const kind = mediaKind(doc.media);
   const [failed, setFailed] = useState(false);
@@ -106,19 +109,19 @@ export function MediaView({ doc }: { doc: OpenDoc }) {
             </span>
             {failed && (
               <p className="media-card-why">
-                O visualizador embutido não deu conta: o formato (ou o codec lá dentro)
-                está fora do que o navegador do app toca. No programa do sistema ele
-                abre.
+                {t(
+                  "O visualizador embutido não deu conta: o formato (ou o codec lá dentro) está fora do que o navegador do app toca. No programa do sistema ele abre.",
+                )}
               </p>
             )}
             <div className="media-card-actions">
               <button className="btn btn--primary btn--sm" onClick={openExternally}>
                 <ExternalLink size={12} aria-hidden="true" />
-                Abrir no aplicativo padrão
+                {t("Abrir no aplicativo padrão")}
               </button>
               <button className="btn btn--ghost btn--sm" onClick={reveal}>
                 <FolderOpen size={12} aria-hidden="true" />
-                Mostrar no Explorer
+                {t("Mostrar no Explorer")}
               </button>
             </div>
           </div>
@@ -142,27 +145,27 @@ export function MediaView({ doc }: { doc: OpenDoc }) {
           <div className="media-tools">
             <button
               className="icon-btn"
-              data-tip="Diminuir"
-              aria-label="Diminuir"
+              data-tip={t("Diminuir")}
+              aria-label={t("Diminuir")}
               onClick={() => setZoom(Math.max(ZOOM_MIN, scale / ZOOM_STEP))}
             >
               <ZoomOut size={14} />
             </button>
             <span className="media-zoom" aria-live="polite">
-              {zoom === null ? "ajustada" : `${Math.round(scale * 100)}%`}
+              {zoom === null ? t("ajustada") : `${Math.round(scale * 100)}%`}
             </span>
             <button
               className="icon-btn"
-              data-tip="Aumentar"
-              aria-label="Aumentar"
+              data-tip={t("Aumentar")}
+              aria-label={t("Aumentar")}
               onClick={() => setZoom(Math.min(ZOOM_MAX, scale * ZOOM_STEP))}
             >
               <ZoomIn size={14} />
             </button>
             <button
               className={`icon-btn ${zoom === null ? "is-active" : ""}`}
-              data-tip="Caber na janela"
-              aria-label="Caber na janela"
+              data-tip={t("Caber na janela")}
+              aria-label={t("Caber na janela")}
               aria-pressed={zoom === null}
               onClick={() => setZoom(null)}
             >
@@ -170,8 +173,8 @@ export function MediaView({ doc }: { doc: OpenDoc }) {
             </button>
             <button
               className={`icon-btn ${zoom === 1 ? "is-active" : ""}`}
-              data-tip="Tamanho real (1:1)"
-              aria-label="Tamanho real"
+              data-tip={t("Tamanho real (1:1)")}
+              aria-label={t("Tamanho real")}
               aria-pressed={zoom === 1}
               onClick={() => setZoom(1)}
             >

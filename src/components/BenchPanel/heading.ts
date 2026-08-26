@@ -9,6 +9,8 @@
  * you happen to be looking at and is wrong on the other three.
  */
 
+import { t, tn } from "../../lib/i18n";
+
 export type BenchTab = "files" | "search" | "scm" | "tasks" | "prompts";
 
 export interface BenchHeadingInfo {
@@ -38,36 +40,36 @@ export interface BenchHeading {
   subtitle: string;
 }
 
-const NO_PROJECT = "Nenhum projeto aberto";
+const NO_PROJECT = "Nenhum projeto aberto"; // i18n-ok
 
 export function benchHeading(tab: BenchTab, info: BenchHeadingInfo): BenchHeading {
   switch (tab) {
     case "tasks":
       return {
-        title: "Tarefas",
+        title: t("Tarefas"),
         subtitle: `${pendingText(info.pending)} · ${info.scopeName}`,
       };
     case "prompts":
       return {
-        title: "Prompts",
+        title: t("Prompts"),
         subtitle:
           info.promptCount === 0
-            ? "Biblioteca vazia"
-            : `${info.promptCount} na biblioteca`,
+            ? t("Biblioteca vazia")
+            : t("{n} na biblioteca", { n: info.promptCount }),
       };
     case "search":
-      return { title: "Buscar", subtitle: info.projectName ?? NO_PROJECT };
+      return { title: t("Buscar"), subtitle: info.projectName ?? t(NO_PROJECT) };
     case "scm":
-      return { title: "Controle", subtitle: scmText(info) };
+      return { title: t("Controle"), subtitle: scmText(info) };
     case "files":
       return {
-        title: "Arquivos",
+        title: t("Arquivos"),
         // Unsaved work outranks the project's name: the name is still one
         // glance away in the sidebar, the warning is not.
         subtitle:
           info.unsaved > 0
-            ? `${info.unsaved} não ${info.unsaved === 1 ? "salvo" : "salvos"}`
-            : (info.projectName ?? NO_PROJECT),
+            ? tn(info.unsaved, "{n} não salvo", "{n} não salvos")
+            : (info.projectName ?? t(NO_PROJECT)),
       };
   }
 }
@@ -78,15 +80,15 @@ export function benchHeading(tab: BenchTab, info: BenchHeadingInfo): BenchHeadin
  * tab's expensive mistake, and the file count protects nobody from it.
  */
 function scmText(info: BenchHeadingInfo): string {
-  if (!info.scm || !info.projectName) return NO_PROJECT;
-  if (!info.scm.isRepo) return "Sem repositório git";
+  if (!info.scm || !info.projectName) return t(NO_PROJECT);
+  if (!info.scm.isRepo) return t("Sem repositório git");
   const n = info.scm.changes;
-  const changesText = n === 0 ? "sem alterações" : `${n} ${n === 1 ? "alteração" : "alterações"}`;
+  const changesText = n === 0 ? t("sem alterações") : tn(n, "{n} alteração", "{n} alterações");
   return `${info.scm.branch} · ${changesText}`;
 }
 
 /** "nada pendente", "1 pendente", "4 pendentes" — never "0 pendentes". */
 function pendingText(pending: number): string {
-  if (pending === 0) return "nada pendente";
-  return `${pending} ${pending === 1 ? "pendente" : "pendentes"}`;
+  if (pending === 0) return t("nada pendente");
+  return tn(pending, "{n} pendente", "{n} pendentes");
 }

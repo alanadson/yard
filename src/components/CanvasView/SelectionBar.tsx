@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import type { AlignKind, DistributeKind } from "../../lib/arrange";
+import { useT } from "../../hooks/useT";
 
 interface Props {
   /** Screen position of the top-center of the selection, in px. */
@@ -31,6 +32,7 @@ interface Props {
   onTidy: () => void;
 }
 
+// i18n-scan: tables — the labels are wrapped with t() where they are rendered.
 const ALIGNS: { id: AlignKind; icon: React.ReactNode; label: string }[] = [
   { id: "left", icon: <AlignStartVertical size={13} />, label: "Alinhar à esquerda" },
   { id: "hcenter", icon: <AlignCenterVertical size={13} />, label: "Centralizar na horizontal" },
@@ -48,12 +50,13 @@ export function SelectionBar({
   onDistribute,
   onTidy,
 }: Props) {
+  const t = useT();
   return (
     <div
       className="cv-selbar"
       style={{ left: at.x, top: at.y }}
       role="toolbar"
-      aria-label="Arranjo da seleção"
+      aria-label={t("Arranjo da seleção")}
       // The bar sits inside the canvas, and a pointerdown that reaches the
       // background clears the very selection the bar acts on.
       onPointerDown={(e) => e.stopPropagation()}
@@ -65,8 +68,8 @@ export function SelectionBar({
           key={a.id}
           className="icon-btn"
           data-tip-side="top"
-          data-tip={a.label}
-          aria-label={a.label}
+          data-tip={t(a.label)}
+          aria-label={t(a.label)}
           onClick={() => onAlign(a.id)}
         >
           {a.icon}
@@ -76,8 +79,8 @@ export function SelectionBar({
       <button
         className="icon-btn"
         data-tip-side="top"
-        data-tip="Distribuir na horizontal"
-        aria-label="Distribuir na horizontal"
+        data-tip={t("Distribuir na horizontal")}
+        aria-label={t("Distribuir na horizontal")}
         disabled={!canDistribute}
         onClick={() => onDistribute("h")}
       >
@@ -86,8 +89,8 @@ export function SelectionBar({
       <button
         className="icon-btn"
         data-tip-side="top"
-        data-tip="Distribuir na vertical"
-        aria-label="Distribuir na vertical"
+        data-tip={t("Distribuir na vertical")}
+        aria-label={t("Distribuir na vertical")}
         disabled={!canDistribute}
         onClick={() => onDistribute("v")}
       >
@@ -97,9 +100,9 @@ export function SelectionBar({
       <button
         className="icon-btn"
         data-tip-side="top"
-        data-tip="Organizar em grade (Ctrl+Shift+T) — de novo troca o layout"
+        data-tip={t("Organizar em grade (Ctrl+Shift+T) — de novo troca o layout")}
         data-tip-wrap=""
-        aria-label="Organizar em grade"
+        aria-label={t("Organizar em grade")}
         onClick={onTidy}
       >
         <LayoutGrid size={13} />

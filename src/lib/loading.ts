@@ -9,6 +9,8 @@
  * to render the list without first deciding what to do with `falhou`.
  */
 
+import { t } from "./i18n";
+
 export type LoadState<T> =
   | { readonly state: "carregando" }
   | { readonly state: "pronto"; readonly data: T }
@@ -33,7 +35,7 @@ export function reasonOf(error: unknown): string {
         : typeof error === "object" && error !== null && "message" in error
           ? String((error as { message: unknown }).message)
           : "";
-  return raw.trim() || "falha desconhecida";
+  return raw.trim() || t("falha desconhecida");
 }
 
 /**

@@ -29,6 +29,7 @@ import { ErrorBoundary } from "../ErrorBoundary";
 import { FloorsControl } from "../Floors";
 import { FlowRunsBar } from "../CanvasView/FlowHud";
 import { TerminalPane } from "../TerminalPane";
+import { useT } from "../../hooks/useT";
 import { range } from "../../lib/format";
 import { show } from "../../lib/navigate";
 import { paneMenu } from "../../lib/paneMenu";
@@ -77,6 +78,7 @@ export function WorkspaceGrid({ groupId }: Props) {
 }
 
 function GridBody({ groupId }: Props) {
+  const t = useT();
   // The selector returns the store's raw reference. Filtering inside it
   // would create a new array on every call, and since Zustand compares by
   // identity that becomes "Maximum update depth exceeded" — the render
@@ -206,7 +208,7 @@ function GridBody({ groupId }: Props) {
   // window — and, with the tab saved in the workspace, wiped every boot
   // after it too.
   const renderPane = (slot: number) => (
-    <ErrorBoundary where="este painel">
+    <ErrorBoundary where={t("este painel")}>
       <TerminalPane
         groupId={groupId}
         slot={slot}
@@ -280,22 +282,22 @@ function GridBody({ groupId }: Props) {
           />
         )}
         <div>
-          <h2>Nenhum terminal neste grupo</h2>
+          <h2>{t("Nenhum terminal neste grupo")}</h2>
           <p>
-            <kbd>Ctrl</kbd> + <kbd>T</kbd> para abrir um shell ou um agente.
+            <kbd>Ctrl</kbd> + <kbd>T</kbd> {t("para abrir um shell ou um agente.")}
           </p>
           <div className="pane-empty-actions">
             <button
               className="btn btn--sm"
               onClick={() => useUI.getState().openModal("new-terminal", { groupId, slot: 0 })}
             >
-              <Plus size={12} /> Nova aba
+              <Plus size={12} /> {t("Nova aba")}
             </button>
             <button
               className="btn btn--sm"
               onClick={() => useBrowsers.getState().open({ groupId, slot: 0 })}
             >
-              <Globe size={12} /> Navegador
+              <Globe size={12} /> {t("Navegador")}
             </button>
           </div>
         </div>

@@ -11,6 +11,8 @@
  * keep working as they always did.
  */
 
+import { t } from "./i18n";
+
 export type FloorKind = "ground" | "isolated" | "plain";
 
 export interface FloorHooks {
@@ -159,7 +161,7 @@ export function uniqueFloorName(
   groups: readonly { name: string }[],
   base: string,
 ): string {
-  const trimmed = base.trim() || "Andar";
+  const trimmed = base.trim() || t("Andar");
   if (!findGroupNamed(groups, trimmed)) return trimmed;
   let n = 2;
   while (findGroupNamed(groups, `${trimmed} (${n})`)) {

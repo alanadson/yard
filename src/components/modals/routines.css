@@ -114,3 +114,9 @@
   font-weight: 600;
   color: var(--text-dim);
 }
+
+/* Triggers share the routine rows; only the pickers need a floor so the
+   "Quando"/"Então" line does not collapse in the narrow sheet. */
+.trigger-form .set-picker {
+  min-width: 190px;
+}

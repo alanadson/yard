@@ -20,6 +20,7 @@
  * explain and easy to fix by nudging it.
  */
 import type { Box, CanvasData, CanvasItem } from "./canvas";
+import { t } from "./i18n";
 
 /** Air left between the members and the frame drawn around them, in world px. */
 export const GROUP_PAD = 28;
@@ -41,7 +42,7 @@ export const GROUP_MIN_H = GROUP_HEAD + 60;
 export const GROUP_NAME_MAX = 48;
 
 /** What a frame is called when the user has not named it yet. */
-export const GROUP_DEFAULT_NAME = "Grupo";
+export const GROUP_DEFAULT_NAME = "Grupo"; // i18n-ok — wrapped with t() where it is used
 
 /** Is `inner` entirely within `outer`? The definition of membership. */
 export function contains(outer: Box, inner: Box): boolean {
@@ -135,7 +136,7 @@ export const GROUP_COLOR = "#6b6b6b";
 export function frameItem(
   id: string,
   box: Box,
-  name: string = GROUP_DEFAULT_NAME,
+  name: string = t(GROUP_DEFAULT_NAME),
   color: string = GROUP_COLOR,
 ): CanvasItem {
   return {
@@ -145,7 +146,7 @@ export function frameItem(
     y: box.y,
     w: box.w,
     h: box.h,
-    name: name.trim().slice(0, GROUP_NAME_MAX) || GROUP_DEFAULT_NAME,
+    name: name.trim().slice(0, GROUP_NAME_MAX) || t(GROUP_DEFAULT_NAME),
     color,
   };
 }

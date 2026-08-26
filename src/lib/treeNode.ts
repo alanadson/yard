@@ -1,3 +1,4 @@
+// i18n-scan: tables
 /**
  * File-tree cards (§14): the project explorer, on the board, next to the
  * agents working in it.
@@ -15,6 +16,7 @@
  * changes under it every time an agent saves a file.
  */
 import type { CanvasItem } from "./canvas";
+import { t } from "./i18n";
 
 export type TreeItem = Extract<CanvasItem, { type: "tree" }>;
 
@@ -52,8 +54,8 @@ export function isTreeMode(v: unknown): v is TreeMode {
 export function treeNodeName(it: TreeItem): string {
   if (it.name && it.name.trim()) return it.name.trim();
   const path = it.path.replace(/\/+$/, "");
-  if (!path) return "Arquivos";
-  return path.slice(path.lastIndexOf("/") + 1) || "Arquivos";
+  if (!path) return t("Arquivos");
+  return path.slice(path.lastIndexOf("/") + 1) || t("Arquivos");
 }
 
 /** Is this folder open in **this** card? */

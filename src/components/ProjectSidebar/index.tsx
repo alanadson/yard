@@ -50,6 +50,8 @@ import { terminalActionEntries } from "../../lib/terminalMenu";
 import { baseName } from "../../lib/terminals";
 import { useAction } from "../../hooks/useAction";
 import { unsavedWarning } from "../../stores/editorStore";
+import { useT } from "../../hooks/useT";
+import { t } from "../../lib/i18n";
 import { useProjects } from "../../stores/projectsStore";
 import { isLive, useTerminals } from "../../stores/terminalsStore";
 import {
@@ -106,6 +108,7 @@ export function ProjectSidebar() {
   const moveTerminalBy = useProjects((s) => s.moveTerminalBy);
   const openModal = useUI((s) => s.openModal);
   const showToast = useUI((s) => s.showToast);
+  const t = useT();
   const focusedTerminalId = useUI((s) => s.focusedTerminalId);
   const width = useUI((s) => s.prefs.sidebarWidth);
   const setPref = useUI((s) => s.setPref);
@@ -350,15 +353,15 @@ export function ProjectSidebar() {
   const suspendGroup = async (groupId: string) => {
     const ids = liveIds(groupId);
     if (ids.length === 0) {
-      showToast("Nenhum terminal vivo neste grupo.");
+      showToast(t("Nenhum terminal vivo neste grupo."));
       return;
     }
     const failures = await ipc.suspendGroup(ids);
     const suspended = ids.length - failures.length;
     showToast(
       failures.length
-        ? `${suspended} suspenso(s), ${failures.length} falharam.`
-        : `${suspended} terminal(is) suspenso(s) — RAM liberada.`,
+        ? t("{n} suspenso(s), {failed} falharam.", { n: suspended, failed: failures.length })
+        : t("{n} terminal(is) suspenso(s) — RAM liberada.", { n: suspended }),
       failures.length ? "error" : "info",
     );
   };
@@ -380,16 +383,18 @@ export function ProjectSidebar() {
     const aliveCount = cards.filter((t) => isLive(runtimes[t.id])).length;
     const detail =
       aliveCount > 0
-        ? `${aliveCount} CLI(s) ainda rodando. Excluir encerra os processos.`
+        ? t("{n} CLI(s) ainda rodando. Excluir encerra os processos.", { n: aliveCount })
         : cards.length > 0
-          ? `O quadro tem ${cards.length} CLI(s).`
-          : "O quadro está vazio.";
+          ? t("O quadro tem {n} CLI(s).", { n: cards.length })
+          : t("O quadro está vazio.");
     const ok = await ask(
-      `Excluir o quadro “${board.name}”? ${detail} Os desenhos e as notas dele ` +
-        `também vão.${unsavedWarning({ groupId: boardId })}`,
-      { title: "Excluir quadro", kind: "warning" },
+      t("Excluir o quadro “{name}”? {detail} Os desenhos e as notas dele também vão.", {
+        name: board.name,
+        detail,
+      }) + unsavedWarning({ groupId: boardId }),
+      { title: t("Excluir quadro"), kind: "warning" },
     );
-    if (ok) await act(() => closeGroup(boardId), "Não consegui excluir o quadro");
+    if (ok) await act(() => closeGroup(boardId), t("Não consegui excluir o quadro"));
   };
 
   const confirmDeleteGroup = async (groupId: string) => {
@@ -399,13 +404,14 @@ export function ProjectSidebar() {
     const aliveCount = clis.filter((t) => isLive(runtimes[t.id])).length;
     const detail =
       aliveCount > 0
-        ? `${aliveCount} CLI(s) ainda rodando. Excluir encerra os processos.`
+        ? t("{n} CLI(s) ainda rodando. Excluir encerra os processos.", { n: aliveCount })
         : clis.length > 0
-          ? `O grupo tem ${clis.length} CLI(s).`
-          : "O grupo está vazio.";
+          ? t("O grupo tem {n} CLI(s).", { n: clis.length })
+          : t("O grupo está vazio.");
     const ok = await ask(
-      `Excluir o grupo “${group.name}”? ${detail}${unsavedWarning({ groupId })}`,
-      { title: "Excluir grupo", kind: "warning" },
+      t("Excluir o grupo “{name}”? {detail}", { name: group.name, detail }) +
+        unsavedWarning({ groupId }),
+      { title: t("Excluir grupo"), kind: "warning" },
     );
     if (!ok) return;
     await closeGroup(groupId);
@@ -420,10 +426,14 @@ export function ProjectSidebar() {
     const aliveCount = clis.filter((t) => isLive(runtimes[t.id])).length;
     const ok = await ask(
       (aliveCount > 0
-        ? `Remover “${project.name}”? ${aliveCount} CLI(s) ainda rodando serão encerradas.`
-        : `Remover o projeto “${project.name}” da barra? A pasta no disco permanece.`) +
-        unsavedWarning({ projectId }),
-      { title: "Remover projeto", kind: "warning" },
+        ? t("Remover “{name}”? {n} CLI(s) ainda rodando serão encerradas.", {
+            name: project.name,
+            n: aliveCount,
+          })
+        : t("Remover o projeto “{name}” da barra? A pasta no disco permanece.", {
+            name: project.name,
+          })) + unsavedWarning({ projectId }),
+      { title: t("Remover projeto"), kind: "warning" },
     );
     if (!ok) return;
     await closeProject(projectId);
@@ -438,14 +448,14 @@ export function ProjectSidebar() {
       return [
         {
           id: "add-project",
-          label: "Adicionar projeto",
+          label: t("Adicionar projeto"),
           icon: <FolderPlus size={13} />,
           onSelect: () => openModal("new-project"),
         },
         { kind: "sep" },
         {
           id: "fold",
-          label: allClosed ? "Expandir todos" : "Recolher todos",
+          label: allClosed ? t("Expandir todos") : t("Recolher todos"),
           icon: allClosed ? <ChevronDown size={13} /> : <ChevronRight size={13} />,
           disabled: ids.length === 0,
           onSelect: () => useUI.getState().setTreeCollapsed(ids, !allClosed),
@@ -453,7 +463,7 @@ export function ProjectSidebar() {
         { kind: "sep" },
         {
           id: "hide",
-          label: "Esconder a barra",
+          label: t("Esconder a barra"),
           shortcut: "Ctrl+B",
           onSelect: () => useUI.getState().toggleSidebar(),
         },
@@ -466,27 +476,27 @@ export function ProjectSidebar() {
       return [
         {
           id: "new-cli",
-          label: "Nova CLI neste quadro",
+          label: t("Nova CLI neste quadro"),
           icon: <TerminalIcon size={13} />,
           onSelect: () => newCli(board.id),
         },
         {
           id: "rename",
-          label: "Renomear",
+          label: t("Renomear"),
           icon: <Pencil size={13} />,
           onSelect: () => beginRename("board", board.id),
         },
         { kind: "sep" },
         {
           id: "new-board",
-          label: "Novo quadro",
+          label: t("Novo quadro"),
           icon: <Plus size={13} />,
           onSelect: () => beginRename("board", addBoard("")),
         },
         { kind: "sep" },
         {
           id: "delete",
-          label: "Excluir quadro",
+          label: t("Excluir quadro"),
           icon: <Trash2 size={13} />,
           danger: true,
           onSelect: () => void confirmDeleteBoard(board.id),
@@ -500,26 +510,26 @@ export function ProjectSidebar() {
       return [
         {
           id: "rename",
-          label: "Renomear",
+          label: t("Renomear"),
           icon: <Pencil size={13} />,
           onSelect: () => beginRename("project", project.id),
         },
         {
           id: "style",
-          label: "Personalizar…",
+          label: t("Personalizar…"),
           icon: <Palette size={13} />,
           onSelect: () => openModal("project-style", { projectId: project.id }),
         },
         {
           id: "new-group",
-          label: "Novo grupo",
+          label: t("Novo grupo"),
           icon: <Plus size={13} />,
           onSelect: () => addGroup(project.id),
         },
         { kind: "sep" },
         {
           id: "explorer",
-          label: "Abrir no Explorer",
+          label: t("Abrir no Explorer"),
           icon: <FolderOpen size={13} />,
           onSelect: () =>
             void ipc
@@ -528,20 +538,20 @@ export function ProjectSidebar() {
         },
         {
           id: "sessions",
-          label: "Sessões de agentes…",
+          label: t("Sessões de agentes…"),
           icon: <History size={13} />,
           onSelect: () => openModal("sessions", { projectPath: project.path }),
         },
         {
           id: "scores",
-          label: "Partituras…",
+          label: t("Partituras…"),
           icon: <Music size={13} />,
           onSelect: () => openModal("scores", { projectId: project.id }),
         },
         { kind: "sep" },
         {
           id: "delete",
-          label: "Remover projeto",
+          label: t("Remover projeto"),
           icon: <Trash2 size={13} />,
           danger: true,
           onSelect: () => void confirmDeleteProject(project.id),
@@ -560,26 +570,26 @@ export function ProjectSidebar() {
       return [
         {
           id: "rename",
-          label: "Renomear",
+          label: t("Renomear"),
           icon: <Pencil size={13} />,
           onSelect: () => beginRename("group", group.id),
         },
         {
           id: "new-cli",
-          label: "Nova aba…",
+          label: t("Nova aba…"),
           icon: <TerminalIcon size={13} />,
           shortcut: "Ctrl+T",
           onSelect: () => newCli(group.id),
         },
         {
           id: "new-group",
-          label: "Novo grupo",
+          label: t("Novo grupo"),
           icon: <Plus size={13} />,
           onSelect: () => group.projectId && addGroup(group.projectId),
         },
         {
           id: "scores",
-          label: "Partituras…",
+          label: t("Partituras…"),
           icon: <Music size={13} />,
           onSelect: () =>
             openModal("scores", { groupId: group.id, projectId: group.projectId }),
@@ -587,14 +597,14 @@ export function ProjectSidebar() {
         { kind: "sep" },
         {
           id: "up",
-          label: "Mover para cima",
+          label: t("Mover para cima"),
           icon: <ArrowUp size={13} />,
           disabled: idx <= 0,
           onSelect: () => moveGroup(group.id, -1),
         },
         {
           id: "down",
-          label: "Mover para baixo",
+          label: t("Mover para baixo"),
           icon: <ArrowDown size={13} />,
           disabled: idx < 0 || idx >= siblings.length - 1,
           onSelect: () => moveGroup(group.id, 1),
@@ -602,14 +612,14 @@ export function ProjectSidebar() {
         { kind: "sep" },
         {
           id: "suspend",
-          label: aliveCount > 0 ? `Suspender grupo (${aliveCount})` : "Suspender grupo",
+          label: aliveCount > 0 ? t("Suspender grupo ({n})", { n: aliveCount }) : t("Suspender grupo"),
           icon: <PauseCircle size={13} />,
           disabled: aliveCount === 0,
           onSelect: () => void suspendGroup(group.id),
         },
         {
           id: "delete",
-          label: "Excluir grupo",
+          label: t("Excluir grupo"),
           icon: <Trash2 size={13} />,
           danger: true,
           onSelect: () => void confirmDeleteGroup(group.id),
@@ -617,23 +627,23 @@ export function ProjectSidebar() {
       ];
     }
 
-    const t = terminals.find((x) => x.id === menu.id);
-    if (!t) return [];
+    const row = terminals.find((x) => x.id === menu.id);
+    if (!row) return [];
     // The order the tree draws is the same as the pane's tab bar — which is
     // why the neighbour above is the previous sibling in the same slot.
-    const siblings = (terminalsByGroup.get(t.groupId) ?? []).filter(
-      (x) => x.slot === t.slot,
+    const siblings = (terminalsByGroup.get(row.groupId) ?? []).filter(
+      (x) => x.slot === row.slot,
     );
-    const idx = siblings.findIndex((x) => x.id === t.id);
+    const idx = siblings.findIndex((x) => x.id === row.id);
     return terminalActionEntries({
-      id: t.id,
-      running: isLive(runtimes[t.id]),
+      id: row.id,
+      running: isLive(runtimes[row.id]),
       run: act,
-      onRename: () => beginRename("terminal", t.id),
+      onRename: () => beginRename("terminal", row.id),
       reorder: {
         canUp: idx > 0,
         canDown: idx >= 0 && idx < siblings.length - 1,
-        run: (delta) => moveTerminalBy(t.id, delta),
+        run: (delta) => moveTerminalBy(row.id, delta),
       },
     });
   };
@@ -644,51 +654,51 @@ export function ProjectSidebar() {
    * `level` is the ARIA depth: a card hangs straight off its board (2), a tab
    * hangs off a group inside a project (3).
    */
-  const renderTerminal = (t: TerminalRow, level: number, origin?: string | null) => {
-    const rt = runtimes[t.id];
-    const termMenuOpen = menu?.kind === "terminal" && menu.id === t.id;
-    const label = baseName(t);
+  const renderTerminal = (row: TerminalRow, level: number, origin?: string | null) => {
+    const rt = runtimes[row.id];
+    const termMenuOpen = menu?.kind === "terminal" && menu.id === row.id;
+    const label = baseName(row);
     // The tree is the primary navigation: clicking has to bring the CLI to
     // the front, not just light up the row. On a board that means taking the
     // camera to the card — both routes live in `lib/navigate`.
-    const openIt = () => goToTerminal(t);
+    const openIt = () => goToTerminal(row);
     return (
                             <div
-                              key={t.id}
+                              key={row.id}
                               className={`tree-row tree-row--terminal ${
                                 termMenuOpen ? "is-menu-open" : ""
-                              } ${t.id === focusedTerminalId ? "is-focused" : ""}`}
+                              } ${row.id === focusedTerminalId ? "is-focused" : ""}`}
                               role="treeitem"
                               aria-level={level}
                               // The dot and the badges are colour only; both
                               // states have to reach a screen reader through
                               // the name — "blocked" is the one signal the
                               // whole product exists to deliver.
-                              aria-label={`${label}${origin ? ` em ${origin}` : ""} — ${readableState(rt?.state)}${
+                              aria-label={`${label}${origin ? ` ${t("em {origin}", { origin })}` : ""} — ${readableState(rt?.state)}${
                                 rt?.blocked
-                                  ? ", esperando uma resposta sua"
+                                  ? `, ${t("esperando uma resposta sua")}` // i18n-ok
                                   : rt?.finished
-                                    ? ", terminou de trabalhar"
+                                    ? `, ${t("terminou de trabalhar")}`
                                     : rt?.unread
-                                      ? ", saída nova ainda não vista"
+                                      ? `, ${t("saída nova ainda não vista")}` // i18n-ok
                                       : ""
                               }`}
-                              aria-selected={t.id === focusedTerminalId}
+                              aria-selected={row.id === focusedTerminalId}
                               aria-current={
-                                t.id === focusedTerminalId ? "true" : undefined
+                                row.id === focusedTerminalId ? "true" : undefined
                               }
-                              ref={(el) => registerRow(t.id, el)}
-                              tabIndex={tabIndexOf(t.id)}
-                              onFocus={() => setFocusId(t.id)}
+                              ref={(el) => registerRow(row.id, el)}
+                              tabIndex={tabIndexOf(row.id)}
+                              onFocus={() => setFocusId(row.id)}
                               onKeyDown={(e) =>
-                                onRowKeyDown(e, "terminal", t.id, openIt, null)
+                                onRowKeyDown(e, "terminal", row.id, openIt, null)
                               }
                               onClick={openIt}
                               onContextMenu={(e) => {
                                 openIt();
-                                openMenu(e, "terminal", t.id);
+                                openMenu(e, "terminal", row.id);
                               }}
-                              data-tip-at="left" data-tip-wrap="" data-tip={`${t.program} ${t.args.join(" ")}`.trim()}
+                              data-tip-at="left" data-tip-wrap="" data-tip={`${row.program} ${row.args.join(" ")}`.trim()}
                             >
                               <span
                                 className={`dot dot--${rt?.state ?? "idle"}`}
@@ -696,9 +706,9 @@ export function ProjectSidebar() {
                                 // The row's own name already says the state.
                                 aria-hidden="true"
                               />
-                              <TerminalMark term={t} size={11} className="tree-icon" />
+                              <TerminalMark term={row} size={11} className="tree-icon" />
                               {renaming?.kind === "terminal" &&
-                              renaming.id === t.id ? (
+                              renaming.id === row.id ? (
                                 <InlineRename
                                   value={label}
                                   onCommit={commitRename}
@@ -709,7 +719,7 @@ export function ProjectSidebar() {
                                   className="tree-label"
                                   onDoubleClick={(e) => {
                                     e.stopPropagation();
-                                    beginRename("terminal", t.id);
+                                    beginRename("terminal", row.id);
                                   }}
                                 >
                                   {label}
@@ -722,26 +732,26 @@ export function ProjectSidebar() {
                                 <span
                                   className="badge-blocked"
                                   data-tip-wrap=""
-                                  data-tip={rt.blockedAsk ?? "Esperando uma resposta sua"}
+                                  data-tip={rt.blockedAsk ?? t("Esperando uma resposta sua")}
                                 />
                               ) : rt?.finished ? (
                                 <span
                                   className="badge-finished"
-                                  data-tip="Terminou de trabalhar"
+                                  data-tip={t("Terminou de trabalhar")}
                                 />
                               ) : rt?.unread ? (
                                 <span
                                   className="badge-unread"
-                                  data-tip="Saída nova ainda não vista"
+                                  data-tip={t("Saída nova ainda não vista")}
                                 />
                               ) : null}
                               <button
                                 className="icon-btn"
-                                data-tip-at="right" data-tip="Mais ações"
-                                aria-label={`Mais ações de ${label}`}
+                                data-tip-at="right" data-tip={t("Mais ações")}
+                                aria-label={t("Mais ações de {name}", { name: label })}
                                 onClick={(e) => {
                                   openIt();
-                                  openMenu(e, "terminal", t.id, true);
+                                  openMenu(e, "terminal", row.id, true);
                                 }}
                               >
                                 <MoreVertical size={13} />
@@ -764,11 +774,11 @@ export function ProjectSidebar() {
           surface-exclusive: boards on Canvas, projects on the pane grid. */}
       {sections.boards && (
         <div className="sidebar-header">
-          <span>Quadros</span>
+          <span>{t("Quadros")}</span>
           <button
             className="icon-btn"
-            data-tip="Novo quadro"
-            aria-label="Novo quadro"
+            data-tip={t("Novo quadro")}
+            aria-label={t("Novo quadro")}
             onClick={() => beginRename("board", addBoard(""))}
           >
             <Plus size={14} />
@@ -779,13 +789,13 @@ export function ProjectSidebar() {
       <div
         className={`sidebar-boards ${sections.projects ? "" : "is-alone"}`}
         role="tree"
-        aria-label="Quadros do canvas"
+        aria-label={t("Quadros do canvas")}
         hidden={!sections.boards}
       >
         {boards.length === 0 && (
           <div className="tree-empty">
-            Nenhum quadro —{" "}
-            <button onClick={() => beginRename("board", addBoard(""))}>criar um</button>
+            {t("Nenhum quadro —")}{" "}
+            <button onClick={() => beginRename("board", addBoard(""))}>{t("criar um")}</button>
           </div>
         )}
         {boards.map((board) => {
@@ -821,14 +831,16 @@ export function ProjectSidebar() {
                   setActiveGroup(board.id);
                   openMenu(e, "board", board.id);
                 }}
-                data-tip-wrap="" data-tip="Botão direito para ações"
+                data-tip-wrap="" data-tip={t("Botão direito para ações")}
               >
                 {cards.length > 0 ? (
                   <button
                     className="tree-toggle"
                     aria-expanded={!boardCollapsed}
                     aria-label={
-                      boardCollapsed ? `Expandir ${board.name}` : `Recolher ${board.name}`
+                      boardCollapsed
+                        ? t("Expandir {name}", { name: board.name })
+                        : t("Recolher {name}", { name: board.name })
                     }
                     onClick={(e) => {
                       e.stopPropagation();
@@ -863,8 +875,8 @@ export function ProjectSidebar() {
                 )}
                 <button
                   className="icon-btn"
-                  data-tip-at="right" data-tip="Nova CLI neste quadro"
-                  aria-label={`Nova CLI em ${board.name}`}
+                  data-tip-at="right" data-tip={t("Nova CLI neste quadro")}
+                  aria-label={t("Nova CLI em {name}", { name: board.name })}
                   onClick={(e) => {
                     e.stopPropagation();
                     newCli(board.id);
@@ -874,8 +886,8 @@ export function ProjectSidebar() {
                 </button>
                 <button
                   className="icon-btn"
-                  data-tip-at="right" data-tip="Mais ações"
-                  aria-label={`Mais ações de ${board.name}`}
+                  data-tip-at="right" data-tip={t("Mais ações")}
+                  aria-label={t("Mais ações de {name}", { name: board.name })}
                   onClick={(e) => openMenu(e, "board", board.id, true)}
                 >
                   <MoreVertical size={13} />
@@ -884,8 +896,8 @@ export function ProjectSidebar() {
 
               {cards.length === 0 && (
                 <div className="tree-empty">
-                  Quadro vazio —{" "}
-                  <button onClick={() => newCli(board.id)}>abrir uma CLI</button>
+                  {t("Quadro vazio —")}{" "}
+                  <button onClick={() => newCli(board.id)}>{t("abrir uma CLI")}</button>
                 </div>
               )}
 
@@ -900,11 +912,11 @@ export function ProjectSidebar() {
 
       {sections.projects && (
         <div className="sidebar-header">
-          <span>Projetos</span>
+          <span>{t("Projetos")}</span>
           <button
             className="icon-btn"
-            data-tip="Adicionar projeto"
-            aria-label="Adicionar projeto"
+            data-tip={t("Adicionar projeto")}
+            aria-label={t("Adicionar projeto")}
             onClick={() => openModal("new-project")}
           >
             <FolderPlus size={14} />
@@ -915,20 +927,19 @@ export function ProjectSidebar() {
       <div
         className="sidebar-tree"
         role="tree"
-        aria-label="Projetos, grupos e terminais"
+        aria-label={t("Projetos, grupos e terminais")}
         hidden={!sections.projects}
       >
         {projects.length === 0 && (
           <div className="sidebar-empty">
             <p>
-              Um projeto é uma pasta do disco. É dela que saem o diretório de
-              trabalho das CLIs e as sessões que os agentes já gravaram.
+              {t("Um projeto é uma pasta do disco. É dela que saem o diretório de trabalho das CLIs e as sessões que os agentes já gravaram.")}
             </p>
             <button
               className="btn btn--primary"
               onClick={() => openModal("new-project")}
             >
-              <FolderPlus size={13} /> Adicionar pasta
+              <FolderPlus size={13} /> {t("Adicionar pasta")}
             </button>
           </div>
         )}
@@ -966,8 +977,8 @@ export function ProjectSidebar() {
                   aria-expanded={!isCollapsed}
                   aria-label={
                     isCollapsed
-                      ? `Expandir ${project.name}`
-                      : `Recolher ${project.name}`
+                      ? t("Expandir {name}", { name: project.name })
+                      : t("Recolher {name}", { name: project.name })
                   }
                   onClick={() => toggle(project.id)}
                 >
@@ -1003,16 +1014,16 @@ export function ProjectSidebar() {
                 )}
                 <button
                   className="icon-btn"
-                  data-tip-at="right" data-tip="Novo grupo"
-                  aria-label={`Novo grupo em ${project.name}`}
+                  data-tip-at="right" data-tip={t("Novo grupo")}
+                  aria-label={t("Novo grupo em {name}", { name: project.name })}
                   onClick={() => addGroup(project.id)}
                 >
                   <Plus size={13} />
                 </button>
                 <button
                   className="icon-btn"
-                  data-tip-at="right" data-tip="Mais ações"
-                  aria-label={`Mais ações de ${project.name}`}
+                  data-tip-at="right" data-tip={t("Mais ações")}
+                  aria-label={t("Mais ações de {name}", { name: project.name })}
                   onClick={(e) => openMenu(e, "project", project.id, true)}
                 >
                   <MoreVertical size={13} />
@@ -1059,7 +1070,7 @@ export function ProjectSidebar() {
                           setActiveGroup(group.id);
                           openMenu(e, "group", group.id);
                         }}
-                        data-tip-wrap="" data-tip="Botão direito para ações"
+                        data-tip-wrap="" data-tip={t("Botão direito para ações")}
                       >
                         {groupTerminals.length > 0 ? (
                           <button
@@ -1067,8 +1078,8 @@ export function ProjectSidebar() {
                             aria-expanded={!groupCollapsed}
                             aria-label={
                               groupCollapsed
-                                ? `Expandir ${group.name}`
-                                : `Recolher ${group.name}`
+                                ? t("Expandir {name}", { name: group.name })
+                                : t("Recolher {name}", { name: group.name })
                             }
                             onClick={(e) => {
                               e.stopPropagation();
@@ -1104,15 +1115,15 @@ export function ProjectSidebar() {
                         {running > 0 && (
                           <span
                             className="pill"
-                            data-tip-wrap="" data-tip={`${running} rodando neste grupo`}
+                            data-tip-wrap="" data-tip={t("{n} rodando neste grupo", { n: running })}
                           >
                             {running}
                           </span>
                         )}
                         <button
                           className="icon-btn"
-                          data-tip-at="right" data-tip="Nova aba neste grupo"
-                          aria-label={`Nova aba em ${group.name}`}
+                          data-tip-at="right" data-tip={t("Nova aba neste grupo")}
+                          aria-label={t("Nova aba em {name}", { name: group.name })}
                           onClick={(e) => {
                             e.stopPropagation();
                             newCli(group.id);
@@ -1122,8 +1133,8 @@ export function ProjectSidebar() {
                         </button>
                         <button
                           className="icon-btn"
-                          data-tip-at="right" data-tip="Mais ações"
-                          aria-label={`Mais ações de ${group.name}`}
+                          data-tip-at="right" data-tip={t("Mais ações")}
+                          aria-label={t("Mais ações de {name}", { name: group.name })}
                           onClick={(e) => {
                             setActiveGroup(group.id);
                             openMenu(e, "group", group.id, true);
@@ -1135,9 +1146,9 @@ export function ProjectSidebar() {
 
                       {groupTerminals.length === 0 && (
                         <div className="tree-empty">
-                          Sem CLIs —{" "}
+                          {t("Sem CLIs —")}{" "}
                           <button onClick={() => newCli(group.id)}>
-                            abrir uma
+                            {t("abrir uma")}
                           </button>
                         </div>
                       )}
@@ -1160,7 +1171,7 @@ export function ProjectSidebar() {
         min={SIDEBAR_MIN}
         max={SIDEBAR_MAX}
         defaultWidth={DEFAULT_PREFS.sidebarWidth}
-        label="Largura da barra lateral"
+        label={t("Largura da barra lateral")}
         onResize={(w) => setPrefLocal("sidebarWidth", w)}
         onCommit={(w) => setPref("sidebarWidth", w)}
       />
@@ -1178,6 +1189,7 @@ export function ProjectSidebar() {
  * the whole project tree just to move a progress bar.
  */
 function ResourceHud() {
+  const t = useT();
   const totalRssMb = useTerminals((s) => s.totalRssMb);
   const systemAvailableMb = useTerminals((s) => s.systemAvailableMb);
   const systemTotalMb = useTerminals((s) => s.systemTotalMb);
@@ -1191,13 +1203,13 @@ function ResourceHud() {
   return (
     <div className="sidebar-hud">
       <div className="hud-row">
-        <span>Terminais</span>
-        <strong data-tip-side="top" data-tip-wrap="" data-tip="RAM somada das árvores de processo das CLIs">
+        <span>{t("Terminais")}</span>
+        <strong data-tip-side="top" data-tip-wrap="" data-tip={t("RAM somada das árvores de processo das CLIs")}>
           {totalRssMb > 0 ? `${totalRssMb.toFixed(0)} MB` : "—"}
         </strong>
       </div>
       <div className="hud-row">
-        <span>RAM livre</span>
+        <span>{t("RAM livre")}</span>
         <strong>
           {systemAvailableMb > 0
             ? `${(systemAvailableMb / 1024).toFixed(1)} / ${(systemTotalMb / 1024).toFixed(0)} GB`
@@ -1209,8 +1221,10 @@ function ResourceHud() {
           className="hud-bar"
           data-tip-side="top" data-tip-wrap="" data-tip={
             ramLevel === "ok"
-              ? `${Math.round(ramUsage * 100)}% da memória em uso`
-              : `${Math.round(ramUsage * 100)}% da memória em uso — suspenda grupos ociosos para liberar RAM`
+              ? t("{pct}% da memória em uso", { pct: Math.round(ramUsage * 100) })
+              : t("{pct}% da memória em uso — suspenda grupos ociosos para liberar RAM", {
+                  pct: Math.round(ramUsage * 100),
+                })
           }
         >
           <div
@@ -1226,14 +1240,14 @@ function ResourceHud() {
 function readableState(state?: string): string {
   switch (state) {
     case "running":
-      return "Rodando";
+      return t("Rodando");
     case "starting":
-      return "Iniciando";
+      return t("Iniciando");
     case "exited":
-      return "Encerrado";
+      return t("Encerrado");
     case "error":
-      return "Falhou ao iniciar";
+      return t("Falhou ao iniciar");
     default:
-      return "Parado";
+      return t("Parado");
   }
 }

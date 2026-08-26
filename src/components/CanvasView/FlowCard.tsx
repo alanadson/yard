@@ -15,6 +15,7 @@ import { cancelFlow } from "../../lib/flowRun";
 import { stageLabelOf, type FlowItem } from "../../lib/flow";
 import type { CanvasItem, ResizeDir } from "../../lib/canvas";
 import { useFlows } from "../../stores/flowStore";
+import { useT } from "../../hooks/useT";
 
 /** Same displacement the note tolerates between "click" and "drag". */
 const CLICK_SLOP = 4;
@@ -65,6 +66,7 @@ function FlowCardImpl({
   onResizeMove,
   onResizeEnd,
 }: Props) {
+  const t = useT();
   const run = useFlows((s) => s.runs[it.id]);
   const press = useRef<{ id: number; x: number; y: number } | null>(null);
   const live = run && !run.finishedAt;
@@ -110,8 +112,8 @@ function FlowCardImpl({
         {live ? (
           <button
             className="icon-btn icon-btn--danger"
-            data-tip="Cancelar a execução"
-            aria-label={`Cancelar a execução do fluxo ${it.name}`}
+            data-tip={t("Cancelar a execução")}
+            aria-label={t("Cancelar a execução do fluxo {name}", { name: it.name })}
             onClick={(e) => {
               e.stopPropagation();
               cancelFlow(it.id);
@@ -122,8 +124,8 @@ function FlowCardImpl({
         ) : (
           <button
             className="icon-btn"
-            data-tip="Editar etapas"
-            aria-label={`Editar o fluxo ${it.name}`}
+            data-tip={t("Editar etapas")}
+            aria-label={t("Editar o fluxo {name}", { name: it.name })}
             onClick={(e) => {
               e.stopPropagation();
               onEdit(it.id);
@@ -136,7 +138,7 @@ function FlowCardImpl({
 
       <div className="cv-flowcard-stages">
         {it.stages.length === 0 && (
-          <span className="cv-flowcard-hint">Sem etapas — clique para editar.</span>
+          <span className="cv-flowcard-hint">{t("Sem etapas — clique para editar.")}</span>
         )}
         {it.stages.map((s, i) => {
           const status = run?.stages[i]?.status;
@@ -152,12 +154,15 @@ function FlowCardImpl({
 
       <div className="cv-flowcard-foot">
         {live
-          ? `rodando — etapa ${Math.min((run?.current ?? 0) + 1, it.stages.length)}/${it.stages.length}`
+          ? t("rodando — etapa {step}/{total}", {
+              step: Math.min((run?.current ?? 0) + 1, it.stages.length),
+              total: it.stages.length,
+            })
           : run?.error
-            ? "última execução falhou"
+            ? t("última execução falhou")
             : wired === 0
-              ? "conecte uma CLI (tecla C) para armar"
-              : `${wired} CLI(s) conectada(s) — mande a tarefa lá`}
+              ? t("conecte uma CLI (tecla C) para armar")
+              : t("{n} CLI(s) conectada(s) — mande a tarefa lá", { n: wired })}
       </div>
 
       <ResizeHandles

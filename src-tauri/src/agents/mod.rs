@@ -2,6 +2,7 @@
 
 pub mod resolver;
 pub mod sessions;
+pub mod read;
 pub mod tail;
 
 #[cfg(test)]

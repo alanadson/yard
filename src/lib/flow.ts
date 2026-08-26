@@ -11,6 +11,7 @@
 import type { CanvasData, CanvasItem, FlowStage } from "./canvas";
 import { isConnected } from "./canvasOps";
 import { tail } from "./bridgeCore";
+import { t } from "./i18n";
 
 export type FlowItem = Extract<CanvasItem, { type: "flow" }>;
 
@@ -88,7 +89,7 @@ export const FLOW_MSG_TAG = "[Yard · Fluxo";
 
 /** Display label of a stage: the user's title, else its position. */
 export function stageLabelOf(s: FlowStage, index: number): string {
-  return s.label?.trim() || `Etapa ${index + 1}`;
+  return s.label?.trim() || t("Etapa {n}", { n: index + 1 });
 }
 
 /**
@@ -168,18 +169,18 @@ export function buildStagePrompt(p: StagePromptInput): string {
     `${FLOW_MSG_TAG} "${p.flowName}" — etapa ${p.index + 1}/${p.total}: ${p.stageLabel}]`,
   );
   if (inst) parts.push(inst);
-  parts.push(`## Tarefa\n${p.task.trim()}`);
+  parts.push(`## Tarefa\n${p.task.trim()}`); // i18n-ok — the briefing the agent reads
   if (p.carry.trim()) {
     parts.push(
-      `## O que a etapa anterior${p.prevLabel ? ` (${p.prevLabel})` : ""} concluiu\n${p.carry.trim()}`,
+      `## O que a etapa anterior${p.prevLabel ? ` (${p.prevLabel})` : ""} concluiu\n${p.carry.trim()}`, // i18n-ok
     );
   }
   const handoff = p.nextLabel
-    ? `Faça SÓ o que esta etapa pede. Ao terminar, escreva um bloco final começando ` +
-      `com a linha "${CARRY_MARK}" resumindo o que fez e o que a próxima etapa ` +
+    ? `Faça SÓ o que esta etapa pede. Ao terminar, escreva um bloco final começando ` + // i18n-ok
+      `com a linha "${CARRY_MARK}" resumindo o que fez e o que a próxima etapa ` + // i18n-ok
       `(${p.nextLabel}) precisa saber.`
-    : `Esta é a última etapa. Ao terminar, escreva um bloco final começando com a ` +
-      `linha "${CARRY_MARK}" com o veredito e o estado final da tarefa para o usuário.`;
+    : `Esta é a última etapa. Ao terminar, escreva um bloco final começando com a ` + // i18n-ok
+      `linha "${CARRY_MARK}" com o veredito e o estado final da tarefa para o usuário.`; // i18n-ok
   parts.push(handoff);
   return parts.join("\n\n");
 }
@@ -222,38 +223,38 @@ export const FLOW_PRESETS: { name: string; prompt: string }[] = [
   {
     name: "Planejador",
     prompt:
-      "Nesta etapa você é o PLANEJADOR. Não escreva código. Analise a tarefa e o " +
-      "código envolvido e produza um plano de implementação numerado: arquivos a " +
-      "tocar, mudanças em cada um, riscos e o que NÃO fazer.",
+      "Nesta etapa você é o PLANEJADOR. Não escreva código. Analise a tarefa e o " + // i18n-ok — agent prompt
+      "código envolvido e produza um plano de implementação numerado: arquivos a " + // i18n-ok
+      "tocar, mudanças em cada um, riscos e o que NÃO fazer.", // i18n-ok
   },
   {
     name: "Executor",
     prompt:
-      "Nesta etapa você é o EXECUTOR. Implemente exatamente o plano da etapa " +
-      "anterior. Se algo se provar inviável, adapte o mínimo necessário e registre " +
-      "o desvio no resumo final. Não invente escopo novo.",
+      "Nesta etapa você é o EXECUTOR. Implemente exatamente o plano da etapa " + // i18n-ok
+      "anterior. Se algo se provar inviável, adapte o mínimo necessário e registre " + // i18n-ok
+      "o desvio no resumo final. Não invente escopo novo.", // i18n-ok
   },
   {
     name: "Testes (TDD)",
     prompt:
-      "Nesta etapa você cuida de TESTES. Escreva/ajuste testes cobrindo o que foi " +
-      "implementado (casos felizes, bordas e regressões), rode a suíte e corrija o " +
-      "código apenas o suficiente para os testes passarem. Liste no resumo o que " +
-      "ficou coberto e o que não ficou.",
+      "Nesta etapa você cuida de TESTES. Escreva/ajuste testes cobrindo o que foi " + // i18n-ok
+      "implementado (casos felizes, bordas e regressões), rode a suíte e corrija o " + // i18n-ok
+      "código apenas o suficiente para os testes passarem. Liste no resumo o que " + // i18n-ok
+      "ficou coberto e o que não ficou.", // i18n-ok
   },
   {
     name: "QA",
     prompt:
-      "Nesta etapa você é o QA. Revise criticamente o que as etapas anteriores " +
+      "Nesta etapa você é o QA. Revise criticamente o que as etapas anteriores " + // i18n-ok
       "fizeram: rode a build, procure bugs, pontas soltas e desvios do plano. " +
-      "Corrija problemas pequenos; os graves, descreva com precisão no resumo.",
+      "Corrija problemas pequenos; os graves, descreva com precisão no resumo.", // i18n-ok
   },
   {
     name: "Confirmador",
     prompt:
-      "Nesta etapa você é o CONFIRMADOR, a última linha. Verifique o resultado de " +
-      "ponta a ponta (build, testes, diff) e dê um veredito honesto: o que foi " +
-      "entregue, o que ficou de fora e se está pronto. Não corrija nada — confirme " +
+      "Nesta etapa você é o CONFIRMADOR, a última linha. Verifique o resultado de " + // i18n-ok
+      "ponta a ponta (build, testes, diff) e dê um veredito honesto: o que foi " + // i18n-ok
+      "entregue, o que ficou de fora e se está pronto. Não corrija nada — confirme " + // i18n-ok
       "ou aponte.",
   },
 ];

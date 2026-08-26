@@ -26,6 +26,14 @@ pub mod scores;
 pub mod state;
 pub mod usage;
 pub mod wsl;
+pub mod pty_export;
+pub mod tray;
+pub mod support;
+pub mod updater;
+pub mod costs;
+pub mod mcp;
+pub mod ssh;
+pub mod lsp;
 
 mod logging;
 mod resources;
@@ -183,6 +191,19 @@ fn forget_pty(state: State<'_, Arc<AppState>>, id: String) {
     pty::scrollback::Scrollback::delete_file(&id);
 }
 
+/// Saves a terminal's scrollback to `dest` (`pty_export.rs`); `plain` strips
+/// the escapes. Up to 8 MB of disk in and out, so it goes to the blocking pool
+/// like `repaint_pty`.
+#[tauri::command]
+async fn pty_export(app: AppHandle, id: String, dest: String, plain: bool) -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<Arc<AppState>>();
+        pty_export::export(&state, &id, std::path::Path::new(&dest), plain)
+    })
+    .await
+    .map_err(|e| format!("exportação interrompida: {e}"))?
+}
+
 #[tauri::command]
 fn default_shell() -> String {
     pty::default_shell()
@@ -201,6 +222,16 @@ fn list_shells() -> Vec<ShellOption> {
 #[tauri::command]
 async fn wsl_status() -> wsl::WslStatus {
     tauri::async_runtime::spawn_blocking(wsl::status)
+        .await
+        .unwrap_or_default()
+}
+
+/// Whether an agent can be told to run on another machine over SSH, and
+/// which aliases `~/.ssh/config` already names. A PATH lookup plus one file
+/// read — cheap, but it keeps the same shape as `wsl_status` on purpose.
+#[tauri::command]
+async fn ssh_status() -> ssh::SshStatus {
+    tauri::async_runtime::spawn_blocking(ssh::status)
         .await
         .unwrap_or_default()
 }
@@ -1200,6 +1231,9 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // The relaunch the updater asks for once the installer ran.
+        .plugin(tauri_plugin_process::init())
         // The project's images, video, audio and PDFs reach the screen through
         // here, not over the IPC: `<video>` asks for chunks as it plays
         // (media.rs). It has to be registered before the window exists.
@@ -1216,6 +1250,11 @@ pub fn run() {
             resources::start(handle.clone());
             watcher::start(handle.clone());
             usage::start(handle.clone());
+            tray::start(handle.clone());
+            // Signed updates from GitHub Releases (updater.rs holds the config
+            // lock). Desktop only, as the plugin's own docs register it.
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             bridge::start(handle);
             Ok(())
         })
@@ -1357,6 +1396,22 @@ pub fn run() {
             usage_snapshot,
             usage_refresh,
             ui_log,
+            pty_export,
+            tray::tray_set_status,
+            tray::window_summon,
+            support::support_bundle,
+            persistence::autobackup::backup_auto_run,
+            costs::usage_history,
+            agents::read::session_events,
+            mcp::mcp_list,
+            mcp::mcp_save,
+            mcp::mcp_delete,
+            mcp::mcp_env_values,
+            ssh_status,
+            lsp::lsp_start,
+            lsp::lsp_send,
+            lsp::lsp_stop,
+            lsp::lsp_detect,
         ])
         .build(tauri::generate_context!())
         .expect("erro ao construir o Yard")
@@ -1367,6 +1422,9 @@ pub fn run() {
                 window_state::flush_now(app);
                 let state = app.state::<Arc<AppState>>();
                 pty::kill_all(&state);
+                // Language servers are children like the PTYs: none may outlive
+                // the window (lsp.rs).
+                lsp::stop_all();
                 portal::close_all(app);
             }
         });

@@ -58,3 +58,21 @@ describe("fileSize", () => {
     expect(fileSize(1024 ** 3 * 2.5)).toBe("2,5 GB");
   });
 });
+
+/**
+ * The decimal separator follows the interface language: "18,4 MB" in
+ * Portuguese, "18.4 MB" in English — a comma in an English sentence reads as
+ * a thousands separator and turns 18.4 into eighteen thousand.
+ */
+describe("fileSize in English", () => {
+  it("writes the decimal with a point", async () => {
+    const { setActiveLang } = await import("./i18n");
+    setActiveLang("en");
+    try {
+      expect(fileSize(1024 * 1024 * 18.4)).toBe("18.4 MB");
+      expect(fileSize(1024 * 934)).toBe("934 KB");
+    } finally {
+      setActiveLang("pt-BR");
+    }
+  });
+});

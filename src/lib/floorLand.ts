@@ -10,6 +10,7 @@ import { closeFloor } from "./floorClose";
 import { isIsolatedFloor } from "./floors";
 import { ipc, type GroupRow, type LandResult, type ProjectRow } from "./ipc";
 import { parseLayout, useProjects } from "../stores/projectsStore";
+import { t } from "./i18n";
 
 export async function previewFloor(
   project: ProjectRow,
@@ -17,7 +18,7 @@ export async function previewFloor(
 ) {
   const floor = parseLayout(group.layoutJson).floor;
   if (!isIsolatedFloor(floor) || !floor?.branch) {
-    throw new Error(`o andar "${group.name}" não tem uma branch para aterrissar`);
+    throw new Error(t('o andar "{name}" não tem uma branch para aterrissar', { name: group.name }));
   }
   return ipc.worktreePreview(project.path, floor.branch, floor.worktreePath);
 }
@@ -28,7 +29,7 @@ export async function landFloor(
 ): Promise<LandResult> {
   const floor = parseLayout(group.layoutJson).floor;
   if (!isIsolatedFloor(floor) || !floor?.branch) {
-    throw new Error(`o andar "${group.name}" não tem uma branch para aterrissar`);
+    throw new Error(t('o andar "{name}" não tem uma branch para aterrissar', { name: group.name }));
   }
   return ipc.worktreeLand(project.path, floor.branch, floor.worktreePath);
 }

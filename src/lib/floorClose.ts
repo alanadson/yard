@@ -13,6 +13,7 @@ import { isLive, useTerminals } from "../stores/terminalsStore";
 import { useProjects } from "../stores/projectsStore";
 import { runFloorHooks } from "./floorHooks";
 import { useUI } from "../stores/uiStore";
+import { t } from "./i18n";
 
 async function waitForExit(ids: string[], timeoutMs = 6_000): Promise<void> {
   const end = Date.now() + timeoutMs;
@@ -43,13 +44,17 @@ export function closeFloorWarning(
 ): string {
   const isolated = floor.kind === "isolated" && !!floor.worktreePath;
   return (
-    `Encerrar o andar "${group.name}"?\n\n` +
+    t('Encerrar o andar "{name}"?\n\n', { name: group.name }) +
     (liveCount
-      ? `• ${liveCount} terminal(is) rodando serão encerrados agora — ` +
-        "no Windows eles trancam a pasta do worktree.\n"
+      ? t(
+          "• {n} terminal(is) rodando serão encerrados agora — no Windows eles trancam a pasta do worktree.\n",
+          { n: liveCount },
+        )
       : "") +
-    "• Os cartões, o canvas e as rotinas deste andar vão embora.\n" +
-    (isolated ? `• O worktree em ${floor.worktreePath} é apagado do disco.\n` : "") +
+    t("• Os cartões, o canvas e as rotinas deste andar vão embora.\n") +
+    (isolated
+      ? t("• O worktree em {path} é apagado do disco.\n", { path: floor.worktreePath ?? "" })
+      : "") +
     unsavedWarning({ groupId: group.id })
   );
 }
@@ -62,7 +67,7 @@ export async function closeFloor(opts: {
   skipDirtyCheck?: boolean;
 }): Promise<void> {
   const floor = parseLayout(opts.group.layoutJson).floor;
-  if (!floor) throw new Error("este grupo não é um andar");
+  if (!floor) throw new Error(t("este grupo não é um andar"));
   const isolated = floor.kind === "isolated" && !!floor.worktreePath;
 
   if (isolated && !opts.skipDirtyCheck) {
@@ -72,12 +77,18 @@ export async function closeFloor(opts: {
     } catch (e) {
       uiLog.warn(`worktree_dirty falhou em ${floor.worktreePath}: ${e}`);
       throw new Error(
-        `Não consegui verificar se o andar "${opts.group.name}" tem trabalho pendente — encerramento cancelado por segurança.`,
+        t(
+          'Não consegui verificar se o andar "{name}" tem trabalho pendente — encerramento cancelado por segurança.',
+          { name: opts.group.name },
+        ),
       );
     }
     if (dirty) {
       throw new Error(
-        `O andar "${opts.group.name}" tem trabalho não commitado — faça commit (ou descarte) antes de encerrar.`,
+        t(
+          'O andar "{name}" tem trabalho não commitado — faça commit (ou descarte) antes de encerrar.',
+          { name: opts.group.name },
+        ),
       );
     }
   }
@@ -111,8 +122,10 @@ export async function closeFloor(opts: {
       useUI
         .getState()
         .showToast(
-          `A limpeza do andar "${opts.group.name}" falhou: ${r.detail}. ` +
-            "O andar foi encerrado assim mesmo.",
+          t('A limpeza do andar "{name}" falhou: {detail}. O andar foi encerrado assim mesmo.', {
+            name: opts.group.name,
+            detail: r.detail,
+          }),
           "error",
         );
     }

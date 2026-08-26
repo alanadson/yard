@@ -15,6 +15,7 @@ import { memo, useEffect, useState } from "react";
 
 import { mediaUrl } from "../../lib/media";
 import { parseMarkdown, type Inline } from "../../lib/markdown";
+import { useT } from "../../hooks/useT";
 
 interface Props {
   text: string;
@@ -128,6 +129,7 @@ function NoteImage({ src, alt, root }: { src: string; alt: string; root: string 
 }
 
 function NoteBodyImpl({ text, placeholder, root, onTask, onLink }: Props) {
+  const t = useT();
   if (!text.trim()) {
     return <div className="cv-note-md is-empty">{placeholder}</div>;
   }
@@ -156,7 +158,7 @@ function NoteBodyImpl({ text, placeholder, root, onTask, onLink }: Props) {
                     className="cv-md-check"
                     role="checkbox"
                     aria-checked={b.task === "done"}
-                    aria-label={b.task === "done" ? "Reabrir a tarefa" : "Concluir a tarefa"}
+                    aria-label={b.task === "done" ? t("Reabrir a tarefa") : t("Concluir a tarefa")}
                     // The note body turns a click into "edit this note"; a
                     // checkbox has to keep its own click to itself, press and
                     // release both, or ticking it would open the editor too.

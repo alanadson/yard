@@ -16,6 +16,7 @@
  */
 import { Hourglass, MessageSquareReply, Play } from "lucide-react";
 
+import { useT } from "../../hooks/useT";
 import { useAgents } from "../../stores/agentsStore";
 import { useTerminals, type TerminalRuntime } from "../../stores/terminalsStore";
 import type { TerminalRow } from "../../lib/ipc";
@@ -41,6 +42,7 @@ export function ExitBanner({
   /** `extra` are arguments added only for this boot (resuming the conversation). */
   onStart: (extra?: string[]) => void;
 }) {
+  const t = useT();
   // A subscription, not a one-off read: the catalog arrives a few moments
   // after boot, and a strip already on screen needs to gain the button when
   // it lands.
@@ -64,10 +66,16 @@ export function ExitBanner({
       <div className="pane-exit-banner">
         <span
           data-tip-wrap=""
-          data-tip={`O Yard espera ${SPAWN_MIN_FREE_MB} MB livres antes de subir um agente (até 45 s). Suspender um grupo ocioso libera RAM na hora.`}
+          data-tip={t(
+            "O Yard espera {mb} MB livres antes de subir um agente (até 45 s). Suspender um grupo ocioso libera RAM na hora.",
+            { mb: SPAWN_MIN_FREE_MB },
+          )}
         >
-          <Hourglass size={11} aria-hidden="true" /> Esperando memória livre —{" "}
-          {Math.round(freeMemoryMb)} MB de {SPAWN_MIN_FREE_MB} MB
+          <Hourglass size={11} aria-hidden="true" />{" "}
+          {t("Esperando memória livre — {free} MB de {min} MB", {
+            free: Math.round(freeMemoryMb),
+            min: SPAWN_MIN_FREE_MB,
+          })}
         </span>
       </div>
     );
@@ -80,11 +88,12 @@ export function ExitBanner({
     return (
       <div className="pane-exit-banner pane-exit-banner--error">
         <span data-tip-wrap="" data-tip={rt.error ?? undefined}>
-          Não consegui iniciar
-          {rt.error ? `: ${rt.error}` : " — motivo desconhecido."}
+          {rt.error
+            ? t("Não consegui iniciar: {reason}", { reason: rt.error })
+            : t("Não consegui iniciar — motivo desconhecido.")}
         </span>
         <button onClick={() => onStart()}>
-          <Play size={11} /> Tentar de novo
+          <Play size={11} /> {t("Tentar de novo")}
         </button>
       </div>
     );
@@ -97,32 +106,34 @@ export function ExitBanner({
     <div className="pane-exit-banner">
       <span>
         {reason === "suspended"
-          ? `Suspenso — o histórico continua aqui${
-              theAgent && !resumeConversation ? ", mas a conversa do agente não volta" : ""
-            }.`
+          ? theAgent && !resumeConversation
+            ? t("Suspenso — o histórico continua aqui, mas a conversa do agente não volta.")
+            : t("Suspenso — o histórico continua aqui.")
           : reason === "killed"
-            ? "Encerrado por você."
+            ? t("Encerrado por você.")
             : // "gone" is the state after a restart: the app took the process
               // tree with it and what is on screen came off the disk. Without
               // this line the card looks alive and simply eats what you type.
               reason === "gone"
-              ? "Não está rodando — isto é o histórico da sessão anterior."
-              : `O processo saiu${
-                  rt.exit?.code != null ? ` com código ${rt.exit.code}` : ""
-                }.`}
+              ? t("Não está rodando — isto é o histórico da sessão anterior.")
+              : rt.exit?.code != null
+                ? t("O processo saiu com código {code}.", { code: rt.exit.code })
+                : t("O processo saiu.")}
       </span>
       {resumeConversation && (
         <button
           className="pane-exit-continue"
           data-tip-wrap=""
-          data-tip={`Sobe a CLI com ${resumeConversation.join(" ")} — a última conversa deste projeto volta com ela`}
+          data-tip={t("Sobe a CLI com {args} — a última conversa deste projeto volta com ela", {
+            args: resumeConversation.join(" "),
+          })}
           onClick={() => onStart(resumeConversation)}
         >
-          <MessageSquareReply size={11} /> Retomar a conversa
+          <MessageSquareReply size={11} /> {t("Retomar a conversa")}
         </button>
       )}
       <button onClick={() => onStart()}>
-        <Play size={11} /> {resumeConversation ? "Começar do zero" : "Retomar"}
+        <Play size={11} /> {resumeConversation ? t("Começar do zero") : t("Retomar")}
       </button>
     </div>
   );

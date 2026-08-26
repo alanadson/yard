@@ -12,6 +12,7 @@
  * `Range` the progress bar would not move. As a URL, the webview asks for the
  * chunks it needs.
  */
+import { locale } from "./i18n";
 
 export type MediaKind = "image" | "video" | "audio" | "pdf";
 
@@ -79,5 +80,8 @@ export function fileSize(bytes: number): string {
   // One decimal place from MB upward, where it says something ("18,4 MB"), and
   // none in KB, where it would be noise ("912,3 KB").
   const decimals = i === 0 ? 0 : 1;
-  return `${value.toFixed(decimals).replace(".", ",")} ${units[i]}`;
+  // The decimal mark follows the interface language: "18,4 MB" in
+  // Portuguese, "18.4 MB" in English.
+  const number = value.toFixed(decimals);
+  return `${locale() === "pt-BR" ? number.replace(".", ",") : number} ${units[i]}`;
 }

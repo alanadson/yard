@@ -10,6 +10,9 @@
  * The two icon themes, which also take turns, come in as a radio: a switch
  * would promise independence and lie — the same rule as the store, now
  * written in a single place (`controleDeExtensao`).
+ *
+ * The catalog (`lib/extensions.ts`) keeps its Portuguese; name, line and
+ * chip are translated here, where they are drawn.
  */
 import {
   extensionControl,
@@ -17,12 +20,14 @@ import {
   settingsExtensions,
   type ExtensionDef,
 } from "../../../lib/extensions";
+import { useT } from "../../../hooks/useT";
 import { useExtensions } from "../../../stores/extensionsStore";
 import { useUI } from "../../../stores/uiStore";
 import { logoOf } from "../../modals/extLogos";
 import { Card } from "../rows";
 
 function ExtensionRow({ ext }: { ext: ExtensionDef }) {
+  const t = useT();
   const on = useExtensions((s) => s.enabled[ext.id] === true);
   const setEnabled = useExtensions((s) => s.setEnabled);
   const radio = extensionControl(ext) === "radio";
@@ -34,10 +39,10 @@ function ExtensionRow({ ext }: { ext: ExtensionDef }) {
         {logoOf(ext)}
       </span>
       <span className="set-ext-text">
-        <span className="set-row-label">{ext.name}</span>
-        <small className="set-row-desc set-ext-desc">{ext.description}</small>
+        <span className="set-row-label">{t(ext.name)}</span>
+        <small className="set-row-desc set-ext-desc">{t(ext.description)}</small>
       </span>
-      <span className="set-chip">{chip}</span>
+      <span className="set-chip">{t(chip)}</span>
       <input
         type={radio ? "radio" : "checkbox"}
         role={radio ? undefined : "switch"}
@@ -50,13 +55,14 @@ function ExtensionRow({ ext }: { ext: ExtensionDef }) {
           // at all is a valid choice too.
           if (radio && on) setEnabled(ext.id, false);
         }}
-        aria-label={ext.name}
+        aria-label={t(ext.name)}
       />
     </div>
   );
 }
 
 export function SecExtensions() {
+  const t = useT();
   const openModal = useUI((s) => s.openModal);
   return (
     <>
@@ -66,12 +72,11 @@ export function SecExtensions() {
         ))}
       </Card>
       <p className="hint">
-        Tudo já vem com o Yard — ligar é instalar, e vale na hora, sem
-        reiniciar.{" "}
+        {t("Tudo já vem com o Yard — ligar é instalar, e vale na hora, sem reiniciar.")}{" "}
         <button className="linkish" onClick={() => openModal("extensions")}>
-          A loja completa
+          {t("A loja completa")}
         </button>
-        , com prévias ao vivo e os temas de cor, abre com Ctrl+Shift+X.
+        {t(", com prévias ao vivo e os temas de cor, abre com Ctrl+Shift+X.")}
       </p>
     </>
   );

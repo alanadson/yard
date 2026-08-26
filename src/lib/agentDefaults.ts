@@ -22,13 +22,14 @@
  * Where there is no field to pre-fill — recruit, fan-out, resume — the line
  * is applied straight to the argv.
  */
+// i18n-scan: tables — the cache choices and notes are translated where Settings renders them.
 import { skipFlagOf, tokenizeArgs, withFlag, type SkipFlag } from "./termArgs";
 import { programName } from "./terminals";
 import type { AgentInfo } from "./ipc";
 import type { RolePick } from "./roles";
 
-/** Where the process runs. */
-export type AgentWhere = "windows" | "wsl";
+/** Where the process runs: this machine, a WSL distro, or another machine over SSH. */
+export type AgentWhere = "windows" | "wsl" | "ssh";
 
 /**
  * How long the conversation cache survives a pause.
@@ -48,6 +49,14 @@ export interface AgentConfig {
   where: AgentWhere;
   /** WSL distro; `""` means the distro WSL itself defaults to. */
   distro: string;
+  /**
+   * SSH destination as `ssh` itself reads it — an alias from `~/.ssh/config`
+   * or `user@host`. Kept even while `where` is Windows, so switching back to
+   * SSH finds it again.
+   */
+  sshHost: string;
+  /** Folder on the remote machine; `""` means the login shell's home. */
+  sshPath: string;
   cache: AgentCache;
   /** Kept out of the pickers ("Nova aba", a fan-out) — not uninstalled. */
   hidden: boolean;
@@ -70,6 +79,8 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   args: "",
   where: "windows",
   distro: "",
+  sshHost: "",
+  sshPath: "",
   cache: "",
   hidden: false,
   name: "",
@@ -85,6 +96,8 @@ export function isDefaultConfig(config: AgentConfig): boolean {
     config.args === DEFAULT_AGENT_CONFIG.args &&
     config.where === DEFAULT_AGENT_CONFIG.where &&
     config.distro === DEFAULT_AGENT_CONFIG.distro &&
+    config.sshHost === DEFAULT_AGENT_CONFIG.sshHost &&
+    config.sshPath === DEFAULT_AGENT_CONFIG.sshPath &&
     config.cache === DEFAULT_AGENT_CONFIG.cache &&
     config.hidden === DEFAULT_AGENT_CONFIG.hidden &&
     config.name === DEFAULT_AGENT_CONFIG.name &&
@@ -100,7 +113,7 @@ export function configOf(
   return (id && all[id]) || DEFAULT_AGENT_CONFIG;
 }
 
-const WHERES: readonly string[] = ["windows", "wsl"];
+const WHERES: readonly string[] = ["windows", "wsl", "ssh"];
 const CACHES: readonly string[] = ["", "1h", "5m", "off"];
 
 /**
@@ -138,10 +151,12 @@ function parseConfig(value: unknown): AgentConfig {
     name: typeof row.name === "string" ? row.name.trim() : "",
     role: parseRole(row.role),
     args: typeof row.args === "string" ? row.args.trim() : DEFAULT_AGENT_CONFIG.args,
-    // A value from outside that is neither Windows nor WSL would reach the
-    // launcher as neither: it becomes the default instead of a broken spawn.
+    // A value from outside that is none of the three places would reach the
+    // launcher as none of them: it becomes the default instead of a broken spawn.
     where: WHERES.includes(where as string) ? (where as AgentWhere) : "windows",
     distro: typeof row.distro === "string" ? row.distro.trim() : "",
+    sshHost: typeof row.sshHost === "string" ? row.sshHost.trim() : "",
+    sshPath: typeof row.sshPath === "string" ? row.sshPath.trim() : "",
     cache: CACHES.includes(cache as string) ? (cache as AgentCache) : "",
     hidden: row.hidden === true,
   };
@@ -186,6 +201,8 @@ export function serializeAgentDefaults(
     if (config.args) rest.args = config.args;
     if (config.where !== "windows") rest.where = config.where;
     if (config.distro) rest.distro = config.distro;
+    if (config.sshHost) rest.sshHost = config.sshHost;
+    if (config.sshPath) rest.sshPath = config.sshPath;
     if (config.cache) rest.cache = config.cache;
     if (config.hidden) rest.hidden = true;
     if (config.name) rest.name = config.name;
@@ -206,6 +223,8 @@ export function withAgentConfig(
   const config: AgentConfig = { ...configOf(all, id), ...patch };
   if (typeof patch.args === "string") config.args = patch.args.trim();
   if (typeof patch.distro === "string") config.distro = patch.distro.trim();
+  if (typeof patch.sshHost === "string") config.sshHost = patch.sshHost.trim();
+  if (typeof patch.sshPath === "string") config.sshPath = patch.sshPath.trim();
   if (typeof patch.name === "string") config.name = patch.name.trim();
   if (isDefaultConfig(config)) delete next[id];
   else next[id] = config;
@@ -336,6 +355,62 @@ export function wslLaunch(input: {
 }
 
 /**
+ * A value a POSIX shell reads back verbatim: single quotes, with the one
+ * character they cannot hold — the single quote itself — closed, escaped and
+ * reopened (`it's` → `'it'\''s'`).
+ */
+export function shQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * A word of the remote command line: quoted only when the shell would
+ * otherwise read something into it. A plain flag stays a plain flag, which is
+ * what a human sees when the card's command line is shown back.
+ */
+function shWord(value: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : shQuote(value);
+}
+
+/**
+ * The same CLI, launched on another machine over SSH.
+ *
+ * The shape is the WSL one turned outward: the process Yard spawns is
+ * `ssh.exe`, and the CLI, its arguments and the folder travel inside a
+ * single remote command. What this has to get right:
+ *
+ * - **`-tt` forces a tty.** From ssh's point of view a ConPTY is a pipe, and
+ *   without a tty on the far side the CLIs refuse to draw (or run in a mode
+ *   nobody wants). Doubled so it is forced even when ssh disagrees.
+ * - **the program is the bare command**, as in WSL: `claude.cmd` is the npm
+ *   shim on this machine, not the CLI over there.
+ * - **every argument is quoted** for the remote shell — a role brief handed
+ *   over with `--append-system-prompt` is one argument here and must stay one
+ *   argument there.
+ * - `exec` so the CLI replaces the login shell: exit codes and the "process
+ *   ended" banner mean the CLI, not a shell that outlived it.
+ *
+ * What does **not** travel: the `yard` shim and the `YARD_*` environment. The
+ * remote CLI cannot talk to the canvas — a limit, written down in the docs.
+ */
+export function sshLaunch(input: {
+  program: string;
+  args: readonly string[];
+  cwd: string;
+  host: string;
+  remotePath: string;
+}): Launch {
+  const command = programName(input.program).replace(/\.(cmd|bat|exe|ps1)$/i, "");
+  const run = [command, ...input.args.map(shWord)].join(" ");
+  const path = input.remotePath.trim();
+  const remote = path ? `cd ${shQuote(path)} && exec ${run}` : `exec ${run}`;
+  return {
+    program: "ssh.exe",
+    args: ["-tt", input.host.trim(), remote],
+  };
+}
+
+/**
  * Everything a card is born with, given what was configured for that agent:
  * the fixed line, the cache, and where it runs.
  *
@@ -360,13 +435,24 @@ export function launchFor(
     if (token.startsWith("-") && args.includes(token)) break;
     args.push(token);
   }
-  if (config.where !== "wsl") return { program: launch.program, args };
-  return wslLaunch({
-    program: launch.program,
-    args,
-    cwd: launch.cwd,
-    distro: config.distro,
-  });
+  if (config.where === "wsl") {
+    return wslLaunch({
+      program: launch.program,
+      args,
+      cwd: launch.cwd,
+      distro: config.distro,
+    });
+  }
+  if (config.where === "ssh") {
+    return sshLaunch({
+      program: launch.program,
+      args,
+      cwd: launch.cwd,
+      host: config.sshHost,
+      remotePath: config.sshPath,
+    });
+  }
+  return { program: launch.program, args };
 }
 
 // ---------------------------------------------------------------------------

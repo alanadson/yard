@@ -5,6 +5,7 @@
  * changing a signature in Rust breaks the front-end compile instead of
  * becoming a silent `undefined` in production.
  */
+// i18n-scan: tables — string-literal unions and backend error names; nothing here is rendered.
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -804,6 +805,121 @@ export interface NotesData {
   tags: NoteTagRecord[];
 }
 
+/** What `support_bundle` wrote — the entry list is the privacy contract, shown to the user. */
+export interface SupportSummary {
+  path: string;
+  bytes: number;
+  entries: string[];
+  version: string;
+}
+/** What `backup_auto_run` wrote and what it rotated out (`persistence/autobackup.rs`). */
+export interface AutoBackupReport {
+  path: string;
+  bytes: number;
+  pruned: string[];
+}
+// ---------------------------------------------------------------------------
+// costs — mirrors costs.rs
+// ---------------------------------------------------------------------------
+
+/**
+ * One row of the "Custos e uso" panel: one agent, one project, one model, one
+ * local day. `costUsd` is `null` for a model outside the price table.
+ */
+export interface UsageRow {
+  day: string;
+  agent: string;
+  projectPath: string;
+  model: string;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  costUsd: number | null;
+  sessions: number;
+}
+// ---------------------------------------------------------------------------
+// MCP manager — mirrors src-tauri/src/mcp.rs
+// ---------------------------------------------------------------------------
+
+/** A server as the manager sees it, whatever CLI it came from. */
+export interface McpServer {
+  name: string;
+  /** `stdio` | `http` | `sse` — plus `ws` passing through from Claude Code. */
+  transport: string;
+  command: string | null;
+  args: string[];
+  url: string | null;
+  env: Record<string, string>;
+  headers: Record<string, string>;
+  enabled: boolean;
+}
+
+/** One row of the listing: the names of env/header keys, never the values. */
+export interface McpRow {
+  cli: string;
+  /** `user` | `local` | `project`. */
+  scope: string;
+  name: string;
+  transport: string;
+  command: string | null;
+  args: string[];
+  url: string | null;
+  envKeys: string[];
+  headerKeys: string[];
+  sourceFile: string;
+  enabled: boolean;
+  /** The CLI has a native on/off flag the manager can write. */
+  canToggle: boolean;
+}
+
+export interface McpListing {
+  rows: McpRow[];
+  /** Files that could not be read, each naming its path. */
+  errors: string[];
+}
+
+export interface McpSecrets {
+  env: Record<string, string>;
+  headers: Record<string, string>;
+}
+/**
+ * Whether an agent can be told to run on another machine over SSH, and the
+ * aliases `~/.ssh/config` already names — mirrors `WslStatus`.
+ */
+export interface SshStatus {
+  available: boolean;
+  /** Where `ssh` was found, for the line under the control. */
+  path: string | null;
+  hosts: string[];
+  /** Why it cannot be used — the line under the disabled control. */
+  reason: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// language servers (lsp.rs)
+// ---------------------------------------------------------------------------
+
+/** A server of the editor's catalog and whether this machine has it. */
+export interface LspServerInfo {
+  /** LSP language ids the server takes (`typescript`, `rust`, …). */
+  languageIds: string[];
+  program: string;
+  args: string[];
+  version: string | null;
+  installHint: string;
+  found: boolean;
+}
+/** One bare-JSON message from a server, tagged with the client id that started it. */
+export interface LspMessagePayload {
+  id: string;
+  message: string;
+}
+export interface LspExitPayload {
+  id: string;
+  code: number | null;
+}
+
 // ---------------------------------------------------------------------------
 // commands
 // ---------------------------------------------------------------------------
@@ -1204,6 +1320,41 @@ export const ipc = {
   // agent<->app bridge (CLI `yard`)
   bridgeRespond: (id: number, body: BridgeResponse) =>
     invoke<boolean>("bridge_respond", { id, body }),
+  /** Saves a terminal's scrollback to `dest`; `plain` strips the escapes. Bytes written. */
+  ptyExport: (id: string, dest: string, plain: boolean) =>
+    invoke<number>("pty_export", { id, dest, plain }),
+  // tray icon + summon hotkey (tray.rs)
+  traySetStatus: (blocked: number, running: number) =>
+    invoke<void>("tray_set_status", { blocked, running }),
+  windowSummon: () => invoke<"show" | "hide">("window_summon"),
+  // support bundle (logs of the last two days + about/agents JSON)
+  supportBundle: (dest: string) =>
+    invoke<SupportSummary>("support_bundle", { dest }),
+  // automatic backup: `dir = null` is the data directory's `backups` folder
+  backupAutoRun: (dir: string | null, keep: number) =>
+    invoke<AutoBackupReport>("backup_auto_run", { dir, keep }),
+
+  // costs and usage over time (costs.rs)
+  usageHistory: (days: number) => invoke<UsageRow[]>("usage_history", { days }),
+  /** The whole session `.jsonl` as events — the "Ombro" digest and the transcript. */
+  sessionEvents: (file: string) => invoke<FeedEvent[]>("session_events", { file }),
+
+  // MCP manager (mcp.rs)
+  mcpList: (projectRoot: string | null) =>
+    invoke<McpListing>("mcp_list", { projectRoot }),
+  mcpSave: (cli: string, scope: string, projectRoot: string | null, server: McpServer) =>
+    invoke<void>("mcp_save", { cli, scope, projectRoot, server }),
+  mcpDelete: (cli: string, scope: string, projectRoot: string | null, name: string) =>
+    invoke<void>("mcp_delete", { cli, scope, projectRoot, name }),
+  mcpEnvValues: (cli: string, scope: string, projectRoot: string | null, name: string) =>
+    invoke<McpSecrets>("mcp_env_values", { cli, scope, projectRoot, name }),
+  sshStatus: () => invoke<SshStatus>("ssh_status"),
+  // language servers (lsp.rs) — the editor's LSP clients
+  lspStart: (id: string, program: string, args: string[], cwd: string) =>
+    invoke<number>("lsp_start", { id, program, args, cwd }),
+  lspSend: (id: string, message: string) => invoke<void>("lsp_send", { id, message }),
+  lspStop: (id: string) => invoke<void>("lsp_stop", { id }),
+  lspDetect: (refresh: boolean) => invoke<LspServerInfo[]>("lsp_detect", { refresh }),
 };
 
 /** Request from the `yard` CLI (one JSON line on the pipe). */
@@ -1245,6 +1396,9 @@ export const topics = {
   portalPopup: "portal://popup",
   portalEscape: "portal://escape",
   portalMenu: "portal://menu",
+  trayQuit: "tray://quit",
+  lspMessage: "lsp://message",
+  lspExit: "lsp://exit",
 } as const;
 
 export interface OutputChunk {
@@ -1296,6 +1450,12 @@ export const on = {
     listen<PortalEscape>(topics.portalEscape, (e) => cb(e.payload)),
   portalMenu: (cb: (p: PortalMenu) => void) =>
     listen<PortalMenu>(topics.portalMenu, (e) => cb(e.payload)),
+  /** "Sair" picked in the tray menu: run the window's exit flow. */
+  trayQuit: (cb: () => void) => listen<null>(topics.trayQuit, () => cb()),
+  lspMessage: (cb: (p: LspMessagePayload) => void) =>
+    listen<LspMessagePayload>(topics.lspMessage, (e) => cb(e.payload)),
+  lspExit: (cb: (p: LspExitPayload) => void) =>
+    listen<LspExitPayload>(topics.lspExit, (e) => cb(e.payload)),
 };
 
 export type { UnlistenFn };

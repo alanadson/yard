@@ -27,6 +27,9 @@ import {
   Settings,
 } from "lucide-react";
 
+// i18n-scan: tables
+import { useT } from "../../hooks/useT";
+import { tn } from "../../lib/i18n";
 import { show } from "../../lib/navigate";
 import { projectIcon } from "../../lib/projectStyle";
 import { AsyncDisposer } from "../../lib/disposables";
@@ -55,10 +58,7 @@ const MODES: { id: LayoutMode; label: string; tip: string }[] = [
   { id: "spotlight", label: "Holofote", tip: "Um painel grande, os outros ao lado" },
 ];
 
-const PANES = [1, 2, 3, 4, 6].map((n) => ({
-  value: String(n),
-  label: `${n} ${n === 1 ? "painel" : "painéis"}`,
-}));
+const PANES = [1, 2, 3, 4, 6].map((n) => ({ value: String(n), n }));
 
 /* Window glyphs in the Windows shape: 10×10, 1px hairline strokes, like
    Segoe Fluent Icons. Drawn by hand — lucide's are rounded and much
@@ -74,6 +74,7 @@ const GLYPH = {
 } as const;
 
 export function TitleBar() {
+  const t = useT();
   const [maximized, setMaximized] = useState(false);
   const [menu, setMenu] = useState<MenuAnchor | null>(null);
   const toggleSidebar = useUI((s) => s.toggleSidebar);
@@ -175,9 +176,9 @@ export function TitleBar() {
       <div className="titlebar-left">
         <button
           className="icon-btn"
-          data-tip="Mostrar ou esconder a barra lateral (Ctrl+B)"
+          data-tip={t("Mostrar ou esconder a barra lateral (Ctrl+B)")}
           data-tip-at="left"
-          aria-label="Mostrar ou esconder a barra lateral"
+          aria-label={t("Mostrar ou esconder a barra lateral")}
           aria-pressed={sidebarOpen}
           onClick={toggleSidebar}
         >
@@ -193,7 +194,7 @@ export function TitleBar() {
           Yard
         </span>
         {board ? (
-          <span className="crumb" data-tip="Quadro — o canvas como container próprio">
+          <span className="crumb" data-tip={t("Quadro — o canvas como container próprio")}>
             <Frame size={14} className="crumb-icon" aria-hidden="true" />
             <span className="crumb-project">{board.name}</span>
           </span>
@@ -220,7 +221,7 @@ export function TitleBar() {
                 {floor?.kind === "isolated" && floor.branch && (
                   <span
                     className="crumb-branch"
-                    data-tip={`Andar isolado — worktree em ${floor.worktreePath ?? "?"}`}
+                    data-tip={t("Andar isolado — worktree em {path}", { path: floor.worktreePath ?? "?" })}
                   >
                     <GitBranch size={10} aria-hidden="true" />
                     {floor.branch}
@@ -239,7 +240,7 @@ export function TitleBar() {
             <div
               className={`layout-switch ${onBoard ? "is-behind" : ""}`}
               role="group"
-              aria-label="Layout dos painéis"
+              aria-label={t("Layout dos painéis")}
             >
               <LayoutGrid size={13} aria-hidden="true" />
               {MODES.map((m) => (
@@ -255,17 +256,20 @@ export function TitleBar() {
                     show(controls.groupId, "grid");
                     if (board) leaveBoard();
                   }}
-                  data-tip={m.tip}
+                  data-tip={t(m.tip)}
                 >
-                  {m.label}
+                  {t(m.label)}
                 </button>
               ))}
               {(layout.mode === "grid" || layout.mode === "spotlight") && (
                 <Select
                   value={String(layout.panelCount)}
-                  label="Número de painéis"
-                  tip="Número de painéis"
-                  options={PANES}
+                  label={t("Número de painéis")}
+                  tip={t("Número de painéis")}
+                  options={PANES.map((p) => ({
+                    value: p.value,
+                    label: tn(p.n, "{n} painel", "{n} painéis"),
+                  }))}
                   onChange={(v) =>
                     updateLayout(controls.groupId, { panelCount: Number(v) })
                   }
@@ -275,7 +279,7 @@ export function TitleBar() {
             <button
               className={`layout-canvas ${onBoard ? "is-active" : ""}`}
               aria-pressed={onBoard}
-              data-tip="Canvas infinito: cartões soltos, desenho à mão, notas e conexões — com as CLIs dele"
+              data-tip={t("Canvas infinito: cartões soltos, desenho à mão, notas e conexões — com as CLIs dele")}
               onClick={() => {
                 show(controls.groupId, onBoard ? "grid" : "canvas");
                 if (board && onBoard) leaveBoard();
@@ -293,19 +297,19 @@ export function TitleBar() {
         <StatusChip />
         <button
           className="btn btn--ghost"
-          data-tip="Nova aba — CLI ou navegador (Ctrl+T)"
+          data-tip={t("Nova aba — CLI ou navegador (Ctrl+T)")}
           onClick={() => openModal("new-terminal")}
         >
-          <Plus size={13} aria-hidden="true" /> Nova aba
+          <Plus size={13} aria-hidden="true" /> {t("Nova aba")}
         </button>
         <button
           className={`icon-btn changes-toggle ${changesOpen ? "is-active" : ""}`}
-          data-tip="Arquivos e alterações (Ctrl+Shift+D)"
+          data-tip={t("Arquivos e alterações (Ctrl+Shift+D)")}
           data-tip-at="right"
           aria-label={
             changedCount > 0
-              ? `Arquivos e alterações (${changedCount} alterados)`
-              : "Arquivos e alterações"
+              ? t("Arquivos e alterações ({n} alterados)", { n: changedCount })
+              : t("Arquivos e alterações")
           }
           aria-pressed={changesOpen}
           onClick={toggleChanges}
@@ -319,12 +323,12 @@ export function TitleBar() {
         </button>
         <button
           className={`icon-btn changes-toggle ${benchOpen ? "is-active" : ""}`}
-          data-tip="Bancada — tarefas e prompts (Ctrl+Shift+B)"
+          data-tip={t("Bancada — tarefas e prompts (Ctrl+Shift+B)")}
           data-tip-at="right"
           aria-label={
             pendingTasks > 0
-              ? `Bancada — tarefas e prompts (${pendingTasks} pendentes)`
-              : "Bancada — tarefas e prompts"
+              ? t("Bancada — tarefas e prompts ({n} pendentes)", { n: pendingTasks })
+              : t("Bancada — tarefas e prompts")
           }
           aria-pressed={benchOpen}
           onClick={toggleBench}
@@ -338,9 +342,9 @@ export function TitleBar() {
         </button>
         <button
           className={`icon-btn ${notesOpen ? "is-active" : ""}`}
-          data-tip="Anotações — caderno markdown (Ctrl+Shift+N)"
+          data-tip={t("Anotações — caderno markdown (Ctrl+Shift+N)")}
           data-tip-at="right"
-          aria-label="Anotações"
+          aria-label={t("Anotações")}
           aria-pressed={notesOpen}
           onClick={toggleNotes}
         >
@@ -348,18 +352,18 @@ export function TitleBar() {
         </button>
         <button
           className="icon-btn"
-          data-tip="Extensões (Ctrl+Shift+X)"
+          data-tip={t("Extensões (Ctrl+Shift+X)")}
           data-tip-at="right"
-          aria-label="Extensões"
+          aria-label={t("Extensões")}
           onClick={() => openModal("extensions")}
         >
           <Blocks size={14} />
         </button>
         <button
           className="icon-btn"
-          data-tip="Configurações (Ctrl+Shift+P)"
+          data-tip={t("Configurações (Ctrl+Shift+P)")}
           data-tip-at="right"
-          aria-label="Configurações"
+          aria-label={t("Configurações")}
           onClick={() => openModal("preferences")}
         >
           <Settings size={14} />
@@ -374,7 +378,7 @@ export function TitleBar() {
         <button
           className="win-btn"
           onClick={() => void appWindow.minimize()}
-          aria-label="Minimizar"
+          aria-label={t("Minimizar")}
         >
           <svg {...GLYPH}>
             <path d="M0.5 5.5h9" />
@@ -383,7 +387,7 @@ export function TitleBar() {
         <button
           className="win-btn"
           onClick={() => void appWindow.toggleMaximize()}
-          aria-label={maximized ? "Restaurar" : "Maximizar"}
+          aria-label={maximized ? t("Restaurar") : t("Maximizar")}
         >
           {maximized ? (
             <svg {...GLYPH}>
@@ -399,7 +403,7 @@ export function TitleBar() {
         <button
           className="win-btn win-btn--close"
           onClick={() => void appWindow.close()}
-          aria-label="Fechar"
+          aria-label={t("Fechar")}
         >
           <svg {...GLYPH}>
             <path d="M0.7 0.7 9.3 9.3M9.3 0.7 0.7 9.3" />

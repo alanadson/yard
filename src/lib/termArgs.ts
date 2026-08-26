@@ -17,6 +17,8 @@
  * otherwise a stray value would be left behind on the command line.
  */
 
+// i18n-scan: tables — the skip-flag hints are translated where the dialogs render them.
+
 export interface SkipFlag {
   /** Tokens exactly as they go into argv. */
   args: string[];

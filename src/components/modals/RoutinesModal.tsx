@@ -12,7 +12,9 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { Clock, Pause, Play, Plus, Trash2 } from "lucide-react";
 
 import { Modal } from "./Modal";
+import { TriggersSection } from "./TriggersSection";
 import { NumberField } from "../NumberField";
+import { useT } from "../../hooks/useT";
 import { commitCanvasExternal } from "../../lib/canvasWrite";
 import {
   clampRoutineInterval,
@@ -21,6 +23,7 @@ import {
   ROUTINE_MIN_MIN,
   type RoutineDef,
 } from "../../lib/canvas";
+import { locale } from "../../lib/i18n";
 import { baseName } from "../../lib/terminals";
 import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
@@ -31,6 +34,7 @@ interface Payload {
 }
 
 export function RoutinesModal() {
+  const t = useT();
   const closeModal = useUI((s) => s.closeModal);
   const payload = useUI((s) => s.modalPayload) as Payload | null;
   const groups = useProjects((s) => s.groups);
@@ -39,7 +43,7 @@ export function RoutinesModal() {
   const groupId = payload?.groupId ?? "";
   const terminalId = payload?.terminalId ?? "";
   const target = terminal(terminalId);
-  const label = target ? baseName(target) : "terminal";
+  const label = target ? baseName(target) : t("terminal");
 
   // `groups` in the deps: it is layoutJson that changes when someone writes.
   const all = useMemo(() => {
@@ -97,10 +101,11 @@ export function RoutinesModal() {
   // pause one.
   const remove = async (r: RoutineDef) => {
     const ok = await ask(
-      `Remover esta rotina de "${label}"?\n\n` +
+      t('Remover esta rotina de "{name}"?', { name: label }) +
+        "\n\n" +
         r.text.slice(0, 160) +
         (r.text.length > 160 ? "…" : ""),
-      { title: "Remover rotina", kind: "warning" },
+      { title: t("Remover rotina"), kind: "warning" },
     );
     if (!ok) return;
     commitCanvasExternal(groupId, (c) => ({
@@ -110,20 +115,22 @@ export function RoutinesModal() {
   };
 
   return (
-    <Modal title={`Rotinas — ${label}`} onClose={closeModal} wide>
+    <Modal title={t("Rotinas e gatilhos — {name}", { name: label })} onClose={closeModal} wide>
       <p className="hint">
-        Um prompt agendado só é entregue com o terminal <strong>rodando e
-        ocioso</strong>: uma rotina nunca interrompe trabalho em andamento — ela
-        espera o próximo intervalo.
+        {t("Um prompt agendado só é entregue com o terminal ")}
+        <strong>{t("rodando e ocioso")}</strong>
+        {t(
+          ": uma rotina nunca interrompe trabalho em andamento — ela espera o próximo intervalo.",
+        )}
       </p>
 
       <div className="routine-form">
         <label className="grow">
-          Prompt
+          {t("Prompt")}
           <textarea
             rows={3}
             value={text}
-            placeholder="ex.: rode os testes e me diga só o que quebrou"
+            placeholder={t("ex.: rode os testes e me diga só o que quebrou")}
             onChange={(e) => setText(e.target.value)}
           />
         </label>
@@ -132,7 +139,7 @@ export function RoutinesModal() {
               and would not let you clear the content: `Number("") || 1` put
               `1` in the field mid-typing and the next digit piled on top. */}
           <NumberField
-            label="A cada (min)"
+            label={t("A cada (min)")}
             value={everyMin}
             min={ROUTINE_MIN_MIN}
             max={ROUTINE_MAX_MIN}
@@ -145,17 +152,17 @@ export function RoutinesModal() {
               checked={once}
               onChange={(e) => setOnce(e.target.checked)}
             />
-            Só uma vez (lembrete)
+            {t("Só uma vez (lembrete)")}
           </label>
           <button className="btn btn--primary" disabled={!text.trim()} onClick={create}>
-            <Plus size={13} /> Criar rotina
+            <Plus size={13} /> {t("Criar rotina")}
           </button>
         </div>
       </div>
 
       <div className="routine-list">
         {routines.length === 0 && (
-          <p className="hint">Nenhuma rotina neste terminal ainda.</p>
+          <p className="hint">{t("Nenhuma rotina neste terminal ainda.")}</p>
         )}
         {routines.map((r) => (
           <RoutineRow
@@ -169,15 +176,15 @@ export function RoutinesModal() {
 
       {others.length > 0 && (
         <>
-          <h4 className="routine-sub">Outras rotinas deste grupo</h4>
+          <h4 className="routine-sub">{t("Outras rotinas deste grupo")}</h4>
           <div className="routine-list">
             {others.map((r) => (
               <RoutineRow
                 key={r.id}
                 r={r}
                 owner={(() => {
-                  const t = terminal(r.terminalId);
-                  return t ? baseName(t) : "(CLI removida)";
+                  const row = terminal(r.terminalId);
+                  return row ? baseName(row) : t("(CLI removida)");
                 })()}
                 onToggle={() => toggle(r.id)}
                 onRemove={() => void remove(r)}
@@ -186,6 +193,8 @@ export function RoutinesModal() {
           </div>
         </>
       )}
+
+      <TriggersSection groupId={groupId} terminalId={terminalId} />
     </Modal>
   );
 }
@@ -203,6 +212,7 @@ function RoutineRow({
   onToggle: () => void;
   onRemove: () => void;
 }) {
+  const t = useT();
   const following = routineNextAt(r);
   const overdue = following <= Date.now();
   return (
@@ -211,37 +221,41 @@ function RoutineRow({
       <div className="routine-body">
         <strong>
           {who ? `${who} · ` : ""}
-          {r.once ? `uma vez em ${r.everyMin} min` : `a cada ${r.everyMin} min`}
-          {r.enabled ? "" : " · pausada"}
+          {r.once
+            ? t("uma vez em {min} min", { min: r.everyMin })
+            : t("a cada {min} min", { min: r.everyMin })}
+          {r.enabled ? "" : t(" · pausada")}
         </strong>
         <small>{r.text}</small>
         <small className="routine-when">
           {!r.enabled
-            ? "pausada — não dispara"
+            ? t("pausada — não dispara")
             : overdue
               ? // The scheduler's rule: never interrupts work in progress.
-                "dispara no próximo momento em que a CLI estiver livre"
-              : `próximo disparo: ${new Date(following).toLocaleTimeString("pt-BR", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}`}
+                t("dispara no próximo momento em que a CLI estiver livre")
+              : t("próximo disparo: {time}", {
+                  time: new Date(following).toLocaleTimeString(locale(), {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  }),
+                })}
           {r.lastRunAt
-            ? ` · último: ${new Date(r.lastRunAt).toLocaleString("pt-BR")}`
+            ? t(" · último: {when}", { when: new Date(r.lastRunAt).toLocaleString(locale()) })
             : ""}
         </small>
       </div>
       <button
         className="icon-btn"
-        data-tip={r.enabled ? "Pausar" : "Retomar"}
-        aria-label={r.enabled ? "Pausar rotina" : "Retomar rotina"}
+        data-tip={r.enabled ? t("Pausar") : t("Retomar")}
+        aria-label={r.enabled ? t("Pausar rotina") : t("Retomar rotina")}
         onClick={onToggle}
       >
         {r.enabled ? <Pause size={13} /> : <Play size={13} />}
       </button>
       <button
         className="icon-btn icon-btn--danger"
-        data-tip="Remover"
-        aria-label="Remover rotina"
+        data-tip={t("Remover")}
+        aria-label={t("Remover rotina")}
         onClick={onRemove}
       >
         <Trash2 size={13} />

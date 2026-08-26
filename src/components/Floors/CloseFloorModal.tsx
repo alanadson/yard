@@ -16,6 +16,7 @@ import { closeFloor, closeFloorWarning, liveIdsOf } from "../../lib/floorClose";
 import { parseLayout } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
 import type { GroupRow, ProjectRow } from "../../lib/ipc";
+import { useT } from "../../hooks/useT";
 
 export interface CloseFloorPayload {
   project: ProjectRow;
@@ -23,6 +24,7 @@ export interface CloseFloorPayload {
 }
 
 export function CloseFloorModal() {
+  const t = useT();
   const closeModal = useUI((s) => s.closeModal);
   const showToast = useUI((s) => s.showToast);
   const payload = useUI((s) => s.modalPayload) as CloseFloorPayload | null;
@@ -43,7 +45,7 @@ export function CloseFloorModal() {
     setBusy(true);
     try {
       await closeFloor({ project, group, deleteBranch: deleteBranch });
-      showToast(`Andar "${group.name}" encerrado.`);
+      showToast(t('Andar "{name}" encerrado.', { name: group.name }));
       closeModal();
     } catch (e) {
       // Uncommitted work (the most common refusal) arrives here as an error:
@@ -61,7 +63,7 @@ export function CloseFloorModal() {
       footer={
         <div className="modal-foot-row modal-foot-row--end">
           <button className="btn" onClick={closeModal}>
-            Cancelar
+            {t("Cancelar")}
           </button>
           <button
             className="btn btn--danger"
@@ -69,7 +71,7 @@ export function CloseFloorModal() {
             onClick={() => void closeIt()}
           >
             <Trash2 size={13} aria-hidden="true" />
-            {busy ? "Encerrando…" : "Encerrar andar"}
+            {busy ? t("Encerrando…") : t("Encerrar andar")}
           </button>
         </div>
       }
@@ -94,15 +96,16 @@ export function CloseFloorModal() {
               checked={deleteBranch}
               onChange={(e) => setDeleteBranch(e.target.checked)}
             />
-            Apagar também a branch <code>{floor.branch}</code> (desmarcado, ela
-            continua no repositório)
+            {t("Apagar também a branch")} <code>{floor.branch}</code>{" "}
+            {t("(desmarcado, ela continua no repositório)")}
           </label>
         </div>
       )}
 
       <p className="hint">
-        Com trabalho não commitado no andar o encerramento é recusado — nada é
-        apagado até a árvore estar limpa.
+        {t(
+          "Com trabalho não commitado no andar o encerramento é recusado — nada é apagado até a árvore estar limpa.",
+        )}
       </p>
     </Modal>
   );

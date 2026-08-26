@@ -23,6 +23,7 @@ import { isLive, useTerminals } from "../../stores/terminalsStore";
 import { useFlows, type FlowRun } from "../../stores/flowStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
+import { useT } from "../../hooks/useT";
 
 interface Props {
   groupId: string;
@@ -47,22 +48,23 @@ export function RunRow({
   run: FlowRun;
   onReveal: (id: string) => void;
 }) {
+  const t = useT();
   const now = useNow(1_000);
   const live = !run.finishedAt;
   const state = run.error
-    ? "falhou"
+    ? t("falhou")
     : run.cancelled
-      ? "cancelado"
+      ? t("cancelado")
       : live
         ? elapsedLabel(run.startedAt, now)
-        : "concluído";
+        : t("concluído");
 
   return (
     <div className={`cv-flowrun ${run.error ? "is-error" : ""}`}>
       <button
         className="cv-flowrun-name"
         data-tip-wrap=""
-        data-tip={`${run.task}\n\n(clique para ver a CLI executora)`}
+        data-tip={t("{task}\n\n(clique para ver a CLI executora)", { task: run.task })}
         onClick={() => onReveal(run.terminalId)}
       >
         <Workflow size={12} aria-hidden="true" />
@@ -75,7 +77,7 @@ export function RunRow({
             key={i}
             className={`cv-flowchip is-${s.status}`}
             data-tip-wrap=""
-            data-tip={`${s.label} — etapa ${i + 1}/${run.stages.length}`}
+            data-tip={t("{label} — etapa {n}/{total}", { label: s.label, n: i + 1, total: run.stages.length })}
           >
             <span className="cv-flowchip-dot" aria-hidden="true" />
             {i + 1} {s.label}
@@ -85,8 +87,8 @@ export function RunRow({
       {live ? (
         <button
           className="icon-btn"
-          data-tip="Cancelar o fluxo"
-          aria-label="Cancelar o fluxo"
+          data-tip={t("Cancelar o fluxo")}
+          aria-label={t("Cancelar o fluxo")}
           onClick={() => cancelFlow(run.flowId)}
         >
           <X size={12} />
@@ -94,8 +96,8 @@ export function RunRow({
       ) : (
         <button
           className="icon-btn"
-          data-tip="Dispensar"
-          aria-label="Dispensar este resultado"
+          data-tip={t("Dispensar")}
+          aria-label={t("Dispensar este resultado")}
           onClick={() => useFlows.getState().clear(run.flowId)}
         >
           {run.error || run.cancelled ? <X size={12} /> : <Check size={12} />}
@@ -106,6 +108,7 @@ export function RunRow({
 }
 
 export function FlowHud({ groupId, flows, onReveal, onDraw }: Props) {
+  const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   // Floats over the board: without publishing the rectangle, a portal
   // underneath paints the site over the chips.
@@ -135,7 +138,7 @@ export function FlowHud({ groupId, flows, onReveal, onDraw }: Props) {
       useUI
         .getState()
         .showToast(
-          `Conecte uma CLI de agente (viva) ao cartão de "${flow.name}" para executá-lo.`,
+          t('Conecte uma CLI de agente (viva) ao cartão de "{name}" para executá-lo.', { name: flow.name }),
           "error",
         );
       return;
@@ -160,17 +163,17 @@ export function FlowHud({ groupId, flows, onReveal, onDraw }: Props) {
             <span key={f.id} className="cv-flowpill">
               <button
                 className="cv-flowpill-name"
-                data-tip="Mostrar o cartão no canvas"
+                data-tip={t("Mostrar o cartão no canvas")}
                 onClick={() => onReveal(f.id)}
               >
                 <Workflow size={11} aria-hidden="true" />
                 {f.name}
               </button>
-              <small>{f.stages.length} etapas</small>
+              <small>{t("{n} etapas", { n: f.stages.length })}</small>
               <button
                 className="icon-btn icon-btn--go"
-                data-tip={`Executar "${f.name}" com uma tarefa avulsa`}
-                aria-label={`Executar o fluxo ${f.name}`}
+                data-tip={t('Executar "{name}" com uma tarefa avulsa', { name: f.name })}
+                aria-label={t("Executar o fluxo {name}", { name: f.name })}
                 onClick={() => {
                   setRunFor(runFor === f.id ? null : f.id);
                   setTask("");
@@ -182,8 +185,8 @@ export function FlowHud({ groupId, flows, onReveal, onDraw }: Props) {
           ))}
           <button
             className="icon-btn"
-            data-tip="Novo fluxo (F)"
-            aria-label="Criar um fluxo novo"
+            data-tip={t("Novo fluxo (F)")}
+            aria-label={t("Criar um fluxo novo")}
             onClick={onDraw}
           >
             <Plus size={12} />
@@ -196,7 +199,7 @@ export function FlowHud({ groupId, flows, onReveal, onDraw }: Props) {
           <input
             autoFocus
             type="text"
-            placeholder="A tarefa desta execução (normalmente você a manda direto na CLI conectada)"
+            placeholder={t("A tarefa desta execução (normalmente você a manda direto na CLI conectada)")}
             value={task}
             onChange={(e) => setTask(e.target.value)}
             onKeyDown={(e) => {
@@ -213,7 +216,7 @@ export function FlowHud({ groupId, flows, onReveal, onDraw }: Props) {
               if (flow) runAction(flow);
             }}
           >
-            <Play size={12} /> Executar
+            <Play size={12} /> {t("Executar")}
           </button>
         </div>
       )}

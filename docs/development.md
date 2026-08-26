@@ -74,6 +74,11 @@ just brings the existing window to the front.
 | `YARD_DATA_DIR` | Redirects the data directory (default `%APPDATA%\Yard`). Also **turns off the single-instance lock** — two builds with their own directories don't corrupt each other. |
 | `YARD_LOG`      | `tracing` filter, e.g. `yard_lib=debug,ui=debug,warn`. |
 
+The main window's capabilities (`src-tauri/capabilities/default.json`) grant
+the front end `global-shortcut:allow-register`/`allow-unregister` (the summon
+hotkey) and `core:window:allow-hide` (close to the tray); the tray icon itself
+is built in Rust and needs no JS permission.
+
 Inside every terminal Yard opens, the app injects `YARD=1`, `YARD_PTY_ID`,
 `YARD_PIPE`, `YARD_CLI` and — in agent terminals — `YARD_BRIDGE_HELP` (the
 path to the bridge manual).
@@ -88,14 +93,66 @@ Two workflows live in `.github/workflows/`:
   front end first because `tauri::generate_context!` embeds `dist/` at compile
   time. `pty::engine_tests` spawn a real PowerShell — the runner has one.
 - **`release.yml`** — on a `v*` tag, builds the NSIS installer with
-  `tauri-apps/tauri-action` and attaches it to a **draft** GitHub release for
-  review. Release flow: `git tag v0.1.0 && git push origin v0.1.0`.
+  `tauri-apps/tauri-action`, signs the updater artifacts, writes `latest.json`
+  and attaches everything to a **draft** GitHub release for review. Release
+  flow: `git tag v0.1.0 && git push origin v0.1.0`, then publish the draft —
+  **publishing is what ships the update**: the app reads
+  `https://github.com/alanadson/yard/releases/latest/download/latest.json`,
+  and a draft is not "latest".
 
-The installer is not code-signed and there is no updater yet. When those come,
-the updater's `TAURI_SIGNING_PRIVATE_KEY` (generated with
-`npm run tauri signer generate`) goes into the release job's secrets — it is
-separate from Windows code signing ([Windows pitfalls, item
-7](./specs/04-windows-pitfalls.md)).
+### Updater signing (required for every release)
+
+The in-app updater (`src-tauri/src/updater.rs`, `src/stores/updaterStore.ts`)
+only installs what the updater key signed. The key pair was generated with
+`npx tauri signer generate -w %USERPROFILE%\.tauri\yard-updater.key`; the
+public half lives in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`)
+and a Rust test (`updater::tests`) fails the build if it goes missing. The
+private half never enters the repository. The release job reads it from two
+secrets:
+
+| Secret | Value |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | the **content** of `yard-updater.key` |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | its password (empty when the key has none) |
+
+Without them `bundle.createUpdaterArtifacts` makes the build fail on purpose
+— an unsigned installer can never become an update. Losing the private key
+means every installed copy stops seeing updates: regenerate, ship one last
+manually-installed release with the new public key, then continue.
+
+The app checks half a minute after boot and every six hours after that
+(`autoCheckUpdates`, off in Configurações → Dados e backup), keeps the last
+check in `kv` (`updater.lastCheckAt`) so a reload does not fetch again, and
+remembers a version the user ignored (`updater.skipVersion`). The installer
+runs in `passive` mode and the app relaunches by itself.
+
+### Code signing (optional; wired, waiting for a certificate)
+
+Windows code signing is separate from the updater key: it is what stops
+SmartScreen from asking on first install. The release job already carries the
+step — import a PFX from `WINDOWS_CERT_PFX` (base64 of the `.pfx`) with
+`WINDOWS_CERT_PASSWORD`, read its thumbprint and pass it to the bundler
+through `--config` (`bundle.windows.certificateThumbprint`, `sha256`,
+`http://timestamp.digicert.com`). With the two secrets absent the step is a
+no-op and the build is unsigned, exactly as before; until a certificate exists
+the SmartScreen prompt is documented in the README
+([Windows pitfalls, item 7](./specs/04-windows-pitfalls.md)).
+
+## Reporting a problem
+
+**Configurações → Dados e backup → Relatar um problema** writes a support
+bundle the user can attach to an issue. It contains, and only contains:
+
+- `logs/yard.log.<date>` for today and yesterday (from `logs_dir()`);
+- `about.json` — app version, OS, data directory, whether `YARD_DATA_DIR` is set;
+- `agents.json` — the CLIs detected on the machine, with versions.
+
+It never contains `app.db`, scrollback `.bin` files, the `kv` preferences,
+notes, agent session files or anything from the user's projects — the test
+`bundle_holds_recent_logs_and_the_two_jsons_and_nothing_else` in
+`src-tauri/src/support.rs` pins that list. The "Copiar link do rastreador"
+button copies the new-issue URL plus a skeleton to the clipboard; nothing in
+production opens a browser.
 
 ## License
 

@@ -13,6 +13,8 @@
  * promise.
  */
 
+// i18n-scan: tables — the descriptions are translated where the lists render them.
+
 export type Shortcut = [teclas: string[], descricao: string];
 
 export interface ShortcutGroup {
@@ -46,6 +48,13 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       [["Ctrl", "Shift", "A"], "Ir para o próximo agente que está esperando você"],
       [["Ctrl", "Shift", "W"], "Fechar a aba em foco (CLI, arquivo, navegador ou notas)"],
       [["Ctrl", "Shift", "H"], "A lista completa de atalhos"],
+      [["Ctrl", "Shift", "U"], "Transmitir o teclado para todas as CLIs do grupo (liga/desliga)"],
+      [
+        ["Ctrl", "Alt", "Y"],
+        "Trazer ou esconder a janela do Yard — de qualquer lugar do Windows (configurável)",
+      ],
+      [["Ctrl", "Alt", "U"], "Custos e uso — tokens e gasto estimado por dia, projeto, agente e modelo"],
+      [["Ctrl", "Shift", "O"], "Ombro — o que cada agente do grupo fez, lido das sessões em disco"],
     ],
   },
   {
@@ -81,6 +90,11 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       [["Alt", "↑"], "Mover a linha (Alt+↓ desce · Shift+Alt copia)"],
       [["Ctrl", "Shift", "K"], "Apagar a linha"],
       [["Ctrl", "Space"], "Completar a palavra"],
+      [["F12"], "Ir para a definição do símbolo (com um servidor de linguagem)"],
+      [["Shift", "F12"], "Referências do símbolo (LSP); Esc fecha o painel"],
+      [["F2"], "Renomear o símbolo sob o cursor (LSP) — na árvore, renomeia o item"],
+      [["Shift", "Alt", "F"], "Formatar o documento pelo servidor de linguagem"],
+      [["Ctrl", "Shift", "Space"], "Ajuda de assinatura (LSP; Ctrl+Shift+↑/↓ troca a assinatura)"],
       [["Ctrl", "Tab"], "O arquivo é uma aba do painel: alterna com as CLIs"],
       [["Esc"], "No canvas, encosta o editor (os arquivos continuam abertos)"],
       [["F2"], "Renomear o item selecionado na árvore"],
@@ -114,6 +128,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       [["Ctrl", "V"], "Colar (o botão direito abre o menu, não cola sozinho)"],
       [["Shift", "Insert"], "Colar"],
       [["Ctrl", "V"], "Colar imagem: vira arquivo e o agente recebe o caminho"],
+      [["Ctrl", "clique"], "Abrir o link, ou o arquivo na linha apontada, que a saída mostra"],
     ],
   },
   {

@@ -18,6 +18,7 @@ import {
 import { EMPTY_CANVAS, normalizeCanvas, type CanvasData } from "../lib/canvas";
 import { extractBoards } from "../lib/boards";
 import { GROUND_FLOOR, normalizeFloor, type FloorMeta } from "../lib/floors";
+import { t } from "../lib/i18n";
 import {
   normalizeSurface,
   onSurface,
@@ -367,8 +368,9 @@ export const useProjects = create<ProjectsState>((set, get) => ({
               useUI
                 .getState()
                 .showToast(
-                  "Outra instância do Yard gravou este workspace — recarreguei do " +
-                    "disco, e o que estava só aqui na tela se perdeu.",
+                  t(
+                    "Outra instância do Yard gravou este workspace — recarreguei do disco, e o que estava só aqui na tela se perdeu.",
+                  ),
                   "error",
                 );
               saveRequested = false;
@@ -518,7 +520,7 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     const group: GroupRow = {
       id,
       projectId,
-      name: name ?? `Grupo ${count + 1}`,
+      name: name ?? t("Grupo {n}", { n: count + 1 }),
       layoutJson: JSON.stringify({ ...DEFAULT_LAYOUT, ...(opts?.layout ?? {}) }),
       suspended: false,
       sort,

@@ -32,6 +32,7 @@ import {
   type ScmStash,
   type ScmTag,
 } from "../lib/ipc";
+import { t } from "../lib/i18n";
 import { persistJsonPref, type PrefsSnapshot } from "../lib/prefs";
 import { rootKey } from "../lib/roots";
 
@@ -272,8 +273,8 @@ export const useScm = create<ScmState>((set, get) => ({
 
   commit: async (root, opts) => {
     const message = get().draftOf(root);
-    if (!message.trim()) return "Escreva a mensagem do commit";
-    const err = await get().run(root, "commitando", () =>
+    if (!message.trim()) return t("Escreva a mensagem do commit");
+    const err = await get().run(root, t("commitando"), () =>
       ipc.scmCommit(root, message, opts),
     );
     // The text only goes away once the commit exists: retyping the message

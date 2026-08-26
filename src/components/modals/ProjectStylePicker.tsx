@@ -5,6 +5,7 @@
  * row of color dots (the first is the theme's neutral). Both are real
  * radiogroups — keyboard navigates, screen reader announces.
  */
+import { useT } from "../../hooks/useT";
 import { PROJECT_COLORS, PROJECT_ICONS } from "../../lib/projectStyle";
 
 interface Props {
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export function ProjectStylePicker({ icon, color, onIcon, onColor }: Props) {
+  const t = useT();
   // The selected icon takes the chosen color in the grid itself: the user
   // sees the final combination without a separate preview.
   const tint = color ?? undefined;
@@ -23,7 +25,7 @@ export function ProjectStylePicker({ icon, color, onIcon, onColor }: Props) {
     <>
       <div className="picker-field">
         <span className="picker-label" id="picker-icones">
-          Ícone
+          {t("Ícone")}
         </span>
         <div className="icon-grid" role="radiogroup" aria-labelledby="picker-icones">
           {Object.entries(PROJECT_ICONS).map(([name, Icon]) => {
@@ -48,7 +50,7 @@ export function ProjectStylePicker({ icon, color, onIcon, onColor }: Props) {
 
       <div className="picker-field">
         <span className="picker-label" id="picker-cores">
-          Cor
+          {t("Cor")}
         </span>
         <div className="color-row" role="radiogroup" aria-labelledby="picker-cores">
           {PROJECT_COLORS.map((c) => {
@@ -59,8 +61,8 @@ export function ProjectStylePicker({ icon, color, onIcon, onColor }: Props) {
                 type="button"
                 role="radio"
                 aria-checked={active}
-                aria-label={c ?? "Sem cor"}
-                data-tip={c ?? "Sem cor"}
+                aria-label={c ?? t("Sem cor")}
+                data-tip={c ?? t("Sem cor")}
                 className={`color-dot ${c === null ? "color-dot--none" : ""} ${
                   active ? "is-active" : ""
                 }`}

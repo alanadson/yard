@@ -57,6 +57,29 @@ impl Scrollback {
         }
     }
 
+    /// An empty scrollback at an explicit path. The path comes in as a
+    /// parameter so a test does not have to touch `YARD_DATA_DIR` — env vars
+    /// are process-global, and cargo runs tests in parallel.
+    pub fn at(path: PathBuf) -> Self {
+        Self {
+            path,
+            ring: VecDeque::new(),
+            pending: Vec::new(),
+            file_len: 0,
+        }
+    }
+
+    /// The `.bin` this scrollback appends to.
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    /// The whole ring, byte for byte — what an export wants when the disk
+    /// has nothing to offer (`snapshot` is the lossy UTF-8 view the UI paints).
+    pub fn bytes(&self) -> Vec<u8> {
+        self.ring.iter().copied().collect()
+    }
+
     pub fn push(&mut self, bytes: &[u8]) {
         self.pending.extend_from_slice(bytes);
         self.ring.extend(bytes.iter().copied());

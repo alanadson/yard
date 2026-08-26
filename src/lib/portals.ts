@@ -64,7 +64,7 @@ export const UA_CHOICES: UaChoice[] = [
   { id: "android", label: "Chrome (Android)", kind: "ua", engine: "webview2", ua: "android", group: "device" },
   {
     id: "firefox-android",
-    label: "Firefox (Android)",
+    label: "Firefox (Android)", // i18n-ok
     kind: "ua",
     engine: "webview2",
     ua: "firefox-android",
@@ -72,7 +72,7 @@ export const UA_CHOICES: UaChoice[] = [
   },
   {
     id: "edge-android",
-    label: "Microsoft Edge (Android)",
+    label: "Microsoft Edge (Android)", // i18n-ok
     kind: "ua",
     engine: "webview2",
     ua: "edge-android",

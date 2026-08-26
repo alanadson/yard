@@ -113,23 +113,27 @@ diffstat, delete the loser with one click.
 
 ## F6 — Product
 
-- [ ] `tauri-plugin-updater` with our own signing key + an endpoint on GitHub
-      Releases
+- [x] `tauri-plugin-updater` with our own signing key + an endpoint on GitHub
+      Releases (2026-08-26 — `updater.rs`, `updaterStore.ts`, `latest.json`
+      from the release workflow)
 - [ ] NSIS installer + icons + `webviewInstallMode: downloadBootstrapper`
-- [ ] Release CI (see [development](../development.md#cicd--build-and-release-by-tag))
-      producing a release per tag
+- [x] Release CI (see [development](../development.md#cicd))
+      producing a signed release per tag (2026-08-26 — updater artifacts +
+      `latest.json`; code signing wired behind two secrets)
 - [ ] Harden the CSP; review Tauri `capabilities` (bare minimum)
 - [ ] Windows code signing (see
-      [Windows pitfalls, item 7](./04-windows-pitfalls.md)) — or document the
-      SmartScreen warning
-- [ ] Minimal onboarding: first run detects agents and suggests creating the
-      first project
+      [Windows pitfalls, item 7](./04-windows-pitfalls.md)) — wiring + docs
+      ready (2026-08-26, `release.yml` imports a PFX when the secrets exist);
+      needs a certificate. Until then the SmartScreen warning is documented
+- [x] Minimal onboarding: first run detects agents and suggests creating the
+      first project (2026-08-26 — `OnboardingModal`, `lib/onboarding.ts`)
 
 ## F7 — Horizon (after 1.0)
 
 Headless terminal in pure Rust (`wezterm-term`) mirroring state — enables
 perfect reconnection and a mobile companion over WebSocket + NaCl encryption;
-MCP manager.
+MCP manager — **shipped 2026-08-26** as Configurações → Servidores MCP
+(`mcp.rs`, five verified formats, copy between CLIs; see features.md).
 
 > The **diff annotations handed back to the agent** that this item foresaw
 > shipped earlier, in §8.1 — and without waiting for the headless terminal,
@@ -324,9 +328,12 @@ then the list — instead of crushing the editor.
       positioned over the card's rectangle) that the agent drives with
       `yard portal open/goto/snapshot/click/fill`. Gained **design mode** and
       opening straight from the address the process advertised.
-- [ ] **"Shoulder"** — a per-group digest of what each agent did, from the
+- [x] **"Shoulder"** — a per-group digest of what each agent did, from the
       JSONL files `agents/sessions.rs` already reads (parsed in
       `spawn_blocking`).
+      Delivered 2026-08-26 as the **Ombro** sheet (`Ctrl+Shift+O`) plus a
+      readable **transcript** of any session, both over `session_events` and
+      the reducer extracted into `lib/liveModel.ts` — see features.md.
 - [x] **Paste an image into the terminal and the composer** (2026-08-15). It
       sat here as "not planned" for the right reason — CLIs expect a file path
       and a PTY does not carry image bytes — and the way out is precisely to
@@ -474,3 +481,63 @@ then the list — instead of crushing the editor.
       with silence. The commands are still CodeMirror's; only the clothing is
       ours (`CodeEditor/searchPanel.ts`, counting in `searchCore.ts`). The
       same bar serves the file editor and the notebook.
+
+- [x] **Ctrl+click on links and paths in the terminal** (2026-08-26).
+      `findLinks` (`lib/termLinks.ts`) underlines addresses and paths with
+      their `:line:col` — tsc's `(12,3)` and rustc's `--> x.rs:12:3` included
+      — and `lib/termLinkOpen.ts` resolves the path against the process's
+      folder, then the group's root, and opens it as an editor tab at the
+      line; an address becomes a browser tab of the same pane or a portal
+      wired to the card. Ctrl is required so a click never opens anything by
+      accident; a plain click still focuses and selects.
+- [x] **Keyboard broadcast** (2026-08-26). `Ctrl+Shift+U` arms the active
+      group: keystrokes typed into one CLI are written to every other live
+      CLI of the group (`lib/broadcast.ts` decides who; `XTermView.onData`
+      writes). In memory only — never persisted — with a strip over each
+      terminal while it is on.
+- [x] **Save a terminal's output** (2026-08-26). The scrollback could be
+      seen and searched but never taken out of the app. "Salvar saída…" on
+      the CLI's menu writes it to a file: `.txt` strips the escapes and
+      resolves in-line overwrites (`src-tauri/src/pty_export.rs`), `.ansi`
+      keeps every byte. Works on a dead terminal (the `.bin` on disk) and
+      refuses an empty scrollback instead of writing an empty file.
+- [x] **Light appearance** (2026-08-26). *Escuro · Claro · Sistema* in
+      Configurações → Interface; `theme-light.css` redefines the tokens on
+      `<html data-theme="light">` (dark = no attribute), a second ANSI palette
+      for the well, `--syn-*`/`--cm-*` tokens for the editor. Contrast floors
+      and the boot order are tests over the real CSS.
+- [x] **Tray icon, summon hotkey, close to the tray** (2026-08-26). The
+      notification-area icon (`tray.rs`, a `tray-icon` feature of the core
+      crate, not a plugin) with the agents' counts in its tooltip; a global
+      hotkey through `tauri-plugin-global-shortcut`, registered by the
+      frontend from an editable preference (`lib/tray.ts` normalizes it, a
+      bare key is refused); and the X that hides instead of quitting when
+      `closeToTray` is on — *Sair* (tray menu, palette) then runs the
+      window's exit flow via `lib/quit.ts`.
+- [x] **Support bundle** (2026-08-26). *Relatar um problema* in Settings →
+      Dados: a `.zip` with the last two days of logs + `about.json` +
+      `agents.json`, nothing private; the tracker link is copied, never
+      opened (`src-tauri/src/support.rs`, `src/lib/support.ts`).
+- [x] **Automatic backups** (2026-08-26): a daily/weekly `.zip` with retention beside the manual export — `lib/autoBackup.ts` decides when, `persistence/autobackup.rs` writes and prunes (only its own `yard-auto-*` files), the stamp lives in the kv `backup.lastAutoAt`.
+- [x] **Custos e uso** (2026-08-26). Tokens and estimated spend over the last
+      day/week/month, per day, project, agent and model, read from the Claude
+      Code and Codex session files (`src-tauri/src/costs.rs`, folding in
+      `src/lib/costs.ts`); a partially priced sum shows as a floor.
+- [x] **Triggers — when X happens, do Y** (2026-08-26). Event-driven
+      automations next to the routines (`TriggerDef` in `lib/canvas.ts`): a
+      source CLI (or any), an edge (`finished`, `blocked`, `exited`) and an
+      action (ask another CLI, notify, run a flow on the one that fired). Pure
+      engine in `lib/triggers.ts` (edges not states; the sendability gate;
+      cooldown, one-shot and the self-ask loop guard), delivery in
+      `hooks/useTriggers.ts`, the "Gatilhos" section of the routines sheet,
+      and `yard trigger list|create|pause|resume|delete` with the `ask` gate.
+- [x] **Agents over SSH** (2026-08-26). "Roda em" gained a third place next
+      to Windows and WSL: `ssh.exe -tt <host> "cd '<remote>' && exec <cli>
+      …"`, host aliases read from `~/.ssh/config` (`ssh.rs`), the remote
+      folder typed in Settings. Documented limit: the `yard` bridge and the
+      `YARD_*` environment do not cross the connection.
+- [x] **Language servers in the editor** (2026-08-26): `lsp.rs` process
+      manager (framing decoder, Job Object, kill on exit, catalog with
+      version probes), `@codemirror/lsp-client` in the file editor with one
+      client per (root, server), the catalog and its install lines in
+      Configurações → Editor, and the LSP keys in the shortcuts table.

@@ -84,7 +84,7 @@ export function wordScore(query: string, fields: readonly string[]): number {
   }
 
   // Half of the meaningful words unmatched: the user meant something else.
-  if (meaningful > 0 && covered * 2 <= meaningful) return 0;
+  if (meaningful > 0 && covered * 2 <= meaningful) return 0; // i18n-ok
   return score;
 }
 

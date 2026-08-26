@@ -17,6 +17,7 @@ import {
 } from "./floors";
 import { applyScore, serializeGroup } from "./scores";
 import { useProjects } from "../stores/projectsStore";
+import { t } from "./i18n";
 
 export interface CreateFloorInput {
   projectId: string;
@@ -40,15 +41,15 @@ export interface CreatedFloor {
 export async function createFloor(input: CreateFloorInput): Promise<CreatedFloor> {
   const s = useProjects.getState();
   const project = s.projects.find((p) => p.id === input.projectId);
-  if (!project) throw new Error("projeto não encontrado");
+  if (!project) throw new Error(t("projeto não encontrado"));
   const name = input.name.trim();
-  if (!name) throw new Error("dê um nome ao andar");
+  if (!name) throw new Error(t("dê um nome ao andar"));
   const duplicates = findGroupNamed(s.groupsOf(project.id), name);
   if (duplicates) {
-    throw new Error(`já existe um grupo/andar chamado "${duplicates.name}" neste projeto`);
+    throw new Error(t('já existe um grupo/andar chamado "{name}" neste projeto', { name: duplicates.name }));
   }
   if (input.existingBranch && !input.branch?.trim()) {
-    throw new Error("uma branch existente exige o nome dela");
+    throw new Error(t("uma branch existente exige o nome dela"));
   }
 
   let provisioned: { path: string; branch: string | null } | null = null;
@@ -116,7 +117,10 @@ export async function createFloor(input: CreateFloorInput): Promise<CreatedFloor
         );
       } catch {
         throw new Error(
-          `${e}. O worktree em ${provisioned.path} ficou para trás — apague-o com \`git worktree remove\`.`,
+          t("{e}. O worktree em {path} ficou para trás — apague-o com `git worktree remove`.", {
+            e: String(e),
+            path: provisioned.path,
+          }),
         );
       }
     }

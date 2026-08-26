@@ -13,6 +13,7 @@ import { Copy, FilePlus, FolderOpen, FolderPlus, Pencil, RotateCw, Trash2 } from
 
 import { toOsPath } from "./paths";
 import type { MenuEntry } from "../components/ContextMenu";
+import { t } from "./i18n";
 
 /** What the menu needs to know about the clicked row. */
 export interface FileTreeMenuEntry {
@@ -50,13 +51,13 @@ export function fileTreeMenu(
   const items: MenuEntry[] = [
     {
       id: "new-file",
-      label: "Novo arquivo",
+      label: t("Novo arquivo"),
       icon: <FilePlus size={13} />,
       onSelect: () => act.draft(dir, false),
     },
     {
       id: "new-dir",
-      label: "Nova pasta",
+      label: t("Nova pasta"),
       icon: <FolderPlus size={13} />,
       onSelect: () => act.draft(dir, true),
     },
@@ -67,26 +68,26 @@ export function fileTreeMenu(
     items.push(
       {
         id: "rename",
-        label: "Renomear…",
+        label: t("Renomear…"),
         icon: <Pencil size={13} />,
         onSelect: () => act.rename(entry.path),
       },
       {
         id: "copy",
-        label: "Copiar caminho",
+        label: t("Copiar caminho"),
         icon: <Copy size={13} />,
         onSelect: () => act.copyPath(entry.path),
       },
       {
         id: "reveal",
-        label: "Mostrar no Explorer",
+        label: t("Mostrar no Explorer"),
         icon: <FolderOpen size={13} />,
         onSelect: () => act.reveal(toOsPath(root, entry.path)),
       },
       { kind: "sep" },
       {
         id: "delete",
-        label: "Excluir…",
+        label: t("Excluir…"),
         icon: <Trash2 size={13} />,
         danger: true,
         onSelect: () => act.remove(entry),
@@ -101,20 +102,20 @@ export function fileTreeMenu(
   items.push(
     {
       id: "copy",
-      label: "Copiar caminho do projeto",
+      label: t("Copiar caminho do projeto"),
       icon: <Copy size={13} />,
       onSelect: () => act.copyPath(root),
     },
     {
       id: "reveal",
-      label: "Mostrar no Explorer",
+      label: t("Mostrar no Explorer"),
       icon: <FolderOpen size={13} />,
       onSelect: () => act.reveal(root),
     },
     { kind: "sep" },
     {
       id: "refresh",
-      label: "Reler a pasta do disco",
+      label: t("Reler a pasta do disco"),
       icon: <RotateCw size={13} />,
       onSelect: act.refresh,
     },

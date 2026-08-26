@@ -38,6 +38,8 @@ import { NotesRail } from "./NotesRail";
 import { NoteList } from "./NoteList";
 import { NoteEditor } from "./NoteEditor";
 import { Resizer } from "../Resizer";
+import { useT } from "../../hooks/useT";
+import { tn } from "../../lib/i18n";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { isTopLayer } from "../../lib/layers";
 import {
@@ -54,6 +56,7 @@ type NotesVariant = "overlay" | "center" | "tab";
 export function NotesView() {
   const open = useNotes((s) => s.open);
   const rootRef = useRef<HTMLDivElement>(null);
+  const t = useT();
 
   useDialogFocus(rootRef, open, "anotacoes");
 
@@ -113,7 +116,7 @@ export function NotesView() {
         className="notes"
         role="dialog"
         aria-modal="true"
-        aria-label="Anotações"
+        aria-label={t("Anotações")}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <NotesShell variant="overlay" />
@@ -124,11 +127,12 @@ export function NotesView() {
 
 /** The notebook filling the central workspace area — a view, not a dialog. */
 export function NotesCenter() {
+  const t = useT();
   useLandingFocus();
   return (
     <section
       className="notes notes--center"
-      aria-label="Anotações"
+      aria-label={t("Anotações")}
       onKeyDown={(e) => {
         // The key that summoned it dismisses it even from inside a text
         // field — the overlay behaves this way, the central place follows.
@@ -158,12 +162,13 @@ export function NotesEmbed() {
   // one case where the tab could be mounted at the same time as the sheet —
   // and two surfaces may never mount together, so the tab yields.
   const overlayUp = useNotes((s) => s.open);
+  const t = useT();
   useLandingFocus();
   if (overlayUp) return null;
   return (
     <section
       className="notes notes--tab"
-      aria-label="Anotações"
+      aria-label={t("Anotações")}
       onKeyDown={notebookKeys}
     >
       <NotesShell variant="tab" />
@@ -206,12 +211,13 @@ function notebookKeys(e: React.KeyboardEvent) {
 function PlaceSwitch() {
   const placeKind = useNotes((s) => s.place.kind);
   const activeGroupId = useProjects((s) => s.activeGroupId);
+  const t = useT();
   return (
-    <div className="md-modes" role="group" aria-label="Onde o caderno abre">
+    <div className="md-modes" role="group" aria-label={t("Onde o caderno abre")}>
       <button
         className={`icon-btn ${placeKind === "overlay" ? "is-active" : ""}`}
-        data-tip="Sobreposto — o caderno flutua sobre a tela"
-        aria-label="Abrir sobreposto"
+        data-tip={t("Sobreposto — o caderno flutua sobre a tela")}
+        aria-label={t("Abrir sobreposto")}
         aria-pressed={placeKind === "overlay"}
         onClick={() => useNotes.getState().setPlaceKind("overlay")}
       >
@@ -221,10 +227,10 @@ function PlaceSwitch() {
         className={`icon-btn ${placeKind === "tab" ? "is-active" : ""}`}
         data-tip={
           activeGroupId
-            ? "Em aba — no painel em foco, ao lado das CLIs"
-            : "Em aba — abra um grupo primeiro"
+            ? t("Em aba — no painel em foco, ao lado das CLIs")
+            : t("Em aba — abra um grupo primeiro")
         }
-        aria-label="Abrir em aba no painel"
+        aria-label={t("Abrir em aba no painel")}
         aria-pressed={placeKind === "tab"}
         disabled={!activeGroupId}
         onClick={() => {
@@ -235,8 +241,8 @@ function PlaceSwitch() {
       </button>
       <button
         className={`icon-btn ${placeKind === "center" ? "is-active" : ""}`}
-        data-tip="Área central — ocupa todo o espaço do workspace"
-        aria-label="Ocupar a área central"
+        data-tip={t("Área central — ocupa todo o espaço do workspace")}
+        aria-label={t("Ocupar a área central")}
         aria-pressed={placeKind === "center"}
         onClick={() => useNotes.getState().setPlaceKind("center")}
       >
@@ -252,41 +258,42 @@ function NotesShell({ variant }: { variant: NotesVariant }) {
   const listW = useNotes((s) => s.listW);
   const saveError = useNotes((s) => s.saveError);
   const total = useNotes((s) => s.notes.reduce((n, x) => n + (x.deletedAt === null ? 1 : 0), 0));
+  const t = useT();
 
   return (
     <>
       <header className="notes-topbar">
         <span className="notes-brand">
           <NotebookPen size={14} aria-hidden="true" />
-          Anotações
+          {t("Anotações")}
           {total > 0 && (
             <span className="notes-brand-count">
-              {total} {total === 1 ? "nota" : "notas"}
+              {tn(total, "{n} nota", "{n} notas")}
             </span>
           )}
         </span>
         {saveError && (
           <span className="notes-savewarn" role="alert">
             <AlertTriangle size={12} aria-hidden="true" />
-            Não estou conseguindo gravar — a última mudança ainda não foi salva.
+            {t("Não estou conseguindo gravar — a última mudança ainda não foi salva.")}
           </span>
         )}
         <div className="notes-topbar-right">
           <PlaceSwitch />
           <button
             className="btn btn--primary btn--sm"
-            data-tip="Nova nota (Ctrl+N)"
+            data-tip={t("Nova nota (Ctrl+N)")}
             onClick={() => useNotes.getState().createNote()}
           >
-            <Plus size={12} aria-hidden="true" /> Nova nota
+            <Plus size={12} aria-hidden="true" /> {t("Nova nota")}
           </button>
           {/* A tab closes on its own X in the bar; the other two close here. */}
           {variant !== "tab" && (
             <button
               className="icon-btn"
-              data-tip={variant === "overlay" ? "Fechar (Esc)" : "Fechar — volta ao grid"}
+              data-tip={variant === "overlay" ? t("Fechar (Esc)") : t("Fechar — volta ao grid")}
               data-tip-at="right"
-              aria-label="Fechar as anotações"
+              aria-label={t("Fechar as anotações")}
               onClick={() => useNotes.getState().closeView()}
             >
               <X size={14} />
@@ -304,7 +311,7 @@ function NotesShell({ variant }: { variant: NotesVariant }) {
             min={184}
             max={320}
             defaultWidth={RAIL_DEFAULT}
-            label="Largura da coluna de cadernos"
+            label={t("Largura da coluna de cadernos")}
             onResize={(w) => useNotes.getState().setRailW(w)}
             onCommit={(w) => useNotes.getState().setRailW(w, true)}
           />
@@ -317,7 +324,7 @@ function NotesShell({ variant }: { variant: NotesVariant }) {
             min={248}
             max={440}
             defaultWidth={LIST_DEFAULT}
-            label="Largura da lista de notas"
+            label={t("Largura da lista de notas")}
             onResize={(w) => useNotes.getState().setListW(w)}
             onCommit={(w) => useNotes.getState().setListW(w, true)}
           />

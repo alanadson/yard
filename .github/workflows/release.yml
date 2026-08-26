@@ -1,7 +1,10 @@
 name: release
 
 # Tag a commit (`git tag v0.1.0 && git push origin v0.1.0`) and this builds the
-# NSIS installer and attaches it to a draft GitHub release for review.
+# NSIS installer, signs the updater artifacts, writes `latest.json` and
+# attaches everything to a draft GitHub release for review. Publishing the
+# draft is what makes the running installs see the update (the app reads
+# `releases/latest/download/latest.json` — see docs/development.md).
 on:
   push:
     tags: ["v*"]
@@ -23,12 +26,55 @@ jobs:
         with:
           workspaces: src-tauri
       - run: npm ci
+
+      # Windows code signing — only when the repository carries a certificate.
+      # `secrets.*` cannot be tested in `if:` directly, so the presence check
+      # goes through an env var. With no certificate the step writes an empty
+      # `args` output and the build runs unsigned, exactly as before; the day
+      # a certificate exists, nothing but the two secrets changes.
+      - name: Import the code-signing certificate
+        id: cert
+        shell: pwsh
+        env:
+          HAS_CERT: ${{ secrets.WINDOWS_CERT_PFX != '' }}
+          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if ($env:HAS_CERT -ne 'true') {
+            Write-Output "no certificate secret: building unsigned"
+            "args=" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            exit 0
+          }
+          New-Item -ItemType Directory -Force certificate | Out-Null
+          [IO.File]::WriteAllBytes("certificate/certificate.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
+          $cert = Import-PfxCertificate -FilePath certificate/certificate.pfx -CertStoreLocation Cert:\CurrentUser\My `
+            -Password (ConvertTo-SecureString -String $env:WINDOWS_CERT_PASSWORD -Force -AsPlainText)
+          Remove-Item -Recurse -Force certificate
+          $override = @{ bundle = @{ windows = @{
+            certificateThumbprint = $cert.Thumbprint
+            digestAlgorithm = "sha256"
+            timestampUrl = "http://timestamp.digicert.com"
+          } } } | ConvertTo-Json -Depth 5 -Compress
+          $path = Join-Path $env:RUNNER_TEMP "signing.json"
+          Set-Content -Path $path -Value $override -Encoding utf8
+          "args=--config `"$path`"" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Output "certificate imported: $($cert.Thumbprint)"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The updater's minisign key (`npx tauri signer generate`). Without
+          # it `createUpdaterArtifacts` fails the build on purpose: an
+          # unsigned installer can never become an update.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Yard ${{ github.ref_name }}"
           releaseBody: "See the assets below. Windows 10/11, x64."
           releaseDraft: true
           prerelease: false
+          # `latest.json` next to the installer: the app's updater endpoint.
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: ${{ steps.cert.outputs.args }}

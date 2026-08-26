@@ -23,7 +23,9 @@ import {
   TerminalSquare,
 } from "lucide-react";
 
+// i18n-scan: tables — `LABELS` is translated where `textMenuEntries` builds the rows.
 import { copyText, readClipboardText } from "./clipboard";
+import { t } from "./i18n";
 import {
   systemMenuGroups,
   type MenuTarget,
@@ -206,30 +208,30 @@ function iconFor(id: SystemMenuId) {
   }
 }
 
-function runAction(t: TextTarget, action: SystemMenuAction) {
+function runAction(target: TextTarget, action: SystemMenuAction) {
   const ui = useUI.getState();
   switch (action.id) {
     case "copy":
-      void copyText(t.info.selection).then((ok) => {
-        if (!ok) ui.showToast("Não consegui copiar.", "error");
+      void copyText(target.info.selection).then((ok) => {
+        if (!ok) ui.showToast(t("Não consegui copiar."), "error");
       });
       return;
     case "copy-link":
-      void copyText(t.link ?? "").then((ok) => {
+      void copyText(target.link ?? "").then((ok) => {
         ui.showToast(
-          ok ? "Endereço copiado." : "Não consegui copiar.",
+          ok ? t("Endereço copiado.") : t("Não consegui copiar."),
           ok ? "info" : "error",
         );
       });
       return;
     case "cut":
-      restore(t);
+      restore(target);
       // The native one does both halves at once and preserves the field's
       // undo; only when the host refuses is it reassembled by hand.
       if (!document.execCommand("cut")) {
-        void copyText(t.info.selection).then((ok) => {
+        void copyText(target.info.selection).then((ok) => {
           if (ok) document.execCommand("delete");
-          else ui.showToast("Não consegui recortar.", "error");
+          else ui.showToast(t("Não consegui recortar."), "error");
         });
       }
       return;
@@ -240,31 +242,31 @@ function runAction(t: TextTarget, action: SystemMenuAction) {
         // `""` is a clipboard with no text. Different problems, different
         // advice.
         if (text === null) {
-          ui.showToast("sem acesso à área de transferência — use Ctrl+V", "error");
+          ui.showToast(t("sem acesso à área de transferência — use Ctrl+V"), "error");
           return;
         }
         if (!text) {
-          ui.showToast("não há texto na área de transferência");
+          ui.showToast(t("não há texto na área de transferência"));
           return;
         }
-        if (!t.textField) return;
-        restore(t);
-        insertText(t.textField, text);
+        if (!target.textField) return;
+        restore(target);
+        insertText(target.textField, text);
       });
       return;
     case "select-all":
-      restore(t);
+      restore(target);
       if (
-        t.textField instanceof HTMLInputElement ||
-        t.textField instanceof HTMLTextAreaElement
+        target.textField instanceof HTMLInputElement ||
+        target.textField instanceof HTMLTextAreaElement
       ) {
-        t.textField.select();
+        target.textField.select();
       } else {
         document.execCommand("selectAll");
       }
       return;
     case "search-selection":
-      useSearch.getState().setQuery(t.info.selection.trim());
+      useSearch.getState().setQuery(target.info.selection.trim());
       useBench.getState().revealTab("search");
       return;
     case "palette":
@@ -284,10 +286,10 @@ function runAction(t: TextTarget, action: SystemMenuAction) {
  * application's.
  */
 export function textMenuEntries(
-  t: TextTarget,
+  target: TextTarget,
   { app = true }: { app?: boolean } = {},
 ): MenuEntry[] {
-  const groups = systemMenuGroups(t.info);
+  const groups = systemMenuGroups(target.info);
   const used = app ? groups : groups.slice(0, -1);
   const entries: MenuEntry[] = [];
   for (const group of used) {
@@ -297,12 +299,12 @@ export function textMenuEntries(
         id: action.id,
         label:
           action.id === "search-selection" && action.term
-            ? `Buscar “${action.term}” no projeto`
-            : LABELS[action.id],
+            ? t("Buscar “{term}” no projeto", { term: action.term })
+            : t(LABELS[action.id]),
         icon: iconFor(action.id),
         shortcut: SHORTCUTS[action.id],
         disabled: action.disabled,
-        onSelect: () => runAction(t, action),
+        onSelect: () => runAction(target, action),
       });
     }
   }

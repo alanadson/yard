@@ -1,4 +1,5 @@
 import { ipc } from "./ipc";
+import { t } from "./i18n";
 
 /** Runs a floor hook list in sequence and stops at the first failure. */
 export async function runFloorHooks(
@@ -12,7 +13,11 @@ export async function runFloorHooks(
       if (result.code !== 0) {
         return {
           ok: false,
-          detail: `\`${command}\` saiu com código ${result.code}: ${result.output.slice(0, 200)}`,
+          detail: t("`{command}` saiu com código {code}: {output}", {
+            command,
+            code: String(result.code),
+            output: result.output.slice(0, 200),
+          }),
         };
       }
     } catch (error) {

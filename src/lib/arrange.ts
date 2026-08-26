@@ -255,7 +255,7 @@ function bestAxis(
   }
   if (!best) return null;
   const at = best.at;
-  const hit = targets.filter((t) => lines(t, axis).some((v) => Math.abs(v - at) < 0.01));
+  const hit = targets.filter((t) => lines(t, axis).some((v) => Math.abs(v - at) < 0.01)); // i18n-ok
   return { delta: best.delta, at, targets: hit };
 }
 
@@ -371,7 +371,7 @@ export function snapResize(
     e.apply(best.at);
     const at = best.at;
     const hit = targets.filter((t) =>
-      lines(t, e.axis).some((v) => Math.abs(v - at) < 0.01),
+      lines(t, e.axis).some((v) => Math.abs(v - at) < 0.01), // i18n-ok
     );
     guides.push(guideFor(e.axis, at, out, hit));
   }

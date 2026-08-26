@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 
 import { parseGrab } from "../lib/grab";
 import { deliverGrab } from "../lib/grabDeliver";
+import { t } from "../lib/i18n";
 import { ipc } from "../lib/ipc";
 import { GRAB_POLL_JS, GRAB_START_JS, GRAB_STOP_JS } from "../lib/portalDriver";
 
@@ -30,7 +31,7 @@ export function useGrabMode(
     void ipc.portalEval(portalId, GRAB_START_JS).catch((e) => {
       if (!alive) return;
       setGrabbing(false);
-      showToast(`Não consegui armar o modo design: ${e}`, "error");
+      showToast(t("Não consegui armar o modo design: {reason}", { reason: String(e) }), "error");
     });
 
     const timer = setInterval(() => {

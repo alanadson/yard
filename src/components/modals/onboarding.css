@@ -1,0 +1,115 @@
+/* The welcome sheet (OnboardingModal). Lazy chunk: every class here is used
+   only inside the modal, which is what keeps it out of styles.css. The row
+   of shortcuts reuses `.shortcut-group` / `.shortcut-row` from modal.css. */
+
+.onb-lead {
+  margin: 0 0 16px;
+  font-size: var(--fs-md);
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.onb-lead code {
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  padding: 1px 5px;
+  border-radius: var(--r-sm);
+  background: rgb(255 255 255 / 8%);
+  color: var(--text-bright);
+}
+
+.onb-section + .onb-section {
+  margin-top: 18px;
+}
+
+.onb-section > h4 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.onb-count {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-dim);
+}
+
+.onb-hint {
+  margin: 0 0 8px;
+}
+
+.onb-section .hint--error {
+  margin-top: 8px;
+}
+
+.onb-agents {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+}
+
+.onb-agent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: var(--r-md);
+  background: rgb(255 255 255 / 3%);
+  font-size: var(--fs-sm);
+}
+
+.onb-agent--missing {
+  color: var(--text-dim);
+  background: transparent;
+}
+
+.onb-agent--missing .onb-agent-mark {
+  opacity: 0.45;
+}
+
+.onb-agent-mark {
+  display: inline-flex;
+  width: 16px;
+  justify-content: center;
+  flex: none;
+}
+
+/* The name is what the user reads; the version is a detail. So the name
+   keeps its natural width (down to a floor) and it is the mono version that
+   gives way with an ellipsis — the other way round showed "Claud…" next to a
+   complete "2.1.246 (Claude Code)". */
+.onb-agent-name {
+  flex: 0 0 auto;
+  max-width: 62%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onb-agent-version {
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.onb-agent--missing .onb-agent-version {
+  font-family: inherit;
+  font-style: italic;
+}

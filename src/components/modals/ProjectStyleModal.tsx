@@ -6,11 +6,13 @@ import { useState } from "react";
 
 import { Modal } from "./Modal";
 import { ProjectStylePicker } from "./ProjectStylePicker";
+import { useT } from "../../hooks/useT";
 import { DEFAULT_PROJECT_ICON } from "../../lib/projectStyle";
 import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
 
 export function ProjectStyleModal({ projectId }: { projectId: string }) {
+  const t = useT();
   const closeModal = useUI((s) => s.closeModal);
   const setProjectStyle = useProjects((s) => s.setProjectStyle);
   const project = useProjects((s) =>
@@ -29,15 +31,15 @@ export function ProjectStyleModal({ projectId }: { projectId: string }) {
 
   return (
     <Modal
-      title={`Personalizar “${project.name}”`}
+      title={t("Personalizar “{name}”", { name: project.name })}
       onClose={closeModal}
       footer={
         <div className="modal-foot-row modal-foot-row--end">
           <button className="btn" onClick={closeModal}>
-            Cancelar
+            {t("Cancelar")}
           </button>
           <button className="btn btn--primary" onClick={save}>
-            Salvar
+            {t("Salvar")}
           </button>
         </div>
       }

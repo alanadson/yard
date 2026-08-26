@@ -7,8 +7,10 @@ import { runFloorHooks } from "../../lib/floorHooks";
 import { useChanges } from "../../stores/changesStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
+import { useT } from "../../hooks/useT";
 
 export function NewFloorModal() {
+  const t = useT();
   const closeModal = useUI((s) => s.closeModal);
   const showToast = useUI((s) => s.showToast);
   const payload = useUI((s) => s.modalPayload) as { projectId?: string } | null;
@@ -51,11 +53,11 @@ export function NewFloorModal() {
   const create = async () => {
     const name = itemName.trim();
     if (!name) {
-      fail("nome", "Dê um nome ao andar.");
+      fail("nome", t("Dê um nome ao andar."));
       return;
     }
     if (existing && !branch.trim()) {
-      fail("branch", "Informe a branch existente.");
+      fail("branch", t("Informe a branch existente."));
       return;
     }
     const duplicates = findGroupNamed(
@@ -65,7 +67,7 @@ export function NewFloorModal() {
     if (duplicates) {
       fail(
         "nome",
-        `Já existe um grupo/andar chamado "${duplicates.name}" neste projeto.`,
+        t('Já existe um grupo/andar chamado "{name}" neste projeto.', { name: duplicates.name }),
       );
       return;
     }
@@ -98,16 +100,16 @@ export function NewFloorModal() {
             projectName: project.name,
           }),
         );
-        if (!r.ok) showToast(`Setup do andar falhou: ${r.detail}`, "error");
+        if (!r.ok) showToast(t("Setup do andar falhou: {detail}", { detail: r.detail }), "error");
       }
       showToast(
         provision.kind === "isolated"
-          ? `Andar "${name}" criado na branch ${provision.branch}.`
-          : `Andar "${name}" criado sem git — mesmo diretório do chão.`,
+          ? t('Andar "{name}" criado na branch {branch}.', { name, branch: provision.branch ?? "" })
+          : t('Andar "{name}" criado sem git — mesmo diretório do chão.', { name }),
       );
       closeModal();
     } catch (e) {
-      showToast(`Não consegui criar o andar: ${e}`, "error");
+      showToast(t("Não consegui criar o andar: {e}", { e: String(e) }), "error");
     } finally {
       setBusy(false);
     }
@@ -115,7 +117,7 @@ export function NewFloorModal() {
 
   return (
     <Modal
-      title="Criar andar"
+      title={t("Criar andar")}
       onClose={closeModal}
       dirty={
         !!itemName.trim() ||
@@ -127,29 +129,29 @@ export function NewFloorModal() {
       footer={
         <div className="modal-foot-row">
           <span className="hint grow">
-            O andar vira um <code>git worktree</code> em{" "}
-            <code>.yard\floors\…</code> — o chão continua intocado.
+            {t("O andar vira um")} <code>git worktree</code> {t("em")}{" "}
+            <code>.yard\floors\…</code> {t("— o chão continua intocado.")}
           </span>
           <button className="btn" onClick={closeModal}>
-            Cancelar
+            {t("Cancelar")}
           </button>
           <button
             className="btn btn--primary"
             disabled={busy || !itemName.trim()}
             onClick={() => void create()}
           >
-            {busy ? "Criando…" : "Criar andar"}
+            {busy ? t("Criando…") : t("Criar andar")}
           </button>
         </div>
       }
     >
       <div className="form">
         <label>
-          Nome
+          {t("Nome")}
           <input
             ref={nameRef}
             value={itemName}
-            placeholder="ex.: fix-login"
+            placeholder={t("ex.: fix-login")}
             aria-invalid={err?.field === "nome" ? true : undefined}
             aria-describedby={err?.field === "nome" ? "novo-andar-erro" : undefined}
             onChange={(e) => {
@@ -166,12 +168,12 @@ export function NewFloorModal() {
         {!noGit && (
           <>
             <label>
-              Branch {existing ? "existente" : "(opcional)"}
+              Branch {existing ? t("existente") : t("(opcional)")}
               <input
                 ref={branchRef}
                 value={branch}
                 placeholder={
-                  existing ? "nome da branch" : "padrão: yard/<nome>"
+                  existing ? t("nome da branch") : t("padrão: yard/<nome>")
                 }
                 aria-invalid={err?.field === "branch" ? true : undefined}
                 aria-describedby={
@@ -194,7 +196,7 @@ export function NewFloorModal() {
                 checked={existing}
                 onChange={(e) => setExisting(e.target.checked)}
               />
-              Usar uma branch que já existe (sem criar branch nova)
+              {t("Usar uma branch que já existe (sem criar branch nova)")}
             </label>
           </>
         )}
@@ -204,7 +206,7 @@ export function NewFloorModal() {
             checked={cloneGround}
             onChange={(e) => setCloneGround(e.target.checked)}
           />
-          Clonar o layout do chão (terminais nascem parados, no cwd do andar)
+          {t("Clonar o layout do chão (terminais nascem parados, no cwd do andar)")}
         </label>
         {isRepo && (
           <label className="checkbox">
@@ -213,17 +215,17 @@ export function NewFloorModal() {
               checked={noGit}
               onChange={(e) => setNoGitChosen(e.target.checked)}
             />
-            Sem git: só um grupo novo, no mesmo diretório do chão
+            {t("Sem git: só um grupo novo, no mesmo diretório do chão")}
           </label>
         )}
         <details className="floors-hooks">
-          <summary>Hooks (opcional) — um comando por linha</summary>
+          <summary>{t("Hooks (opcional) — um comando por linha")}</summary>
           <label>
-            Setup (na criação)
+            {t("Setup (na criação)")}
             <textarea
               rows={2}
               value={setupTxt}
-              placeholder="ex.: npm ci"
+              placeholder={t("ex.: npm ci")}
               onChange={(e) => setSetupTxt(e.target.value)}
             />
           </label>
@@ -233,23 +235,23 @@ export function NewFloorModal() {
               checked={autoSetup}
               onChange={(e) => setAutoSetup(e.target.checked)}
             />
-            Rodar o setup automaticamente ao criar
+            {t("Rodar o setup automaticamente ao criar")}
           </label>
           <label>
-            Run (botão ▶ no overview)
+            {t("Run (botão ▶ no overview)")}
             <textarea
               rows={2}
               value={runTxt}
-              placeholder="ex.: npm run dev"
+              placeholder={t("ex.: npm run dev")}
               onChange={(e) => setRunTxt(e.target.value)}
             />
           </label>
           <label>
-            Teardown (ao encerrar)
+            {t("Teardown (ao encerrar)")}
             <textarea
               rows={2}
               value={teardownTxt}
-              placeholder="ex.: npm run clean"
+              placeholder={t("ex.: npm run clean")}
               onChange={(e) => setTeardownTxt(e.target.value)}
             />
           </label>

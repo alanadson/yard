@@ -3,6 +3,10 @@
  * Preferences go into the SQLite `kv` table (§4.3).
  */
 import { create } from "zustand";
+
+import { AUTO_BACKUP_MODES, type AutoBackupMode } from "../lib/autoBackup";
+import { LANG_PREFS, type LangPref } from "../lib/i18n";
+import { THEME_PREFS, type ThemePref } from "../lib/theme";
 import {
   persistJsonPref,
   persistPref,
@@ -36,6 +40,10 @@ export type ModalKind =
   | "role"
   | "scores"
   | "scm-confirm"
+  | "onboarding"
+  | "costs"
+  | "shoulder"
+  | "transcript"
   | "flow";
 
 export interface Prefs {
@@ -91,6 +99,23 @@ export interface Prefs {
   usageWidget: boolean;
   confirmOnExit: boolean;
   cursorBlink: boolean;
+  /** Appearance: dark is the shipped look; light and system live in `lib/theme.ts`. */
+  theme: ThemePref;
+  /** The interface's language (`lib/i18n.ts`); the terminals speak whatever they speak. */
+  lang: LangPref;
+  /** Global hotkey that brings or hides the window (`lib/tray.ts`); empty = off. */
+  summonHotkey: string;
+  /** The window's X hides to the tray instead of quitting. */
+  closeToTray: boolean;
+  /** Look for a new release on GitHub every six hours (updater). */
+  autoCheckUpdates: boolean;
+  /** Scheduled `.zip` copies (`lib/autoBackup.ts`): how often, how many to keep, where. */
+  autoBackup: AutoBackupMode;
+  autoBackupKeep: number;
+  /** Empty = the `backups` folder of the data directory. */
+  autoBackupDir: string;
+  /** Language servers in the file editor (completion, diagnostics, definitions). */
+  lspEnabled: boolean;
   /** Sidebar widths, in px (draggable via the splitter). */
   sidebarWidth: number;
   changesWidth: number;
@@ -121,6 +146,20 @@ export const DEFAULT_PREFS: Prefs = {
   usageWidget: true,
   confirmOnExit: true,
   cursorBlink: true,
+  // Dark by default: the light appearance is a choice, the dark one is the
+  // product's identity — and the CSS with no attribute on `<html>`.
+  theme: "dark",
+  // Portuguese is what the product was written in; English is a translation
+  // of it, and "system" only picks English on an English OS.
+  lang: "pt-BR",
+  summonHotkey: "Ctrl+Alt+Y",
+  closeToTray: false,
+  autoCheckUpdates: true,
+  autoBackup: "off",
+  autoBackupKeep: 7,
+  autoBackupDir: "",
+  // On by default: inert until a server of the catalog is installed.
+  lspEnabled: true,
   sidebarWidth: 262,
   changesWidth: 340,
   benchWidth: 312,
@@ -164,9 +203,22 @@ const RANGES: Partial<
   codeFontSize: { min: 9, max: 32, step: 0.5 },
   codeLineHeight: { min: 1, max: 2.4, step: 0.05 },
   codeTabSize: { min: 1, max: 8, step: 1 },
+  autoBackupKeep: { min: 1, max: 60, step: 1 },
 };
 
 /** Clamps a numeric value to its key's range (no range, it passes through). */
+/**
+ * String preferences that only accept a fixed set of values. A `kv` written
+ * by an older build (or by hand) with anything else falls back to the
+ * default instead of leaking an unknown value into the store.
+ */
+export const PREF_ENUMS: Partial<Record<keyof Prefs, readonly string[]>> = {
+  renderer: ["canvas", "webgl"],
+  theme: THEME_PREFS,
+  lang: LANG_PREFS,
+  autoBackup: AUTO_BACKUP_MODES,
+};
+
 export function clampPref<K extends keyof Prefs>(key: K, value: Prefs[K]): Prefs[K] {
   const range = RANGES[key];
   if (!range || typeof value !== "number" || !Number.isFinite(value)) return value;
@@ -436,8 +488,9 @@ export const useUI = create<UIState>((set, get) => ({
           parsed = Number.isFinite(number) ? number : current;
         } else if (typeof current === "boolean") {
           parsed = value === "true" ? true : value === "false" ? false : current;
-        } else if (key === "renderer" && value !== "canvas" && value !== "webgl") {
-          parsed = current;
+        } else if (typeof current === "string") {
+          const allowed = PREF_ENUMS[key as keyof Prefs];
+          if (allowed && !allowed.includes(value)) parsed = current;
         }
         (prefs as Record<string, unknown>)[key] = clampPref(
           key as keyof Prefs,

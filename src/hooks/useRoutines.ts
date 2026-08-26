@@ -17,6 +17,7 @@ import { injectPrompt } from "../lib/inject";
 import { canSend } from "../lib/sendable";
 import { commitCanvasExternal } from "../lib/canvasWrite";
 import { routineDue, type RoutineDef } from "../lib/canvas";
+import { t } from "../lib/i18n";
 import { uiLog } from "../lib/log";
 import { baseName } from "../lib/terminals";
 import { useProjects } from "../stores/projectsStore";
@@ -86,8 +87,11 @@ export function useRoutines() {
             useUI
               .getState()
               .showToast(
-                `A rotina [${r.id}] não chegou em "${targetName(r.terminalId)}": ${err}. ` +
-                  "Continua agendada.",
+                t('A rotina [{id}] não chegou em "{target}": {reason}. Continua agendada.', {
+                  id: r.id,
+                  target: targetName(r.terminalId),
+                  reason: String(err),
+                }),
                 "error",
               );
           }

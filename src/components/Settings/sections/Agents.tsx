@@ -16,7 +16,9 @@
  * "how is Claude set up?" is three scrolls from the answer to "and Codex?".
  * So the agents became **tabs**: the marks in a strip, one panel underneath.
  * The rules are in `lib/agentDefaults.ts`; this screen is the tabs and the
- * panel.
+ * panel. The catalog's own sentences (cache choices and notes, the skip-flag
+ * hints, the role launch hint) keep their Portuguese there and are translated
+ * here, where they are drawn.
  */
 import { useEffect, useId, useRef, useState } from "react";
 import { Bot } from "lucide-react";
@@ -25,6 +27,7 @@ import { Card, GroupTitle, Row, SwitchRow } from "../rows";
 import { BrandIcon } from "../../BrandIcon";
 import { Select } from "../../Select";
 import { RoleField } from "../../modals/RoleField";
+import { useT } from "../../../hooks/useT";
 import {
   agentDefaultRows,
   cacheChoicesOf,
@@ -34,7 +37,7 @@ import {
   type AgentDefaultRow,
 } from "../../../lib/agentDefaults";
 import { brandById } from "../../../lib/brands";
-import { ipc, type WslStatus } from "../../../lib/ipc";
+import { ipc, type SshStatus, type WslStatus } from "../../../lib/ipc";
 import { launchHint } from "../../../lib/roles";
 import { hasFlag, withFlag } from "../../../lib/termArgs";
 import { useAgentDefaults } from "../../../stores/agentDefaultsStore";
@@ -49,7 +52,16 @@ function AgentMark({ row }: { row: AgentDefaultRow }) {
 }
 
 /** The panel of the selected CLI — everything Yard knows how to say about it. */
-function AgentPanel({ row, wsl }: { row: AgentDefaultRow; wsl: WslStatus | null }) {
+function AgentPanel({
+  row,
+  wsl,
+  ssh,
+}: {
+  row: AgentDefaultRow;
+  wsl: WslStatus | null;
+  ssh: SshStatus | null;
+}) {
+  const t = useT();
   const setConfig = useAgentDefaults((s) => s.setConfig);
   const fieldId = useId();
   const nameId = useId();
@@ -61,29 +73,37 @@ function AgentPanel({ row, wsl }: { row: AgentDefaultRow; wsl: WslStatus | null 
    */
   const [text, setText] = useState(row.config.args);
   const [name, setName] = useState(row.config.name);
+  // The SSH host and remote folder follow the same draft rule as the name.
+  const [host, setHost] = useState(row.config.sshHost);
+  const [remote, setRemote] = useState(row.config.sshPath);
+  const hostsId = useId();
   // What comes from outside (the switch above, another window, a restored
   // backup, switching tab) is the truth; typing does not change
   // `row.config.args`, so this never fights the field.
   useEffect(() => setText(row.config.args), [row.config.args]);
   useEffect(() => setName(row.config.name), [row.config.name]);
+  useEffect(() => setHost(row.config.sshHost), [row.config.sshHost]);
+  useEffect(() => setRemote(row.config.sshPath), [row.config.sshPath]);
 
   const on = !!row.skip && hasFlag(text, row.skip.args);
   const caches = cacheChoicesOf(row.id);
   const cache = caches?.find((c) => c.value === row.config.cache) ?? caches?.[0];
   const inWsl = row.config.where === "wsl";
   const canWsl = !!wsl?.available;
+  const inSsh = row.config.where === "ssh";
+  const canSsh = !!ssh?.available;
 
   return (
     <>
       <Card>
         {row.skip ? (
           <Row
-            label="Sem pedir permissão"
+            label={t("Sem pedir permissão")}
             desc={
               <>
                 {/* The flag itself leads the line: the row has to say exactly
                     what the switch writes into the field below. */}
-                <code>{row.skip.args.join(" ")}</code> · {row.skip.hint}
+                <code>{row.skip.args.join(" ")}</code> · {t(row.skip.hint)}
               </>
             }
           >
@@ -97,23 +117,25 @@ function AgentPanel({ row, wsl }: { row: AgentDefaultRow; wsl: WslStatus | null 
                 setText(next);
                 setConfig(row.id, { args: next });
               }}
-              aria-label={`Sem pedir permissão — ${row.name}`}
+              aria-label={t("Sem pedir permissão — {name}", { name: row.name })}
             />
           </Row>
         ) : (
           <Row
-            label="Sem pedir permissão"
-            desc="esta CLI não tem uma flag de permissão que a gente tenha conferido — o que ela precisar vai na linha abaixo"
+            label={t("Sem pedir permissão")}
+            desc={t(
+              "esta CLI não tem uma flag de permissão que a gente tenha conferido — o que ela precisar vai na linha abaixo",
+            )}
           >
-            <span className="set-chip">sem flag</span>
+            <span className="set-chip">{t("sem flag")}</span>
           </Row>
         )}
 
         <label className="set-row set-agent-args" htmlFor={nameId}>
           <span className="set-row-text">
-            <span className="set-row-label">Nome da aba</span>
+            <span className="set-row-label">{t("Nome da aba")}</span>
             <small className="set-row-desc">
-              Como a aba e o cartão vão se chamar. Vazio = o nome da CLI.
+              {t("Como a aba e o cartão vão se chamar. Vazio = o nome da CLI.")}
             </small>
           </span>
           <input
@@ -132,12 +154,12 @@ function AgentPanel({ row, wsl }: { row: AgentDefaultRow; wsl: WslStatus | null 
         </label>
 
         <label className="set-row set-agent-args" htmlFor={fieldId}>
-          <span className="set-row-label">Abre sempre com</span>
+          <span className="set-row-label">{t("Abre sempre com")}</span>
           <input
             id={fieldId}
             value={text}
             spellCheck={false}
-            placeholder="opcional — ex.: --model opus --add-dir ../api"
+            placeholder={t("opcional — ex.: --model opus --add-dir ../api")}
             onChange={(e) => setText(e.target.value)}
             onBlur={() => setConfig(row.id, { args: text })}
             onKeyDown={(e) => {
@@ -148,36 +170,45 @@ function AgentPanel({ row, wsl }: { row: AgentDefaultRow; wsl: WslStatus | null 
         </label>
 
         <Row
-          label="Roda em"
+          label={t("Roda em")}
           desc={
             inWsl
-              ? "no WSL a CLI é a que estiver instalada dentro da distribuição, e a pasta do projeto entra traduzida"
-              : "o processo nasce no Windows, com a CLI que o Yard detectou aqui"
+              ? t(
+                  "no WSL a CLI é a que estiver instalada dentro da distribuição, e a pasta do projeto entra traduzida",
+                )
+              : inSsh
+                ? t(
+                    "por SSH o processo nasce na outra máquina: a CLI é a que estiver instalada lá, e a pasta é a remota",
+                  )
+                : t("o processo nasce no Windows, com a CLI que o Yard detectou aqui")
           }
         >
           <div className="set-agent-pair">
             <Select
               className="set-picker"
-              label={`Onde ${row.name} roda`}
+              label={t("Onde {name} roda", { name: row.name })}
               value={row.config.where}
               // A choice that cannot work must not be clickable: with no distro
               // installed, "WSL" is a terminal that dies on `wsl.exe` with
               // nothing on screen explaining why.
               options={[
-                { value: "windows", label: "Windows" },
-                { value: "wsl", label: "WSL", disabled: !canWsl },
+                { value: "windows", label: "Windows" }, // i18n-ok
+                { value: "wsl", label: "WSL", disabled: !canWsl }, // i18n-ok
+                { value: "ssh", label: "SSH", disabled: !canSsh }, // i18n-ok
               ]}
               onChange={(v) =>
-                setConfig(row.id, { where: v === "wsl" ? "wsl" : "windows" })
+                setConfig(row.id, {
+                  where: v === "wsl" ? "wsl" : v === "ssh" ? "ssh" : "windows",
+                })
               }
             />
             {inWsl && (
               <Select
                 className="set-picker"
-                label={`Distribuição de ${row.name}`}
+                label={t("Distribuição de {name}", { name: row.name })}
                 value={row.config.distro || DEFAULT_DISTRO}
                 options={[
-                  { value: DEFAULT_DISTRO, label: "A padrão do WSL" },
+                  { value: DEFAULT_DISTRO, label: t("A padrão do WSL") },
                   ...(wsl?.distros ?? []).map((d) => ({ value: d, label: d })),
                 ]}
                 onChange={(v) =>
@@ -185,19 +216,56 @@ function AgentPanel({ row, wsl }: { row: AgentDefaultRow; wsl: WslStatus | null 
                 }
               />
             )}
+            {inSsh && (
+              <>
+                <input
+                  className="set-agent-field"
+                  list={hostsId}
+                  value={host}
+                  spellCheck={false}
+                  placeholder={t("host — alias do ~/.ssh/config ou user@host")}
+                  aria-label={t("Host SSH de {name}", { name: row.name })}
+                  onChange={(e) => setHost(e.target.value)}
+                  onBlur={() => setConfig(row.id, { sshHost: host })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                    if (e.key === "Escape") setHost(row.config.sshHost);
+                  }}
+                />
+                {/* The aliases ssh itself knows; typing anything else still works. */}
+                <datalist id={hostsId}>
+                  {(ssh?.hosts ?? []).map((h) => (
+                    <option key={h} value={h} />
+                  ))}
+                </datalist>
+                <input
+                  className="set-agent-field set-agent-field--path"
+                  value={remote}
+                  spellCheck={false}
+                  placeholder={t("pasta remota — vazio = a home")}
+                  aria-label={t("Pasta remota de {name}", { name: row.name })}
+                  onChange={(e) => setRemote(e.target.value)}
+                  onBlur={() => setConfig(row.id, { sshPath: remote })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                    if (e.key === "Escape") setRemote(row.config.sshPath);
+                  }}
+                />
+              </>
+            )}
           </div>
         </Row>
 
         <Row
-          label="Cache da conversa"
-          desc={caches && cache ? cache.hint : cacheNoteOf(row.id)}
+          label={t("Cache da conversa")}
+          desc={caches && cache ? t(cache.hint) : t(cacheNoteOf(row.id))}
         >
           {caches && cache ? (
             <Select
               className="set-picker"
-              label={`Cache de ${row.name}`}
+              label={t("Cache de {name}", { name: row.name })}
               value={cache.value}
-              options={caches.map((c) => ({ value: c.value, label: c.label }))}
+              options={caches.map((c) => ({ value: c.value, label: t(c.label) }))}
               onChange={(v) =>
                 setConfig(row.id, {
                   cache: (caches.find((c) => c.value === v) ?? caches[0]).value,
@@ -205,13 +273,15 @@ function AgentPanel({ row, wsl }: { row: AgentDefaultRow; wsl: WslStatus | null 
               }
             />
           ) : (
-            <span className="set-chip">sem ajuste</span>
+            <span className="set-chip">{t("sem ajuste")}</span>
           )}
         </Row>
 
         <Row
-          label="Aparecer em “Nova aba”"
-          desc="Desligado, continua instalado e configurado aqui — só sai da grade de marcas e da lista de uma tarefa nova"
+          label={t("Aparecer em “Nova aba”")}
+          desc={t(
+            "Desligado, continua instalado e configurado aqui — só sai da grade de marcas e da lista de uma tarefa nova",
+          )}
         >
           <input
             type="checkbox"
@@ -219,12 +289,12 @@ function AgentPanel({ row, wsl }: { row: AgentDefaultRow; wsl: WslStatus | null 
             className="switch"
             checked={!row.config.hidden}
             onChange={(e) => setConfig(row.id, { hidden: !e.target.checked })}
-            aria-label={`Aparecer em Nova aba — ${row.name}`}
+            aria-label={t("Aparecer em Nova aba — {name}", { name: row.name })}
           />
         </Row>
       </Card>
 
-      <GroupTitle>Papel</GroupTitle>
+      <GroupTitle>{t("Papel")}</GroupTitle>
       <Card>
         <div className="set-agent-role">
           <RoleField
@@ -232,28 +302,48 @@ function AgentPanel({ row, wsl }: { row: AgentDefaultRow; wsl: WslStatus | null 
             // only draw on the global library, which is exactly what
             // `groupId: null` means to the picker.
             groupId={null}
-            hint={launchHint(row.id)}
+            hint={t(launchHint(row.id))}
             value={row.config.role}
             onChange={(pick) => setConfig(row.id, { role: pick })}
           />
         </div>
       </Card>
       <p className="hint">
-        Toda aba nova desta CLI nasce com esse papel — e os recrutados no canvas
-        sem <code>--role</code> também. Dá para trocar depois no menu do cartão,
-        sem mexer aqui.
+        {t("Toda aba nova desta CLI nasce com esse papel — e os recrutados no canvas sem")}{" "}
+        <code>--role</code> {t("também. Dá para trocar depois no menu do cartão, sem mexer aqui.")}
       </p>
 
       {!canWsl && inWsl && (
         <p className="hint hint--warn" role="alert">
-          {wsl?.reason ?? "o WSL não está disponível"} — este agente vai tentar
-          abrir assim mesmo até você trocar para Windows.
+          {wsl?.reason ?? t("o WSL não está disponível")}{" "}
+          {t("— este agente vai tentar abrir assim mesmo até você trocar para Windows.")}
+        </p>
+      )}
+      {inSsh && (
+        <p className="hint">
+          {t(
+            "A CLI tem de estar instalada no host, e a chave SSH tem de entrar sem senha — se pedir senha, ela aparece no terminal e funciona, mas o papel e o cache não chegam antes dela. O",
+          )}{" "}
+          <code>yard</code>{" "}
+          {t("não atravessa o SSH: a CLI remota não fala com as outras do canvas.")}
+        </p>
+      )}
+      {!canSsh && inSsh && (
+        <p className="hint hint--warn" role="alert">
+          {ssh?.reason ?? t("o SSH não está disponível")}{" "}
+          {t("— este agente vai tentar abrir assim mesmo até você trocar para Windows.")}
+        </p>
+      )}
+      {inSsh && !row.config.sshHost && (
+        <p className="hint hint--warn" role="alert">
+          {t("Sem host não há para onde ir: a CLI não abre até você preencher o campo acima.")}
         </p>
       )}
       {!row.installed && (
         <p className="hint">
-          Esta CLI não foi encontrada nesta máquina. O que você configurar aqui
-          fica guardado e passa a valer assim que ela aparecer.
+          {t(
+            "Esta CLI não foi encontrada nesta máquina. O que você configurar aqui fica guardado e passa a valer assim que ela aparecer.",
+          )}
         </p>
       )}
     </>
@@ -261,6 +351,7 @@ function AgentPanel({ row, wsl }: { row: AgentDefaultRow; wsl: WslStatus | null 
 }
 
 export function SecAgents() {
+  const t = useT();
   const byId = useAgents((s) => s.byId);
   const defaults = useAgentDefaults((s) => s.defaults);
   const rows = agentDefaultRows(Object.values(byId), defaults);
@@ -274,6 +365,28 @@ export function SecAgents() {
    * "not available yet" and settles into the real answer.
    */
   const [wsl, setWsl] = useState<WslStatus | null>(null);
+  // Same question, same timing, for the third place: is there an `ssh` here,
+  // and which aliases does `~/.ssh/config` already name?
+  const [ssh, setSsh] = useState<SshStatus | null>(null);
+  useEffect(() => {
+    let live = true;
+    void ipc
+      .sshStatus()
+      .then((s) => live && setSsh(s))
+      .catch(
+        () =>
+          live &&
+          setSsh({
+            available: false,
+            path: null,
+            hosts: [],
+            reason: t("não consegui perguntar pelo ssh"),
+          }),
+      );
+    return () => {
+      live = false;
+    };
+  }, []);
   useEffect(() => {
     let live = true;
     void ipc
@@ -285,7 +398,7 @@ export function SecAgents() {
           setWsl({
             available: false,
             distros: [],
-            reason: "não consegui perguntar ao WSL",
+            reason: t("não consegui perguntar ao WSL"),
           }),
       );
     return () => {
@@ -308,15 +421,16 @@ export function SecAgents() {
 
   return (
     <>
-      <GroupTitle>Como cada CLI abre</GroupTitle>
+      <GroupTitle>{t("Como cada CLI abre")}</GroupTitle>
       {rows.length === 0 ? (
         <Card>
           <div className="set-row">
             <div className="set-row-text">
-              <span className="set-row-label">Nenhuma CLI de agente por aqui</span>
+              <span className="set-row-label">{t("Nenhuma CLI de agente por aqui")}</span>
               <small className="set-row-desc">
-                Instale uma (Claude Code, Codex, Gemini…) e ela aparece nesta
-                lista na próxima vez que o Yard abrir.
+                {t(
+                  "Instale uma (Claude Code, Codex, Gemini…) e ela aparece nesta lista na próxima vez que o Yard abrir.",
+                )}
               </small>
             </div>
           </div>
@@ -326,7 +440,7 @@ export function SecAgents() {
           <div
             className="set-agent-tabs"
             role="tablist"
-            aria-label="Agentes"
+            aria-label={t("Agentes")}
             ref={stripRef}
             onKeyDown={onStripKey}
           >
@@ -344,7 +458,7 @@ export function SecAgents() {
                   className={`set-agent-tab ${isOpen ? "is-active" : ""} ${
                     r.config.hidden ? "is-off" : ""
                   } ${r.installed ? "" : "is-missing"}`}
-                  data-tip={r.installed ? r.detail || undefined : "não instalado"}
+                  data-tip={r.installed ? r.detail || undefined : t("não instalado")}
                   onClick={() => setSelectedId(r.id)}
                 >
                   <AgentMark row={r} />
@@ -360,47 +474,47 @@ export function SecAgents() {
           </div>
           {open && (
             <div role="tabpanel" aria-label={open.name}>
-              <AgentPanel row={open} wsl={wsl} key={open.id} />
+              <AgentPanel row={open} wsl={wsl} ssh={ssh} key={open.id} />
             </div>
           )}
         </>
       )}
 
       <p className="hint">
-        É daqui que sai tudo o que uma aba nova daquela CLI recebe — em "Nova
-        aba" um clique já abre, sem formulário — e também o que vai para os
-        agentes que nascem sem diálogo nenhum: os recrutados no canvas
-        (<code>yard recruit</code>), os de uma tarefa em andares e as conversas
-        retomadas. Quem já está aberto não muda: vale a partir do próximo
-        início.
+        {t(
+          "É daqui que sai tudo o que uma aba nova daquela CLI recebe — em “Nova aba” um clique já abre, sem formulário — e também o que vai para os agentes que nascem sem diálogo nenhum: os recrutados no canvas",
+        )}{" "}
+        (<code>yard recruit</code>
+        {t(
+          "), os de uma tarefa em andares e as conversas retomadas. Quem já está aberto não muda: vale a partir do próximo início.",
+        )}
       </p>
       <p className="hint">
-        O <strong>cache</strong> só aparece como escolha nas CLIs que documentam
-        um ajuste — hoje o Claude Code (variáveis de ambiente) e o aider
-        (flags). O Codex faz cache sozinho e não expõe duração; nas outras a
-        gente não achou nada documentado, e é isso que a linha delas diz, em vez
-        de um controle que não faria nada.
+        {t("O")} <strong>{t("cache")}</strong>{" "}
+        {t(
+          "só aparece como escolha nas CLIs que documentam um ajuste — hoje o Claude Code (variáveis de ambiente) e o aider (flags). O Codex faz cache sozinho e não expõe duração; nas outras a gente não achou nada documentado, e é isso que a linha delas diz, em vez de um controle que não faria nada.",
+        )}
       </p>
 
-      <GroupTitle>Notificações</GroupTitle>
+      <GroupTitle>{t("Notificações")}</GroupTitle>
       <Card>
         <SwitchRow
           pref="notifyOnFinish"
-          label="Notificar quando um agente terminar"
-          desc="Notificação nativa do Windows quando a saída fica quieta"
+          label={t("Notificar quando um agente terminar")}
+          desc={t("Notificação nativa do Windows quando a saída fica quieta")}
         />
         <SwitchRow
           pref="notifyBlocked"
-          label="Avisar quando um agente travar"
-          desc="Uma pergunta, um (y/N) ou uma senha na última linha viram notificação com a pergunta dentro — o badge amarelo no cartão aparece de qualquer jeito"
+          label={t("Avisar quando um agente travar")}
+          desc={t(
+            "Uma pergunta, um (y/N) ou uma senha na última linha viram notificação com a pergunta dentro — o badge amarelo no cartão aparece de qualquer jeito",
+          )}
         />
       </Card>
       <p className="hint">
-        Um agente conta como "parou" depois de ~4,5 s de silêncio seguindo
-        atividade. O silêncio diz que parou; a cauda da saída diz por quê — um
-        menu com cursor, um (y/N) ou um Password: na última linha viram
-        "travado" em vez de "terminou". O balão só sai quando o painel não está
-        à vista: o que você acabou de ver acontecer não vira notificação.
+        {t(
+          "Um agente conta como “parou” depois de ~4,5 s de silêncio seguindo atividade. O silêncio diz que parou; a cauda da saída diz por quê — um menu com cursor, um (y/N) ou um Password: na última linha viram “travado” em vez de “terminou”. O balão só sai quando o painel não está à vista: o que você acabou de ver acontecer não vira notificação.",
+        )}
       </p>
     </>
   );

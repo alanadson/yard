@@ -1,0 +1,210 @@
+/* "Custos e uso" — the sheet's own pieces. Lazy with the modal: nothing here
+   is used by a component that mounts at boot. Tokens only; one accent. */
+
+.costs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.costs-when {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+/* The period is a capsule of segments, like the bench's scope control. */
+.costs-seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  box-shadow: var(--hairline);
+}
+
+.costs-seg button {
+  padding: 3px 11px;
+  border-radius: 999px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.costs-seg button:hover {
+  color: var(--text);
+}
+
+.costs-seg button[aria-pressed="true"] {
+  color: var(--on-accent);
+  background: var(--accent-grad);
+}
+
+.costs-spin {
+  animation: costs-spin 0.9s linear infinite;
+}
+
+@keyframes costs-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .costs-spin {
+    animation: none;
+  }
+}
+
+/* totals */
+.costs-tiles {
+  display: grid;
+  /* Six tiles in one row at the sheet's width; the cost — the number the
+     panel exists for — gets the room to never truncate. */
+  grid-template-columns: minmax(150px, 1.6fr) repeat(5, minmax(88px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.costs-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  box-shadow: var(--hairline);
+  min-width: 0;
+}
+
+.costs-tile small {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.costs-tile strong {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.costs-tile--main strong {
+  color: var(--accent-text);
+}
+
+/* the bars — one per day, height by cost (or tokens when nothing is priced) */
+.costs-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 92px;
+  padding: 8px 10px 6px;
+  margin-bottom: 14px;
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+}
+
+.costs-bar {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+}
+
+.costs-bar-track {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+
+.costs-bar-fill {
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: var(--accent-fill);
+  opacity: 0.85;
+  min-height: 0;
+}
+
+.costs-bar:hover .costs-bar-fill {
+  opacity: 1;
+}
+
+.costs-bar small {
+  height: 14px;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* tables */
+.costs-section {
+  margin-top: 6px;
+}
+
+.costs-section h3 {
+  margin: 10px 0 4px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+
+.costs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+
+.costs-table th,
+.costs-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.costs-table th {
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.costs-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.costs-table .costs-name {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-bright);
+}
+
+.costs-table .costs-cost {
+  color: var(--accent-text);
+}
+
+.costs-skeleton {
+  display: grid;
+  gap: 8px;
+}
+
+.costs-note {
+  margin: 0;
+}

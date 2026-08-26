@@ -60,6 +60,7 @@ import { InlineRename } from "../ContextMenu/InlineRename";
 import { closeDocTab, docTabMenu } from "../../lib/editorActions";
 import { show } from "../../lib/navigate";
 import { paneMenu } from "../../lib/paneMenu";
+import { useT } from "../../hooks/useT";
 import { captureTextTarget, textMenuEntries } from "../../lib/textMenu";
 import { terminalActionEntries } from "../../lib/terminalMenu";
 import { beginTabDrag } from "../../lib/tabDrag";
@@ -126,6 +127,7 @@ export function TerminalPane({
   const focusedTerminalId = useUI((s) => s.focusedTerminalId);
   const openModal = useUI((s) => s.openModal);
   const showToast = useUI((s) => s.showToast);
+  const t = useT();
   // Resource ticks replace runtime objects every two seconds. Only the active
   // tab paints memory; hidden tabs care about lifecycle/unread state alone.
   const runtimeSignals = useTerminals((s) =>
@@ -389,14 +391,14 @@ export function TerminalPane({
       >
         <div className="pane-empty-inner">
           <TerminalIcon size={22} aria-hidden="true" />
-          <span>Painel {slot + 1} vazio</span>
-          <small>Arraste a aba de outro painel para cá, ou abra uma CLI nova.</small>
+          <span>{t("Painel {n} vazio", { n: slot + 1 })}</span>
+          <small>{t("Arraste a aba de outro painel para cá, ou abra uma CLI nova.")}</small>
           <div className="pane-empty-actions">
             <button className="btn btn--sm" onClick={newCli}>
-              <Plus size={12} /> Nova aba aqui
+              <Plus size={12} /> {t("Nova aba aqui")}
             </button>
             <button className="btn btn--sm" onClick={newBrowser}>
-              <Globe size={12} /> Navegador aqui
+              <Globe size={12} /> {t("Navegador aqui")}
             </button>
           </div>
         </div>
@@ -433,20 +435,20 @@ export function TerminalPane({
       return [
         {
           id: "overlay",
-          label: "Sobrepor à tela",
+          label: t("Sobrepor à tela"),
           icon: <AppWindow size={13} />,
           onSelect: () => useNotes.getState().setPlaceKind("overlay"),
         },
         {
           id: "center",
-          label: "Ocupar a área central",
+          label: t("Ocupar a área central"),
           icon: <Maximize2 size={13} />,
           onSelect: () => useNotes.getState().setPlaceKind("center"),
         },
         { kind: "sep" },
         {
           id: "close",
-          label: "Fechar aba",
+          label: t("Fechar aba"),
           icon: <X size={13} />,
           danger: true,
           onSelect: () => useNotes.getState().closeDock(),
@@ -464,7 +466,7 @@ export function TerminalPane({
       return [
         {
           id: "rename",
-          label: "Renomear",
+          label: t("Renomear"),
           icon: <Pencil size={13} />,
           onSelect: () => setRenamingId(id),
         },
@@ -473,7 +475,7 @@ export function TerminalPane({
         { kind: "sep" },
         {
           id: "close",
-          label: "Fechar navegador",
+          label: t("Fechar navegador"),
           icon: <X size={13} />,
           danger: true,
           onSelect: () => useBrowsers.getState().close(id),
@@ -486,7 +488,7 @@ export function TerminalPane({
     return [
       {
         id: "rename",
-        label: "Renomear",
+        label: t("Renomear"),
         icon: <Pencil size={13} />,
         onSelect: () => setRenamingId(id),
       },
@@ -494,13 +496,13 @@ export function TerminalPane({
       // same terminal, and a CLI opened here has to be configurable here.
       {
         id: "role",
-        label: role ? `Papel: ${role.name}…` : "Definir papel…",
+        label: role ? t("Papel: {name}…", { name: role.name }) : t("Definir papel…"),
         icon: <Bot size={13} />,
         onSelect: () => openModal("role", { terminalId: id }),
       },
       {
         id: "paste",
-        label: "Colar no terminal",
+        label: t("Colar no terminal"),
         icon: <ClipboardPaste size={13} />,
         shortcut: "Ctrl+V",
         disabled: !isLive(runtimes[id]),
@@ -508,7 +510,7 @@ export function TerminalPane({
       },
       {
         id: "clear",
-        label: "Limpar terminal",
+        label: t("Limpar terminal"),
         icon: <Eraser size={13} />,
         danger: true,
         onSelect: () => {
@@ -541,25 +543,25 @@ export function TerminalPane({
           className="pane-tabs"
           ref={tabsRef}
           role="tablist"
-          aria-label={`Abas do painel ${slot + 1}`}
+          aria-label={t("Abas do painel {n}", { n: slot + 1 })}
           data-overflow={overflow}
           onKeyDown={onTabsKeyDown}
           onMouseLeave={hideTip}
         >
-          {terminals.map((t) => {
-            const r = runtimes[t.id];
-            const label = baseName(t);
+          {terminals.map((term) => {
+            const r = runtimes[term.id];
+            const label = baseName(term);
             const select = () => {
-              setActiveTab(groupId, slot, t.id);
-              focusTerminal(t.id, slot);
-              handles.current[t.id]?.focus();
+              setActiveTab(groupId, slot, term.id);
+              focusTerminal(term.id, slot);
+              handles.current[term.id]?.focus();
             };
             const openMenu = (e: React.MouseEvent) => {
               e.preventDefault();
               e.stopPropagation();
-              setActiveTab(groupId, slot, t.id);
-              focusTerminal(t.id, slot);
-              setTabMenu({ id: t.id, anchor: { x: e.clientX, y: e.clientY } });
+              setActiveTab(groupId, slot, term.id);
+              focusTerminal(term.id, slot);
+              setTabMenu({ id: term.id, anchor: { x: e.clientX, y: e.clientY } });
             };
             return (
               // The slot is a presentational wrapper: `role="tab"` stays on
@@ -567,23 +569,23 @@ export function TerminalPane({
               // an interactive span nested inside it (which the keyboard
               // could not reach and the browser routed to the outer control).
               <div
-                key={t.id}
+                key={term.id}
                 role="presentation"
-                className={`pane-tab-slot ${t.id === active?.id ? "is-active" : ""}`}
+                className={`pane-tab-slot ${term.id === active?.id ? "is-active" : ""}`}
                 data-tab-kind="terminal"
-                data-tab-id={t.id}
+                data-tab-id={term.id}
                 onPointerDown={(e) => {
-                  if (renamingId !== t.id) beginTabDrag(e, "terminal", t.id);
+                  if (renamingId !== term.id) beginTabDrag(e, "terminal", term.id);
                 }}
                 onContextMenu={openMenu}
               >
                 <button
                   type="button"
                   role="tab"
-                  id={`tab-${t.id}`}
-                  aria-selected={t.id === active?.id}
-                  aria-controls={`panel-${t.id}`}
-                  tabIndex={t.id === active?.id ? 0 : -1}
+                  id={`tab-${term.id}`}
+                  aria-selected={term.id === active?.id}
+                  aria-controls={`panel-${term.id}`}
+                  tabIndex={term.id === active?.id ? 0 : -1}
                   className="pane-tab"
                   onClick={select}
                   // Middle button closes the tab — same as every browser and
@@ -591,25 +593,25 @@ export function TerminalPane({
                   onAuxClick={(e) => {
                     if (e.button !== 1) return;
                     e.preventDefault();
-                    void confirmCloseTerminal(t.id);
+                    void confirmCloseTerminal(term.id);
                   }}
                   onDoubleClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    setRenamingId(t.id);
+                    setRenamingId(term.id);
                   }}
                   onMouseEnter={(e) =>
-                    showTip(e, `${t.program} ${t.args.join(" ")}\n${t.cwd}`)
+                    showTip(e, `${term.program} ${term.args.join(" ")}\n${term.cwd}`)
                   }
                   onMouseLeave={hideTip}
                 >
                   <span className={`dot dot--${r?.state ?? "idle"}`} />
-                  <TerminalMark term={t} size={13} />
-                  {renamingId === t.id ? (
+                  <TerminalMark term={term} size={13} />
+                  {renamingId === term.id ? (
                     <InlineRename
                       value={label}
                       onCommit={(next) => {
-                        updateTerminal(t.id, { title: next });
+                        updateTerminal(term.id, { title: next });
                         setRenamingId(null);
                       }}
                       onCancel={() => setRenamingId(null)}
@@ -617,33 +619,43 @@ export function TerminalPane({
                   ) : (
                     <span className="pane-tab-label">{label}</span>
                   )}
-                  {roles[t.id] && (
-                    <span className="pane-tab-role">{roles[t.id].name}</span>
+                  {roles[term.id] && (
+                    <span className="pane-tab-role">{roles[term.id].name}</span>
                   )}
                   {/* Running now beats "armed": the current stage is the most
                       urgent information the tab can carry. */}
-                  {flowMarks[t.id] ? (
+                  {flowMarks[term.id] ? (
                     <span
-                      className={`pane-tab-flow is-${flowMarks[t.id].status}`}
+                      className={`pane-tab-flow is-${flowMarks[term.id].status}`}
                       data-tip-wrap=""
-                      data-tip={`Fluxo "${flowMarks[t.id].name}" — etapa ${flowMarks[t.id].step}/${flowMarks[t.id].total}`}
+                      data-tip={t("Fluxo \"{name}\" — etapa {step}/{total}", {
+                        name: flowMarks[term.id].name,
+                        step: flowMarks[term.id].step,
+                        total: flowMarks[term.id].total,
+                      })}
                     >
                       <Workflow size={10} aria-hidden="true" />
-                      {flowMarks[t.id].step}/{flowMarks[t.id].total}
+                      {flowMarks[term.id].step}/{flowMarks[term.id].total}
                       <span className="sr-only">
-                        — executando o fluxo {flowMarks[t.id].name}, etapa{" "}
-                        {flowMarks[t.id].step} de {flowMarks[t.id].total}
+                        {t("— executando o fluxo {name}, etapa {step} de {total}", {
+                          name: flowMarks[term.id].name,
+                          step: flowMarks[term.id].step,
+                          total: flowMarks[term.id].total,
+                        })}
                       </span>
                     </span>
-                  ) : armed[t.id] ? (
+                  ) : armed[term.id] ? (
                     <span
                       className="pane-tab-flow is-armed"
                       data-tip-wrap=""
-                      data-tip={`O Enter desta CLI entra no fluxo "${armed[t.id].name}" (${armed[t.id].etapas} etapas). Desarme no cartão do fluxo, no canvas.`}
+                      data-tip={t(
+                        "O Enter desta CLI entra no fluxo \"{name}\" ({n} etapas). Desarme no cartão do fluxo, no canvas.",
+                        { name: armed[term.id].name, n: armed[term.id].etapas },
+                      )}
                     >
                       <Workflow size={10} aria-hidden="true" />
                       <span className="sr-only">
-                        — o Enter desta CLI entra no fluxo {armed[t.id].name}
+                        {t("— o Enter desta CLI entra no fluxo {name}", { name: armed[term.id].name })}
                       </span>
                     </span>
                   ) : null}
@@ -653,26 +665,26 @@ export function TerminalPane({
                     <span
                       className="badge-blocked"
                       data-tip-wrap=""
-                      data-tip={r.blockedAsk ?? "Esperando uma resposta sua"}
+                      data-tip={r.blockedAsk ?? t("Esperando uma resposta sua")}
                     >
-                      <span className="sr-only">— esperando uma resposta sua</span>
+                      <span className="sr-only">— {t("esperando uma resposta sua")}</span>
                     </span>
                   ) : r?.finished ? (
-                    <span className="badge-finished" data-tip="Terminou de trabalhar">
-                      <span className="sr-only">— terminou de trabalhar</span>
+                    <span className="badge-finished" data-tip={t("Terminou de trabalhar")}>
+                      <span className="sr-only">— {t("terminou de trabalhar")}</span>
                     </span>
                   ) : r?.unread ? (
-                    <span className="badge-unread" data-tip="Saída nova">
-                      <span className="sr-only">— saída nova</span>
+                    <span className="badge-unread" data-tip={t("Saída nova")}>
+                      <span className="sr-only">— {t("saída nova")}</span>
                     </span>
                   ) : null}
                 </button>
                 <button
                   type="button"
                   className="pane-tab-close"
-                  aria-label={`Fechar ${label}`}
-                  data-tip="Fechar"
-                  onClick={() => void confirmCloseTerminal(t.id)}
+                  aria-label={t("Fechar {name}", { name: label })}
+                  data-tip={t("Fechar")}
+                  onClick={() => void confirmCloseTerminal(term.id)}
                 >
                   <X size={12} />
                 </button>
@@ -731,9 +743,11 @@ export function TerminalPane({
                   type="button"
                   className="pane-tab-close"
                   aria-label={
-                    dirty ? `Fechar ${fileName(d.path)} (não salvo)` : `Fechar ${fileName(d.path)}`
+                    dirty
+                      ? t("Fechar {name} (não salvo)", { name: fileName(d.path) })
+                      : t("Fechar {name}", { name: fileName(d.path) })
                   }
-                  data-tip={dirty ? "Fechar (não salvo)" : "Fechar"}
+                  data-tip={dirty ? t("Fechar (não salvo)") : t("Fechar")}
                   onClick={() => void closeDocTab(d.id)}
                 >
                   {dirty ? <span className="editor-dot" aria-hidden="true" /> : <X size={12} />}
@@ -811,8 +825,8 @@ export function TerminalPane({
                 <button
                   type="button"
                   className="pane-tab-close"
-                  aria-label={`Fechar ${label}`}
-                  data-tip="Fechar"
+                  aria-label={t("Fechar {name}", { name: label })}
+                  data-tip={t("Fechar")}
                   onClick={() => useBrowsers.getState().close(b.id)}
                 >
                   <X size={12} />
@@ -845,7 +859,7 @@ export function TerminalPane({
                 tabIndex={activeNotes ? 0 : -1}
                 className="pane-tab"
                 onMouseEnter={(e) =>
-                  showTip(e, "Anotações — o caderno de notas markdown")
+                  showTip(e, t("Anotações — o caderno de notas markdown"))
                 }
                 onMouseLeave={hideTip}
                 onClick={() => {
@@ -861,13 +875,13 @@ export function TerminalPane({
                 }}
               >
                 <NotebookPen size={13} className="pane-tab-file" aria-hidden="true" />
-                <span className="pane-tab-label">Anotações</span>
+                <span className="pane-tab-label">{t("Anotações")}</span>
               </button>
               <button
                 type="button"
                 className="pane-tab-close"
-                aria-label="Fechar a aba de anotações"
-                data-tip="Fechar"
+                aria-label={t("Fechar a aba de anotações")}
+                data-tip={t("Fechar")}
                 onClick={() => useNotes.getState().closeDock()}
               >
                 <X size={12} />
@@ -895,8 +909,8 @@ export function TerminalPane({
             grid, so the `+` needs no menu of its own. */}
         <button
           className="pane-tab-add"
-          data-tip="Nova aba — CLI, navegador ou anotações (Ctrl+T)"
-          aria-label="Nova aba nesta barra"
+          data-tip={t("Nova aba — CLI, navegador ou anotações (Ctrl+T)")}
+          aria-label={t("Nova aba nesta barra")}
           onClick={newCli}
         >
           <Plus size={14} />
@@ -913,7 +927,7 @@ export function TerminalPane({
         {!activeDoc && !activeBrowser && !activeNotes && (
         <div className="pane-actions">
           {rt && rt.rssMb > 0 && (
-            <span className="pane-stat" data-tip="RAM da árvore de processos">
+            <span className="pane-stat" data-tip={t("RAM da árvore de processos")}>
               {rt.rssMb.toFixed(0)} MB
             </span>
           )}
@@ -924,8 +938,8 @@ export function TerminalPane({
             <button
               className="icon-btn live-launch"
               data-tip-wrap=""
-              data-tip="Ao Vivo — arquivos, plano e sub-agents em tempo real"
-              aria-label="Abrir o Ao Vivo deste agente"
+              data-tip={t("Ao Vivo — arquivos, plano e sub-agents em tempo real")}
+              aria-label={t("Abrir o Ao Vivo deste agente")}
               data-working={isRunning || undefined}
               onClick={() => active && void useLive.getState().openFor(active)}
             >
@@ -937,8 +951,8 @@ export function TerminalPane({
               terminal either way — the way in has to be too. */}
           <button
             className="icon-btn"
-            data-tip="Compositor de prompts (Ctrl+Enter)"
-            aria-label="Abrir o compositor de prompts para este terminal"
+            data-tip={t("Compositor de prompts (Ctrl+Enter)")}
+            aria-label={t("Abrir o compositor de prompts para este terminal")}
             onClick={() => {
               if (!active) return;
               focusTerminal(active.id, slot);
@@ -949,8 +963,8 @@ export function TerminalPane({
           </button>
           <button
             className={`icon-btn ${searchOpen ? "is-active" : ""}`}
-            data-tip="Buscar no histórico (Ctrl+Shift+F)"
-            aria-label="Buscar no histórico"
+            data-tip={t("Buscar no histórico (Ctrl+Shift+F)")}
+            aria-label={t("Buscar no histórico")}
             aria-pressed={searchOpen}
             onClick={() => setSearchOpen((v) => !v)}
           >
@@ -959,10 +973,10 @@ export function TerminalPane({
           {isRunning ? (
             <button
               className="icon-btn"
-              data-tip-wrap="" data-tip="Suspender — encerra o processo e guarda o histórico"
-              aria-label="Suspender"
+              data-tip-wrap="" data-tip={t("Suspender — encerra o processo e guarda o histórico")}
+              aria-label={t("Suspender")}
               onClick={() =>
-                active && act(() => ipc.suspendPty(active.id), "falha ao suspender")
+                active && act(() => ipc.suspendPty(active.id), t("falha ao suspender"))
               }
             >
               <PauseCircle size={13} />
@@ -970,8 +984,8 @@ export function TerminalPane({
           ) : (
             <button
               className="icon-btn icon-btn--go"
-              data-tip="Iniciar ou retomar"
-              aria-label="Iniciar ou retomar"
+              data-tip={t("Iniciar ou retomar")}
+              aria-label={t("Iniciar ou retomar")}
               onClick={() => active && handles.current[active.id]?.start()}
             >
               <Play size={13} />
@@ -979,8 +993,8 @@ export function TerminalPane({
           )}
           <button
             className="icon-btn"
-            data-tip-at="right" data-tip="Mais ações"
-            aria-label="Mais ações deste terminal"
+            data-tip-at="right" data-tip={t("Mais ações")}
+            aria-label={t("Mais ações deste terminal")}
             aria-haspopup="menu"
             onClick={(e) => {
               if (!active) return;
@@ -1002,8 +1016,8 @@ export function TerminalPane({
           <input
             autoFocus
             value={query}
-            aria-label="Buscar no histórico do terminal"
-            placeholder="Buscar no histórico…"
+            aria-label={t("Buscar no histórico do terminal")}
+            placeholder={t("Buscar no histórico…")}
             aria-describedby={`pane-search-count-${slot}`}
             // Search on every keystroke: the count beside it is only worth
             // having if it keeps up with the typing.
@@ -1035,16 +1049,16 @@ export function TerminalPane({
             {!query
               ? ""
               : !matches || matches.count === 0
-                ? "sem resultados"
+                ? t("sem resultados")
                 : matches.count < 0
-                  ? "muitos resultados"
+                  ? t("muitos resultados")
                   : `${Math.max(0, matches.index) + 1}/${matches.count}`}
           </span>
           <span className="pane-search-hint">Enter ↓ · Shift+Enter ↑</span>
           <button
             className="icon-btn"
-            aria-label="Fechar busca"
-            data-tip="Fechar busca (Esc)"
+            aria-label={t("Fechar busca")}
+            data-tip={t("Fechar busca (Esc)")}
             onClick={() => setSearchOpen(false)}
           >
             <X size={13} />
@@ -1194,7 +1208,7 @@ export function TerminalPane({
           data-pane-group={groupId}
           data-pane-slot={newSlot}
         >
-          <span>Novo painel</span>
+          <span>{t("Novo painel")}</span>
         </div>
       )}
 

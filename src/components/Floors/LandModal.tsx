@@ -20,6 +20,7 @@ import type { GroupRow, LandPreview, ProjectRow } from "../../lib/ipc";
 import { useChanges } from "../../stores/changesStore";
 import { parseLayout, useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
+import { useT } from "../../hooks/useT";
 
 export interface LandPayload {
   project: ProjectRow;
@@ -27,6 +28,7 @@ export interface LandPayload {
 }
 
 export function LandModal() {
+  const t = useT();
   const closeModal = useUI((s) => s.closeModal);
   const showToast = useUI((s) => s.showToast);
   const payload = useUI((s) => s.modalPayload) as LandPayload | null;
@@ -94,7 +96,7 @@ export function LandModal() {
       if (!result.ok) {
         showToast(
           result.conflicted
-            ? `Conflito — o chão não foi alterado. ${result.conflictPaths.join(", ")}`
+            ? t("Conflito — o chão não foi alterado. {paths}", { paths: result.conflictPaths.join(", ") })
             : result.message,
           "error",
         );
@@ -114,7 +116,7 @@ export function LandModal() {
       );
       closeModal();
     } catch (e) {
-      showToast(`Não consegui aterrissar: ${e}`, "error");
+      showToast(t("Não consegui aterrissar: {e}", { e: String(e) }), "error");
     } finally {
       setBusy(false);
     }
@@ -122,13 +124,13 @@ export function LandModal() {
 
   return (
     <Modal
-      title={`Aterrissar “${group.name}”`}
+      title={t("Aterrissar “{name}”", { name: group.name })}
       onClose={closeModal}
       wide
       footer={
         <div className="modal-foot-row">
           <span className="hint grow">
-            O merge entra no chão. Conflito previsto recusa — o chão não é tocado.
+            {t("O merge entra no chão. Conflito previsto recusa — o chão não é tocado.")}
           </span>
           {/* Refused is not a dead end: whoever has uncommitted work goes to
               see what it is, and comes back here to compare again without
@@ -145,16 +147,16 @@ export function LandModal() {
                   closeModal();
                 }}
               >
-                <GitCompare size={13} aria-hidden="true" /> Ver as alterações
+                <GitCompare size={13} aria-hidden="true" /> {t("Ver as alterações")}
               </button>
               <button className="btn" disabled={comparing} onClick={() => void compare()}>
                 <RotateCw size={13} aria-hidden="true" />
-                {comparing ? "Comparando…" : "Comparar de novo"}
+                {comparing ? t("Comparando…") : t("Comparar de novo")}
               </button>
             </>
           )}
           <button className="btn" onClick={closeModal}>
-            Cancelar
+            {t("Cancelar")}
           </button>
           <button
             className="btn btn--primary"
@@ -162,13 +164,13 @@ export function LandModal() {
             onClick={() => void land()}
           >
             <GitMerge size={13} aria-hidden="true" />
-            {busy ? "Aterrissando…" : preview?.alreadyMerged ? "Já está no chão" : "Aterrissar no chão"}
+            {busy ? t("Aterrissando…") : preview?.alreadyMerged ? t("Já está no chão") : t("Aterrissar no chão")}
           </button>
         </div>
       }
     >
       {err && <p className="floors-warn">{err}</p>}
-      {!err && !preview && <p className="hint">Comparando com o chão…</p>}
+      {!err && !preview && <p className="hint">{t("Comparando com o chão…")}</p>}
       {preview && (
         <LandPreviewBody preview={preview} />
       )}
@@ -185,7 +187,7 @@ export function LandModal() {
                 if (!e.target.checked) setCloseOthers(false);
               }}
             />
-            Encerrar o andar depois de aterrissar (apaga o worktree e a branch)
+            {t("Encerrar o andar depois de aterrissar (apaga o worktree e a branch)")}
           </label>
           {siblings.length > 0 && (
             <label className="checkbox">
@@ -195,8 +197,9 @@ export function LandModal() {
                 disabled={!closeThis}
                 onChange={(e) => setCloseOthers(e.target.checked)}
               />
-              Descartar também {siblings.length} outro(s) andar(es) desta tarefa
-              (apaga as branches deles)
+              {t("Descartar também {n} outro(s) andar(es) desta tarefa (apaga as branches deles)", {
+                n: siblings.length,
+              })}
             </label>
           )}
         </div>
@@ -206,12 +209,16 @@ export function LandModal() {
 }
 
 export function LandPreviewBody({ preview }: { preview: LandPreview }) {
+  const t = useT();
   const blockers: string[] = [];
-  if (preview.groundDirty) blockers.push("O chão tem trabalho não commitado.");
-  if (preview.floorDirty) blockers.push("O andar tem trabalho não commitado.");
+  if (preview.groundDirty) blockers.push(t("O chão tem trabalho não commitado."));
+  if (preview.floorDirty) blockers.push(t("O andar tem trabalho não commitado."));
   if (!preview.alreadyMerged && !preview.clean) {
     blockers.push(
-      `Isso geraria ${preview.conflictPaths.length} conflito(s): ${preview.conflictPaths.join(", ")}`,
+      t("Isso geraria {n} conflito(s): {paths}", {
+        n: preview.conflictPaths.length,
+        paths: preview.conflictPaths.join(", "),
+      }),
     );
   }
 
@@ -219,10 +226,14 @@ export function LandPreviewBody({ preview }: { preview: LandPreview }) {
   return (
     <div className="floors-preview">
       <p className="hint">
-        <code>{preview.floorBranch}</code> → chão <code>{preview.groundBranch}</code>
+        <code>{preview.floorBranch}</code> → {t("chão")} <code>{preview.groundBranch}</code>
         {preview.alreadyMerged
-          ? " — já está mesclado."
-          : ` — ${preview.files.length} arquivo(s), +${preview.additions} −${preview.deletions}.`}
+          ? t(" — já está mesclado.")
+          : t(" — {n} arquivo(s), +{a} −{d}.", {
+              n: preview.files.length,
+              a: preview.additions,
+              d: preview.deletions,
+            })}
       </p>
       {blockers.map((b) => (
         <p key={b} className="floors-warn">
@@ -232,9 +243,9 @@ export function LandPreviewBody({ preview }: { preview: LandPreview }) {
       {/* Saying what is wrong without saying what to do is only halfway. */}
       {dirty && (
         <p className="hint">
-          Um merge só entra com as duas árvores limpas: faça commit (ou stash)
-          do que está pendente e volte aqui — “Comparar de novo” refaz a
-          previsão sem fechar esta janela.
+          {t(
+            "Um merge só entra com as duas árvores limpas: faça commit (ou stash) do que está pendente e volte aqui — “Comparar de novo” refaz a previsão sem fechar esta janela.",
+          )}
         </p>
       )}
       {preview.files.length > 0 && (

@@ -2,6 +2,7 @@ import type { MenuEntry } from "../components/ContextMenu";
 import type { PortalStorage } from "./canvas";
 import { ipc } from "./ipc";
 import { resolveUa, UA_PRESET_IDS } from "./portals";
+import { t } from "./i18n";
 
 interface PortalPreferenceMenuOptions {
   id: string;
@@ -28,7 +29,7 @@ export function portalPreferenceMenu({
   );
   const userAgents: MenuEntry[] = UA_PRESET_IDS.map((preset) => ({
     id: `ua-${preset}`,
-    label: preset === "desktop" ? "UA: desktop (padrão)" : `UA: ${preset}`,
+    label: preset === "desktop" ? t("UA: desktop (padrão)") : `UA: ${preset}`,
     checked: preset === "desktop" ? !ua : preset === currentUa,
     onSelect: () => {
       const next = preset === "desktop" ? undefined : resolveUa(preset);
@@ -38,9 +39,9 @@ export function portalPreferenceMenu({
   }));
   const scopes: PortalStorage[] = ["instance", "workspace", "global"];
   const labels: Record<PortalStorage, string> = {
-    instance: `Cookies: ${instanceLabel}`,
-    workspace: "Cookies: deste projeto",
-    global: "Cookies: global",
+    instance: t("Cookies: {whose}", { whose: instanceLabel }),
+    workspace: t("Cookies: deste projeto"),
+    global: t("Cookies: global"),
   };
   const currentStorage = storage ?? "instance";
   return [
@@ -54,9 +55,12 @@ export function portalPreferenceMenu({
         if (scope === currentStorage) return;
         patch({ storage: scope });
         const whose =
-          scope === "instance" ? instanceLabel : scope === "workspace" ? "deste projeto" : "globais";
+          scope === "instance" ? instanceLabel : scope === "workspace" ? t("deste projeto") : t("globais");
         showToast(
-          `${subject} recarregado com os cookies ${whose} — a sessão anterior fica no perfil antigo.`,
+          t("{subject} recarregado com os cookies {whose} — a sessão anterior fica no perfil antigo.", {
+            subject,
+            whose,
+          }),
         );
       },
     })),

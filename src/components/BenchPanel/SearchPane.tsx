@@ -28,6 +28,7 @@ import { fileName, toOsPath } from "../../lib/paths";
 import { useEditor, parentDir } from "../../stores/editorStore";
 import { MIN_QUERY, outcomeIsCurrent, useSearch } from "../../stores/searchStore";
 import { useUI } from "../../stores/uiStore";
+import { useT } from "../../hooks/useT";
 
 /** Typing pauses this long before the disk is walked. */
 const DEBOUNCE_MS = 350;
@@ -50,6 +51,7 @@ export function SearchPane({
   const outcomeRoot = useSearch((s) => s.root);
   const collapsed = useSearch((s) => s.collapsed);
   const showToast = useUI((s) => s.showToast);
+  const t = useT();
 
   const inputRef = useRef<HTMLInputElement>(null);
   const timer = useRef(0);
@@ -98,20 +100,20 @@ export function SearchPane({
     const absolutePath = root ? toOsPath(root, path) : null;
     const copy = (theValue: string) => {
       void copyText(theValue).then((ok) =>
-        showToast(ok ? "Copiado." : "Não consegui copiar.", ok ? "info" : "error"),
+        showToast(ok ? t("Copiado.") : t("Não consegui copiar."), ok ? "info" : "error"),
       );
     };
     const entries: MenuEntry[] = [
       {
         id: "abrir",
-        label: line === null ? "Abrir o arquivo" : `Abrir na linha ${line}`,
+        label: line === null ? t("Abrir o arquivo") : t("Abrir na linha {line}", { line }),
         onSelect: () => openHit(path, line ?? 1),
       },
       { kind: "sep" },
-      { id: "copiar", label: "Copiar caminho", onSelect: () => copy(path) },
+      { id: "copiar", label: t("Copiar caminho"), onSelect: () => copy(path) },
       {
         id: "copiar-abs",
-        label: "Copiar caminho completo",
+        label: t("Copiar caminho completo"),
         disabled: absolutePath === null,
         onSelect: () => absolutePath && copy(absolutePath),
       },
@@ -119,13 +121,13 @@ export function SearchPane({
     if (theText !== null) {
       entries.push({
         id: "copiar-linha",
-        label: "Copiar a linha",
+        label: t("Copiar a linha"),
         onSelect: () => copy(theText),
       });
     }
     entries.push({
       id: "revelar",
-      label: "Mostrar na pasta",
+      label: t("Mostrar na pasta"),
       disabled: absolutePath === null,
       onSelect: () => {
         if (absolutePath) void ipc.revealPath(absolutePath).catch((e) => showToast(String(e), "error"));
@@ -149,19 +151,19 @@ export function SearchPane({
     void useEditor
       .getState()
       .openFileAt(path, line)
-      .catch((e) => showToast(`Não consegui abrir: ${e}`, "error"));
+      .catch((e) => showToast(t("Não consegui abrir: {e}", { e: String(e) }), "error"));
   };
 
   return (
-    <div className="bench-body bench-body--search" role="tabpanel" aria-label="Buscar no projeto">
+    <div className="bench-body bench-body--search" role="tabpanel" aria-label={t("Buscar no projeto")}>
       <div className="bench-bar">
         <div className="bench-search">
           <Search size={12} aria-hidden="true" />
           <input
             ref={inputRef}
             value={query}
-            placeholder="Buscar no projeto"
-            aria-label="Buscar texto em todos os arquivos do projeto"
+            placeholder={t("Buscar no projeto")}
+            aria-label={t("Buscar texto em todos os arquivos do projeto")}
             disabled={!root}
             onChange={(e) => useSearch.getState().setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -177,7 +179,7 @@ export function SearchPane({
           {query && (
             <button
               className="icon-btn"
-              aria-label="Limpar a busca"
+              aria-label={t("Limpar a busca")}
               onClick={() => {
                 useSearch.getState().clear();
                 inputRef.current?.focus();
@@ -192,8 +194,8 @@ export function SearchPane({
               search closes it, lit blue while it is on. */}
           <button
             className="icon-btn bench-lens is-active"
-            data-tip="Fechar a busca"
-            aria-label="Fechar a busca e voltar à árvore"
+            data-tip={t("Fechar a busca")}
+            aria-label={t("Fechar a busca e voltar à árvore")}
             aria-pressed={true}
             onClick={onClose}
           >
@@ -201,8 +203,8 @@ export function SearchPane({
           </button>
           <button
             className={`icon-btn ${caseSensitive ? "is-active" : ""}`}
-            data-tip="Diferenciar maiúsculas"
-            aria-label="Diferenciar maiúsculas de minúsculas"
+            data-tip={t("Diferenciar maiúsculas")}
+            aria-label={t("Diferenciar maiúsculas de minúsculas")}
             aria-pressed={caseSensitive}
             onClick={() => useSearch.getState().setCaseSensitive(!caseSensitive)}
           >
@@ -210,8 +212,8 @@ export function SearchPane({
           </button>
           <button
             className={`icon-btn ${wholeWord ? "is-active" : ""}`}
-            data-tip="Palavra inteira"
-            aria-label="Só palavras inteiras"
+            data-tip={t("Palavra inteira")}
+            aria-label={t("Só palavras inteiras")}
             aria-pressed={wholeWord}
             onClick={() => useSearch.getState().setWholeWord(!wholeWord)}
           >
@@ -220,23 +222,29 @@ export function SearchPane({
         </div>
       </div>
 
-      {!root && <p className="bench-note">Abra um projeto para buscar nele.</p>}
+      {!root && <p className="bench-note">{t("Abra um projeto para buscar nele.")}</p>}
       {/* Under two characters the search does not run; without this line the
           area sat empty and the silence looked like a failure. */}
-      {root && query.trim().length > 0 && query.trim().length < MIN_QUERY && (
-        <p className="bench-note">Digite ao menos {MIN_QUERY} caracteres.</p>
+      {root && query.trim().length > 0 && query.trim().length < MIN_QUERY && ( // i18n-ok
+        <p className="bench-note">{t("Digite ao menos {n} caracteres.", { n: MIN_QUERY })}</p>
       )}
       {status === "error" && error && (
         <p className="bench-note bench-note--error">{error}</p>
       )}
-      {status === "searching" && <p className="bench-note">buscando…</p>}
+      {status === "searching" && <p className="bench-note">{t("buscando…")}</p>}
       {status === "done" && fresh && outcome && (
         <p className="bench-note">
           {outcome.hits.length === 0
-            ? `Nada de “${query.trim()}” em ${outcome.filesScanned} arquivos.`
-            : `${outcome.hits.length} linha(s) em ${outcome.filesHit} arquivo(s).`}
+            ? t("Nada de “{query}” em {files} arquivos.", {
+                query: query.trim(),
+                files: outcome.filesScanned,
+              })
+            : t("{hits} linha(s) em {files} arquivo(s).", {
+                hits: outcome.hits.length,
+                files: outcome.filesHit,
+              })}
           {outcome.truncated &&
-            " A lista parou num limite — refine a busca para ver o resto."}
+            ` ${t("A lista parou num limite — refine a busca para ver o resto.")}`}
         </p>
       )}
 
@@ -263,7 +271,7 @@ export function SearchPane({
                   <button
                     key={`${hit.path}:${hit.line}`}
                     className="psearch-hit"
-                    data-tip={`linha ${hit.line}`}
+                    data-tip={t("linha {line}", { line: hit.line })}
                     onClick={() => openHit(hit.path, hit.line)}
                     onContextMenu={(e) => openMenu(e, hit.path, hit.line, hit.text)}
                   >

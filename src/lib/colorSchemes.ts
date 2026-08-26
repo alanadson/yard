@@ -217,7 +217,7 @@ export const SCHEMES: readonly ColorScheme[] = [
   },
   {
     id: "theme-rose-pine",
-    name: "Rosé Pine",
+    name: "Rosé Pine", // i18n-ok
     term: ansi({
       background: "#191724",
       foreground: "#e0def4",

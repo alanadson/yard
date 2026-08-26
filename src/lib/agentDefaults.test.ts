@@ -32,6 +32,8 @@ import {
   spawnArgv,
   withAgentConfig,
   wslLaunch,
+  sshLaunch,
+  shQuote,
   withAgentDefault,
 } from "./agentDefaults";
 import { skipFlagOf } from "./termArgs";
@@ -536,5 +538,99 @@ describe("launchFor is everything a card is born with", () => {
         "--cache-prompts",
       ],
     });
+  });
+});
+
+/**
+ * Running the agent on another machine is, like WSL, a different command
+ * line rather than a flag: the process Yard spawns is `ssh.exe`, and the CLI,
+ * its arguments and the folder travel inside one remote command that a POSIX
+ * shell on the other side has to read back exactly as they were typed here.
+ */
+describe("shQuote", () => {
+  it("wraps in single quotes, which a POSIX shell reads verbatim", () => {
+    expect(shQuote("/home/alan/api")).toBe("'/home/alan/api'");
+    expect(shQuote("with space")).toBe("'with space'");
+  });
+
+  it("survives a single quote inside the value", () => {
+    // The only character single quotes cannot hold: close, escape, reopen.
+    expect(shQuote("it's")).toBe("'it'\\''s'");
+  });
+});
+
+describe("sshLaunch", () => {
+  const base = {
+    program: String.raw`C:\Users\alan\AppData\Roaming\npm\claude.cmd`,
+    args: ["--dangerously-skip-permissions"],
+    cwd: String.raw`C:\Workspace\api`,
+    host: "devbox",
+    remotePath: "/home/alan/api",
+  };
+
+  it("spawns ssh with a forced tty — ConPTY is not a tty from ssh's point of view", () => {
+    expect(sshLaunch(base).program).toBe("ssh.exe");
+    expect(sshLaunch(base).args.slice(0, 2)).toEqual(["-tt", "devbox"]);
+  });
+
+  it("runs the bare command in the remote folder — the Windows shim does not exist there", () => {
+    expect(sshLaunch(base).args[2]).toBe(
+      "cd '/home/alan/api' && exec claude --dangerously-skip-permissions",
+    );
+  });
+
+  it("quotes every argument, so a role brief with spaces stays one word over there", () => {
+    const launch = sshLaunch({ ...base, args: ["--append-system-prompt", "be nice"] });
+    expect(launch.args[2]).toBe(
+      "cd '/home/alan/api' && exec claude --append-system-prompt 'be nice'",
+    );
+  });
+
+  it("no remote folder means the login shell's home — no cd at all", () => {
+    expect(sshLaunch({ ...base, remotePath: "" }).args[2]).toBe(
+      "exec claude --dangerously-skip-permissions",
+    );
+  });
+});
+
+describe("launchFor — over SSH", () => {
+  it("wraps the one told to live on another machine", () => {
+    const all = withAgentConfig({}, "claude", {
+      where: "ssh",
+      sshHost: "devbox",
+      sshPath: "/srv/api",
+    });
+    expect(
+      launchFor(all, "claude", { program: "claude.cmd", args: ["--verbose"], cwd: "C:\\api" }),
+    ).toEqual({
+      program: "ssh.exe",
+      args: ["-tt", "devbox", "cd '/srv/api' && exec claude --verbose"],
+    });
+  });
+});
+
+describe("the ssh fields in the kv", () => {
+  it("reads host and remote folder back, trimmed", () => {
+    const raw = JSON.stringify({
+      claude: { where: "ssh", sshHost: " devbox ", sshPath: " /srv/api " },
+    });
+    expect(parseAgentDefaults(raw)).toEqual({
+      claude: cfg({ where: "ssh", sshHost: "devbox", sshPath: "/srv/api" }),
+    });
+  });
+
+  it("writes them only when set, next to where — a Windows agent says nothing about ssh", () => {
+    const all = withAgentConfig({}, "claude", { where: "ssh", sshHost: "devbox" });
+    expect(serializeAgentDefaults(all)).toEqual({
+      claude: { where: "ssh", sshHost: "devbox" },
+    });
+  });
+
+  it("a host remembered for later is still something to say, even back on Windows", () => {
+    // Switching the picker back to Windows must not erase the host the user
+    // typed: the row stays in the kv so the next switch to SSH finds it.
+    const all = withAgentConfig({}, "claude", { sshHost: "devbox" });
+    expect(isDefaultConfig(all.claude)).toBe(false);
+    expect(serializeAgentDefaults(all)).toEqual({ claude: { sshHost: "devbox" } });
   });
 });

@@ -24,12 +24,15 @@ import { Bot, Check, Gauge, Moon, RefreshCw, Zap } from "lucide-react";
 
 import { BrandIcon } from "../BrandIcon";
 import { brandById } from "../../lib/brands";
+// i18n-scan: tables
 import { ago, untilShort } from "../../lib/format";
+import { t } from "../../lib/i18n";
 import type { ProviderUsage, UsageWindow } from "../../lib/ipc";
 import { usePower, type PowerMode } from "../../stores/powerStore";
 import { useUI } from "../../stores/uiStore";
 import { useUsage, worstWindow } from "../../stores/usageStore";
 import { useNow } from "../../hooks/useNow";
+import { useT } from "../../hooks/useT";
 import { buildUsageStrip } from "./usageStrip";
 
 /** Same steps as the memory HUD: blue → yellow (warning) → red. */
@@ -42,11 +45,11 @@ function meterClass(pct: number): string {
 function windowLabel(w: UsageWindow): string {
   switch (w.key) {
     case "session":
-      return "Sessão";
+      return t("Sessão");
     case "weekly":
-      return "Semana";
+      return t("Semana");
     case "monthly":
-      return "Mês";
+      return t("Mês");
     default:
       // Per-model window ("fable" today): the name comes from the API, capitalized.
       return w.key.charAt(0).toUpperCase() + w.key.slice(1);
@@ -118,12 +121,13 @@ function Meter({ pct }: { pct: number }) {
 }
 
 function ResetIn({ at }: { at: number | null }) {
+  const t = useT();
   const now = useNow(30_000);
   if (at === null) return null;
   const left = at - now;
   return (
     <span className="usage-reset">
-      {left <= 0 ? "reiniciando…" : untilShort(left)}
+      {left <= 0 ? t("reiniciando…") : untilShort(left)}
     </span>
   );
 }
@@ -138,17 +142,21 @@ function ProviderMark({ id, size }: { id: string; size: number }) {
 }
 
 function ProviderBlock({ p }: { p: ProviderUsage }) {
+  const t = useT();
   const now = useNow(30_000);
   const note = (() => {
     if (p.status === "ok") return null;
     if (p.status === "stale" && p.updatedAt > 0) {
-      return { text: `Sem resposta agora — dados de ${ago(now - p.updatedAt)} atrás`, tone: "dim" };
+      return {
+        text: t("Sem resposta agora — dados de {ago} atrás", { ago: ago(now - p.updatedAt) }),
+        tone: "dim",
+      };
     }
-    return { text: p.error ?? "Indisponível", tone: p.status === "missing" ? "dim" : "bad" };
+    return { text: p.error ?? t("Indisponível"), tone: p.status === "missing" ? "dim" : "bad" };
   })();
 
   return (
-    <section className="usage-prov" aria-label={`Uso de ${p.name}`}>
+    <section className="usage-prov" aria-label={t("Uso de {name}", { name: p.name })}>
       <div className="usage-prov-head">
         <ProviderMark id={p.id} size={12} />
         <span className="usage-prov-name">{p.name}</span>
@@ -183,6 +191,7 @@ function UpdatedAgo({ at }: { at: number }) {
 }
 
 export function StatusChip() {
+  const t = useT();
   const providers = useUsage((s) => s.providers);
   const fetchedAt = useUsage((s) => s.fetchedAt);
   const nudge = useUsage((s) => s.nudge);
@@ -243,12 +252,12 @@ export function StatusChip() {
 
   const powerStatus =
     mode === "off"
-      ? "O PC dorme normalmente."
+      ? t("O PC dorme normalmente.")
       : mode === "always"
-        ? "Segurando o PC acordado agora."
+        ? t("Segurando o PC acordado agora.")
         : engaged
-          ? "Agente trabalhando — segurando o PC acordado."
-          : "Nenhum agente trabalhando — o PC pode dormir.";
+          ? t("Agente trabalhando — segurando o PC acordado.")
+          : t("Nenhum agente trabalhando — o PC pode dormir.");
 
   // Arrows walk the three modes, as `role="radio"` promises.
   const onRadioKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -267,8 +276,8 @@ export function StatusChip() {
       <button
         ref={btnRef}
         className="usage-strip"
-        data-tip="Uso dos agentes e Energético"
-        aria-label="Uso dos agentes e Energético"
+        data-tip={t("Uso dos agentes e Energético")}
+        aria-label={t("Uso dos agentes e Energético")}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
@@ -316,17 +325,17 @@ export function StatusChip() {
             ref={popRef}
             className="usage-pop"
             role="dialog"
-            aria-label="Uso dos agentes e Energético"
+            aria-label={t("Uso dos agentes e Energético")}
             style={{ top: pos.top, right: pos.right }}
           >
             <div className="usage-pop-head">
-              <span className="usage-pop-title">Uso dos agentes</span>
+              <span className="usage-pop-title">{t("Uso dos agentes")}</span>
               <UpdatedAgo at={fetchedAt} />
               <button
                 className={`icon-btn usage-refresh ${spinning ? "is-spinning" : ""}`}
-                data-tip="Atualizar agora"
+                data-tip={t("Atualizar agora")}
                 data-tip-at="right"
-                aria-label="Atualizar agora"
+                aria-label={t("Atualizar agora")}
                 onClick={refresh}
               >
                 <RefreshCw size={12} />
@@ -334,7 +343,7 @@ export function StatusChip() {
             </div>
             {providers.length === 0 ? (
               <p className="usage-note">
-                Nenhuma CLI com medidor de uso detectada ainda.
+                {t("Nenhuma CLI com medidor de uso detectada ainda.")}
               </p>
             ) : (
               providers.map((p) => <ProviderBlock p={p} key={p.id} />)
@@ -342,10 +351,10 @@ export function StatusChip() {
             <div
               className="energy-sect"
               role="radiogroup"
-              aria-label="Energético"
+              aria-label={t("Energético")}
               onKeyDown={onRadioKey}
             >
-              <div className="energy-pop-title">Energético</div>
+              <div className="energy-pop-title">{t("Energético")}</div>
               {POWER_MODES.map((o) => (
                 <button
                   key={o.id}
@@ -356,8 +365,8 @@ export function StatusChip() {
                 >
                   <o.icon size={14} className="energy-opt-icon" aria-hidden="true" />
                   <span className="energy-opt-text">
-                    <span className="energy-opt-label">{o.label}</span>
-                    <span className="energy-opt-desc">{o.desc}</span>
+                    <span className="energy-opt-label">{t(o.label)}</span>
+                    <span className="energy-opt-desc">{t(o.desc)}</span>
                   </span>
                   {mode === o.id && (
                     <Check size={13} className="energy-opt-check" aria-hidden="true" />

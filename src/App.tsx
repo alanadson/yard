@@ -1,7 +1,7 @@
 import { lazy, useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { AlertTriangle, FolderOpen, FolderPlus, Loader2, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Download, FolderOpen, FolderPlus, Loader2, RefreshCw, X } from "lucide-react";
 
 import { ContextMenu, type MenuAnchor } from "./components/ContextMenu";
 import { GlobalMenu } from "./components/ContextMenu/GlobalMenu";
@@ -12,7 +12,18 @@ import { WorkspaceGrid } from "./components/WorkspaceGrid";
 import { useGlobalEvents } from "./hooks/useGlobalEvents";
 import { useOccluder } from "./hooks/useOccluder";
 import { useKeybindings } from "./hooks/useKeybindings";
+import { useLspLifecycle } from "./hooks/useLspLifecycle";
 import { useRoutines } from "./hooks/useRoutines";
+import { useTheme } from "./hooks/useTheme";
+import { useLanguage } from "./hooks/useLanguage";
+import { useFirstRun } from "./hooks/useFirstRun";
+import { useTray } from "./hooks/useTray";
+import { useUpdaterChecks } from "./hooks/useUpdater";
+import { useT } from "./hooks/useT";
+import { tn } from "./lib/i18n";
+import { useTriggers } from "./hooks/useTriggers";
+import { useAutoBackupTimer } from "./hooks/useAutoBackupTimer";
+import { useAutoBackup } from "./stores/autoBackupStore";
 import { cancelBackupRestore, restartIntoBackup } from "./lib/backupFlow";
 import { startBridge } from "./lib/bridgeListener";
 import { loadBundledFonts } from "./lib/bundledFonts";
@@ -22,6 +33,7 @@ import { ipc } from "./lib/ipc";
 import { reconcileAliveFlags } from "./lib/lifecycle";
 import { uiLog } from "./lib/log";
 import { readInitialPrefs } from "./lib/prefs";
+import { setQuitHandler } from "./lib/quit";
 import { startPtyWatch } from "./lib/ptyWatch";
 import { baseName } from "./lib/terminals";
 import { useAgentDefaults } from "./stores/agentDefaultsStore";
@@ -35,6 +47,9 @@ import { INTERRUPTED, useFlows } from "./stores/flowStore";
 import { useLive } from "./stores/liveStore";
 import { useNotes } from "./stores/notesStore";
 import { startKeepAwake, usePower } from "./stores/powerStore";
+import { useOnboarding } from "./stores/onboardingStore";
+import { useUpdater } from "./stores/updaterStore";
+import { installUpdate } from "./lib/updateFlow";
 import { useProjects } from "./stores/projectsStore";
 import { useReview } from "./stores/reviewStore";
 import { isLive, useTerminals } from "./stores/terminalsStore";
@@ -46,6 +61,10 @@ import {
   type Toast,
 } from "./stores/uiStore";
 import "./styles.css";
+// The light appearance: the same tokens, other values, keyed on
+// `<html data-theme="light">` — loaded on boot so the shell never opens dark
+// and flips (`src/theme-light.test.ts` locks the order).
+import "./theme-light.css";
 
 /** Floor of the terminal canvas — mirrors `.workspace`'s `min-width`. */
 const WORKSPACE_MIN = 320;
@@ -141,6 +160,18 @@ const SessionsModal = lazy(() =>
 const ShortcutsModal = lazy(() =>
   import("./components/modals/ShortcutsModal").then((m) => ({ default: m.ShortcutsModal })),
 );
+const OnboardingModal = lazy(() =>
+  import("./components/modals/OnboardingModal").then((m) => ({ default: m.OnboardingModal })),
+);
+const CostsModal = lazy(() =>
+  import("./components/modals/CostsModal").then((m) => ({ default: m.CostsModal })),
+);
+const ShoulderModal = lazy(() =>
+  import("./components/modals/ShoulderModal").then((m) => ({ default: m.ShoulderModal })),
+);
+const TranscriptModal = lazy(() =>
+  import("./components/modals/TranscriptModal").then((m) => ({ default: m.TranscriptModal })),
+);
 
 export default function App() {
   const [booting, setBooting] = useState(true);
@@ -173,6 +204,7 @@ export default function App() {
   const toasts = useUI((s) => s.toasts);
   const toastOverflow = useUI((s) => s.toastOverflow);
   const backupPending = useUI((s) => s.backupPending);
+  const updateOffer = useUpdater((s) => (s.phase === "available" ? s.version : null));
   const dismissToast = useUI((s) => s.dismissToast);
   const openModal = useUI((s) => s.openModal);
   const [welcomeMenu, setWelcomeMenu] = useState<MenuAnchor | null>(null);
@@ -182,6 +214,15 @@ export default function App() {
   useGlobalEvents();
   useKeybindings();
   useRoutines();
+  useTheme();
+  useLanguage();
+  const t = useT();
+  useTray();
+  useFirstRun();
+  useUpdaterChecks();
+  useAutoBackupTimer();
+  useTriggers();
+  useLspLifecycle();
 
   // Chosen fonts → CSS variables on <html>. One scalar per subscription, like
   // the terminals do: `s.prefs` is rebuilt on every splitter drag.
@@ -285,6 +326,15 @@ export default function App() {
         // round and a webview reload never reached `onCloseRequested`, so
         // this is the only thing standing between a refresh and lost typing.
         bootPrefs.then((prefs) => useEditor.getState().restore(prefs)),
+        // The welcome sheet needs the kv key before it can decide; the
+        // decision itself waits for the workspace (`useFirstRun`).
+        bootPrefs.then((prefs) => useOnboarding.getState().load(prefs)),
+        // The last check's stamp and the ignored version: without them a
+        // reload would fetch the manifest again and re-offer what was declined.
+        bootPrefs.then((prefs) => useUpdater.getState().load(prefs)),
+        // The stamp of the last automatic copy: without it every boot would
+        // think no backup was ever made and write one a minute later.
+        bootPrefs.then((prefs) => useAutoBackup.getState().load(prefs)),
       ]);
       // Only now are there rows to check against the backend.
       await reconcileAliveFlags().catch((e) =>
@@ -312,9 +362,13 @@ export default function App() {
         useUI
           .getState()
           .showToast(
-            `${interruptedRuns.length} fluxo(s) pararam quando a interface recarregou ` +
-              `(${interruptedRuns.map((r) => `"${r.name}"`).join(", ")}). ` +
-              "As CLIs continuam com o que já receberam.",
+            t(
+              "{n} fluxo(s) pararam quando a interface recarregou ({names}). As CLIs continuam com o que já receberam.",
+              {
+                n: interruptedRuns.length,
+                names: interruptedRuns.map((r) => `"${r.name}"`).join(", "),
+              },
+            ),
             "error",
           );
       }
@@ -456,51 +510,70 @@ export default function App() {
   // we cancel.
   useEffect(() => {
     const subscription = new AsyncDisposer();
+    // The flow itself, shared with "Sair" in the tray menu and the palette
+    // (`lib/quit.ts`): `force` skips the close-to-tray branch, because those
+    // two mean quit.
+    const closeFlow = async (force: boolean) => {
+      // Close to the tray: the X hides the window and the CLIs go on. The
+      // way back is the tray icon or the summon hotkey; quitting is "Sair"
+      // in the tray menu or in the palette, which come here with `force`.
+      if (!force && useUI.getState().prefs.closeToTray) {
+        await getCurrentWindow().hide();
+        return;
+      }
+      // Notes on a debounce timer would miss the train: write them now.
+      useNotes.getState().flush();
+      try {
+        await useProjects.getState().save();
+      } catch (e) {
+        // No disk, nothing we can do; close anyway.
+        uiLog.error(`falha ao salvar o workspace no fechamento: ${e}`);
+      }
+
+      // Drafts do survive the close now — `editorStore` writes them to kv and
+      // `restore()` brings them back with the conflict banner. So this is no
+      // longer "your typing is about to be destroyed"; it is "these files are
+      // still only drafts". Saying the old sentence taught the user to
+      // distrust the warning the day they discovered it was false.
+      const unsaved = useEditor
+        .getState()
+        .docs.filter((d) => isDirty(d) && !isReadOnly(d));
+      if (unsaved.length > 0) {
+        const names = unsaved.map((d) => d.path).join(", ");
+        const proceed = await ask(
+          t(
+            "{n} arquivo(s) ainda não gravados no disco: {names}.\n\nOs rascunhos voltam quando você reabrir o Yard, mas o arquivo em disco continua como está — e quem estiver lendo esses arquivos agora (um agente, o build) vê a versão antiga.",
+            { n: unsaved.length, names },
+          ),
+          { title: t("Fechar com arquivos por gravar?"), kind: "warning" },
+        );
+        if (!proceed) return;
+      }
+
+      const { prefs } = useUI.getState();
+      const aliveCount = Object.values(useTerminals.getState().byId).filter(isLive).length;
+      if (prefs.confirmOnExit && aliveCount > 0) {
+        const proceed = await ask(
+          t("{n} terminal(is) ainda rodando. Fechar o Yard encerra as árvores de processo.", {
+            n: aliveCount,
+          }),
+          { title: t("Fechar o Yard?"), kind: "warning" },
+        );
+        if (!proceed) return;
+      }
+      await getCurrentWindow().destroy();
+    };
+    setQuitHandler(() => void closeFlow(true));
     void subscription.add(
       getCurrentWindow().onCloseRequested(async (event) => {
         event.preventDefault();
-        // Notes on a debounce timer would miss the train: write them now.
-        useNotes.getState().flush();
-        try {
-          await useProjects.getState().save();
-        } catch (e) {
-          // No disk, nothing we can do; close anyway.
-          uiLog.error(`falha ao salvar o workspace no fechamento: ${e}`);
-        }
-
-        // Drafts do survive the close now — `editorStore` writes them to kv and
-        // `restore()` brings them back with the conflict banner. So this is no
-        // longer "your typing is about to be destroyed"; it is "these files are
-        // still only drafts". Saying the old sentence taught the user to
-        // distrust the warning the day they discovered it was false.
-        const unsaved = useEditor
-          .getState()
-          .docs.filter((d) => isDirty(d) && !isReadOnly(d));
-        if (unsaved.length > 0) {
-          const names = unsaved.map((d) => d.path).join(", ");
-          const proceed = await ask(
-            `${unsaved.length} arquivo(s) ainda não gravados no disco: ${names}.\n\n` +
-              "Os rascunhos voltam quando você reabrir o Yard, mas o arquivo em disco " +
-              "continua como está — e quem estiver lendo esses arquivos agora (um agente, " +
-              "o build) vê a versão antiga.",
-            { title: "Fechar com arquivos por gravar?", kind: "warning" },
-          );
-          if (!proceed) return;
-        }
-
-        const { prefs } = useUI.getState();
-        const aliveCount = Object.values(useTerminals.getState().byId).filter(isLive).length;
-        if (prefs.confirmOnExit && aliveCount > 0) {
-          const proceed = await ask(
-            `${aliveCount} terminal(is) ainda rodando. Fechar o Yard encerra as árvores de processo.`,
-            { title: "Fechar o Yard?", kind: "warning" },
-          );
-          if (!proceed) return;
-        }
-        await getCurrentWindow().destroy();
+        await closeFlow(false);
       }),
     );
-    return () => subscription.dispose();
+    return () => {
+      setQuitHandler(null);
+      subscription.dispose();
+    };
   }, []);
 
   if (booting) {
@@ -508,7 +581,7 @@ export default function App() {
       <div className="boot">
         <div className="boot-inner">
           <img className="boot-mark" src="/yard-app-icon.png" alt="" />
-          <span>carregando workspace…</span>
+          <span>{t("carregando workspace…")}</span>
         </div>
       </div>
     );
@@ -530,16 +603,16 @@ export default function App() {
         <div className="boot boot--failed">
           <div className="boot-fail" role="alert">
             <AlertTriangle size={26} className="boot-fail-icon" aria-hidden="true" />
-            <h2>Não consegui abrir o workspace</h2>
+            <h2>{t("Não consegui abrir o workspace")}</h2>
             <p>
-              O banco em <code>%APPDATA%\Yard\app.db</code> não pôde ser lido, então
-              o Yard está sem os seus projetos — e <strong>nada que você fizer agora
-              seria salvo</strong>. Por isso a tela parou aqui em vez de abrir vazia.
+              {t("O banco em")} <code>%APPDATA%\Yard\app.db</code>{" "}
+              {t("não pôde ser lido, então o Yard está sem os seus projetos — e")}{" "}
+              <strong>{t("nada que você fizer agora seria salvo")}</strong>.{" "}
+              {t("Por isso a tela parou aqui em vez de abrir vazia.")}
             </p>
             <pre className="boot-fail-detail">{loadError}</pre>
             <p className="boot-fail-hint">
-              Causa comum: outra instância do Yard já está aberta com o mesmo
-              diretório de dados. Feche-a e tente de novo.
+              {t("Causa comum: outra instância do Yard já está aberta com o mesmo diretório de dados. Feche-a e tente de novo.")}
             </p>
             <div className="boot-fail-actions">
               <button
@@ -548,7 +621,7 @@ export default function App() {
                 onClick={() => void retryBoot()}
               >
                 <RefreshCw size={13} aria-hidden="true" />
-                {retrying ? "Tentando…" : "Tentar de novo"}
+                {retrying ? t("Tentando…") : t("Tentar de novo")}
               </button>
               <button
                 className="btn"
@@ -559,7 +632,7 @@ export default function App() {
                     .catch((e) => uiLog.warn(`não consegui abrir a pasta de dados: ${e}`));
                 }}
               >
-                <FolderOpen size={13} aria-hidden="true" /> Abrir a pasta de dados
+                <FolderOpen size={13} aria-hidden="true" /> {t("Abrir a pasta de dados")}
               </button>
             </div>
           </div>
@@ -576,11 +649,10 @@ export default function App() {
         <div className="save-warn" role="alert">
           <AlertTriangle size={13} aria-hidden="true" />
           <span>
-            Não estou conseguindo gravar o workspace no disco — as últimas mudanças
-            ainda não foram salvas. Tentando de novo automaticamente.
+            {t("Não estou conseguindo gravar o workspace no disco — as últimas mudanças ainda não foram salvas. Tentando de novo automaticamente.")}
           </span>
           <button className="btn btn--sm" onClick={() => void useProjects.getState().save()}>
-            Tentar agora
+            {t("Tentar agora")}
           </button>
         </div>
       )}
@@ -592,14 +664,32 @@ export default function App() {
         <div className="save-warn" role="alert">
           <AlertTriangle size={13} aria-hidden="true" />
           <span>
-            Um backup restaurado está esperando o próximo boot — tudo o que você
-            fizer até lá será descartado quando o Yard reabrir.
+            {t("Um backup restaurado está esperando o próximo boot — tudo o que você fizer até lá será descartado quando o Yard reabrir.")}
           </span>
           <button className="btn btn--sm" onClick={() => void restartIntoBackup()}>
-            Reiniciar agora
+            {t("Reiniciar agora")}
           </button>
           <button className="btn btn--sm" onClick={() => void cancelBackupRestore()}>
-            Cancelar restauração
+            {t("Cancelar restauração")}
+          </button>
+        </div>
+      )}
+      {updateOffer && (
+        // A new release, signed and ready. The bar stays until it is installed
+        // or ignored — the same shape as the backup warning, in the chrome's
+        // blue: this is news, not danger.
+        <div className="save-warn save-warn--info" role="status">
+          <Download size={13} aria-hidden="true" />
+          <span>
+            {t("Versão {version} do Yard disponível — instale e reinicie quando quiser.", {
+              version: updateOffer,
+            })}
+          </span>
+          <button className="btn btn--sm btn--primary" onClick={() => void installUpdate()}>
+            {t("Instalar e reiniciar")}
+          </button>
+          <button className="btn btn--sm" onClick={() => useUpdater.getState().skip()}>
+            {t("Ignorar esta versão")}
           </button>
         </div>
       )}
@@ -615,7 +705,7 @@ export default function App() {
             // The notebook in its central place takes the whole area the
             // grid would get — the panels and sidebar around it keep working.
             <Overlay
-              where="o caderno"
+              where={t("o caderno")}
               fallback={<LoadingSurface label="Abrindo o caderno" />}
             >
               <NotesCenter />
@@ -639,20 +729,20 @@ export default function App() {
                   items={[
                     {
                       id: "add",
-                      label: "Adicionar projeto",
+                      label: t("Adicionar projeto"),
                       icon: <FolderPlus size={13} />,
                       onSelect: () => openModal("new-project"),
                     },
                     {
                       id: "palette",
-                      label: "Paleta de comandos",
+                      label: t("Paleta de comandos"),
                       shortcut: "Ctrl+P",
                       onSelect: () => useUI.getState().openPalette(),
                     },
                     { kind: "sep" },
                     {
                       id: "prefs",
-                      label: "Configurações",
+                      label: t("Configurações"),
                       shortcut: "Ctrl+,",
                       onSelect: () => openModal("preferences"),
                     },
@@ -668,20 +758,20 @@ export default function App() {
                 />
                 <h2>
                   {projects.length === 0
-                    ? "Comece pela pasta de um projeto"
-                    : "Escolha um grupo para começar"}
+                    ? t("Comece pela pasta de um projeto")
+                    : t("Escolha um grupo para começar")}
                 </h2>
                 <p>
                   {projects.length === 0
-                    ? "O Yard roda as CLIs de agentes dentro dessa pasta e acompanha o que elas mexem no disco."
-                    : "Cada grupo é um conjunto de CLIs sobre o mesmo projeto. Selecione um na barra lateral."}
+                    ? t("O Yard roda as CLIs de agentes dentro dessa pasta e acompanha o que elas mexem no disco.")
+                    : t("Cada grupo é um conjunto de CLIs sobre o mesmo projeto. Selecione um na barra lateral.")}
                 </p>
                 {projects.length === 0 && (
                   <button
                     className="btn btn--primary"
                     onClick={() => openModal("new-project")}
                   >
-                    <FolderPlus size={13} /> Adicionar projeto
+                    <FolderPlus size={13} /> {t("Adicionar projeto")}
                   </button>
                 )}
                 <div className="welcome-hints">
@@ -689,12 +779,11 @@ export default function App() {
                       teaching it here made the very first flow a dead end. */}
                   {projects.length > 0 && (
                     <span className="welcome-hint">
-                      <kbd>Ctrl</kbd> + <kbd>T</kbd> abre um terminal
+                      <kbd>Ctrl</kbd> + <kbd>T</kbd> {t("abre um terminal")}
                     </span>
                   )}
                   <span className="welcome-hint">
-                    <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>H</kbd> lista os
-                    atalhos
+                    <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>H</kbd> {t("lista os atalhos")}
                   </span>
                 </div>
               </div>
@@ -702,36 +791,36 @@ export default function App() {
           )}
         </main>
         {changesOpen && (
-          <Overlay where="o painel de alterações" fallback={<LoadingPane paneSide="changes" />}>
+          <Overlay where={t("o painel de alterações")} fallback={<LoadingPane paneSide="changes" />}>
             <ChangesPanel />
           </Overlay>
         )}
         {benchOpen && (
-          <Overlay where="a bancada" fallback={<LoadingPane paneSide="bench" />}>
+          <Overlay where={t("a bancada")} fallback={<LoadingPane paneSide="bench" />}>
             <BenchPanel />
           </Overlay>
         )}
       </div>
 
-      <Overlay where="o Ao Vivo" fallback={<LoadingOverlay />}>
+      <Overlay where={t("o Ao Vivo")} fallback={<LoadingOverlay />}>
         {liveOpen && <LiveView />}
       </Overlay>
-      <Overlay where="o visualizador de diff" fallback={<LoadingOverlay />}>
+      <Overlay where={t("o visualizador de diff")} fallback={<LoadingOverlay />}>
         {viewerOpen && <DiffViewer />}
       </Overlay>
-      <Overlay where="o caderno" fallback={<LoadingOverlay />}>
+      <Overlay where={t("o caderno")} fallback={<LoadingOverlay />}>
         {notesOpen && !notesCenter && <NotesView />}
       </Overlay>
-      <Overlay where="o editor" fallback={<LoadingOverlay />}>
+      <Overlay where={t("o editor")} fallback={<LoadingOverlay />}>
         {editorOpen && <CodeEditor />}
       </Overlay>
-      <Overlay where="o compositor" fallback={<LoadingOverlay />}>
+      <Overlay where={t("o compositor")} fallback={<LoadingOverlay />}>
         {composerOpen && <Composer />}
       </Overlay>
-      <Overlay where="a Busca" fallback={<LoadingOverlay />}>
+      <Overlay where={t("a Busca")} fallback={<LoadingOverlay />}>
         {paletteOpen && <Palette />}
       </Overlay>
-      <Overlay where="esta janela" fallback={<LoadingOverlay />}>
+      <Overlay where={t("esta janela")} fallback={<LoadingOverlay />}>
         {modal === "new-terminal" && <NewTerminalModal />}
         {modal === "new-portal" && <NewPortalModal />}
         {modal === "new-project" && <NewProjectModal />}
@@ -755,6 +844,10 @@ export default function App() {
         {modal === "scores" && <ScoresModal />}
         {modal === "flow" && <FlowModal />}
         {modal === "scm-confirm" && <ScmConfirmModal />}
+        {modal === "onboarding" && <OnboardingModal />}
+        {modal === "costs" && <CostsModal />}
+        {modal === "shoulder" && <ShoulderModal />}
+        {modal === "transcript" && <TranscriptModal />}
         {modal === "sessions" && (
           <SessionsModal
             projectPath={
@@ -768,9 +861,7 @@ export default function App() {
         <div className="toast-stack">
           {toastOverflow > 0 && (
             <div className="toast-overflow" role="status">
-              +{toastOverflow}{" "}
-              {toastOverflow === 1 ? "aviso anterior saiu" : "avisos anteriores saíram"}{" "}
-              da pilha
+              {tn(toastOverflow, "+{n} aviso anterior saiu da pilha", "+{n} avisos anteriores saíram da pilha")}
             </div>
           )}
           {toasts.map((t, i) => (
@@ -819,27 +910,30 @@ function LoadingSurface({ label }: { label: string }) {
 }
 
 function LoadingPane({ paneSide: side }: { paneSide: "changes" | "bench" }) {
+  const t = useT();
   const width = useUI((s) =>
     side === "changes" ? s.prefs.changesWidth : s.prefs.benchWidth,
   );
   return (
     <aside className="panel-loading" style={{ width: width }} role="status">
       <Loader2 size={15} className="spin" aria-hidden="true" />
-      <span className="sr-only">Abrindo o painel…</span>
+      <span className="sr-only">{t("Abrindo o painel…")}</span>
     </aside>
   );
 }
 
 function LoadingOverlay() {
+  const t = useT();
   return (
     <div className="overlay-loading" role="status">
       <Loader2 size={18} className="spin" aria-hidden="true" />
-      <span className="sr-only">Abrindo…</span>
+      <span className="sr-only">{t("Abrindo…")}</span>
     </div>
   );
 }
 
 function AgentAnnouncer() {
+  const t = useT();
   const [message, setMessage] = useState("");
   useEffect(() => {
     return useTerminals.subscribe((s, prev) => {
@@ -849,19 +943,19 @@ function AgentAnnouncer() {
           continue;
         }
         const row = useProjects.getState().terminals.find((t) => t.id === id);
-        const itemName = row ? baseName(row) : "Um agente";
+        const itemName = row ? baseName(row) : t("Um agente");
         if (rt.blocked && !before?.blocked) {
           // A trailing space forces a DOM change when the same agent blocks
           // twice in a row — identical text would not be re-announced.
           setMessage((m) => {
-            const newValue = `${itemName} está esperando uma resposta sua`;
+            const newValue = t("{name} está esperando uma resposta sua", { name: itemName });
             return m === newValue ? `${newValue} ` : newValue;
           });
           return;
         }
         if (rt.finished && !before?.finished && !rt.blocked) {
           setMessage((m) => {
-            const next = `${itemName} terminou de trabalhar`;
+            const next = t("{name} terminou de trabalhar", { name: itemName });
             return m === next ? `${next} ` : next;
           });
           return;
@@ -898,6 +992,7 @@ function ToastBar({
   slot: number;
   onDismiss: () => void;
 }) {
+  const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   // Keyed by **position**, not by id: dismissing the notice below moves this
   // one down, and a `ResizeObserver` does not fire for a move. Re-keying on the
@@ -912,7 +1007,7 @@ function ToastBar({
       aria-live={toast.kind === "error" ? "assertive" : "polite"}
     >
       <span>{toast.message}</span>
-      <button className="icon-btn" aria-label="Dispensar aviso" onClick={onDismiss}>
+      <button className="icon-btn" aria-label={t("Dispensar aviso")} onClick={onDismiss}>
         <X size={12} />
       </button>
     </div>

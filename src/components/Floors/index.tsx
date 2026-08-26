@@ -36,6 +36,7 @@ import { parseLayout, useProjects } from "../../stores/projectsStore";
 import { isLive, useTerminals } from "../../stores/terminalsStore";
 import { useUI } from "../../stores/uiStore";
 import { runFloorHooks } from "../../lib/floorHooks";
+import { useT } from "../../hooks/useT";
 
 function hookEnvFor(
   group: GroupRow,
@@ -68,6 +69,7 @@ export function FloorsControl({
   groupId: string;
   variant: "canvas" | "grid";
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   /** Where focus goes back to when the popover closes with Esc. */
@@ -111,8 +113,8 @@ export function FloorsControl({
       <button
         ref={buttonRef}
         className={`floors-btn ${open ? "is-active" : ""}`}
-        data-tip-side="top" data-tip-wrap="" data-tip="Andares: cópias isoladas do repositório, cada uma com o próprio canvas"
-        aria-label="Andares"
+        data-tip-side="top" data-tip-wrap="" data-tip={t("Andares: cópias isoladas do repositório, cada uma com o próprio canvas")}
+        aria-label={t("Andares")}
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
@@ -131,6 +133,7 @@ function FloorsPopover({
   project: ProjectRow;
   onClose: () => void;
 }) {
+  const t = useT();
   const groups = useProjects((s) => s.groups);
   const terminals = useProjects((s) => s.terminals);
   const runtimes = useTerminals((s) => s.byId);
@@ -153,7 +156,7 @@ function FloorsPopover({
   const [menu, setMenu] = useState<{ anchor: MenuAnchor; entries: MenuEntry[] } | null>(
     null,
   );
-  const withLock = (g: GroupRow, fn: () => Promise<void>) => async () => {
+  const withLock = (g: GroupRow, fn: () => Promise<void>) => async () => { // i18n-ok
     if (occupied) return;
     setBusy(g.id);
     try {
@@ -169,14 +172,14 @@ function FloorsPopover({
   const unload = async (g: GroupRow) => {
     const ids = liveIdsOf(g.id);
     if (ids.length === 0) {
-      showToast("Nenhum terminal vivo neste andar.");
+      showToast(t("Nenhum terminal vivo neste andar."));
       return;
     }
     const failures = await ipc.suspendGroup(ids);
     showToast(
       failures.length
-        ? `Andar descarregado com ${failures.length} falha(s).`
-        : `Andar "${g.name}" descarregado — sessões preservadas.`,
+        ? t("Andar descarregado com {n} falha(s).", { n: failures.length })
+        : t('Andar "{name}" descarregado — sessões preservadas.', { name: g.name }),
     );
   };
 
@@ -193,18 +196,21 @@ function FloorsPopover({
     const floor = parseLayout(g.layoutJson).floor;
     if (!floor?.hooks?.run.length) return;
     const cwd = floor.worktreePath ?? project.path;
-    showToast(`Rodando hooks de "${g.name}"…`);
+    showToast(t('Rodando hooks de "{name}"…', { name: g.name }));
     const r = await runFloorHooks(cwd, floor.hooks.run, hookEnvFor(g, floor, project));
-    showToast(r.ok ? `Hooks de "${g.name}" concluídos.` : `Hook falhou: ${r.detail}`, r.ok ? "info" : "error");
+    showToast(
+      r.ok ? t('Hooks de "{name}" concluídos.', { name: g.name }) : t("Hook falhou: {detail}", { detail: r.detail }),
+      r.ok ? "info" : "error",
+    );
   };
 
   return (
     // `role="group"`, not `role="menu"`: the rows carry their own action
     // buttons, and a menu whose items contain buttons is a broken menu — the
     // shape here is a list of choices, which is what this says.
-    <div className="floors-pop" role="group" aria-label="Andares do projeto">
+    <div className="floors-pop" role="group" aria-label={t("Andares do projeto")}>
       <div className="floors-pop-head">
-        <span>Andares — {project.name}</span>
+        <span>{t("Andares — {name}", { name: project.name })}</span>
       </div>
       <ul className="floors-list">
         {ofProject.map((g, i) => {
@@ -246,7 +252,7 @@ function FloorsPopover({
                             copy: (text) => {
                               void copyText(text).then((ok) =>
                                 showToast(
-                                  ok ? "Copiado." : "Não consegui copiar.",
+                                  ok ? t("Copiado.") : t("Não consegui copiar."),
                                   ok ? "info" : "error",
                                 ),
                               );
@@ -271,7 +277,7 @@ function FloorsPopover({
                       <span className="floors-name" data-tip={g.name}>
                         {g.name}
                       </span>
-                      {isGround && <span className="floors-badge">chão</span>}
+                      {isGround && <span className="floors-badge">{t("chão")}</span>}
                       {floor?.kind === "isolated" && floor.branch && (
                         <span className="floors-badge floors-badge--branch" data-tip-wrap="" data-tip={floor.worktreePath}>
                           <GitBranch size={10} aria-hidden="true" />
@@ -279,14 +285,14 @@ function FloorsPopover({
                         </span>
                       )}
                       {floor?.kind === "plain" && (
-                        <span className="floors-badge">sem git</span>
+                        <span className="floors-badge">{t("sem git")}</span>
                       )}
                       {aliveCount > 0 && (
                         <span
                           className="floors-alive"
-                          data-tip={`${aliveCount} terminal(is) vivo(s)`}
+                          data-tip={t("{n} terminal(is) vivo(s)", { n: aliveCount })}
                           role="img"
-                          aria-label={`${aliveCount} terminal(is) vivo(s)`}
+                          aria-label={t("{n} terminal(is) vivo(s)", { n: aliveCount })}
                         >
                           {aliveCount}
                         </span>
@@ -297,8 +303,8 @@ function FloorsPopover({
                         {isIsolatedFloor(floor) && (
                           <button
                             className="icon-btn"
-                            data-tip="Aterrissar este andar no chão"
-                            aria-label={`Aterrissar ${g.name}`}
+                            data-tip={t("Aterrissar este andar no chão")}
+                            aria-label={t("Aterrissar {name}", { name: g.name })}
                             disabled={occupied !== null}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -312,8 +318,8 @@ function FloorsPopover({
                         {floor.hooks?.run.length ? (
                           <button
                             className={`icon-btn ${occupied === g.id ? "is-busy" : ""}`}
-                            data-tip="Rodar hooks do andar"
-                            aria-label={`Rodar hooks de ${g.name}`}
+                            data-tip={t("Rodar hooks do andar")}
+                            aria-label={t("Rodar hooks de {name}", { name: g.name })}
                             aria-busy={occupied === g.id}
                             disabled={occupied !== null}
                             onClick={(e) => {
@@ -326,8 +332,8 @@ function FloorsPopover({
                         ) : null}
                         <button
                           className={`icon-btn ${occupied === g.id ? "is-busy" : ""}`}
-                          data-tip-wrap="" data-tip="Descarregar: suspender os terminais, mantendo o andar"
-                          aria-label={`Descarregar ${g.name}`}
+                          data-tip-wrap="" data-tip={t("Descarregar: suspender os terminais, mantendo o andar")}
+                          aria-label={t("Descarregar {name}", { name: g.name })}
                           aria-busy={occupied === g.id}
                           disabled={occupied !== null}
                           onClick={(e) => {
@@ -339,8 +345,8 @@ function FloorsPopover({
                         </button>
                         <button
                           className="icon-btn icon-btn--danger"
-                          data-tip-wrap="" data-tip="Encerrar: remover o andar e o worktree (recusado se houver trabalho não commitado)"
-                          aria-label={`Encerrar ${g.name}`}
+                          data-tip-wrap="" data-tip={t("Encerrar: remover o andar e o worktree (recusado se houver trabalho não commitado)")}
+                          aria-label={t("Encerrar {name}", { name: g.name })}
                           disabled={occupied !== null}
                           onClick={(e) => {
                             e.stopPropagation();
@@ -370,7 +376,7 @@ function FloorsPopover({
           openModal("new-task", { projectId: project.id });
         }}
       >
-        <Split size={12} aria-hidden="true" /> Nova tarefa…
+        <Split size={12} aria-hidden="true" /> {t("Nova tarefa…")}
       </button>
       <button
         className="floors-new"
@@ -379,7 +385,7 @@ function FloorsPopover({
           openModal("compare-floors", { projectId: project.id });
         }}
       >
-        <Columns2 size={12} aria-hidden="true" /> Comparar andares…
+        <Columns2 size={12} aria-hidden="true" /> {t("Comparar andares…")}
       </button>
       <button
         className="floors-new"
@@ -388,7 +394,7 @@ function FloorsPopover({
           openModal("new-floor", { projectId: project.id });
         }}
       >
-        <Plus size={12} aria-hidden="true" /> Criar andar…
+        <Plus size={12} aria-hidden="true" /> {t("Criar andar…")}
       </button>
     </div>
   );

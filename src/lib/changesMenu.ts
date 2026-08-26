@@ -15,6 +15,7 @@
 import { toOsPath } from "./paths";
 import type { ChangedFile } from "./ipc";
 import type { MenuEntry } from "../components/ContextMenu";
+import { t } from "./i18n";
 
 export interface ChangesMenuActions {
   openDiff: (path: string) => void;
@@ -52,13 +53,13 @@ export function changedFileMenu(
       : [
           {
             id: "diff",
-            label: "Abrir o diff",
+            label: t("Abrir o diff"),
             onSelect: () => act.openDiff(file.path),
           } satisfies MenuEntry,
         ]),
     {
       id: "editor",
-      label: "Abrir no editor",
+      label: t("Abrir no editor"),
       // Binary opens in the media viewer, not in the text editor; and the
       // deleted one is no longer there to be opened.
       disabled: !onDisk || file.binary,
@@ -67,13 +68,13 @@ export function changedFileMenu(
     { kind: "sep" },
     {
       id: "copiar",
-      label: "Copiar caminho",
+      label: t("Copiar caminho"),
       // The relative path is how the repository (and the agent) refer to the file.
       onSelect: () => act.copyPath(file.path),
     },
     {
       id: "copiar-abs",
-      label: "Copiar caminho completo",
+      label: t("Copiar caminho completo"),
       disabled: absolutePath === null,
       onSelect: () => absolutePath && act.copyPath(absolutePath),
     },
@@ -81,13 +82,13 @@ export function changedFileMenu(
   if (file.origPath) {
     entries.push({
       id: "copiar-origem",
-      label: "Copiar o caminho de origem",
+      label: t("Copiar o caminho de origem"),
       onSelect: () => act.copyPath(file.origPath!),
     });
   }
   entries.push({
     id: "revelar",
-    label: "Mostrar na pasta",
+    label: t("Mostrar na pasta"),
     disabled: !onDisk || absolutePath === null,
     onSelect: () => absolutePath && act.reveal(absolutePath),
   });
@@ -110,7 +111,7 @@ export function changesPanelMenu(
   if (ctx.tab === "live") {
     entries.push({
       id: "limpar",
-      label: "Limpar o feed",
+      label: t("Limpar o feed"),
       disabled: ctx.feedCount === 0,
       onSelect: act.clearFeed,
     });
@@ -118,14 +119,14 @@ export function changesPanelMenu(
   if (ctx.hasRepo) {
     entries.push({
       id: "atualizar",
-      label: "Atualizar (git status)",
+      label: t("Atualizar (git status)"),
       onSelect: act.refresh,
     });
   }
   if (entries.length > 0) entries.push({ kind: "sep" });
   entries.push({
     id: "fechar",
-    label: "Fechar o painel",
+    label: t("Fechar o painel"),
     shortcut: "Ctrl+Shift+D",
     onSelect: act.close,
   });

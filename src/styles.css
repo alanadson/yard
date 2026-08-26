@@ -3336,3 +3336,44 @@ body.is-tab-drag * {
   gap: 8px;
   margin-top: 2px;
 }
+
+/* Keyboard broadcast (lib/broadcast.ts): the strip over every terminal of
+   the armed group. Semantic yellow, like the "blocked" badge — the mode is a
+   state the user must not forget, not an action. Lives here because
+   XTermView mounts at boot; the host gets `position: relative` so the strip
+   floats over the first row without reflowing xterm. */
+.xterm-host {
+  position: relative;
+}
+
+.xterm-broadcast {
+  position: absolute;
+  top: 4px;
+  right: 10px;
+  z-index: 2;
+  padding: 2px 8px;
+  border: 1px solid rgb(240 195 60 / 45%);
+  border-radius: 999px;
+  background: rgb(240 195 60 / 14%);
+  color: var(--yellow);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 16px;
+  letter-spacing: 0.01em;
+  max-width: calc(100% - 20px);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  backdrop-filter: var(--blur-thin);
+}
+/* --- updater bar (App, always mounted): the update twin of `.save-warn`,
+   in the chrome's blue instead of a warning's red — news, not danger. --- */
+.save-warn--info {
+  background: var(--accent-soft);
+  border-bottom-color: var(--accent-border);
+}
+
+.save-warn--info svg {
+  color: var(--accent-text);
+}

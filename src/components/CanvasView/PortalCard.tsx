@@ -56,6 +56,7 @@ import {
 } from "../../lib/portals";
 import { rectsOverlap, useOccluders } from "../../stores/occludersStore";
 import { useUI } from "../../stores/uiStore";
+import { useT } from "../../hooks/useT";
 
 export type PortalData = Extract<CanvasItem, { type: "portal" }>;
 
@@ -168,6 +169,7 @@ function PortalCardImpl({
   onRect,
   onBounds,
 }: Props) {
+  const t = useT();
   const showToast = useUI((s) => s.showToast);
   const occluders = useOccluders((s) => s.rects);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -367,7 +369,7 @@ function PortalCardImpl({
         id: it.id,
         ua: it.ua,
         storage: it.storage,
-        instanceLabel: "desta carta",
+        instanceLabel: t("desta carta"),
         subject: "Portal",
         patch: (change) => onPatch(it.id, change),
         showToast,
@@ -375,7 +377,7 @@ function PortalCardImpl({
       { kind: "sep" },
       {
         id: "mute",
-        label: it.muted ? "Ativar som" : "Silenciar",
+        label: it.muted ? t("Ativar som") : t("Silenciar"),
         icon: it.muted ? <Volume2 size={13} /> : <VolumeX size={13} />,
         onSelect: () => {
           const muted = !it.muted;
@@ -385,7 +387,7 @@ function PortalCardImpl({
       },
       {
         id: "del",
-        label: "Fechar portal",
+        label: t("Fechar portal"),
         icon: <X size={13} />,
         danger: true,
         onSelect: () => onDelete(it.id),
@@ -429,8 +431,8 @@ function PortalCardImpl({
         <div className="cv-card-actions">
           <button
             className="icon-btn"
-            data-tip="Preencher a tela (100%)"
-            aria-label="Maximizar no canvas"
+            data-tip={t("Preencher a tela (100%)")}
+            aria-label={t("Maximizar no canvas")}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
@@ -441,8 +443,8 @@ function PortalCardImpl({
           </button>
           <button
             className="icon-btn"
-            data-tip-at="right" data-tip={it.muted ? "Ativar som" : "Silenciar"}
-            aria-label={it.muted ? "Ativar som" : "Silenciar"}
+            data-tip-at="right" data-tip={it.muted ? t("Ativar som") : t("Silenciar")}
+            aria-label={it.muted ? t("Ativar som") : t("Silenciar")}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
@@ -455,8 +457,8 @@ function PortalCardImpl({
           </button>
           <button
             className="icon-btn"
-            data-tip-at="right" data-tip="Mais"
-            aria-label="Menu do portal"
+            data-tip-at="right" data-tip={t("Mais")}
+            aria-label={t("Menu do portal")}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
@@ -468,8 +470,8 @@ function PortalCardImpl({
           </button>
           <button
             className="icon-btn"
-            data-tip-at="right" data-tip="Fechar"
-            aria-label="Fechar portal"
+            data-tip-at="right" data-tip={t("Fechar")}
+            aria-label={t("Fechar portal")}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
@@ -484,8 +486,8 @@ function PortalCardImpl({
       <div className="cv-portal-bar">
         <button
           className="icon-btn"
-          data-tip="Voltar"
-          aria-label="Voltar"
+          data-tip={t("Voltar")}
+          aria-label={t("Voltar")}
           onClick={() => void ipc.portalBack(it.id).catch(() => {})}
         >
           <ArrowLeft size={12} />
@@ -494,16 +496,16 @@ function PortalCardImpl({
             already existed in the backend, with no screen calling it. */}
         <button
           className="icon-btn"
-          data-tip="Avançar"
-          aria-label="Avançar"
+          data-tip={t("Avançar")}
+          aria-label={t("Avançar")}
           onClick={() => void ipc.portalForward(it.id).catch(() => {})}
         >
           <ArrowRight size={12} />
         </button>
         <button
           className="icon-btn"
-          data-tip="Recarregar"
-          aria-label="Recarregar"
+          data-tip={t("Recarregar")}
+          aria-label={t("Recarregar")}
           onClick={() => void ipc.portalReload(it.id).catch(() => {})}
         >
           <RefreshCw size={12} />
@@ -514,10 +516,10 @@ function PortalCardImpl({
             data-tip-wrap=""
             data-tip={
               liveOn
-                ? "Ao vivo: recarrega sozinho quando o site muda — clique para desligar"
-                : "Ao vivo desligado — clique para recarregar sozinho quando o site mudar"
+                ? t("Ao vivo: recarrega sozinho quando o site muda — clique para desligar")
+                : t("Ao vivo desligado — clique para recarregar sozinho quando o site mudar")
             }
-            aria-label="Recarregar sozinho quando o site mudar"
+            aria-label={t("Recarregar sozinho quando o site mudar")}
             aria-pressed={liveOn}
             onClick={() => onPatch(it.id, { live: !liveOn })}
           >
@@ -529,10 +531,10 @@ function PortalCardImpl({
           data-tip-wrap=""
           data-tip={
             grabbing
-              ? "Clique no elemento dentro da página (Esc cancela)"
-              : "Modo design — apontar um elemento e mandar para o agente"
+              ? t("Clique no elemento dentro da página (Esc cancela)")
+              : t("Modo design — apontar um elemento e mandar para o agente")
           }
-          aria-label="Modo design"
+          aria-label={t("Modo design")}
           aria-pressed={grabbing}
           onClick={toggleGrab}
         >
@@ -548,7 +550,7 @@ function PortalCardImpl({
           <input
             value={urlDraft}
             spellCheck={false}
-            aria-label="Endereço do portal"
+            aria-label={t("Endereço do portal")}
             onChange={(e) => setUrlDraft(e.target.value)}
             onFocus={() => onSelect(it.id)}
             onPointerDown={(e) => e.stopPropagation()}
@@ -567,10 +569,10 @@ function PortalCardImpl({
             {shownVeil !== "away" && (
               <small>
                 {shownVeil === "opening"
-                  ? "Abrindo o navegador…"
+                  ? t("Abrindo o navegador…")
                   : shownVeil === "failed"
-                    ? "Não deu para abrir o navegador"
-                    : "O site volta quando esta tela sair"}
+                    ? t("Não deu para abrir o navegador")
+                    : t("O site volta quando esta tela sair")}
               </small>
             )}
             {/* Failing with no way out forced closing the card and recreating
@@ -581,7 +583,7 @@ function PortalCardImpl({
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={retry}
               >
-                <RotateCw size={12} aria-hidden="true" /> Tentar de novo
+                <RotateCw size={12} aria-hidden="true" /> {t("Tentar de novo")}
               </button>
             )}
           </div>

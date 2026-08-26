@@ -1,0 +1,263 @@
+/* --- Transcript: a session read as a document --- */
+
+.tr-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.tr-search {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgb(0 0 0 / 22%);
+  color: var(--text-dim);
+  transition:
+    border-color var(--dur-1) ease,
+    box-shadow var(--dur-1) ease;
+}
+
+.tr-search:focus-within {
+  border-color: rgb(10 132 255 / 60%);
+  box-shadow: 0 0 0 3.5px rgb(10 132 255 / 22%);
+}
+
+.tr-search input {
+  /* The global field style draws its own box; inside the capsule the input
+     is bare text. */
+  flex: 1;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-bright);
+  font: inherit;
+  font-size: var(--fs-sm);
+  outline: none;
+}
+
+.tr-search input:focus {
+  box-shadow: none;
+  border: 0;
+}
+
+.tr-search .icon-btn {
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+
+.tr-count {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.tr-search.is-empty .tr-count {
+  color: var(--yellow);
+}
+
+.tr-spacer {
+  flex: 1;
+}
+
+.tr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.tr-block {
+  border-radius: var(--r-lg);
+  padding: 9px 12px;
+  transition: box-shadow var(--dur-1) ease;
+}
+
+.tr-block header,
+.tr-block summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.tr-block time {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.tr-who {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.tr-block p,
+.tr-block pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.tr-prompt {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+}
+
+.tr-prompt p {
+  color: var(--text-bright);
+}
+
+.tr-say {
+  background: rgb(255 255 255 / 3.5%);
+  border: 1px solid var(--border);
+  box-shadow: var(--hairline);
+}
+
+.tr-think {
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--text-dim);
+}
+
+.tr-think summary {
+  cursor: pointer;
+  margin-bottom: 0;
+}
+
+.tr-think[open] summary {
+  margin-bottom: 6px;
+}
+
+.tr-notify {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  padding: 0 12px;
+}
+
+.tr-tools {
+  list-style: none;
+  margin: 0;
+  padding: 4px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 2px solid var(--border);
+}
+
+.tr-tool,
+.tr-tool summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  min-width: 0;
+}
+
+.tr-tool summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.tr-tool summary::-webkit-details-marker {
+  display: none;
+}
+
+.tr-tool details {
+  width: 100%;
+}
+
+.tr-tool pre {
+  margin: 4px 0 6px 22px;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  background: rgb(0 0 0 / 26%);
+  font-size: var(--fs-xs);
+  max-height: 240px;
+  overflow: auto;
+}
+
+.tr-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex: none;
+  font-size: 10px;
+}
+
+.tr-mark--ok {
+  color: var(--green);
+  background: var(--green-bg);
+}
+
+.tr-mark--fail {
+  color: var(--red);
+  background: var(--red-bg);
+}
+
+.tr-mark--open {
+  color: var(--text-dim);
+  background: rgb(255 255 255 / 6%);
+}
+
+.tr-op {
+  color: var(--text);
+  font-weight: 600;
+  flex: none;
+}
+
+.tr-path {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tr-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tr-add {
+  color: var(--green);
+  font-style: normal;
+}
+
+.tr-del {
+  color: var(--red);
+  font-style: normal;
+}
+
+.tr-block.is-hit {
+  box-shadow: 0 0 0 1px var(--accent-border);
+}
+
+.tr-block.is-current {
+  box-shadow: 0 0 0 2px var(--accent);
+}

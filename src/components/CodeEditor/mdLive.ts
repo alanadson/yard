@@ -28,6 +28,8 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 
+import { t } from "../../lib/i18n";
+
 /** Marker hidden while the line is not being edited. */
 const hidden = Decoration.replace({});
 
@@ -84,7 +86,7 @@ class TaskBox extends WidgetType {
     box.className = "cm-md-task";
     box.setAttribute("role", "checkbox");
     box.setAttribute("aria-checked", String(this.done));
-    box.setAttribute("aria-label", this.done ? "Reabrir a tarefa" : "Concluir a tarefa");
+    box.setAttribute("aria-label", this.done ? t("Reabrir a tarefa") : t("Concluir a tarefa"));
     box.textContent = "";
     box.onmousedown = (e) => {
       e.preventDefault();
@@ -137,7 +139,7 @@ function build(view: EditorView): DecorationSet {
 
         if (name.startsWith("ATXHeading") || name.startsWith("SetextHeading")) {
           const level = Number(name[name.length - 1]);
-          if (level >= 1 && level <= 6) {
+          if (level >= 1 && level <= 6) { // i18n-ok — not a sentence
             const first = state.doc.lineAt(node.from);
             found.push(HEADING[level - 1].range(first.from));
           }

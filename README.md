@@ -23,8 +23,9 @@ surface**. Every terminal is a real ConPTY session with a Job Object attached,
 scrollback on disk and a persisted layout, so closing the window, reloading the
 UI or switching layouts never disturbs an agent in the middle of a task.
 
-> The product UI is in Brazilian Portuguese. Code, comments, tests and docs are
-> in English.
+> The product UI is in Brazilian Portuguese by default, with English available
+> in Configurações → Interface → Idioma. Code, comments, tests and docs are in
+> English.
 
 ## Highlights
 
@@ -48,6 +49,28 @@ UI or switching layouts never disturbs an agent in the middle of a task.
 - **Agent awareness.** Detects 8 CLIs, resumes local sessions, estimates cost,
   tells "finished" from "blocked on a question", and shows each provider's
   remaining usage window in the title bar.
+- **After the fact.** The *Ombro* digest says what every agent of a group did
+  while you were not looking; a session opens as a readable, searchable
+  transcript; *Custos e uso* buckets tokens and estimated cost by day, project,
+  agent and model.
+- **Automation.** Routines fire by the clock; *gatilhos* fire on events — when
+  a CLI finishes, stops at a question or exits, send a prompt to another one,
+  notify, or start a flow (`yard trigger` from the CLI too).
+- **Terminal ergonomics.** Ctrl+click opens the file (at the line) or the URL
+  an agent printed; one keystroke broadcasts to every CLI of the group; a
+  terminal's output saves to a file with or without the ANSI colors.
+- **Editor with language servers.** Completion, diagnostics, hover, go to
+  definition, rename and format through the LSP servers installed on the
+  machine (`typescript-language-server`, `rust-analyzer`, `pyright`, `gopls`…).
+- **One place for MCP.** The MCP servers of Claude Code, Codex, Gemini CLI,
+  Cursor and OpenCode, read and written in each CLI's own file and dialect,
+  with "copy to another CLI".
+- **Where it runs.** Each CLI opens on Windows, inside a WSL distro, or on
+  another machine over SSH.
+- **A desktop app that stays out of the way.** Tray icon with a global summon
+  hotkey, close-to-tray, light and dark appearance, English or Portuguese,
+  signed in-app updates from GitHub Releases, scheduled backups with retention,
+  a first-run tour and a one-click support bundle for bug reports.
 
 The full tour, phase by phase, is in [`docs/features.md`](./docs/features.md).
 
@@ -56,7 +79,9 @@ The full tour, phase by phase, is in [`docs/features.md`](./docs/features.md).
 Download the NSIS installer from the
 [latest release](https://github.com/alanadson/yard/releases) and run it
 (Windows 10/11, x64; WebView2 is installed on demand). The installer is not yet
-code-signed, so SmartScreen will ask once.
+code-signed, so SmartScreen will ask once. From then on the app checks GitHub
+Releases on its own and offers each signed update in **Configurações → Dados e
+backup** ("Instalar e reiniciar").
 
 ## Build from source
 

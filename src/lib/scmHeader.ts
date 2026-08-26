@@ -1,3 +1,4 @@
+// i18n-scan: tables
 /**
  * What the top of the Source Control tab says about the repository: the branch
  * label, the single remote button and the banner saying an operation is
@@ -10,6 +11,7 @@
  * wrong number at commit time.
  */
 import type { ScmInfo } from "./ipc";
+import { t, tn } from "./i18n";
 
 export type SyncKind = "none" | "publish" | "sync" | "fetch";
 
@@ -30,7 +32,7 @@ export function syncState(info: ScmInfo | null | undefined): SyncState {
     return {
       kind: "none",
       label: "",
-      tip: "Este repositório não tem remoto configurado",
+      tip: t("Este repositório não tem remoto configurado"),
       disabled: true,
     };
   }
@@ -38,15 +40,15 @@ export function syncState(info: ScmInfo | null | undefined): SyncState {
     return {
       kind: "none",
       label: "",
-      tip: "HEAD solto: não há branch para publicar nem para sincronizar",
+      tip: t("HEAD solto: não há branch para publicar nem para sincronizar"),
       disabled: true,
     };
   }
   if (!info.hasHead) {
     return {
       kind: "publish",
-      label: "Publicar branch",
-      tip: "Faça o primeiro commit antes de publicar",
+      label: t("Publicar branch"),
+      tip: t("Faça o primeiro commit antes de publicar"),
       disabled: true,
     };
   }
@@ -56,20 +58,20 @@ export function syncState(info: ScmInfo | null | undefined): SyncState {
   if (!info.upstream) {
     return {
       kind: "publish",
-      label: "Publicar branch",
+      label: t("Publicar branch"),
       tip: halted
-        ? `Termine ${STATE_NOUN[info.state]} antes`
-        : `Publicar “${info.branch ?? ""}” em ${info.remotes[0].name}`,
+        ? finishFirst(info.state)
+        : t("Publicar “{branch}” em {remote}", { branch: info.branch ?? "", remote: info.remotes[0].name }),
       disabled: halted,
     };
   }
   if (info.ahead === 0 && info.behind === 0) {
     return {
       kind: "fetch",
-      label: "Buscar",
+      label: t("Buscar"),
       tip: halted
-        ? `Termine ${STATE_NOUN[info.state]} antes`
-        : `Em dia com ${info.upstream} — buscar novidades`,
+        ? finishFirst(info.state)
+        : t("Em dia com {upstream} — buscar novidades", { upstream: info.upstream }),
       disabled: halted,
     };
   }
@@ -80,8 +82,11 @@ export function syncState(info: ScmInfo | null | undefined): SyncState {
     kind: "sync",
     label: parts.join(" "),
     tip: halted
-      ? `Termine ${STATE_NOUN[info.state]} antes`
-      : `Sincronizar com ${info.upstream}: ${describeGap(info.ahead, info.behind)}`,
+      ? finishFirst(info.state)
+      : t("Sincronizar com {upstream}: {gap}", {
+          upstream: info.upstream,
+          gap: describeGap(info.ahead, info.behind),
+        }),
     disabled: halted,
   };
 }
@@ -89,10 +94,10 @@ export function syncState(info: ScmInfo | null | undefined): SyncState {
 function describeGap(ahead: number, behind: number): string {
   const snippets: string[] = [];
   if (behind > 0) {
-    snippets.push(`${behind} ${behind === 1 ? "commit para trazer" : "commits para trazer"}`);
+    snippets.push(tn(behind, "{n} commit para trazer", "{n} commits para trazer"));
   }
   if (ahead > 0) {
-    snippets.push(`${ahead} ${ahead === 1 ? "commit para enviar" : "commits para enviar"}`);
+    snippets.push(tn(ahead, "{n} commit para enviar", "{n} commits para enviar"));
   }
   return snippets.join(", ");
 }
@@ -105,6 +110,11 @@ const STATE_NOUN: Record<ScmInfo["state"], string> = {
   reverting: "o revert",
   bisecting: "a bissecção",
 };
+
+/** "Finish the merge first" — the noun in the language of the screen. */
+function finishFirst(state: ScmInfo["state"]): string {
+  return t("Termine {what} antes", { what: t(STATE_NOUN[state]) });
+}
 
 export interface StateBanner {
   title: string;
@@ -121,40 +131,40 @@ export function stateBanner(info: ScmInfo | null | undefined): StateBanner | nul
   switch (info.state) {
     case "merging":
       return {
-        title: "Merge em andamento",
-        detail: "Resolva os conflitos, prepare os arquivos e finalize com um commit.",
+        title: t("Merge em andamento"),
+        detail: t("Resolva os conflitos, prepare os arquivos e finalize com um commit."),
         canContinue: false,
         canAbort: true,
         tone: "danger",
       };
     case "rebasing":
       return {
-        title: "Rebase em andamento",
-        detail: "Resolva o commit atual e continue, ou aborte para voltar ao que era.",
+        title: t("Rebase em andamento"),
+        detail: t("Resolva o commit atual e continue, ou aborte para voltar ao que era."),
         canContinue: true,
         canAbort: true,
         tone: "danger",
       };
     case "cherry-picking":
       return {
-        title: "Cherry-pick em andamento",
-        detail: "Resolva o que colidiu e continue, ou aborte.",
+        title: t("Cherry-pick em andamento"),
+        detail: t("Resolva o que colidiu e continue, ou aborte."),
         canContinue: true,
         canAbort: true,
         tone: "danger",
       };
     case "reverting":
       return {
-        title: "Revert em andamento",
-        detail: "Resolva o que colidiu e continue, ou aborte.",
+        title: t("Revert em andamento"),
+        detail: t("Resolva o que colidiu e continue, ou aborte."),
         canContinue: true,
         canAbort: true,
         tone: "danger",
       };
     case "bisecting":
       return {
-        title: "Bissecção em andamento",
-        detail: "O repositório está num commit escolhido pelo `git bisect`.",
+        title: t("Bissecção em andamento"),
+        detail: t("O repositório está num commit escolhido pelo `git bisect`."),
         canContinue: false,
         canAbort: true,
         tone: "warn",
@@ -164,9 +174,10 @@ export function stateBanner(info: ScmInfo | null | undefined): StateBanner | nul
   }
   if (info.detached) {
     return {
-      title: "HEAD solto",
-      detail:
+      title: t("HEAD solto"),
+      detail: t(
         "Você não está em nenhuma branch. Um commit feito aqui não pertence a lugar nenhum — crie uma branch antes.",
+      ),
       canContinue: false,
       canAbort: false,
       tone: "warn",

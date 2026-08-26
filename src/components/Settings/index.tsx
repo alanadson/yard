@@ -24,6 +24,7 @@ import {
   Database,
   Keyboard,
   Monitor,
+  Plug,
   Settings2,
   Terminal,
   X,
@@ -45,6 +46,7 @@ import {
   SETTINGS_CATEGORIES,
   type SettingsCategory,
 } from "./categories";
+import { useT } from "../../hooks/useT";
 import { useFonts } from "./useFonts";
 import { SecAgents } from "./sections/Agents";
 import { SecBehavior } from "./sections/Behavior";
@@ -54,6 +56,7 @@ import { SecExtensions } from "./sections/Extensions";
 import { SecInterface } from "./sections/Interface";
 import { SecShortcuts } from "./sections/Shortcuts";
 import { SecTerminal } from "./sections/Terminal";
+import { SecMcp } from "./sections/Mcp";
 
 const ICONS: Record<SettingsCategory, LucideIcon> = {
   interface: Monitor,
@@ -64,6 +67,7 @@ const ICONS: Record<SettingsCategory, LucideIcon> = {
   atalhos: Keyboard,
   dados: Database,
   extensoes: Blocks,
+  mcp: Plug,
 };
 
 export function SettingsScreen() {
@@ -75,6 +79,7 @@ export function SettingsScreen() {
   const ref = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const fonts = useFonts();
+  const t = useT();
 
   useDialogFocus(ref, true, "modal");
 
@@ -104,10 +109,10 @@ export function SettingsScreen() {
       ref={ref}
       role="dialog"
       aria-modal="true"
-      aria-label="Configurações"
+      aria-label={t("Configurações")}
     >
-      <nav className="set-nav" aria-label="Categorias">
-        <h1 className="set-nav-title">Configurações</h1>
+      <nav className="set-nav" aria-label={t("Categorias")}>
+        <h1 className="set-nav-title">{t("Configurações")}</h1>
         <div className="set-nav-list">
           {SETTINGS_CATEGORIES.map((c) => {
             const Icon = ICONS[c.id];
@@ -119,33 +124,33 @@ export function SettingsScreen() {
                 // In a narrow window the menu becomes icons only; the balloon
                 // is what gives the name back (the CSS turns it off at the
                 // width where the label is in view).
-                data-tip={c.label}
+                data-tip={t(c.label)}
                 data-tip-at="right"
                 onClick={() => setCat(c.id)}
               >
                 <span className="set-nav-icon" style={{ background: c.tone }}>
                   <Icon size={12} />
                 </span>
-                {c.label}
+                {t(c.label)}
               </button>
             );
           })}
         </div>
-        <div className="set-nav-foot">{"Yard · dados em %APPDATA%\Yard"}</div>
+        <div className="set-nav-foot">{t("Yard · dados em %APPDATA%\\Yard")}</div>
       </nav>
 
       <main className="set-main" ref={mainRef}>
         <div className="set-col">
           <header className="set-head">
             <div>
-              <h2>{info.title}</h2>
-              <p>{info.desc}</p>
+              <h2>{t(info.title)}</h2>
+              <p>{t(info.desc)}</p>
             </div>
             <button
               className="icon-btn"
               onClick={closeModal}
-              aria-label="Fechar"
-              data-tip="Fechar (Esc)"
+              aria-label={t("Fechar")}
+              data-tip={t("Fechar (Esc)")}
             >
               <X size={14} />
             </button>
@@ -159,6 +164,7 @@ export function SettingsScreen() {
           {cat === "atalhos" && <SecShortcuts />}
           {cat === "dados" && <SecData />}
           {cat === "extensoes" && <SecExtensions />}
+          {cat === "mcp" && <SecMcp />}
         </div>
       </main>
     </div>

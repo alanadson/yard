@@ -1,0 +1,431 @@
+/**
+ * English lines of the dialogs (`components/modals/`): the modal frame, Nova
+ * aba, Novo projeto, Novo portal, the role picker, routines and triggers,
+ * flows, scores, sessions, the transcript, costs, the shoulder, extensions,
+ * the welcome sheet and the source-control confirm. Key = the PT-BR sentence
+ * as written in the component. Sentences that read the same in English
+ * ("URL", "Global", "Shells", "Prompt", "Cache") are left out on purpose.
+ *
+ * Tables owned by other areas but drawn here (the shortcut groups, the
+ * extension catalog, the trigger events, the UA choices, the flow presets)
+ * carry their lines in their own area's file.
+ */
+export default {
+  // -- the frame (Modal.tsx) -----------------------------------------------
+  Fechar: "Close",
+  "Fechar (Esc)": "Close (Esc)",
+  "Você tem algo preenchido aqui — fechar de novo (": "You have something typed here — closing again (",
+  ", o × ou um clique fora) descarta.": ", the × or a click outside) discards it.",
+
+  // -- shared verbs --------------------------------------------------------
+  Cancelar: "Cancel",
+  Salvar: "Save",
+  Adicionar: "Add",
+  "Adicionando…": "Adding…",
+  Aplicar: "Apply",
+  Criar: "Create",
+  Excluir: "Delete",
+  Remover: "Remove",
+  Pausar: "Pause",
+  Retomar: "Resume",
+  Procurar: "Browse",
+  Nome: "Name",
+  Padrão: "Default",
+  Opcional: "Optional",
+  "Carregando…": "Loading…",
+  "Tentar de novo": "Try again",
+  Atualizar: "Refresh",
+  e: "and",
+
+  // -- Novo projeto --------------------------------------------------------
+  "Novo projeto": "New project",
+  "Pasta raiz": "Root folder",
+  "opcional — usa o nome da pasta": "optional — uses the folder name",
+  "O projeto vira o diretório de trabalho dos terminais e a chave para localizar as sessões que os agentes já gravaram nesta pasta.":
+    "The project becomes the terminals' working directory and the key to find the sessions the agents have already recorded in this folder.",
+
+  // -- Personalizar projeto ------------------------------------------------
+  "Personalizar “{name}”": "Customize “{name}”",
+  Ícone: "Icon",
+  Cor: "Color",
+  "Sem cor": "No color",
+
+  // -- Papel (RoleModal, RoleField) ----------------------------------------
+  "Papel do agente": "Agent role",
+  "Este terminal não existe mais.": "This terminal no longer exists.",
+  'Papel "{name}" definido — instruções enviadas ao terminal.':
+    'Role "{name}" set — instructions sent to the terminal.',
+  'Papel "{name}" definido — as instruções vão assim que a CLI subir.':
+    'Role "{name}" set — the instructions go out as soon as the CLI is up.',
+  'Papel "{name}" definido.': 'Role "{name}" set.',
+  "Papel removido.": "Role removed.",
+  "Papel — {name}": "Role — {name}",
+  "Este terminal é um shell: o papel fica no cartão como etiqueta, mas não há agente para receber instruções.":
+    "This terminal is a shell: the role stays on the card as a label, but there is no agent to receive instructions.",
+  "Sem papel": "No role",
+  "{name} (não salvo)": "{name} (unsaved)",
+  "Neste grupo": "In this group",
+  "Em todo o Yard": "Across Yard",
+  "Dê um nome ao papel — é o que aparece no cartão.": "Give the role a name — it is what shows on the card.",
+  "O nome passa de {max} caracteres.": "The name exceeds {max} characters.",
+  "Sem instruções não há o que dizer ao agente.": "Without instructions there is nothing to tell the agent.",
+  "Não consegui salvar: {e}": "Could not save: {e}",
+  "Não consegui excluir: {e}": "Could not delete: {e}",
+  "Novo papel": "New role",
+  "Editar este papel": "Edit this role",
+  "Excluir da biblioteca": "Delete from the library",
+  "Uma responsabilidade fixa: o agente já nasce sabendo o que é dele.":
+    "A fixed responsibility: the agent is born knowing what is its own.",
+  "ex.: Revisora de PR": "e.g.: PR reviewer",
+  Instruções: "Instructions",
+  "O que este agente cuida, o que evita, como responde…": "What this agent takes care of, what it avoids, how it answers…",
+  "Onde fica": "Where it lives",
+  "Só neste grupo": "Only in this group",
+  "Cor do cartão": "Card color",
+  "Salvar papel": "Save role",
+
+  // -- Atalhos de teclado --------------------------------------------------
+  "Atalhos de teclado": "Keyboard shortcuts",
+  "Fora essas, tudo que você digita vai direto para a CLI — o Yard não intercepta teclas que o terminal precisa.":
+    "Beyond these, everything you type goes straight to the CLI — Yard does not intercept keys the terminal needs.",
+
+  // -- Ombro ---------------------------------------------------------------
+  "Não consegui abrir o Ao Vivo: {e}": "Could not open Live: {e}",
+  "Ombro — {group}": "Shoulder — {group}",
+  grupo: "group",
+  "Ler de novo": "Read again",
+  "Ler as sessões de novo": "Read the sessions again",
+  "O que cada agente deste grupo fez, lido da sessão que a CLI guarda em disco — para quem não estava olhando.":
+    "What each agent of this group did, read from the session the CLI keeps on disk — for whoever was not watching.",
+  "Nenhuma CLI de agente neste grupo.": "No agent CLI in this group.",
+  "lendo a sessão…": "reading the session…",
+  "esta CLI não guarda a sessão em disco — nada para ler aqui":
+    "this CLI keeps no session on disk — nothing to read here",
+  "sem sessão em disco nesta pasta ainda": "no session on disk in this folder yet",
+  "não consegui ler a sessão: {error}": "could not read the session: {error}",
+  "Último evento da sessão": "Last event of the session",
+  "há {ago}": "{ago} ago",
+  "{n} comando": "{n} command",
+  "{n} comandos": "{n} commands",
+  "{n} sub-agente": "{n} sub-agent",
+  "{n} sub-agentes": "{n} sub-agents",
+  "{n} falha": "{n} failure",
+  "{n} falhas": "{n} failures",
+  "Plano: concluídas de total": "Plan: done of total",
+  "plano {done}/{total}": "plan {done}/{total}",
+  "Estimativa com preços de tabela": "Estimate at list prices",
+  "{n}× editado ": "{n}× edited ",
+  "{n}× escrito ": "{n}× written ",
+  "{n}× lido": "{n}× read",
+  "e mais {n}": "and {n} more",
+  "Ao Vivo": "Live",
+  Transcrição: "Transcript",
+
+  // -- Bem-vindo -----------------------------------------------------------
+  "Escolha uma pasta.": "Choose a folder.",
+  "Projeto “{name}” adicionado — Ctrl+T abre a primeira CLI.":
+    "Project “{name}” added — Ctrl+T opens the first CLI.",
+  "Bem-vindo ao Yard": "Welcome to Yard",
+  Pular: "Skip",
+  Começar: "Get started",
+  "O Yard roda várias CLIs de agentes lado a lado, cada uma num terminal de verdade. Em todo terminal que ele abre, o comando ":
+    "Yard runs several agent CLIs side by side, each in a real terminal. In every terminal it opens, the ",
+  " já está no PATH — é por ele que os agentes conversam entre si, dividem notas e recrutam colegas.":
+    " command is already on the PATH — it is how the agents talk to each other, share notes and recruit teammates.",
+  "CLIs nesta máquina": "CLIs on this machine",
+  "{found} de {total}": "{found} of {total}",
+  "Procurando as CLIs instaladas…": "Looking for the installed CLIs…",
+  instalada: "installed",
+  "não encontrada": "not found",
+  "Nenhuma CLI encontrada. Instale ao menos uma (Claude Code, Codex, OpenCode…) e o Yard passa a oferecê-la em “Nova aba”; até lá, os shells continuam funcionando.":
+    "No CLI found. Install at least one (Claude Code, Codex, OpenCode…) and Yard will offer it in “New tab”; until then, the shells keep working.",
+  "O primeiro projeto": "The first project",
+  "Você já tem projetos no workspace — este é só o tour.": "You already have projects in the workspace — this is just the tour.",
+  "Tudo começa por uma pasta: as CLIs rodam dentro dela e o Yard acompanha o que elas mexem no disco.":
+    "Everything starts with a folder: the CLIs run inside it and Yard follows what they touch on disk.",
+  "Pasta do primeiro projeto": "Folder of the first project",
+  "Seis atalhos que valem o dia": "Six shortcuts worth the day",
+  "A lista completa fica em ": "The full list is under ",
+
+  // -- Partituras ----------------------------------------------------------
+  "Falha ao salvar: {e}": "Failed to save: {e}",
+  "Já existe uma partitura chamada “{name}”. Substituir o arranjo salvo nela?":
+    "A score named “{name}” already exists. Replace the arrangement saved in it?",
+  "Substituir partitura": "Replace score",
+  "Partitura “{name}” substituída.": "Score “{name}” replaced.",
+  "Partitura “{name}” salva.": "Score “{name}” saved.",
+  "Escolha um projeto antes de aplicar a partitura.": "Choose a project before applying the score.",
+  "“{name}” aplicada: {n} CLI(s) criadas paradas — inicie quando quiser.":
+    "“{name}” applied: {n} CLI(s) created stopped — start them whenever you want.",
+  "Falha ao aplicar: {e}": "Failed to apply: {e}",
+  "Excluir a partitura “{name}”?": "Delete the score “{name}”?",
+  "Excluir partitura": "Delete score",
+  "Não consegui excluir a partitura: {e}": "Could not delete the score: {e}",
+  Partituras: "Scores",
+  "Salvar “{name}” como": "Save “{name}” as",
+  "nome da partitura": "score name",
+  "Salvar arranjo": "Save arrangement",
+  "O arranjo guarda as CLIs (programa, argumentos, título), posições, papéis, notas, conexões, desenhos e rotinas. A pasta de trabalho ":
+    "The arrangement keeps the CLIs (program, arguments, title), positions, roles, notes, connections, drawings and routines. The working folder ",
+  "não vai junto": "does not go along",
+  ": ao aplicar, ela vem do projeto de destino.": ": when applying, it comes from the target project.",
+  "Não consegui ler as partituras: {reason}.": "Could not read the scores: {reason}.",
+  "Nenhuma partitura salva ainda.": "No score saved yet.",
+  "Acrescentar o arranjo ao grupo “{name}” — as CLIs e notas entram ao lado do que já existe. Não dá para desfazer com Ctrl+Z: para tirar, exclua os cartões.":
+    "Add the arrangement to the group “{name}” — the CLIs and notes land beside what is already there. Ctrl+Z cannot undo it: to remove, delete the cards.",
+  "Aplicar aqui": "Apply here",
+  "Criar um grupo novo com este arranjo": "Create a new group with this arrangement",
+  "Grupo novo": "New group",
+  "Excluir a partitura {name}": "Delete the score {name}",
+
+  // -- Custos e uso --------------------------------------------------------
+  Período: "Period",
+  "lendo as sessões…": "reading the sessions…",
+  "atualizado {ago}": "updated {ago}",
+  Custo: "Cost",
+  Entrada: "Input",
+  Saída: "Output",
+  Sessões: "Sessions",
+  "Custos e uso": "Costs and usage",
+  "Estimativa com preços de tabela (Opus 5, Sonnet 5, Haiku 4.5; cache 1,25× na gravação e 0,1× na leitura) — não bate com a fatura. Um modelo fora da tabela (o Codex, por exemplo) conta tokens e fica sem preço; nas somas ele aparece como piso (≥). Uma sessão que atravessa a meia-noite conta nos dois dias.":
+    "Estimate at list prices (Opus 5, Sonnet 5, Haiku 4.5; cache 1.25× on write and 0.1× on read) — it does not match the invoice. A model outside the table (Codex, for one) counts tokens and gets no price; in the sums it shows as a floor (≥). A session that crosses midnight counts in both days.",
+  "Não consegui ler as sessões: {error}.": "Could not read the sessions: {error}.",
+  "Totais do período": "Totals of the period",
+  "Custo estimado": "Estimated cost",
+  "Cache lido": "Cache read",
+  "Cache gravado": "Cache written",
+  "Custo por dia nos últimos {days} dias": "Cost per day over the last {days} days",
+  "Tokens por dia nos últimos {days} dias": "Tokens per day over the last {days} days",
+  "Nenhuma sessão com uso registrado hoje.": "No session with recorded usage today.",
+  "Nenhuma sessão com uso registrado nos últimos {days} dias.":
+    "No session with recorded usage in the last {days} days.",
+  "O Yard lê os arquivos que o Claude Code e o Codex gravam em ":
+    "Yard reads the files Claude Code and Codex write in ",
+  "Por projeto": "By project",
+  "Por agente": "By agent",
+  "Por modelo": "By model",
+
+  // -- Novo portal ---------------------------------------------------------
+  "Aparência (user-agent — o motor é sempre o WebView2)":
+    "Appearance (user agent — the engine is always WebView2)",
+  Dispositivo: "Device",
+  Isolado: "Isolated",
+  "Deste projeto": "This project's",
+  "Abra um grupo em canvas antes de criar um portal.": "Open a group in canvas mode before creating a portal.",
+  "Um portal abre páginas http/https. Endereços como file: não são suportados.":
+    "A portal opens http/https pages. Addresses such as file: are not supported.",
+  "Informe o endereço da página.": "Enter the page address.",
+  "Novo portal": "New portal",
+  "Agente de usuário": "User agent",
+  "UA personalizado": "Custom UA",
+  Armazenamento: "Storage",
+
+  // -- Rotinas -------------------------------------------------------------
+  'Remover esta rotina de "{name}"?': 'Remove this routine from "{name}"?',
+  "Remover rotina": "Remove routine",
+  "Rotinas e gatilhos — {name}": "Routines and triggers — {name}",
+  "Um prompt agendado só é entregue com o terminal ": "A scheduled prompt is only delivered with the terminal ",
+  "rodando e ocioso": "running and idle",
+  ": uma rotina nunca interrompe trabalho em andamento — ela espera o próximo intervalo.":
+    ": a routine never interrupts work in progress — it waits for the next interval.",
+  "ex.: rode os testes e me diga só o que quebrou": "e.g.: run the tests and tell me only what broke",
+  "A cada (min)": "Every (min)",
+  "Só uma vez (lembrete)": "Only once (reminder)",
+  "Criar rotina": "Create routine",
+  "Nenhuma rotina neste terminal ainda.": "No routine in this terminal yet.",
+  "Outras rotinas deste grupo": "Other routines of this group",
+  "(CLI removida)": "(CLI removed)",
+  "uma vez em {min} min": "once in {min} min",
+  "a cada {min} min": "every {min} min",
+  " · pausada": " · paused",
+  "pausada — não dispara": "paused — does not fire",
+  "dispara no próximo momento em que a CLI estiver livre": "fires the next moment the CLI is free",
+  "próximo disparo: {time}": "next fire: {time}",
+  " · último: {when}": " · last: {when}",
+  "Pausar rotina": "Pause routine",
+  "Retomar rotina": "Resume routine",
+
+  // -- Gatilhos ------------------------------------------------------------
+  "mandar um prompt a uma CLI": "send a prompt to a CLI",
+  "notificar você": "notify you",
+  "rodar um fluxo nesta CLI": "run a flow in this CLI",
+  "ex.: {name} terminou — revise o diff dela e aponte só o que quebrou":
+    "e.g.: {name} finished — review its diff and point out only what broke",
+  "ex.: {name} parou numa pergunta: {ask}": "e.g.: {name} stopped at a question: {ask}",
+  "a tarefa que abre a esteira (ex.: revise o que acabou de mudar)":
+    "the task that starts the pipeline (e.g.: review what just changed)",
+  "Remover este gatilho?": "Remove this trigger?",
+  "Remover gatilho": "Remove trigger",
+  "Gatilhos — quando algo acontecer, faça": "Triggers — when something happens, do",
+  "Um gatilho dispara na ": "A trigger fires on the ",
+  mudança: "change",
+  ": a CLI terminou um turno, parou numa pergunta ou saiu. Um prompt disparado passa pela mesma regra da rotina — só chega com o alvo rodando e ocioso. ":
+    ": the CLI finished a turn, stopped at a question or exited. A fired prompt goes through the same rule as a routine — it only lands with the target running and idle. ",
+  "no texto viram quem disparou e a pergunta em que parou.":
+    "in the text become who fired and the question it stopped at.",
+  Quando: "When",
+  "Qualquer CLI do grupo (não só esta)": "Any CLI of the group (not just this one)",
+  Então: "Then",
+  "Alvo do prompt": "Prompt target",
+  "escolha a CLI": "choose the CLI",
+  "{name} (esta CLI)": "{name} (this CLI)",
+  Fluxo: "Flow",
+  "escolha o fluxo": "choose the flow",
+  "nenhum fluxo no grupo": "no flow in the group",
+  "Texto da notificação": "Notification text",
+  Tarefa: "Task",
+  "Intervalo mínimo (s)": "Minimum interval (s)",
+  "Só uma vez": "Only once",
+  "Criar gatilho": "Create trigger",
+  "Nenhum gatilho nesta CLI ainda.": "No trigger in this CLI yet.",
+  "Outros gatilhos deste grupo": "Other triggers of this group",
+  "pausado — não dispara": "paused — does not fire",
+  "uma vez · já disparou": "once · already fired",
+  "uma vez": "once",
+  "mín. {s} s entre disparos": "min. {s} s between fires",
+  "último: {when}": "last: {when}",
+  "Pausar gatilho": "Pause trigger",
+  "Retomar gatilho": "Resume trigger",
+
+  // -- Sessões de agentes --------------------------------------------------
+  "{agent} nao expoe comando de retomada.": "{agent} exposes no resume command.",
+  "Cadastre um projeto primeiro.": "Add a project first.",
+  "{agent} (retomado)": "{agent} (resumed)",
+  "Não consegui retomar: {e}": "Could not resume: {e}",
+  "Não consegui ler o uso desta sessão: {e}": "Could not read this session's usage: {e}",
+  "Sessões de agentes": "Agent sessions",
+  Recarregar: "Reload",
+  "Recarregar a lista de sessões": "Reload the session list",
+  "Lendo de ": "Reading from ",
+  "(todos os projetos)": "(all projects)",
+  "Não consegui ler as sessões: {err}. Use o botão de recarregar.":
+    "Could not read the sessions: {err}. Use the reload button.",
+  "Nenhuma sessao encontrada para este agente nesta pasta.": "No session found for this agent in this folder.",
+  "{n} eventos · {input} entrada · {output} saida": "{n} events · {input} in · {output} out",
+  Uso: "Usage",
+  "Ler a conversa do começo, sem retomar o processo":
+    "Read the conversation from the start, without resuming the process",
+  "Retomando…": "Resuming…",
+
+  // -- Transcrição ---------------------------------------------------------
+  "Transcrição copiada como markdown.": "Transcript copied as markdown.",
+  "Não consegui copiar.": "Could not copy.",
+  "sem ocorrências": "no matches",
+  "{i} de {n}": "{i} of {n}",
+  "Buscar na transcrição": "Search the transcript",
+  "Limpar a busca": "Clear the search",
+  "Ocorrência anterior (Shift+Enter)": "Previous match (Shift+Enter)",
+  "Ocorrência anterior": "Previous match",
+  "Próxima ocorrência (Enter)": "Next match (Enter)",
+  "Próxima ocorrência": "Next match",
+  "Copiar como markdown": "Copy as markdown",
+  "Não consegui ler a sessão: {error}": "Could not read the session: {error}",
+  "Lendo a sessão…": "Reading the session…",
+  "Esta sessão ainda não tem turnos.": "This session has no turns yet.",
+  "você → sub-agente": "you → sub-agent",
+  você: "you",
+  "sub-agente": "sub-agent",
+  agente: "agent",
+  "pensando…": "thinking…",
+  "Sem resultado gravado": "No result recorded",
+
+  // -- Fluxo ---------------------------------------------------------------
+  "{n} etapa(s) sem prompt foram descartadas.": "{n} stage(s) without a prompt were discarded.",
+  'Fluxo "{name}" salvo sem etapas — escreva o prompt de pelo menos uma para poder rodá-lo.':
+    'Flow "{name}" saved with no stages — write the prompt of at least one to be able to run it.',
+  'Fluxo "{name}" salvo — digite o pedido em {targets} para disparar.':
+    'Flow "{name}" saved — type the request in {targets} to fire it.',
+  'Fluxo "{name}" salvo — conecte uma CLI ao cartão (tecla C) para armá-lo.':
+    'Flow "{name}" saved — connect a CLI to the card (key C) to arm it.',
+  'Excluir o fluxo "{name}"?': 'Delete the flow "{name}"?',
+  "Ele está executando agora — a esteira é cancelada na etapa atual.":
+    "It is running now — the pipeline is cancelled at the current stage.",
+  "Excluir fluxo": "Delete flow",
+  "Esse fluxo não está mais no canvas deste grupo.": "This flow is no longer on this group's canvas.",
+  "Fluxo — {name}": "Flow — {name}",
+  "Salvar fluxo": "Save flow",
+  "Nome do fluxo": "Flow name",
+  "Etapas do fluxo, em ordem": "Flow stages, in order",
+  "Título da etapa {n} — ex.: {example}": "Title of stage {n} — e.g.: {example}",
+  "Título da etapa {n}": "Title of stage {n}",
+  "Subir etapa": "Move stage up",
+  "Subir a etapa {n}": "Move stage {n} up",
+  "Descer etapa": "Move stage down",
+  "Descer a etapa {n}": "Move stage {n} down",
+  "Remover etapa": "Remove stage",
+  "Remover a etapa {n}": "Remove stage {n}",
+  "Sugestões de etapa": "Stage suggestions",
+  Sugestões: "Suggestions",
+  "O que esta etapa deve fazer com a tarefa que chegar…": "What this stage should do with the task that arrives…",
+  "Instruções da etapa {n}": "Instructions of stage {n}",
+  "Primeira etapa": "First stage",
+  "Adicionar etapa": "Add stage",
+  "Conectado a ": "Connected to ",
+  " — a tarefa mandada lá atravessa este fluxo.": " — a task sent there goes through this flow.",
+  "Nenhuma CLI conectada ainda. No canvas, use a ferramenta ": "No CLI connected yet. On the canvas, use the ",
+  " para ligar um terminal de agente a este cartão — é isso que arma o fluxo.":
+    " tool to wire an agent terminal to this card — that is what arms the flow.",
+  "Qualquer prompt digitado na CLI conectada passa pelo fluxo.": "Any prompt typed into the connected CLI goes through the flow.",
+  "Nada é enviado ao terminal ao conectar: o Yard intercepta o seu Enter — o pedido vira a tarefa e cada etapa chega como um carimbo de uma linha; o agente busca as instruções com ":
+    "Nothing is sent to the terminal on connecting: Yard intercepts your Enter — the request becomes the task and each stage arrives as a one-line stamp; the agent fetches the instructions with ",
+  ", sem encher o seu prompt. Desmarcado, o fluxo só roda quando pedido (▶ no rodapé do canvas ou ":
+    ", without cluttering your prompt. Unchecked, the flow only runs when asked (▶ in the canvas footer or ",
+
+  // -- Extensões -----------------------------------------------------------
+  "→ diagrama desenhado na leitura": "→ diagram drawn in reading mode",
+  "→ fórmula desenhada na leitura": "→ formula drawn in reading mode",
+  Extensões: "Extensions",
+  "Buscar extensões": "Search extensions",
+  "Limpar busca": "Clear search",
+  "Filtrar por categoria": "Filter by category",
+  Todas: "All",
+  "Recursos que já vêm com o Yard, desligados até você querer. O interruptor vale na hora, para o aplicativo inteiro — temas (de ícones ou de cor) se revezam: ligar um desliga o irmão.":
+    "Features that already ship with Yard, off until you want them. The switch takes effect at once, app-wide — themes (icon or color) take turns: turning one on turns its sibling off.",
+  "um de cada vez": "one at a time",
+  "Nenhuma extensão para ": "No extension for ",
+  " nesta categoria": " in this category",
+
+  // -- Nova aba ------------------------------------------------------------
+  Navegador: "Browser",
+  "página embutida na barra de abas — o mesmo motor dos portais":
+    "a page embedded in the tab bar — the same engine as the portals",
+  Anotações: "Notes",
+  "o caderno de notas markdown vira uma aba deste painel": "the markdown notebook becomes a tab of this pane",
+  "não instalado — instale a CLI e detecte de novo": "not installed — install the CLI and detect again",
+  "não encontrado nesta máquina": "not found on this machine",
+  "Um quadro não tem barra de abas — encaixe o caderno num painel de um grupo, ou use o caderno em tela.":
+    "A board has no tab bar — dock the notebook in a group's pane, or use the notebook on screen.",
+  "Esse grupo está mostrando o canvas, que não tem barra de abas — volte para os painéis antes de encaixar o caderno.":
+    "This group is showing the canvas, which has no tab bar — go back to the panes before docking the notebook.",
+  "Num quadro o navegador é um portal: use a ferramenta de portal na barra do quadro.":
+    "On a board the browser is a portal: use the portal tool in the board's toolbar.",
+  'O projeto "{name}" não tem pasta cadastrada — informe o caminho nas configurações do projeto.':
+    'The project "{name}" has no folder registered — enter the path in the project settings.',
+  'A pasta "{folder}" não existe — confira o caminho do projeto.':
+    'The folder "{folder}" does not exist — check the project path.',
+  "Não consegui abrir: {e}": "Could not open: {e}",
+  Agentes: "Agents",
+  Outros: "Others",
+  "Nova aba": "New tab",
+  "Abrindo…": "Opening…",
+  "Um clique abre. Como cada CLI abre — flags, papel, nome — fica em Configurações › Agentes.":
+    "One click opens. How each CLI opens — flags, role, name — lives in Settings › Agents.",
+  "Configurar agentes": "Configure agents",
+  "Tudo aqui nasce dentro de um projeto (uma pasta do disco) — e ainda não há nenhum.":
+    "Everything here is born inside a project (a folder on disk) — and there is none yet.",
+  "Adicionar projeto…": "Add project…",
+  "Abrir em": "Open in",
+  "Pasta da CLI": "CLI folder",
+  "Em qual projeto esta CLI vai rodar": "Which project this CLI runs in",
+  "Procurando CLIs…": "Looking for CLIs…",
+  "Abrir em {name}": "Open in {name}",
+  "Início rápido": "Quick start",
+  "Detectar de novo": "Detect again",
+  "Detectar CLIs de novo": "Detect CLIs again",
+  "O que vai rodar": "What is going to run",
+  "Não consegui listar os shells desta máquina: {error}": "Could not list this machine's shells: {error}",
+  "A detecção falhou: {error}. Clique em detectar de novo.": "Detection failed: {error}. Click detect again.",
+  "Nenhuma CLI de agente encontrada no PATH nem nas pastas do npm. Instale uma (ex.: ":
+    "No agent CLI found on the PATH nor in npm's folders. Install one (e.g.: ",
+  ") e clique em detectar de novo.": ") and click detect again.",
+} satisfies Record<string, string>;

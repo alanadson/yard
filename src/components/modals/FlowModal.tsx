@@ -15,6 +15,7 @@ import { ArrowDown, ArrowUp, Cable, ChevronDown, Plus, Trash2 } from "lucide-rea
 
 import { Modal } from "./Modal";
 import { TerminalMark } from "../BrandIcon";
+import { useT } from "../../hooks/useT";
 import { commitCanvasExternal } from "../../lib/canvasWrite";
 import { patchItemOfType, removeItemAndEdges } from "../../lib/canvasOps";
 import { flowAgents, FLOW_PRESETS, type FlowItem } from "../../lib/flow";
@@ -34,7 +35,11 @@ interface Payload {
   itemId: string;
 }
 
+/** The name a flow card carries until the user writes one — data, not UI. */
+const DEFAULT_FLOW_NAME = "Fluxo"; // i18n-ok
+
 export function FlowModal() {
+  const t = useT();
   const closeModal = useUI((s) => s.closeModal);
   const payload = useUI((s) => s.modalPayload) as Payload | null;
   const groupId = payload?.groupId ?? "";
@@ -50,7 +55,7 @@ export function FlowModal() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [name, setName] = useState(item?.name ?? "Fluxo");
+  const [name, setName] = useState(item?.name ?? DEFAULT_FLOW_NAME);
   const [stages, setStages] = useState<FlowStage[]>(
     () => item?.stages.map((s) => ({ ...s })) ?? [],
   );
@@ -90,7 +95,7 @@ export function FlowModal() {
 
   const save = () => {
     if (!item) return closeModal();
-    const cleanName = name.trim().slice(0, FLOW_NAME_MAX) || "Fluxo";
+    const cleanName = name.trim().slice(0, FLOW_NAME_MAX) || DEFAULT_FLOW_NAME;
     // An empty stage is not a stage: the briefing `yard flow stage` hands over
     // would carry no instruction at all, and the CLI would burn a whole turn
     // guessing. They are dropped here instead of being refused, so a row the
@@ -115,19 +120,24 @@ export function FlowModal() {
     );
     const discarded =
       emptyCount > 0
-        ? ` ${emptyCount} etapa(s) sem prompt foram descartadas.`
+        ? " " + t("{n} etapa(s) sem prompt foram descartadas.", { n: emptyCount })
         : "";
     useUI
       .getState()
       .showToast(
         (cleanStages.length === 0
-          ? `Fluxo "${cleanName}" salvo sem etapas — escreva o prompt de pelo menos uma para poder rodá-lo.`
+          ? t(
+              'Fluxo "{name}" salvo sem etapas — escreva o prompt de pelo menos uma para poder rodá-lo.',
+              { name: cleanName },
+            )
           : wired.length
-            ? `Fluxo "${cleanName}" salvo — digite o pedido em ${wired
-                .map((t) => `"${baseName(t)}"`)
-                .join(", ")} para disparar.`
-            : `Fluxo "${cleanName}" salvo — conecte uma CLI ao cartão (tecla C) para armá-lo.`) +
-          discarded,
+            ? t('Fluxo "{name}" salvo — digite o pedido em {targets} para disparar.', {
+                name: cleanName,
+                targets: wired.map((term) => `"${baseName(term)}"`).join(", "),
+              })
+            : t('Fluxo "{name}" salvo — conecte uma CLI ao cartão (tecla C) para armá-lo.', {
+                name: cleanName,
+              })) + discarded,
         cleanStages.length === 0 ? "error" : "info",
       );
     closeModal();
@@ -140,11 +150,11 @@ export function FlowModal() {
     // CLI, from a flow that was no longer on the canvas.
     const running = liveRunsOf([item.id]);
     void ask(
-      `Excluir o fluxo "${item.name}"?` +
+      t('Excluir o fluxo "{name}"?', { name: item.name }) +
         (running.length
-          ? "\n\nEle está executando agora — a esteira é cancelada na etapa atual."
+          ? "\n\n" + t("Ele está executando agora — a esteira é cancelada na etapa atual.")
           : ""),
-      { title: "Excluir fluxo", kind: "warning" },
+      { title: t("Excluir fluxo"), kind: "warning" },
     ).then((yes) => {
       if (!yes) return;
       cancelRunsOf([item.id]);
@@ -155,15 +165,15 @@ export function FlowModal() {
 
   if (!item) {
     return (
-      <Modal title="Fluxo" onClose={closeModal}>
-        <p className="hint">Esse fluxo não está mais no canvas deste grupo.</p>
+      <Modal title={t("Fluxo")} onClose={closeModal}>
+        <p className="hint">{t("Esse fluxo não está mais no canvas deste grupo.")}</p>
       </Modal>
     );
   }
 
   return (
     <Modal
-      title={`Fluxo — ${item.name}`}
+      title={t("Fluxo — {name}", { name: item.name })}
       onClose={closeModal}
       wide
       dirty={touched}
@@ -171,20 +181,20 @@ export function FlowModal() {
       footer={
         <div className="modal-foot-row modal-foot-row--end">
           <button className="btn btn--danger" onClick={remove}>
-            <Trash2 size={13} /> Excluir
+            <Trash2 size={13} /> {t("Excluir")}
           </button>
           <span className="grow" />
           <button className="btn" onClick={closeModal}>
-            Cancelar
+            {t("Cancelar")}
           </button>
           <button className="btn btn--primary" onClick={save}>
-            Salvar fluxo
+            {t("Salvar fluxo")}
           </button>
         </div>
       }
     >
       <label>
-        Nome do fluxo
+        {t("Nome do fluxo")}
         <input
           className="flow-name-input"
           type="text"
@@ -197,7 +207,7 @@ export function FlowModal() {
         />
       </label>
 
-      <div className="flow-rail" role="list" aria-label="Etapas do fluxo, em ordem">
+      <div className="flow-rail" role="list" aria-label={t("Etapas do fluxo, em ordem")}>
         {stages.map((s, i) => (
           <div key={i} className="flow-step" role="listitem">
             <div className="flow-step-spine" aria-hidden="true">
@@ -216,17 +226,18 @@ export function FlowModal() {
                   className="flow-step-title"
                   type="text"
                   value={s.label ?? ""}
-                  placeholder={`Título da etapa ${i + 1} — ex.: ${
-                    FLOW_PRESETS[Math.min(i, FLOW_PRESETS.length - 1)].name
-                  }`}
-                  aria-label={`Título da etapa ${i + 1}`}
+                  placeholder={t("Título da etapa {n} — ex.: {example}", {
+                    n: i + 1,
+                    example: t(FLOW_PRESETS[Math.min(i, FLOW_PRESETS.length - 1)].name),
+                  })}
+                  aria-label={t("Título da etapa {n}", { n: i + 1 })}
                   onChange={(e) => patchStage(i, { label: e.target.value })}
                 />
                 <div className="flow-step-actions">
                   <button
                     className="icon-btn"
-                    data-tip="Subir etapa"
-                    aria-label={`Subir a etapa ${i + 1}`}
+                    data-tip={t("Subir etapa")}
+                    aria-label={t("Subir a etapa {n}", { n: i + 1 })}
                     disabled={i === 0}
                     onClick={() => moveStage(i, -1)}
                   >
@@ -234,8 +245,8 @@ export function FlowModal() {
                   </button>
                   <button
                     className="icon-btn"
-                    data-tip="Descer etapa"
-                    aria-label={`Descer a etapa ${i + 1}`}
+                    data-tip={t("Descer etapa")}
+                    aria-label={t("Descer a etapa {n}", { n: i + 1 })}
                     disabled={i === stages.length - 1}
                     onClick={() => moveStage(i, 1)}
                   >
@@ -243,8 +254,8 @@ export function FlowModal() {
                   </button>
                   <button
                     className="icon-btn icon-btn--danger"
-                    data-tip="Remover etapa"
-                    aria-label={`Remover a etapa ${i + 1}`}
+                    data-tip={t("Remover etapa")}
+                    aria-label={t("Remover a etapa {n}", { n: i + 1 })}
                     onClick={() => dropStage(i)}
                   >
                     <Trash2 size={12} />
@@ -252,8 +263,8 @@ export function FlowModal() {
                 </div>
               </div>
 
-              <div className="flow-chips" aria-label="Sugestões de etapa">
-                <span className="flow-chips-label">Sugestões</span>
+              <div className="flow-chips" aria-label={t("Sugestões de etapa")}>
+                <span className="flow-chips-label">{t("Sugestões")}</span>
                 {FLOW_PRESETS.map((p) => (
                   <button
                     key={p.name}
@@ -262,7 +273,7 @@ export function FlowModal() {
                     data-tip={p.prompt}
                     onClick={() => patchStage(i, { label: p.name, prompt: p.prompt })}
                   >
-                    {p.name}
+                    {t(p.name)}
                   </button>
                 ))}
               </div>
@@ -271,8 +282,8 @@ export function FlowModal() {
                 className="flow-step-prompt"
                 rows={3}
                 value={s.prompt}
-                placeholder="O que esta etapa deve fazer com a tarefa que chegar…"
-                aria-label={`Instruções da etapa ${i + 1}`}
+                placeholder={t("O que esta etapa deve fazer com a tarefa que chegar…")}
+                aria-label={t("Instruções da etapa {n}", { n: i + 1 })}
                 onChange={(e) => patchStage(i, { prompt: e.target.value })}
               />
             </div>
@@ -288,7 +299,7 @@ export function FlowModal() {
           <div className="flow-step-addbox">
             <button className="btn" onClick={addStage}>
               <Plus size={13} />
-              {stages.length === 0 ? "Primeira etapa" : "Adicionar etapa"}
+              {stages.length === 0 ? t("Primeira etapa") : t("Adicionar etapa")}
             </button>
           </div>
         </div>
@@ -298,20 +309,20 @@ export function FlowModal() {
         <Cable size={13} aria-hidden="true" />
         {wired.length ? (
           <span>
-            Conectado a{" "}
-            {wired.map((t, i) => (
-              <span key={t.id} className="flow-wired-term">
+            {t("Conectado a ")}
+            {wired.map((term, i) => (
+              <span key={term.id} className="flow-wired-term">
                 {i > 0 && ", "}
-                <TerminalMark term={t} size={11} /> {baseName(t)}
+                <TerminalMark term={term} size={11} /> {baseName(term)}
               </span>
             ))}
-            {" — a tarefa mandada lá atravessa este fluxo."}
+            {t(" — a tarefa mandada lá atravessa este fluxo.")}
           </span>
         ) : (
           <span>
-            Nenhuma CLI conectada ainda. No canvas, use a ferramenta{" "}
-            <kbd>C</kbd> para ligar um terminal de agente a este cartão — é
-            isso que arma o fluxo.
+            {t("Nenhuma CLI conectada ainda. No canvas, use a ferramenta ")}
+            <kbd>C</kbd>
+            {t(" para ligar um terminal de agente a este cartão — é isso que arma o fluxo.")}
           </span>
         )}
       </div>
@@ -326,12 +337,12 @@ export function FlowModal() {
           }}
         />
         <span>
-          <strong>Qualquer prompt digitado na CLI conectada passa pelo fluxo.</strong>{" "}
-          Nada é enviado ao terminal ao conectar: o Yard intercepta o seu
-          Enter — o pedido vira a tarefa e cada etapa chega como um carimbo
-          de uma linha; o agente busca as instruções com{" "}
-          <code>yard flow stage</code>, sem encher o seu prompt. Desmarcado,
-          o fluxo só roda quando pedido (▶ no rodapé do canvas ou{" "}
+          <strong>{t("Qualquer prompt digitado na CLI conectada passa pelo fluxo.")}</strong>{" "}
+          {t(
+            "Nada é enviado ao terminal ao conectar: o Yard intercepta o seu Enter — o pedido vira a tarefa e cada etapa chega como um carimbo de uma linha; o agente busca as instruções com ",
+          )}
+          <code>yard flow stage</code>
+          {t(", sem encher o seu prompt. Desmarcado, o fluxo só roda quando pedido (▶ no rodapé do canvas ou ")}
           <code>yard flow run</code>).
         </span>
       </label>

@@ -1,0 +1,419 @@
+/* Yard — the light appearance (2026-08-26).
+
+   The same tokens `styles.css` declares in `:root`, with values for paper:
+   keyed on `<html data-theme="light">`, which `lib/theme.ts` stamps and
+   clears. Dark is the *absence* of the attribute, so this sheet changes
+   nothing for whoever never opens Configurações → Interface → Tema.
+
+   What stays: the system blue as the only action color (`--accent`,
+   `--accent-fill`, the gradients), the semantic hues' meaning, the radii, the
+   materials' blur. What changes: the paper, the ink, the veils (white veils
+   vanish on paper — every `rgb(255 255 255 / n%)` relief in the dark sheet
+   has a `rgb(0 0 0 / n%)` twin below), and the shadows, which get shorter and
+   lighter because a light room has softer light.
+
+   Loaded on boot right after `styles.css` (`App.tsx`; `theme-light.test.ts`
+   locks the order and the contrast floors). Rules for lazy sheets (the
+   editor, the diffs, the canvas) live here too: the attribute selector wins
+   on specificity, so it does not matter which sheet arrives first. */
+
+:root[data-theme="light"] {
+  --ambient:
+    radial-gradient(1100px 640px at 10% -12%, rgb(10 132 255 / 11%), transparent 62%),
+    radial-gradient(700px 480px at -8% 84%, rgb(10 132 255 / 5%), transparent 60%),
+    radial-gradient(900px 560px at 106% 112%, rgb(191 90 242 / 8%), transparent 60%),
+    linear-gradient(178deg, #f1f2f6 0%, #e7e9ef 58%, #eaecf2 100%);
+
+  /* paper: ground, panel, raised, overlay */
+  --bg: #eceef3;
+  --bg-panel: #f7f8fb;
+  --bg-raised: #ffffff;
+  --bg-overlay: #ffffff;
+  --bg-hover: rgb(0 0 0 / 5%);
+  --bg-active: rgb(0 0 0 / 9%);
+
+  /* translucent materials: more paint than the dark ones — a light room
+     needs opacity to keep text readable over whatever floats underneath */
+  --material-thin: rgb(246 247 250 / 62%);
+  --material-menu: rgb(251 251 253 / 80%);
+  --material-sheet: rgb(247 248 251 / 84%);
+
+  /* lines: translucent black hairlines on paper */
+  --border-soft: rgb(0 0 0 / 5%);
+  --border: rgb(0 0 0 / 9%);
+  --border-strong: rgb(0 0 0 / 16%);
+
+  /* the thread of light still reads on paper — brighter, since the surface
+     it sits on is already bright */
+  --hairline: inset 0 1px 0 rgb(255 255 255 / 85%);
+
+  /* ink (all ≥ 4.5:1 over every paper above — see theme-light.test.ts) */
+  --text: #1d1d22;
+  --text-dim: #5c5d66;
+  --text-bright: #0a0a0c;
+
+  /* the blue is the same; only its *text* and veils change, because blue
+     text over paper needs the deeper step to reach 4.5:1 */
+  --accent-bright: #2b8cff;
+  --accent-text: #0b5ec2;
+  --accent-dim: rgb(10 132 255 / 13%);
+  --accent-border: rgb(10 132 255 / 55%);
+  --accent-soft: rgb(10 132 255 / 11%);
+
+  /* semantic inks, one step deeper for paper: green and red read at 4.5:1,
+     yellow — the hard one — at 3:1, the floor for a state color */
+  --green: #1a7f37;
+  --green-bg: rgb(26 127 55 / 14%);
+  --yellow: #b07a00;
+  --yellow-bg: rgb(176 122 0 / 16%);
+  --red: #c8352b;
+  --red-bg: rgb(200 53 43 / 12%);
+
+  /* elevation: shorter and lighter — soft daylight, not a spotlight */
+  --shadow-1:
+    0 1px 2px rgb(0 0 0 / 8%),
+    0 3px 10px rgb(0 0 0 / 7%);
+  --shadow-2:
+    0 12px 32px rgb(0 0 0 / 14%),
+    0 2px 8px rgb(0 0 0 / 8%);
+  --shadow-3:
+    0 32px 80px rgb(0 0 0 / 20%),
+    0 8px 24px rgb(0 0 0 / 10%);
+
+  /* code editor chrome (`CodeEditor/cm.ts` reads these with the dark values
+     as fallbacks) */
+  --cm-gutter-ink: rgb(0 0 0 / 30%);
+  --cm-active-line: rgb(0 0 0 / 3.5%);
+  --cm-selection-match: rgb(0 0 0 / 7%);
+  --cm-fold: rgb(0 0 0 / 6%);
+  --cm-input: rgb(0 0 0 / 5%);
+
+  /* syntax on paper: the same ten roles as `yardHighlight`, deeper */
+  --syn-comment: #6a737d;
+  --syn-keyword: #8a3fc0;
+  --syn-string: #1a7f37;
+  --syn-number: #a15c00;
+  --syn-function: #0a5fc4;
+  --syn-definition: #1d1d22;
+  --syn-type: #0e7c86;
+  --syn-property: #2f4f9e;
+  --syn-tag: #b3261e;
+  --syn-constant: #9a4d00;
+  --syn-operator: #5c5d66;
+
+  color-scheme: light;
+}
+
+/* --- the boot sheet's literal veils, paper twins --------------------------
+   Each block below mirrors a rule in `styles.css` that paints a white veil,
+   a black recess or a hex well by hand. Same selectors, same properties. */
+
+:root[data-theme="light"] ::selection {
+  background: rgb(10 132 255 / 22%);
+}
+
+:root[data-theme="light"] .font-preview,
+:root[data-theme="light"] .boot-fail-detail,
+:root[data-theme="light"] .cv-portal-url input {
+  background: rgb(0 0 0 / 4%);
+}
+
+:root[data-theme="light"] input,
+:root[data-theme="light"] select,
+:root[data-theme="light"] .select-trigger {
+  background: rgb(0 0 0 / 4%);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 5%);
+}
+
+:root[data-theme="light"] select,
+:root[data-theme="light"] input[list] {
+  background-color: #f7f8fb;
+}
+
+:root[data-theme="light"] .select-group + .select-group,
+:root[data-theme="light"] .menu-sep {
+  border-top-color: rgb(0 0 0 / 8%);
+  background: rgb(0 0 0 / 8%);
+}
+
+:root[data-theme="light"] kbd {
+  background: rgb(0 0 0 / 5%);
+  border-color: rgb(0 0 0 / 12%);
+}
+
+:root[data-theme="light"] .titlebar {
+  border-bottom-color: rgb(0 0 0 / 10%);
+}
+
+:root[data-theme="light"] .sidebar {
+  border-right-color: rgb(0 0 0 / 9%);
+}
+
+:root[data-theme="light"] .pane-header,
+:root[data-theme="light"] .cv-portal-bar {
+  border-bottom-color: rgb(0 0 0 / 9%);
+}
+
+:root[data-theme="light"] [data-tip]::after,
+:root[data-theme="light"] .pane-tabtip,
+:root[data-theme="light"] .menu,
+:root[data-theme="light"] .toast,
+:root[data-theme="light"] .usage-pop {
+  border-color: rgb(0 0 0 / 10%);
+}
+
+:root[data-theme="light"] [data-tip]::after,
+:root[data-theme="light"] .pane-tabtip {
+  box-shadow: 0 6px 18px rgb(0 0 0 / 14%), var(--hairline);
+}
+
+:root[data-theme="light"] .crumb-branch {
+  background: rgb(0 0 0 / 4%);
+}
+
+:root[data-theme="light"] .usage-meter,
+:root[data-theme="light"] .hud-bar {
+  background: rgb(0 0 0 / 9%);
+}
+
+:root[data-theme="light"] .usage-plan,
+:root[data-theme="light"] .pane-tab-flow {
+  background: rgb(0 0 0 / 6%);
+}
+
+:root[data-theme="light"] .usage-note--bad,
+:root[data-theme="light"] .toast--error {
+  color: #b3261e;
+}
+
+/* Segmented control: recessed track, raised (white) active segment. */
+:root[data-theme="light"] .layout-switch,
+:root[data-theme="light"] .layout-canvas {
+  background: rgb(0 0 0 / 6%);
+  border-color: rgb(0 0 0 / 6%);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 6%);
+}
+
+:root[data-theme="light"] .layout-switch button.is-active,
+:root[data-theme="light"] .layout-canvas.is-active,
+:root[data-theme="light"] .layout-switch .select-trigger.is-open {
+  background: #ffffff;
+  border-color: rgb(0 0 0 / 8%);
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 14%),
+    inset 0 1px 0 rgb(255 255 255 / 90%);
+}
+
+/* Buttons: white paper on paper, with a real edge. The `:not()`s matter: the
+   attribute selector outranks `.btn--primary`, and a plain `.btn` override
+   here painted the blue and the red buttons white — white text on white. */
+:root[data-theme="light"] .btn:not(.btn--primary, .btn--danger) {
+  background: #ffffff;
+  border-color: rgb(0 0 0 / 11%);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 7%),
+    inset 0 1px 0 rgb(255 255 255 / 90%);
+}
+
+:root[data-theme="light"] .btn:not(.btn--primary, .btn--danger):hover {
+  background: #f4f5f9;
+  border-color: rgb(0 0 0 / 15%);
+}
+
+:root[data-theme="light"] .btn:not(.btn--primary, .btn--danger):active {
+  background: #e9ebf1;
+}
+
+:root[data-theme="light"] .btn:not(.btn--primary, .btn--danger):disabled {
+  background: rgb(0 0 0 / 4%);
+}
+
+:root[data-theme="light"] .btn--primary:disabled,
+:root[data-theme="light"] .btn--danger:disabled {
+  background: rgb(0 0 0 / 22%);
+}
+
+/* Panes: a softer drop, the same hairline. */
+:root[data-theme="light"] .pane {
+  box-shadow: 0 4px 16px rgb(0 0 0 / 9%), var(--hairline);
+}
+
+:root[data-theme="light"] .pane--focused {
+  box-shadow:
+    0 0 0 3px rgb(10 132 255 / 16%),
+    0 4px 16px rgb(0 0 0 / 9%),
+    var(--hairline);
+}
+
+:root[data-theme="light"] .pane--focused .pane-header {
+  background: #f2f3f7;
+}
+
+:root[data-theme="light"] .pane-tab-slot.is-active {
+  background: #ffffff;
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 12%),
+    inset 0 1px 0 rgb(255 255 255 / 90%);
+}
+
+:root[data-theme="light"] .tab-drag-ghost {
+  background: #ffffff;
+  box-shadow:
+    0 10px 28px rgb(0 0 0 / 16%),
+    inset 0 1px 0 rgb(255 255 255 / 90%),
+    var(--hairline);
+}
+
+:root[data-theme="light"] .pane-tab-close:hover,
+:root[data-theme="light"] .toast .icon-btn:hover {
+  background: rgb(0 0 0 / 9%);
+}
+
+/* The terminal well — matches `LIGHT_TERM.background` in lib/termTheme.ts. */
+:root[data-theme="light"] .xterm-host {
+  background: #fafafc;
+}
+
+:root[data-theme="light"] .cv-portal-body {
+  background: #ffffff;
+}
+
+/* Scrollbars: black ink on paper. */
+:root[data-theme="light"] .xterm .xterm-viewport {
+  scrollbar-color: rgb(0 0 0 / 22%) transparent;
+}
+
+:root[data-theme="light"] .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgb(0 0 0 / 18%);
+  background-clip: padding-box;
+}
+
+:root[data-theme="light"] .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgb(0 0 0 / 30%);
+  background-clip: padding-box;
+}
+
+:root[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgb(0 0 0 / 22%);
+  background-clip: padding-box;
+}
+
+:root[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgb(0 0 0 / 36%);
+  background-clip: padding-box;
+}
+
+/* --- lazy sheets: the wells and the few inks they hard-code ---------------- */
+
+/* Diffs and viewers (`ChangesPanel/changes.css`, `BenchPanel/scm.css`). */
+:root[data-theme="light"] .diff,
+:root[data-theme="light"] .viewer-body,
+:root[data-theme="light"] .scm-diff > pre,
+:root[data-theme="light"] .scm-hunk {
+  background: #fafafc;
+}
+
+:root[data-theme="light"] .review-section-title {
+  background: #f2f3f7;
+}
+
+:root[data-theme="light"] .dline--hunk {
+  background: #eef0f5;
+}
+
+/* The media stage of the viewer (`CodeEditor/editor.css`). */
+:root[data-theme="light"] .media-stage {
+  background: #eef0f5;
+}
+
+:root[data-theme="light"] .media-view--image .media-stage {
+  background:
+    repeating-conic-gradient(rgb(0 0 0 / 4%) 0% 25%, transparent 0% 50%) 50% / 22px 22px,
+    #eef0f5;
+}
+
+/* Syntax in the markdown preview and the diff viewer: the same roles the
+   editor paints with `--syn-*`. */
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-comment {
+  color: var(--syn-comment);
+}
+
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-keyword {
+  color: var(--syn-keyword);
+}
+
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-string,
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-string2 {
+  color: var(--syn-string);
+}
+
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-number,
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-bool,
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-atom,
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-literal {
+  color: var(--syn-number);
+}
+
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-typeName,
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-className,
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-namespace {
+  color: var(--syn-type);
+}
+
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-propertyName {
+  color: var(--syn-property);
+}
+
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-definition {
+  color: var(--syn-definition);
+}
+
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-operator,
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-punctuation,
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-meta,
+:root[data-theme="light"] :is(.md-pre, .dgrid) .tok-macroName {
+  color: var(--syn-operator);
+}
+
+/* Extension logos in the store (`modals/modal.css`) and two inks. */
+:root[data-theme="light"] .ext-logo {
+  background: #ffffff;
+}
+
+:root[data-theme="light"] .live-mark-badge--m {
+  color: #0b5ec2;
+  background: rgb(10 132 255 / 12%);
+}
+
+:root[data-theme="light"] .task-done-clear:hover {
+  color: #0a4fa8;
+}
+
+/* --- the canvas: its own materials, on paper --------------------------------
+   `CanvasView/canvas.css` declares the board's elevation tokens in `.cv`;
+   the light board keeps the same *steps* with daylight values. */
+:root[data-theme="light"] .cv {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 70%);
+  --cv-glass: rgb(250 250 253 / 62%);
+  --cv-glass-border: rgb(0 0 0 / 10%);
+  --cv-glass-edge:
+    inset 0 1px 0 rgb(255 255 255 / 90%),
+    inset 0 -1px 0 rgb(0 0 0 / 6%);
+  --cv-float:
+    0 20px 48px rgb(0 0 0 / 14%),
+    0 2px 8px rgb(0 0 0 / 8%);
+  --cv-lift:
+    0 24px 64px rgb(0 0 0 / 14%),
+    0 6px 18px rgb(0 0 0 / 8%);
+  --cv-lift-hi:
+    0 32px 80px rgb(0 0 0 / 18%),
+    0 8px 24px rgb(0 0 0 / 10%);
+  --cv-edge: inset 0 1px 0 rgb(255 255 255 / 80%);
+}
+
+:root[data-theme="light"] .cv-card-head {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 70%), rgb(255 255 255 / 20%)),
+    #f2f3f7;
+  border-bottom-color: rgb(0 0 0 / 9%);
+}

@@ -17,6 +17,7 @@ import { tags as t } from "@lezer/highlight";
 import { EditorState, type Extension } from "@codemirror/state";
 
 import { highlightTag } from "./languages";
+import { activeLang } from "../../lib/i18n";
 
 export {
   fenceLabel,
@@ -51,7 +52,7 @@ export const yardTheme = EditorView.theme(
     // Frameless gutter: the numbering is background information, not a column.
     ".cm-gutters": {
       backgroundColor: "transparent",
-      color: "rgb(255 255 255 / 26%)",
+      color: "var(--cm-gutter-ink, rgb(255 255 255 / 26%))",
       border: "none",
       paddingRight: "2px",
     },
@@ -59,20 +60,20 @@ export const yardTheme = EditorView.theme(
       backgroundColor: "transparent",
       color: "var(--text-dim)",
     },
-    ".cm-activeLine": { backgroundColor: "rgb(255 255 255 / 3.5%)" },
+    ".cm-activeLine": { backgroundColor: "var(--cm-active-line, rgb(255 255 255 / 3.5%))" },
     ".cm-cursor, .cm-dropCursor": {
       borderLeftColor: "var(--accent-bright)",
       borderLeftWidth: "2px",
     },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection":
       { backgroundColor: "rgb(10 132 255 / 30%)" },
-    ".cm-selectionMatch": { backgroundColor: "rgb(255 255 255 / 9%)" },
+    ".cm-selectionMatch": { backgroundColor: "var(--cm-selection-match, rgb(255 255 255 / 9%))" },
     "&.cm-focused .cm-matchingBracket": {
       backgroundColor: "rgb(10 132 255 / 22%)",
       outline: "1px solid var(--accent-border)",
     },
     ".cm-foldPlaceholder": {
-      backgroundColor: "rgb(255 255 255 / 8%)",
+      backgroundColor: "var(--cm-fold, rgb(255 255 255 / 8%))",
       border: "1px solid var(--border)",
       borderRadius: "4px",
       color: "var(--text-dim)",
@@ -98,7 +99,7 @@ export const yardTheme = EditorView.theme(
       fontSize: "var(--fs-sm)",
     },
     ".cm-dialog input": {
-      background: "rgb(0 0 0 / 30%)",
+      background: "var(--cm-input, rgb(0 0 0 / 30%))",
       color: "var(--text)",
       border: "1px solid var(--border)",
       borderRadius: "var(--r-sm)",
@@ -151,22 +152,28 @@ export const yardTheme = EditorView.theme(
   { dark: true },
 );
 
-/** Highlighting: cool like the rest of the window, low saturation, muted comments. */
+/**
+ * Highlighting: cool like the rest of the window, low saturation, muted
+ * comments. Each color is a `--syn-*` token with the dark value as fallback:
+ * the dark side is untouched by the token, and `theme-light.css` redefines
+ * the same ten names for paper — the light appearance never has to touch
+ * this file.
+ */
 export const yardHighlight = HighlightStyle.define([
-  { tag: [t.comment, t.lineComment, t.blockComment], color: "#7b8494", fontStyle: "italic" },
-  { tag: [t.keyword, t.moduleKeyword, t.controlKeyword], color: "#c792ea" },
-  { tag: [t.operatorKeyword, t.definitionKeyword, t.modifier], color: "#c792ea" },
-  { tag: [t.string, t.special(t.string), t.regexp], color: "#8fd694" },
-  { tag: [t.number, t.bool, t.null, t.atom], color: "#e3b341" },
-  { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "#6fb3ff" },
-  { tag: [t.definition(t.variableName), t.definition(t.propertyName)], color: "#e2e2e6" },
-  { tag: [t.typeName, t.className, t.namespace], color: "#5ecfbb" },
-  { tag: [t.propertyName, t.attributeName], color: "#a9c7ff" },
-  { tag: [t.tagName, t.angleBracket], color: "#ff8a80" },
+  { tag: [t.comment, t.lineComment, t.blockComment], color: "var(--syn-comment, #7b8494)", fontStyle: "italic" },
+  { tag: [t.keyword, t.moduleKeyword, t.controlKeyword], color: "var(--syn-keyword, #c792ea)" },
+  { tag: [t.operatorKeyword, t.definitionKeyword, t.modifier], color: "var(--syn-keyword, #c792ea)" },
+  { tag: [t.string, t.special(t.string), t.regexp], color: "var(--syn-string, #8fd694)" },
+  { tag: [t.number, t.bool, t.null, t.atom], color: "var(--syn-number, #e3b341)" },
+  { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "var(--syn-function, #6fb3ff)" },
+  { tag: [t.definition(t.variableName), t.definition(t.propertyName)], color: "var(--syn-definition, #e2e2e6)" },
+  { tag: [t.typeName, t.className, t.namespace], color: "var(--syn-type, #5ecfbb)" },
+  { tag: [t.propertyName, t.attributeName], color: "var(--syn-property, #a9c7ff)" },
+  { tag: [t.tagName, t.angleBracket], color: "var(--syn-tag, #ff8a80)" },
   { tag: [t.variableName, t.self], color: "var(--text)" },
-  { tag: [t.constant(t.variableName), t.standard(t.variableName)], color: "#e0a458" },
-  { tag: [t.operator, t.punctuation, t.separator, t.bracket], color: "#9e9ea6" },
-  { tag: [t.meta, t.processingInstruction], color: "#9e9ea6" },
+  { tag: [t.constant(t.variableName), t.standard(t.variableName)], color: "var(--syn-constant, #e0a458)" },
+  { tag: [t.operator, t.punctuation, t.separator, t.bracket], color: "var(--syn-operator, #9e9ea6)" },
+  { tag: [t.meta, t.processingInstruction], color: "var(--syn-operator, #9e9ea6)" },
   { tag: t.link, color: "var(--accent-text)", textDecoration: "underline" },
   { tag: t.url, color: "var(--accent-text)" },
   { tag: [t.heading, t.strong], color: "var(--text-bright)", fontWeight: "600" },
@@ -182,9 +189,15 @@ export const yardHighlight = HighlightStyle.define([
 
 /**
  * CodeMirror speaks the app's language. The panels (Ctrl+F, Ctrl+G) ship
- * their labels in English; every string they use goes through this table.
+ * their labels in English; every string they use goes through this table
+ * — in Portuguese. With the interface in English the panels keep
+ * CodeMirror's own words, which is what the table below turns into: each
+ * entry is a getter that answers the Portuguese only while the interface
+ * speaks it, read when the panel is built (`state.phrase`), so one bundle
+ * serves both languages and no editor has to be rebuilt on a switch.
+ * (i18n-scan: tables — the Portuguese here is the translation, not a key.)
  */
-const ptBR = EditorState.phrases.of({
+const PT_PHRASES: Record<string, string> = {
   // @codemirror/search — the find/replace panel
   Find: "Buscar",
   Replace: "Substituir",
@@ -209,7 +222,20 @@ const ptBR = EditorState.phrases.of({
   // @codemirror/lint
   Diagnostics: "Problemas",
   "No diagnostics": "Sem problemas",
-});
+};
+
+function languageAwarePhrases(): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const [key, pt] of Object.entries(PT_PHRASES)) {
+    Object.defineProperty(map, key, {
+      enumerable: true,
+      get: () => (activeLang() === "pt-BR" ? pt : key),
+    });
+  }
+  return map;
+}
+
+const ptBR = EditorState.phrases.of(languageAwarePhrases());
 
 /**
  * The editor's base bundle around a given highlight style. The default is

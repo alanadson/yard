@@ -15,8 +15,10 @@ import { useAgentDefaults } from "../../stores/agentDefaultsStore";
 import { useChanges } from "../../stores/changesStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
+import { useT } from "../../hooks/useT";
 
 export function FanoutModal() {
+  const t = useT();
   const closeModal = useUI((s) => s.closeModal);
   const openModal = useUI((s) => s.openModal);
   const showToast = useUI((s) => s.showToast);
@@ -82,18 +84,22 @@ export function FanoutModal() {
       const launched = result.floors.length - result.notStarted.length;
       showToast(
         result.failures.length
-          ? `Tarefa “${itemName.trim()}”: ${launched} de ${fan.length} no ar. ` +
+          ? t("Tarefa “{name}”: {launched} de {total} no ar. ", {
+              name: itemName.trim(),
+              launched,
+              total: fan.length,
+            }) +
               `${result.failures.join("; ")}.` +
               (result.notStarted.length
-                ? " Os andares existem — use ▶ no cartão para iniciar."
+                ? t(" Os andares existem — use ▶ no cartão para iniciar.")
                 : "")
-          : `Tarefa “${itemName.trim()}”: ${launched} andar(es) no ar.`,
+          : t("Tarefa “{name}”: {n} andar(es) no ar.", { name: itemName.trim(), n: launched }),
         result.failures.length ? "error" : "info",
       );
       closeModal();
       openModal("compare-floors", { projectId: project.id });
     } catch (e) {
-      showToast(`Não consegui disparar a tarefa: ${e}`, "error");
+      showToast(t("Não consegui disparar a tarefa: {e}", { e: String(e) }), "error");
     } finally {
       setBusy(false);
     }
@@ -104,7 +110,7 @@ export function FanoutModal() {
 
   return (
     <Modal
-      title="Nova tarefa"
+      title={t("Nova tarefa")}
       onClose={closeModal}
       dirty={!!itemName.trim() || !!prompt.trim()}
       initialFocus="#fanout-nome"
@@ -112,15 +118,18 @@ export function FanoutModal() {
         <div className="modal-foot-row">
           <span className="hint grow">
             {!isRepo
-              ? "Esta pasta não é um repositório git — sem worktree os agentes se atropelam."
+              ? t("Esta pasta não é um repositório git — sem worktree os agentes se atropelam.")
               : chosen.length > 0
                 ? // The price in front of the button: worktrees on disk, agent
                   // processes and the same request billed to every subscription.
-                  `${chosen.length} worktree(s) no disco e ${chosen.length} agente(s) rodando o mesmo pedido — depois você compara e aterrissa o vencedor.`
-                : "Escolha ao menos um agente. Cada um ganha um andar isolado com o mesmo pedido."}
+                  t(
+                    "{n} worktree(s) no disco e {n} agente(s) rodando o mesmo pedido — depois você compara e aterrissa o vencedor.",
+                    { n: chosen.length },
+                  )
+                : t("Escolha ao menos um agente. Cada um ganha um andar isolado com o mesmo pedido.")}
           </span>
           <button className="btn" onClick={closeModal}>
-            Cancelar
+            {t("Cancelar")}
           </button>
           <button
             className="btn btn--primary"
@@ -128,45 +137,45 @@ export function FanoutModal() {
             onClick={() => void launch()}
           >
             <Split size={13} aria-hidden="true" />
-            {busy ? "Disparando…" : `Disparar em ${chosen.length}`}
+            {busy ? t("Disparando…") : t("Disparar em {n}", { n: chosen.length })}
           </button>
         </div>
       }
     >
       <div className="form">
         <label>
-          Nome
+          {t("Nome")}
           <input
             id="fanout-nome"
             value={itemName}
-            placeholder="ex.: validar o checkout"
+            placeholder={t("ex.: validar o checkout")}
             onChange={(e) => setName(e.target.value)}
           />
         </label>
         <label>
-          Pedido
+          {t("Pedido")}
           <textarea
             rows={5}
             value={prompt}
-            placeholder="O que cada agente deve fazer neste worktree."
+            placeholder={t("O que cada agente deve fazer neste worktree.")}
             onChange={(e) => setPrompt(e.target.value)}
           />
         </label>
         <fieldset className="floors-agents">
-          <legend>Agentes nesta máquina</legend>
-          {agents.state === "carregando" && <p className="hint">Procurando CLIs…</p>}
+          <legend>{t("Agentes nesta máquina")}</legend>
+          {agents.state === "carregando" && <p className="hint">{t("Procurando CLIs…")}</p>}
           {/* A detection that failed must not become "no CLI installed": the
               user would give up on the fan-out because of a read error. */}
           {agents.state === "falhou" && (
             <p className="hint hint--error" role="alert">
-              Não consegui procurar as CLIs: {agents.reason}.{" "}
+              {t("Não consegui procurar as CLIs: {reason}.", { reason: agents.reason })}{" "}
               <button className="linkish" onClick={search}>
-                Procurar de novo
+                {t("Procurar de novo")}
               </button>
             </p>
           )}
           {agents.state === "pronto" && installed.length === 0 && (
-            <p className="hint">Nenhuma CLI de agente instalada.</p>
+            <p className="hint">{t("Nenhuma CLI de agente instalada.")}</p>
           )}
           {installed.map((a) => {
             const on = chosen.includes(a.id);
@@ -195,7 +204,7 @@ export function FanoutModal() {
             checked={cloneGround}
             onChange={(e) => setCloneGround(e.target.checked)}
           />
-          Clonar o layout do chão (terminais extra nascem parados)
+          {t("Clonar o layout do chão (terminais extra nascem parados)")}
         </label>
       </div>
     </Modal>

@@ -23,6 +23,7 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { ResizeHandles } from "./ResizeHandles";
 import { GROUP_HEAD, GROUP_NAME_MAX } from "../../lib/canvasGroups";
 import type { CanvasItem, ResizeDir } from "../../lib/canvas";
+import { useT } from "../../hooks/useT";
 
 type GroupData = Extract<CanvasItem, { type: "group" }>;
 
@@ -68,6 +69,7 @@ function GroupFrameImpl({
   onResizeMove,
   onResizeEnd,
 }: Props) {
+  const t = useT();
   const [draft, setDraft] = useState(it.name);
   const input = useRef<HTMLInputElement | null>(null);
 
@@ -123,7 +125,7 @@ function GroupFrameImpl({
             className="cv-group-name-input"
             value={draft}
             maxLength={GROUP_NAME_MAX}
-            aria-label="Nome do grupo"
+            aria-label={t("Nome do grupo")}
             onPointerDown={(e) => e.stopPropagation()}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={commit}

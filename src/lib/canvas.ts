@@ -27,6 +27,7 @@ import {
   GROUP_MIN_W,
   GROUP_NAME_MAX,
 } from "./canvasGroups";
+import { t } from "./i18n";
 
 export interface CanvasViewport {
   x: number;
@@ -279,6 +280,41 @@ export interface RoutineDef {
   lastRunAt?: number;
 }
 
+/** What a trigger listens for — the three edges the runtime mirror draws. */
+export type TriggerEvent = "finished" | "blocked" | "exited";
+
+/**
+ * What a trigger does. `ask` types a prompt into another CLI of the group
+ * (through the same sendability gate as a routine); `notify` is the native
+ * balloon plus a toast; `flow` runs a flow card on the terminal that fired,
+ * with `text` as the task. `{name}` and `{ask}` in a text are filled in with
+ * the source's name and the question it stopped at.
+ */
+export type TriggerAction =
+  | { kind: "ask"; targetId: string; text: string }
+  | { kind: "notify"; text: string }
+  | { kind: "flow"; flowId: string; text: string };
+
+/**
+ * "When X happens to a terminal, do Y" — the event-driven twin of a routine.
+ * Lives in the group's canvas next to `routines`, so `yard trigger`, the
+ * modal and the runtime hook all read one list.
+ */
+export interface TriggerDef {
+  id: string;
+  /** The terminal whose edge fires it, or `"*"` for any terminal of the group. */
+  sourceId: string;
+  event: TriggerEvent;
+  action: TriggerAction;
+  enabled: boolean;
+  /** Fires once and turns itself off. */
+  once?: boolean;
+  /** Minimum seconds between two fires of the same trigger. */
+  cooldownSec?: number;
+  createdAt: number;
+  lastRunAt?: number;
+}
+
 /**
  * One stage of a flow: a titled prompt. No terminal here on purpose — a flow
  * is a reusable pipeline of prompts, and the CLI that runs it is whichever one
@@ -343,6 +379,8 @@ export interface CanvasData {
   roles?: Record<string, CardRole>;
   /** Scheduled prompts of this group. Dropped when empty. */
   routines?: RoutineDef[];
+  /** Event-driven automations of this group. Dropped when empty. */
+  triggers?: TriggerDef[];
   /** Reusable roles scoped to this group (`--scope current`). */
   rolePresets?: Record<string, RolePreset>;
 }
@@ -430,7 +468,7 @@ export const EMPTY_CANVAS: CanvasData = {
 export function noteName(it: Extract<CanvasItem, { type: "note" }>): string {
   if (it.name && it.name.trim()) return it.name.trim();
   const first = it.text.split("\n")[0]?.replace(/^#+\s*/, "").trim() ?? "";
-  return (first || "nota sem título").slice(0, 48);
+  return (first || t("nota sem título")).slice(0, 48);
 }
 
 /** Display/addressing name of a portal: the pinned one or the URL hostname. */
@@ -673,6 +711,10 @@ export function normalizeCanvas(raw: unknown): CanvasData | undefined {
     const routines = (r.routines as RoutineDef[]).filter(isValidRoutine);
     if (routines.length) data.routines = routines;
   }
+  if (Array.isArray(r.triggers)) {
+    const triggers = (r.triggers as TriggerDef[]).filter(isValidTrigger);
+    if (triggers.length) data.triggers = triggers;
+  }
   const presets = normalizePresets(r.rolePresets);
   if (presets) data.rolePresets = presets;
   return data;
@@ -789,7 +831,7 @@ function sanitizeItem(it: CanvasItem): CanvasItem {
     const name = (it.name || "").trim().slice(0, GROUP_NAME_MAX);
     return {
       ...it,
-      name: name || GROUP_DEFAULT_NAME,
+      name: name || t(GROUP_DEFAULT_NAME),
       w: Math.max(GROUP_MIN_W, it.w),
       h: Math.max(GROUP_MIN_H, it.h),
     };
@@ -835,6 +877,37 @@ function isValidRoutine(r: RoutineDef): boolean {
     r.everyMin > 0 &&
     typeof r.enabled === "boolean" &&
     Number.isFinite(r.createdAt)
+  );
+}
+
+const TRIGGER_EVENTS: readonly string[] = ["finished", "blocked", "exited"];
+
+function isValidTriggerAction(a: unknown): a is TriggerAction {
+  if (!a || typeof a !== "object") return false;
+  const x = a as { kind?: unknown; targetId?: unknown; text?: unknown; flowId?: unknown };
+  switch (x.kind) {
+    case "ask":
+      return typeof x.targetId === "string" && x.targetId.length > 0 && typeof x.text === "string";
+    case "notify":
+      return typeof x.text === "string";
+    case "flow":
+      return typeof x.flowId === "string" && x.flowId.length > 0 && typeof x.text === "string";
+    default:
+      return false;
+  }
+}
+
+function isValidTrigger(t: TriggerDef): boolean {
+  return (
+    !!t &&
+    typeof t === "object" &&
+    typeof t.id === "string" &&
+    typeof t.sourceId === "string" &&
+    t.sourceId.length > 0 &&
+    TRIGGER_EVENTS.includes(t.event) &&
+    isValidTriggerAction(t.action) &&
+    typeof t.enabled === "boolean" &&
+    Number.isFinite(t.createdAt)
   );
 }
 
@@ -1185,7 +1258,7 @@ export function hitItem(
       );
     case "text": {
       const b = textBox(it);
-      return wx >= b.x - tol && wx <= b.x + b.w + tol && wy >= b.y - tol && wy <= b.y + b.h + tol;
+      return wx >= b.x - tol && wx <= b.x + b.w + tol && wy >= b.y - tol && wy <= b.y + b.h + tol; // i18n-ok
     }
     case "note":
     case "portal":
@@ -1194,7 +1267,7 @@ export function hitItem(
     case "binder":
     case "tree":
       return (
-        wx >= it.x - tol && wx <= it.x + it.w + tol && wy >= it.y - tol && wy <= it.y + it.h + tol
+        wx >= it.x - tol && wx <= it.x + it.w + tol && wy >= it.y - tol && wy <= it.y + it.h + tol // i18n-ok
       );
     case "group": {
       // Title band, or the border ring — never the body. A frame that took

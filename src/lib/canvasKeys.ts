@@ -7,6 +7,7 @@
  * release the board leaves the user with no way out. See `canvasKeys.test.ts`.
  */
 import { noteName, portalName, type CanvasItem, type CanvasItemType } from "./canvas";
+import { t } from "./i18n";
 
 /** Where focus is, from the point of view of the board's shortcuts. */
 export interface BoardFocus {
@@ -74,6 +75,7 @@ export type CycleTarget =
   | { readonly kind: "terminal"; readonly name: string }
   | { readonly kind: "item"; readonly type: CanvasItemType; readonly name?: string };
 
+// i18n-scan: tables — the kind labels are wrapped with t() in selectionAnnouncement.
 const KIND_LABELS: Record<CanvasItemType, string> = {
   stroke: "Desenho",
   rect: "Retângulo",
@@ -101,10 +103,10 @@ const KIND_LABELS: Record<CanvasItemType, string> = {
  * name.
  */
 export function selectionAnnouncement(target: CycleTarget, index: number, total: number): string {
-  const position = `${index + 1} de ${total}`;
+  const position = t("{n} de {total}", { n: index + 1, total });
   if (target.kind === "terminal") return `Terminal ${target.name}, ${position}`;
   const itemName = target.name?.trim();
-  const kind = KIND_LABELS[target.type];
+  const kind = t(KIND_LABELS[target.type]);
   return itemName ? `${kind} ${itemName}, ${position}` : `${kind}, ${position}`;
 }
 

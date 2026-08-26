@@ -3,11 +3,12 @@
  * The page always runs inside Yard (WebView2). Chrome/Firefox/Edge in
  * the list only change the UA string — they never open a window on the PC.
  */
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { nanoid } from "nanoid";
 
 import { Modal } from "./Modal";
 import { Select } from "../Select";
+import { useT } from "../../hooks/useT";
 import {
   isSupportedPortalUrl,
   normalizePortalUrl,
@@ -36,6 +37,7 @@ export interface NewPortalPayload {
   name?: string;
 }
 
+// i18n-scan: tables — rendered through `t()` in the picker below.
 const STORAGE_OPTIONS = [
   { value: "instance", label: "Isolado" },
   { value: "workspace", label: "Deste projeto" },
@@ -43,6 +45,7 @@ const STORAGE_OPTIONS = [
 ];
 
 export function NewPortalModal() {
+  const t = useT();
   const closeModal = useUI((s) => s.closeModal);
   const showToast = useUI((s) => s.showToast);
   const payload = useUI((s) => s.modalPayload) as NewPortalPayload | null;
@@ -66,25 +69,26 @@ export function NewPortalModal() {
   const choice = UA_CHOICES.find((c) => c.id === choiceId) ?? UA_CHOICES[0];
   // The list groups by origin, and the options come out already in that
   // order — the pop-up button draws a heading whenever the group changes.
-  const uaOptions = useMemo(() => {
-    const order: UaChoice["group"][] = ["default", "engine", "device"];
-    const theTitle: Record<UaChoice["group"], string> = {
-      default: "Padrão",
-      engine: "Aparência (user-agent — o motor é sempre o WebView2)",
-      device: "Dispositivo",
-    };
-    return order.flatMap((g) =>
-      UA_CHOICES.filter((c) => c.group === g).map((c) => ({
-        value: c.id,
-        label: c.label,
-        group: theTitle[g],
-      })),
-    );
-  }, []);
+  // Built per render (a dozen rows): `t` is one function for every language,
+  // so a memo keyed on it would never see the language flip.
+  const uaOrder: UaChoice["group"][] = ["default", "engine", "device"];
+  const uaTitle: Record<UaChoice["group"], string> = {
+    default: t("Padrão"),
+    engine: t("Aparência (user-agent — o motor é sempre o WebView2)"),
+    device: t("Dispositivo"),
+  };
+  const uaOptions = uaOrder.flatMap((g) =>
+    UA_CHOICES.filter((c) => c.group === g).map((c) => ({
+      value: c.id,
+      label: t(c.label),
+      group: uaTitle[g],
+    })),
+  );
+  const storageOptions = STORAGE_OPTIONS.map((o) => ({ ...o, label: t(o.label) }));
 
   const create = () => {
     if (!groupId) {
-      showToast("Abra um grupo em canvas antes de criar um portal.", "error");
+      showToast(t("Abra um grupo em canvas antes de criar um portal."), "error");
       return;
     }
     // Asked before the card exists: the backend refuses anything that is not
@@ -92,14 +96,14 @@ export function NewPortalModal() {
     // on the canvas for the user to clean up.
     if (url.trim() && !isSupportedPortalUrl(url)) {
       setError(
-        "Um portal abre páginas http/https. Endereços como file: não são suportados.",
+        t("Um portal abre páginas http/https. Endereços como file: não são suportados."),
       );
       urlRef.current?.focus();
       return;
     }
     const href = normalizePortalUrl(url);
     if (!href || href === "https://" || href === "http://") {
-      setError("Informe o endereço da página.");
+      setError(t("Informe o endereço da página."));
       urlRef.current?.focus();
       return;
     }
@@ -154,17 +158,17 @@ export function NewPortalModal() {
 
   return (
     <Modal
-      title="Novo portal"
+      title={t("Novo portal")}
       onClose={closeModal}
       dirty={!!url.trim() || !!name.trim() || !!customUa.trim()}
       initialFocus="#novo-portal-url"
       footer={
         <div className="modal-foot-row modal-foot-row--end">
           <button className="btn" onClick={closeModal}>
-            Cancelar
+            {t("Cancelar")}
           </button>
           <button className="btn btn--primary" onClick={create}>
-            Criar
+            {t("Criar")}
           </button>
         </div>
       }
@@ -197,20 +201,20 @@ export function NewPortalModal() {
           </p>
         )}
         <label>
-          Nome
+          {t("Nome")}
           <input
             value={name}
-            placeholder="Opcional"
+            placeholder={t("Opcional")}
             onChange={(e) => setName(e.target.value)}
           />
         </label>
         <label>
-          Agente de usuário
+          {t("Agente de usuário")}
           <Select value={choiceId} options={uaOptions} onChange={setChoiceId} />
         </label>
         {choice.kind === "custom" && (
           <label>
-            UA personalizado
+            {t("UA personalizado")}
             <input
               value={customUa}
               placeholder="Mozilla/5.0 …"
@@ -219,10 +223,10 @@ export function NewPortalModal() {
           </label>
         )}
         <label>
-          Armazenamento
+          {t("Armazenamento")}
           <Select
             value={storage}
-            options={STORAGE_OPTIONS}
+            options={storageOptions}
             onChange={(v) => setStorage(v as PortalStorage)}
           />
         </label>

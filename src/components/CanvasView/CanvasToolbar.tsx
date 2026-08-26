@@ -29,6 +29,7 @@ import {
 
 import { CANVAS_COLORS, type StrokeSize } from "../../lib/canvas";
 import { useOccluder } from "../../hooks/useOccluder";
+import { useT } from "../../hooks/useT";
 
 export type Tool =
   | "select"
@@ -60,6 +61,7 @@ interface Family {
   tools: ToolDef[];
 }
 
+// i18n-scan: tables — every label and hint below is wrapped with t() where it is rendered.
 /** Families in the order the hand reaches for them: point, draw, shape, place. */
 const FAMILIES: Family[] = [
   {
@@ -167,6 +169,7 @@ export function CanvasToolbar({
   onUndo,
   onRedo,
 }: Props) {
+  const t = useT();
   const [open, setOpen] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   // The rail floats over the board: without this a portal card underneath
@@ -227,7 +230,7 @@ export function CanvasToolbar({
     <div
       className="cv-toolbar"
       role="toolbar"
-      aria-label="Ferramentas do canvas"
+      aria-label={t("Ferramentas do canvas")}
       ref={rootRef}
     >
       {FAMILIES.map((family) => {
@@ -249,10 +252,10 @@ export function CanvasToolbar({
               className={`icon-btn cv-tool-btn ${isHere ? "is-active" : ""}`}
               data-tip-side="right"
               data-tip-wrap={face.hint ? "" : undefined}
-              data-tip={`${many ? `${family.label} — ` : ""}${face.label} (${face.key})${
-                face.hint ? `\n${face.hint}` : ""
+              data-tip={`${many ? `${t(family.label)} — ` : ""}${t(face.label)} (${face.key})${
+                face.hint ? `\n${t(face.hint)}` : ""
               }`}
-              aria-label={family.label}
+              aria-label={t(family.label)}
               aria-pressed={isHere}
               aria-haspopup={many ? "true" : undefined}
               aria-expanded={many ? isOpen : undefined}
@@ -263,18 +266,18 @@ export function CanvasToolbar({
             </button>
 
             {isOpen && (
-              <div className="cv-flyout" role="group" aria-label={family.label}>
-                {family.tools.map((t) => (
+              <div className="cv-flyout" role="group" aria-label={t(family.label)}>
+                {family.tools.map((td) => (
                   <button
-                    key={t.id}
-                    className={`icon-btn ${tool === t.id ? "is-active" : ""}`}
-                    data-tip-wrap={t.hint ? "" : undefined}
-                    data-tip={`${t.label} (${t.key})${t.hint ? `\n${t.hint}` : ""}`}
-                    aria-label={t.label}
-                    aria-pressed={tool === t.id}
-                    onClick={() => pickTool(t.id)}
+                    key={td.id}
+                    className={`icon-btn ${tool === td.id ? "is-active" : ""}`}
+                    data-tip-wrap={td.hint ? "" : undefined}
+                    data-tip={`${t(td.label)} (${td.key})${td.hint ? `\n${t(td.hint)}` : ""}`}
+                    aria-label={t(td.label)}
+                    aria-pressed={tool === td.id}
+                    onClick={() => pickTool(td.id)}
                   >
-                    {t.icon}
+                    {td.icon}
                   </button>
                 ))}
               </div>
@@ -290,8 +293,8 @@ export function CanvasToolbar({
         <button
           className="icon-btn cv-tool-btn"
           data-tip-side="right"
-          data-tip={`Cor e traço — ${chip.short}`}
-          aria-label="Cor e espessura do traço"
+          data-tip={t("Cor e traço — {size}", { size: t(chip.short) })}
+          aria-label={t("Cor e espessura do traço")}
           aria-haspopup="true"
           aria-expanded={open === STYLE}
           onClick={() => setOpen(open === STYLE ? null : STYLE)}
@@ -304,7 +307,7 @@ export function CanvasToolbar({
         </button>
 
         {open === STYLE && (
-          <div className="cv-flyout cv-flyout--style" role="group" aria-label="Cor e traço">
+          <div className="cv-flyout cv-flyout--style" role="group" aria-label={t("Cor e traço")}>
             <div className="cv-swatches">
               {CANVAS_COLORS.map((c) => (
                 <button
@@ -312,7 +315,7 @@ export function CanvasToolbar({
                   className={`cv-swatch ${color === c ? "is-active" : ""}`}
                   style={{ background: c }}
                   data-tip={c}
-                  aria-label={`Cor ${c}`}
+                  aria-label={t("Cor {c}", { c })}
                   aria-pressed={color === c}
                   onClick={() => onColor(c)}
                 />
@@ -326,8 +329,8 @@ export function CanvasToolbar({
                 <button
                   key={s.id}
                   className={`icon-btn ${size === s.id ? "is-active" : ""}`}
-                  data-tip={s.label}
-                  aria-label={s.label}
+                  data-tip={t(s.label)}
+                  aria-label={t(s.label)}
                   aria-pressed={size === s.id}
                   onClick={() => onSize(s.id)}
                 >
@@ -343,8 +346,8 @@ export function CanvasToolbar({
 
       <button
         className="icon-btn"
-        data-tip-side="right" data-tip="Desfazer (Ctrl+Z)"
-        aria-label="Desfazer"
+        data-tip-side="right" data-tip={t("Desfazer (Ctrl+Z)")}
+        aria-label={t("Desfazer")}
         disabled={!canUndo}
         onClick={onUndo}
       >
@@ -352,8 +355,8 @@ export function CanvasToolbar({
       </button>
       <button
         className="icon-btn"
-        data-tip-side="right" data-tip="Refazer (Ctrl+Y)"
-        aria-label="Refazer"
+        data-tip-side="right" data-tip={t("Refazer (Ctrl+Y)")}
+        aria-label={t("Refazer")}
         disabled={!canRedo}
         onClick={onRedo}
       >

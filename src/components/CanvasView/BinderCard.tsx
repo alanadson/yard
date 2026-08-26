@@ -19,6 +19,7 @@ import { NoteBody } from "./NoteBody";
 import { ResizeHandles } from "./ResizeHandles";
 import { BINDER_CHROME, binderTabs, type BinderItem } from "../../lib/binder";
 import { noteName, type CanvasItem, type ResizeDir } from "../../lib/canvas";
+import { useT } from "../../hooks/useT";
 
 interface Props {
   it: BinderItem;
@@ -80,6 +81,7 @@ function BinderCardImpl({
   onResizeMove,
   onResizeEnd,
 }: Props) {
+  const t = useT();
   const tabs = binderTabs(it, items);
   const at = Math.min(it.active ?? 0, Math.max(0, tabs.length - 1));
   const showing = tabs[at] ?? null;
@@ -110,15 +112,15 @@ function BinderCardImpl({
         onPointerUp={onItemUp}
       >
         <span className="cv-binder-title">
-          {it.name || (showing ? noteName(showing) : "Fichário")}
+          {it.name || (showing ? noteName(showing) : t("Fichário"))}
         </span>
         <span className="cv-binder-count">
-          {tabs.length ? `${at + 1}/${tabs.length}` : "vazio"}
+          {tabs.length ? `${at + 1}/${tabs.length}` : t("vazio")}
         </span>
         <button
           className="cv-binder-btn"
-          data-tip="Nova nota neste fichário"
-          aria-label="Nova nota neste fichário"
+          data-tip={t("Nova nota neste fichário")}
+          aria-label={t("Nova nota neste fichário")}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
@@ -153,7 +155,7 @@ function BinderCardImpl({
       >
         {!showing ? (
           <span className="cv-binder-empty">
-            Fichário vazio — arquive notas aqui pelo menu da nota.
+            {t("Fichário vazio — arquive notas aqui pelo menu da nota.")}
           </span>
         ) : editing ? (
           <textarea
@@ -167,7 +169,7 @@ function BinderCardImpl({
         ) : (
           <NoteBody
             text={showing.text}
-            placeholder="Nota vazia — dois cliques para escrever."
+            placeholder={t("Nota vazia — dois cliques para escrever.")}
             root={root}
             onTask={(line) => onToggleTask(showing.id, line)}
             onLink={onOpenLink}
@@ -180,7 +182,7 @@ function BinderCardImpl({
       <div
         className="cv-binder-tabs"
         role="tablist"
-        aria-label="Notas do fichário"
+        aria-label={t("Notas do fichário")}
         onPointerDown={(e) => e.stopPropagation()}
       >
         {tabs.map((note, i) => (
@@ -200,8 +202,8 @@ function BinderCardImpl({
               className="cv-binder-tab-off"
               role="button"
               tabIndex={-1}
-              data-tip="Tirar do fichário (a nota volta para o canvas)"
-              aria-label={`Tirar ${noteName(note)} do fichário`}
+              data-tip={t("Tirar do fichário (a nota volta para o canvas)")}
+              aria-label={t("Tirar {name} do fichário", { name: noteName(note) })}
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();

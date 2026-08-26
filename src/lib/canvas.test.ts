@@ -694,3 +694,41 @@ describe("the tree item", () => {
     expect((out?.items[0] as { expanded: string[] }).expanded).toEqual(["src", "lib"]);
   });
 })
+
+/**
+ * Triggers live in the same layout blob as routines: a crooked entry written
+ * by an older build (or by an agent through the CLI) must be dropped on load,
+ * never crash the boot — and the good ones must survive it.
+ */
+describe("normalizeCanvas — triggers", () => {
+  it("preserves valid triggers and drops the malformed ones", () => {
+    const good = {
+      id: "g1",
+      sourceId: "t1",
+      event: "finished",
+      action: { kind: "ask", targetId: "t2", text: "revise" },
+      enabled: true,
+      once: true,
+      cooldownSec: 30,
+      createdAt: 1,
+      lastRunAt: 2,
+    };
+    const out = normalizeCanvas({
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: {},
+      items: [],
+      triggers: [
+        good,
+        { id: "x", sourceId: "t1", event: "someday", action: { kind: "notify", text: "a" }, enabled: true, createdAt: 0 },
+        { id: "y", sourceId: "t1", event: "finished", action: { kind: "ask", targetId: "", text: "a" }, enabled: true, createdAt: 0 },
+        { id: "z", sourceId: "t1", event: "finished", action: { kind: "flow", flowId: "f", text: "t" }, enabled: "yes", createdAt: 0 },
+      ],
+    })!;
+    expect(out.triggers).toEqual([good]);
+  });
+
+  it("does not create the field when nothing valid is in it", () => {
+    const out = normalizeCanvas({ viewport: { x: 0, y: 0, zoom: 1 }, nodes: {}, items: [], triggers: [] })!;
+    expect(out.triggers).toBeUndefined();
+  });
+});

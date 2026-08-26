@@ -42,7 +42,10 @@ import {
 } from "../../lib/notes";
 import { useNotes } from "../../stores/notesStore";
 import { useUI } from "../../stores/uiStore";
+import { useT } from "../../hooks/useT";
+import { locale, t, tn } from "../../lib/i18n";
 
+// i18n-scan: tables
 const SORT_LABEL: Record<NoteSort, string> = {
   updated: "Última edição",
   created: "Criação",
@@ -61,7 +64,7 @@ function exportName(note: Note): string {
     .replace(/[\\/:*?"<>|]/g, "-")
     .slice(0, 60)
     .trim();
-  return `${base || "nota"}.md`;
+  return `${base || t("nota")}.md`;
 }
 
 /** Paints `texto` with the query's positive terms lit as `.notes-hit`. */
@@ -69,12 +72,12 @@ function withHits(theText: string, terms: readonly string[]): ReactNode {
   if (terms.length === 0 || !theText) return theText;
   const base = fold(theText);
   const spans: [number, number][] = [];
-  for (const t of terms) {
-    let at = base.indexOf(t);
+  for (const term of terms) {
+    let at = base.indexOf(term);
     let fuse = 0;
     while (at >= 0 && fuse < 20) {
-      spans.push([at, at + t.length]);
-      at = base.indexOf(t, at + 1);
+      spans.push([at, at + term.length]);
+      at = base.indexOf(term, at + 1);
       fuse += 1;
     }
   }
@@ -113,6 +116,7 @@ export function NoteList() {
   const wantsFocus = useNotes((s) => s.wantsFocus);
   const totalNotes = useNotes((s) => s.notes.length);
   const showToast = useUI((s) => s.showToast);
+  const t = useT();
 
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -146,16 +150,17 @@ export function NoteList() {
   const inTrash = collection.kind === "trash";
 
   const title = (() => {
-    if (collection.kind === "all") return "Todas as notas";
-    if (collection.kind === "trash") return "Lixeira";
+    if (collection.kind === "all") return t("Todas as notas");
+    if (collection.kind === "trash") return t("Lixeira");
     if (collection.kind === "status") {
       const meta = STATUS_META[collection.status];
-      return collection.status === "paused" ? "Em espera" : `${meta.label}s`;
+      // The plural of the status — the rail's "Ativas", "Concluídas"…
+      return collection.status === "paused" ? t("Em espera") : t(`${meta.label}s`);
     }
     if (collection.kind === "book") {
-      return notebookPath(notebooks, collection.id) || "Caderno";
+      return notebookPath(notebooks, collection.id) || t("Caderno");
     }
-    return tagById.get(collection.id)?.name ?? "Etiqueta";
+    return tagById.get(collection.id)?.name ?? t("Etiqueta");
   })();
 
   /** Who gets the seat when this note leaves the list. */
@@ -172,8 +177,8 @@ export function NoteList() {
       if (activeId === note.id) useNotes.getState().setActive(following);
       return;
     }
-    void ask(`Excluir "${note.title.trim() || fallbackTitle(note.body)}" de vez? Isso não tem volta.`, {
-      title: "Excluir a nota?",
+    void ask(t('Excluir "{title}" de vez? Isso não tem volta.', { title: note.title.trim() || fallbackTitle(note.body) }), {
+      title: t("Excluir a nota?"),
       kind: "warning",
     }).then((yes) => {
       if (!yes) return;
@@ -186,8 +191,8 @@ export function NoteList() {
   const copy = (note: Note) => {
     void navigator.clipboard
       .writeText(noteAsMarkdown(note))
-      .then(() => showToast("Markdown copiado."))
-      .catch(() => showToast("Não consegui copiar.", "error"));
+      .then(() => showToast(t("Markdown copiado.")))
+      .catch(() => showToast(t("Não consegui copiar."), "error"));
   };
 
   const exportIt = (note: Note) => {
@@ -198,7 +203,7 @@ export function NoteList() {
       if (!dest) return;
       void ipc
         .noteExport(dest, noteAsMarkdown(note))
-        .then(() => showToast("Nota exportada."))
+        .then(() => showToast(t("Nota exportada.")))
         .catch((e) => showToast(String(e), "error"));
     });
   };
@@ -208,18 +213,18 @@ export function NoteList() {
       return [
         {
           id: "restaurar",
-          label: "Restaurar",
+          label: t("Restaurar"),
           onSelect: () => useNotes.getState().restoreNote(note.id),
         },
         { kind: "sep" },
-        { id: "excluir", label: "Excluir de vez", danger: true, onSelect: () => remove(note) },
+        { id: "excluir", label: t("Excluir de vez"), danger: true, onSelect: () => remove(note) },
       ];
     }
     // Every notebook as a flat path list — nesting reads as "Pai / Filho".
     const destinations: MenuEntry[] = [
       {
         id: "sem-caderno",
-        label: "Sem caderno",
+        label: t("Sem caderno"),
         checked: note.notebookId === null,
         onSelect: () => useNotes.getState().setNoteBook(note.id, null),
       },
@@ -240,32 +245,32 @@ export function NoteList() {
     return [
       {
         id: "fixar",
-        label: note.pinned ? "Desafixar do topo" : "Fixar no topo",
+        label: note.pinned ? t("Desafixar do topo") : t("Fixar no topo"),
         onSelect: () => useNotes.getState().togglePin(note.id),
       },
       {
         id: "status",
-        label: "Status",
+        label: t("Status"),
         submenu: STATUSES.map((s) => ({
           id: `status-${s}`,
-          label: STATUS_META[s].label,
+          label: t(STATUS_META[s].label),
           checked: note.status === s,
           onSelect: () => useNotes.getState().setNoteStatus(note.id, s),
         })),
       },
-      { id: "mover", label: "Mover para", submenu: destinations },
+      { id: "mover", label: t("Mover para"), submenu: destinations },
       { kind: "sep" },
       {
         id: "duplicar",
-        label: "Duplicar",
+        label: t("Duplicar"),
         onSelect: () => useNotes.getState().duplicateNote(note.id),
       },
-      { id: "copiar", label: "Copiar como markdown", onSelect: () => copy(note) },
-      { id: "exportar", label: "Exportar .md…", onSelect: () => exportIt(note) },
+      { id: "copiar", label: t("Copiar como markdown"), onSelect: () => copy(note) },
+      { id: "exportar", label: t("Exportar .md…"), onSelect: () => exportIt(note) },
       { kind: "sep" },
       {
         id: "lixeira",
-        label: "Mover para a lixeira",
+        label: t("Mover para a lixeira"),
         danger: true,
         shortcut: "Delete",
         onSelect: () => remove(note),
@@ -277,7 +282,7 @@ export function NoteList() {
   const actions: NotesMenuActions = {
     select: (c) => useNotes.getState().select(c),
     createNote: () => useNotes.getState().createNote(),
-    newNotebook: (parentId) => useNotes.getState().addNotebook("Novo caderno", parentId),
+    newNotebook: (parentId) => useNotes.getState().addNotebook(t("Novo caderno"), parentId),
     setSort: (s) => useNotes.getState().setSort(s),
     setShowResolved: (v) => useNotes.getState().setShowResolved(v),
     clearQuery: () => useNotes.getState().setQuery(""),
@@ -285,8 +290,8 @@ export function NoteList() {
     setFolded: () => {},
     emptyTrash: () => {
       const count = useNotes.getState().notes.filter((n) => n.deletedAt !== null).length;
-      void ask(`Excluir de vez ${count} nota(s) da lixeira? Isso não tem volta.`, {
-        title: "Esvaziar a lixeira?",
+      void ask(t("Excluir de vez {n} nota(s) da lixeira? Isso não tem volta.", { n: count }), {
+        title: t("Esvaziar a lixeira?"),
         kind: "warning",
       }).then((yes) => {
         if (yes) useNotes.getState().emptyTrash();
@@ -354,8 +359,8 @@ export function NoteList() {
           <input
             ref={searchRef}
             value={query}
-            placeholder="Buscar — tag: caderno: status: -termo"
-            aria-label="Buscar nas anotações"
+            placeholder={t("Buscar — tag: caderno: status: -termo")}
+            aria-label={t("Buscar nas anotações")}
             spellCheck={false}
             onChange={(e) => useNotes.getState().setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -372,7 +377,7 @@ export function NoteList() {
           {query && (
             <button
               className="icon-btn icon-btn--xs"
-              aria-label="Limpar a busca"
+              aria-label={t("Limpar a busca")}
               onClick={() => {
                 useNotes.getState().setQuery("");
                 searchRef.current?.focus();
@@ -386,7 +391,7 @@ export function NoteList() {
           <span className="notes-list-title" data-tip-wrap="" data-tip={title}>
             {title}
             <span className="notes-list-count">
-              {notes.length} {notes.length === 1 ? "nota" : "notas"}
+              {tn(notes.length, "{n} nota", "{n} notas")}
             </span>
           </span>
           <span className="notes-list-tools">
@@ -395,10 +400,10 @@ export function NoteList() {
                 className={`icon-btn icon-btn--xs ${showResolved ? "is-active" : ""}`}
                 data-tip={
                   showResolved
-                    ? "Esconder concluídas e descartadas"
-                    : "Mostrar concluídas e descartadas"
+                    ? t("Esconder concluídas e descartadas")
+                    : t("Mostrar concluídas e descartadas")
                 }
-                aria-label="Mostrar ou esconder notas resolvidas"
+                aria-label={t("Mostrar ou esconder notas resolvidas")}
                 aria-pressed={showResolved}
                 onClick={() => useNotes.getState().setShowResolved(!showResolved)}
               >
@@ -408,11 +413,11 @@ export function NoteList() {
             <Select
               className="notes-sort"
               value={sort}
-              label="Ordenar por"
-              tip="Ordenação da lista"
+              label={t("Ordenar por")}
+              tip={t("Ordenação da lista")}
               options={(Object.keys(SORT_LABEL) as NoteSort[]).map((s) => ({
                 value: s,
-                label: SORT_LABEL[s],
+                label: t(SORT_LABEL[s]),
               }))}
               onChange={(v) => useNotes.getState().setSort(v as NoteSort)}
             />
@@ -424,7 +429,7 @@ export function NoteList() {
         ref={listRef}
         className="notes-list-scroll"
         role="listbox"
-        aria-label={`Notas — ${title}`}
+        aria-label={t("Notas — {title}", { title })}
         tabIndex={0}
         onKeyDown={onListKey}
       >
@@ -471,6 +476,7 @@ function NoteRow({
   onSelect: () => void;
   onMenu: (anchor: MenuAnchor) => void;
 }) {
+  const t = useT();
   const title = note.title.trim() || fallbackTitle(note.body);
   const snip = useMemo(() => snippetFor(note.body, q), [note.body, q]);
   const tasks = useMemo(() => taskProgress(note.body), [note.body]);
@@ -494,18 +500,18 @@ function NoteRow({
     >
       <div className="notes-item-top">
         {note.pinned && (
-          <Pin size={11} className="notes-item-pin" aria-label="Fixada" />
+          <Pin size={11} className="notes-item-pin" aria-label={t("Fixada")} />
         )}
         {dot && (
           <span
             className="notes-dot"
             style={{ background: dot }}
-            data-tip={STATUS_META[note.status].label}
-            aria-label={STATUS_META[note.status].label}
+            data-tip={t(STATUS_META[note.status].label)}
+            aria-label={t(STATUS_META[note.status].label)}
           />
         )}
         <span className="notes-item-title">{withHits(title, terms)}</span>
-        <span className="notes-item-when" data-tip={new Date(note.updatedAt).toLocaleString("pt-BR")}>
+        <span className="notes-item-when" data-tip={new Date(note.updatedAt).toLocaleString(locale())}>
           {whenLabel(note.updatedAt)}
         </span>
       </div>
@@ -519,9 +525,9 @@ function NoteRow({
           {tasks.total > 0 && (
             <span
               className={`notes-tasks ${tasks.done === tasks.total ? "is-done" : ""}`}
-              data-tip="Tarefas concluídas nesta nota"
+              data-tip={t("Tarefas concluídas nesta nota")}
               role="img"
-              aria-label={`${tasks.done}/${tasks.total} tarefas concluídas`}
+              aria-label={t("{done}/{total} tarefas concluídas", { done: tasks.done, total: tasks.total })}
             >
               <ListChecks size={11} aria-hidden="true" />
               {tasks.done}/{tasks.total}
@@ -559,12 +565,13 @@ function paintSnippet(text: string, hits: [number, number][]): ReactNode {
 }
 
 function EmptyList({ query, trash, total }: { query: string; trash: boolean; total: number }) {
+  const t = useT();
   if (trash) {
     return (
       <div className="notes-empty">
-        <p>Lixeira vazia.</p>
+        <p>{t("Lixeira vazia.")}</p>
         <p className="notes-empty-hint">
-          Notas apagadas ficam aqui até você restaurar ou excluir de vez.
+          {t("Notas apagadas ficam aqui até você restaurar ou excluir de vez.")}
         </p>
       </div>
     );
@@ -572,10 +579,10 @@ function EmptyList({ query, trash, total }: { query: string; trash: boolean; tot
   if (query.trim()) {
     return (
       <div className="notes-empty">
-        <p>Nada com esses termos.</p>
+        <p>{t("Nada com esses termos.")}</p>
         <p className="notes-empty-hint">
-          Refine com <code>caderno:</code>, <code>tag:</code>, <code>status:</code>,{" "}
-          <code>titulo:</code>, frases entre aspas e <code>-termo</code> para excluir.
+          {t("Refine com")} <code>caderno:</code>, <code>tag:</code>, <code>status:</code>,{" "}
+          <code>titulo:</code>{t(", frases entre aspas e")} <code>-termo</code> {t("para excluir.")}
         </p>
       </div>
     );
@@ -583,19 +590,19 @@ function EmptyList({ query, trash, total }: { query: string; trash: boolean; tot
   if (total === 0) {
     return (
       <div className="notes-empty">
-        <p>Seu caderno começa aqui.</p>
+        <p>{t("Seu caderno começa aqui.")}</p>
         <p className="notes-empty-hint">
-          <kbd>Ctrl</kbd>+<kbd>N</kbd> cria a primeira nota — markdown completo, com
-          código, tarefas, tabelas, Mermaid e fórmulas.
+          <kbd>Ctrl</kbd>+<kbd>N</kbd>{" "}
+          {t("cria a primeira nota — markdown completo, com código, tarefas, tabelas, Mermaid e fórmulas.")}
         </p>
       </div>
     );
   }
   return (
     <div className="notes-empty">
-      <p>Nenhuma nota nesta coleção.</p>
+      <p>{t("Nenhuma nota nesta coleção.")}</p>
       <p className="notes-empty-hint">
-        Crie uma com <kbd>Ctrl</kbd>+<kbd>N</kbd> — ela já nasce aqui.
+        {t("Crie uma com")} <kbd>Ctrl</kbd>+<kbd>N</kbd> {t("— ela já nasce aqui.")}
       </p>
     </div>
   );
