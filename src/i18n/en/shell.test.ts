@@ -22,10 +22,11 @@ const VISIBLE = [
   "Tentar de novo",
   "Nenhum terminal neste grupo",
   "Mostrar ou esconder a barra lateral",
+  "Agentes",
 ];
 
 describe("the shell in English", () => {
-  it("every visible sentence of the title bar, sidebar, pane and exit banner has its line", () => {
+  it("every visible sentence of the title bar, status bar, sidebar, pane and exit banner has its line", () => {
     for (const text of VISIBLE) {
       expect(shell[text as keyof typeof shell], `"${text}"`).toBeTruthy();
     }

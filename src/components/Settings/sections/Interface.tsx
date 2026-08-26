@@ -110,6 +110,17 @@ export function SecInterface({
           desc={t("Quanto resta das janelas do Claude, do Codex e do Grok, na barra de título")}
         />
       </Card>
+
+      <GroupTitle>{t("Barra de status")}</GroupTitle>
+      <Card>
+        <SwitchRow
+          pref="statusBar"
+          label={t("Mostrar a barra de status")}
+          desc={t(
+            "No rodapé da janela: agentes esperando você, a branch do projeto, fluxos em andamento e a memória — e atalhos para a Busca, o compositor e o mapa de teclas",
+          )}
+        />
+      </Card>
     </>
   );
 }

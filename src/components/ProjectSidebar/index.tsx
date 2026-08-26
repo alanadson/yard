@@ -45,6 +45,7 @@ import { ipc, type TerminalRow } from "../../lib/ipc";
 import { closeGroup, closeProject } from "../../lib/lifecycle";
 import { goToTerminal } from "../../lib/navigate";
 import { projectIcon } from "../../lib/projectStyle";
+import { ramPressure } from "../../lib/ramPressure";
 import { cardOrigin, sectionsFor, treeRows, type TreeKind } from "./rows";
 import { terminalActionEntries } from "../../lib/terminalMenu";
 import { baseName } from "../../lib/terminals";
@@ -1194,11 +1195,10 @@ function ResourceHud() {
   const systemAvailableMb = useTerminals((s) => s.systemAvailableMb);
   const systemTotalMb = useTerminals((s) => s.systemTotalMb);
 
-  const ramUsage =
-    systemTotalMb > 0
-      ? Math.min(1, Math.max(0, 1 - systemAvailableMb / systemTotalMb))
-      : 0;
-  const ramLevel = ramUsage > 0.92 ? "crit" : ramUsage > 0.82 ? "warn" : "ok";
+  // Same reading as the status bar's meter (`lib/ramPressure.ts`).
+  const ram = ramPressure(systemAvailableMb, systemTotalMb);
+  const ramUsage = ram?.usage ?? 0;
+  const ramLevel = ram?.level ?? "ok";
 
   return (
     <div className="sidebar-hud">

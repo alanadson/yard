@@ -96,6 +96,11 @@ export default {
   "Números de linha": "Line numbers",
   "Calha de números no editor de arquivos": "Number gutter in the file editor",
   "Quebrar linhas longas": "Wrap long lines",
+  // Interface — the status bar rows
+  "Barra de status": "Status bar",
+  "Mostrar a barra de status": "Show the status bar",
+  "No rodapé da janela: agentes esperando você, a branch do projeto, fluxos em andamento e a memória — e atalhos para a Busca, o compositor e o mapa de teclas":
+    "In the window's footer: agents waiting for you, the project's branch, flows in progress and memory — plus shortcuts to Search, the composer and the key map",
   "Linhas mais largas que o painel continuam na linha de baixo":
     "Lines wider than the pane continue on the line below",
   "Servidores de linguagem": "Language servers",
@@ -174,8 +179,8 @@ export default {
   "não instalado": "not installed",
   "É daqui que sai tudo o que uma aba nova daquela CLI recebe — em “Nova aba” um clique já abre, sem formulário — e também o que vai para os agentes que nascem sem diálogo nenhum: os recrutados no canvas":
     "This is where everything a new tab of that CLI receives comes from — in “New tab” one click opens it, no form — and also what goes to the agents born with no dialog at all: the ones recruited on the canvas",
-  "), os de uma tarefa em andares e as conversas retomadas. Quem já está aberto não muda: vale a partir do próximo início.":
-    "), the ones of a task on floors and the resumed conversations. Whoever is already open does not change: it applies from the next start.",
+  "), os de uma tarefa em frentes e as conversas retomadas. Quem já está aberto não muda: vale a partir do próximo início.":
+    "), the ones of a task on fronts and the resumed conversations. Whoever is already open does not change: it applies from the next start.",
   O: "The",
   "só aparece como escolha nas CLIs que documentam um ajuste — hoje o Claude Code (variáveis de ambiente) e o aider (flags). O Codex faz cache sozinho e não expõe duração; nas outras a gente não achou nada documentado, e é isso que a linha delas diz, em vez de um controle que não faria nada.":
     "only appears as a choice in the CLIs that document a setting — today Claude Code (environment variables) and aider (flags). Codex caches on its own and exposes no lifetime; in the others we found nothing documented, and that is what their line says, instead of a control that would do nothing.",

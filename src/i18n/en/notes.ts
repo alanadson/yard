@@ -6,6 +6,8 @@
  * "{n} cmd") are left out on purpose — the fallback returns the key.
  */
 export default {
+  // Palette — the status bar row
+  "agentes, branch, fluxos e memória no rodapé": "agents, branch, flows and memory in the footer",
   // --- the notebook: places, top bar --------------------------------------
   Anotações: "Notes",
   "Onde o caderno abre": "Where the notebook opens",
@@ -272,7 +274,7 @@ export default {
   arquivos: "files",
   Ações: "Actions",
   "Agentes e terminais": "Agents and terminals",
-  "Grupos e andares": "Groups and floors",
+  "Grupos e frentes": "Groups and fronts",
   Projetos: "Projects",
   "Notas do canvas": "Canvas notes",
   "Grupos do canvas": "Canvas groups",
@@ -283,7 +285,7 @@ export default {
   "Endereços anunciados": "Announced addresses",
   Arquivos: "Files",
   Tarefas: "Tasks",
-  andar: "floor",
+  frente: "front",
   "servido por {name} — {local}": "served by {name} — {local}",
   "abrir portal": "open portal",
   "Não consegui abrir o portal: {e}": "Could not open the portal: {e}",
@@ -303,11 +305,11 @@ export default {
   "aba de browser ao lado das CLIs": "a browser tab next to the CLIs",
   "Adicionar projeto": "Add project",
   "abrir uma pasta como projeto": "open a folder as a project",
-  "Novo andar": "New floor",
+  "Nova frente": "New front",
   "worktree isolado para uma tarefa": "an isolated worktree for one task",
   "Nova tarefa": "New task",
-  "mesmo pedido para N agentes, cada um no seu andar": "the same request to N agents, each on its own floor",
-  "Comparar andares": "Compare floors",
+  "mesmo pedido para N agentes, cada um na sua frente": "the same request to N agents, each on its own front",
+  "Comparar frentes": "Compare fronts",
   "diffstat lado a lado e aterrissar o vencedor": "diffstat side by side, and land the winner",
   "escrever um prompt longo fora do terminal": "write a long prompt outside the terminal",
   Bancada: "Bench",

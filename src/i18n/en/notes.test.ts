@@ -10,6 +10,8 @@ import { describe, expect, it } from "vitest";
 import notes from "./notes";
 
 const VISIBLE = [
+  // the palette row of the status bar
+  "agentes, branch, fluxos e memória no rodapé",
   // NotesView rail and list
   "Todas as notas",
   "Cadernos",

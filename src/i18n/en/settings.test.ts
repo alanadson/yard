@@ -46,6 +46,9 @@ const SECTION_SENTENCES = [
   "A loja completa",
   // Servidores MCP
   "Adicionar servidor",
+  // Interface — the status bar rows
+  "Barra de status",
+  "Mostrar a barra de status",
 ];
 
 describe("Settings sections in English", () => {

@@ -9,7 +9,7 @@ import "./palette.css";
  * the actual work — and that is what this replaces.
  *
  * What it searches is deliberately the whole workspace, not the active group:
- * "onde está o codex que ficou no andar da api" is the question worth
+ * "onde está o codex que ficou na frente da api" is the question worth
  * answering. Prefixes narrow it when you already know the kind:
  * `>` actions, `@` agents, `#` canvas, `/` files.
  *
@@ -504,11 +504,11 @@ function buildEntries(world: World): PaletteEntry[] {
       title: g.name,
       subtitle: [
         project?.name,
-        isFloor ? `${t("andar")}${floor.branch ? ` · ${floor.branch}` : ""}` : null, // i18n-ok
+        isFloor ? `${t("frente")}${floor.branch ? ` · ${floor.branch}` : ""}` : null, // i18n-ok
       ]
         .filter(Boolean)
         .join(" · "),
-      keywords: [isFloor ? "andar floor worktree" : "grupo group", floor.branch ?? ""], // i18n-ok
+      keywords: [isFloor ? "frente front floor worktree" : "grupo group", floor.branch ?? ""], // i18n-ok
       weight:
         g.id === world.activeGroupId
           ? W_GROUP
@@ -856,7 +856,7 @@ function actions(world: World): PaletteEntry[] {
     {
       id: "action:new-floor",
       kind: "action",
-      title: t("Novo andar"),
+      title: t("Nova frente"),
       subtitle: t("worktree isolado para uma tarefa"),
       keywords: ["criar", "floor", "worktree", "branch", "git", "new floor"],
       weight: 20,
@@ -866,7 +866,7 @@ function actions(world: World): PaletteEntry[] {
       id: "action:new-task",
       kind: "action",
       title: t("Nova tarefa"),
-      subtitle: t("mesmo pedido para N agentes, cada um no seu andar"),
+      subtitle: t("mesmo pedido para N agentes, cada um na sua frente"),
       keywords: ["fanout", "fan-out", "frota", "paralelo", "worktree", "tarefa", "new task", "fleet", "parallel"],
       weight: 25,
       run: () => ui().openModal("new-task", { projectId: world.activeProjectId }),
@@ -874,7 +874,7 @@ function actions(world: World): PaletteEntry[] {
     {
       id: "action:compare-floors",
       kind: "action",
-      title: t("Comparar andares"),
+      title: t("Comparar frentes"),
       subtitle: t("diffstat lado a lado e aterrissar o vencedor"),
       keywords: ["merge", "aterrissar", "land", "vencedor", "diff", "compare floors", "winner"],
       weight: 24,
@@ -972,6 +972,14 @@ function actions(world: World): PaletteEntry[] {
       keywords: ["esconder", "mostrar", "painel", "sidebar", "show", "hide"],
       hint: "Ctrl+B",
       run: () => ui().toggleSidebar(),
+    },
+    {
+      id: "action:statusbar",
+      kind: "action",
+      title: t("Barra de status"),
+      subtitle: t("agentes, branch, fluxos e memória no rodapé"),
+      keywords: ["esconder", "mostrar", "rodape", "rodapé", "footer"], // i18n-ok
+      run: () => ui().setPref("statusBar", !ui().prefs.statusBar),
     },
     {
       id: "action:routines",

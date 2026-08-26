@@ -6,6 +6,7 @@ import { AlertTriangle, Download, FolderOpen, FolderPlus, Loader2, RefreshCw, X 
 import { ContextMenu, type MenuAnchor } from "./components/ContextMenu";
 import { GlobalMenu } from "./components/ContextMenu/GlobalMenu";
 import { TitleBar } from "./components/TitleBar";
+import { StatusBar } from "./components/StatusBar";
 import { ProjectSidebar } from "./components/ProjectSidebar";
 import { Overlay } from "./components/Overlay";
 import { WorkspaceGrid } from "./components/WorkspaceGrid";
@@ -199,6 +200,7 @@ export default function App() {
   const liveOpen = useLive((s) => s.phase !== "closed");
   const loadPrefs = useUI((s) => s.loadPrefs);
   const sidebarOpen = useUI((s) => s.sidebarOpen);
+  const statusBarOpen = useUI((s) => s.prefs.statusBar);
   const modal = useUI((s) => s.modal);
   const modalPayload = useUI((s) => s.modalPayload);
   const toasts = useUI((s) => s.toasts);
@@ -642,7 +644,7 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className="app" data-statusbar={statusBarOpen ? "open" : "closed"}>
       <h1 className="sr-only">Yard</h1>
       <TitleBar />
       {saveError && (
@@ -801,6 +803,11 @@ export default function App() {
           </Overlay>
         )}
       </div>
+      {/* The footer reads the whole workspace at once — agents waiting, the
+          branch, flows walking, RAM — and is the mouse's door into Busca, the
+          composer and the shortcut map. Not lazy: it is chrome, on screen
+          from the first paint. */}
+      {statusBarOpen && <StatusBar />}
 
       <Overlay where={t("o Ao Vivo")} fallback={<LoadingOverlay />}>
         {liveOpen && <LiveView />}
