@@ -7,7 +7,7 @@ criterion still pending — that is the difference between an app and a demo.
 > things this plan never anticipated and that define the product today — the
 > **canvas mode** and the **agent↔app bridge** (the `yard` CLI) — documented in
 > §8.1. Out of F5 came `git status` (a changes panel with a per-file diff) and
-> **floors** (one worktree per task); "landing" (merging back onto the ground)
+> **fronts** (one worktree per task); "landing" (merging back onto the ground)
 > and automatic fan-out remain open. F6 (product: updater, release CI, code
 > signing, CSP) is still entirely open.
 
@@ -97,10 +97,10 @@ a new pane → when the reply finishes, a Windows notification fires.
 
 - [x] `git status --porcelain=v2` (subprocess with cache): branch + dirty count
       per project — delivered in the files/changes panel, with a per-file diff
-- [x] One worktree per task — delivered as **floors** (§8.1): each floor is a
+- [x] One worktree per task — delivered as **fronts** (§8.1): each front is a
       `git worktree` at `<project>\.yard\floors\<slug>` with its own group and
       canvas
-- [x] **Land** — merge the floor back onto the ground, with a conflict preview
+- [x] **Land** — merge the front back onto the ground, with a conflict preview
       (`worktree_preview` / `worktree_land`; refuses a dirty tree and aborts a
       merge that conflicts anyway)
 - [x] "New task" flow: name → worktree → new group → N agents on the same
@@ -185,7 +185,7 @@ Discovery: a skill in `~/.claude/skills/yard/` for Claude Code and
 `<data>\bin\YARD-BRIDGE.md` + `YARD_BRIDGE_HELP` for the others.
 
 **Search** (`Ctrl+P`, 2026-08-15). A single palette over the **whole**
-workspace: terminals, groups, floors, projects, notes, portals, files (git +
+workspace: terminals, groups, fronts, projects, notes, portals, files (git +
 feed + the tree already read), bench prompts and tasks, advertised addresses
 and the app's actions. Pure ranking in `src/lib/search.ts`: folds accents,
 scores per word (exact > prefix > substring) with a **coverage rule** — half
@@ -227,7 +227,7 @@ one draft per target — writing does not require any terminal: without focus
 the text lives in a loose draft and the target is picked in the header
 selector; only sending needs a terminal), routines (scheduled prompts, only
 with the target idle), scores (a group arrangement saved in
-`<data>\partituras\*.json` and reapplicable), floors (one worktree per task
+`<data>\partituras\*.json` and reapplicable), fronts (one worktree per task
 with its own canvas) and the **Live** overlay (mission control for an agent,
 fed by the session tail, `agents/tail.rs` → `session://feed`) — offered only
 to those that write a session to disk (`AgentInfo.sessionsKind`: Claude, Codex
@@ -322,7 +322,7 @@ then the list — instead of crushing the editor.
 
 **Pending on this line:**
 
-- [x] **Land** — merge the floor back onto the ground with a conflict preview
+- [x] **Land** — merge the front back onto the ground with a conflict preview
       (see F5). `yard floor land` / `compare` / `fanout`.
 - [x] **Portals** — a browser card on the canvas (a Tauri child webview
       positioned over the card's rectangle) that the agent drives with

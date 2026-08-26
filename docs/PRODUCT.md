@@ -39,7 +39,7 @@ the process.
   absolute protagonist of the screen.
 - Flows: create project/group, open CLIs, split panes, canvas with notes and
   connections, prompt composer (Ctrl+Enter), files/git panel on the right,
-  floors (isolated worktrees), scores (saved arrangements).
+  fronts (isolated worktrees), scores (saved arrangements).
 - Keyboard shortcuts everywhere (Ctrl+T, Ctrl+B, Ctrl+1..6, V H P E R O L
   A T N C on the canvas).
 
@@ -65,7 +65,7 @@ the process.
 
 ## Evidence on Hand
 
-- README.md describes real features (F0–F4, canvas, bridge, floors,
+- README.md describes real features (F0–F4, canvas, bridge, fronts,
   scores) — nothing needs to be invented.
 - Token prices/costs come from `agents/sessions.rs`; never fabricate numbers.
 
@@ -74,7 +74,7 @@ the process.
 1. The chrome never competes with the terminal content — depth comes from
    material and light, not from saturation.
 2. Chroma is semantic: process state and diffs; the rest of the chrome is neutral.
-3. State is visible without hover: focus, live process, locked note, active floor.
+3. State is visible without hover: focus, live process, locked note, active front.
 4. No network at runtime; everything is bundled.
 5. Numbers that change on their own don't dance (tabular-nums).
 

@@ -32,7 +32,7 @@ up a GUI.
 
 | Suite                  | Command                          | Size                            | Covers                                                                                              |
 | ---------------------- | -------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Front end (vitest)     | `npm test`                       | 115 files, 1412 tests, ~5 s     | canvas rules, bridge/CLI, floors, flow, notes and markdown, editor, stores, preferences, extensions |
+| Front end (vitest)     | `npm test`                       | 115 files, 1412 tests, ~5 s     | canvas rules, bridge/CLI, fronts, flow, notes and markdown, editor, stores, preferences, extensions |
 | Core (cargo)           | `cd src-tauri; cargo test --lib` | ~21 modules + `engine_tests`    | PTY engine, scrollback, agents, persistence/migrations, git, explorer, portals, bridge              |
 | Types                  | `npm run typecheck`              | —                               | the IPC contract between `src/lib/ipc.ts` and the Rust commands, in the developer's hands          |
 

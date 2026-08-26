@@ -41,10 +41,25 @@ minimize, maximize, close), dark theme, `tracing` writing to
 `react-resizable-panels` in three modes (automatic, fixed grid of 1–6 panes,
 spotlight); sub-tabs per pane; drag & drop of terminals between panes; search in
 the scrollback; shortcuts (`Ctrl+T`, `Ctrl+B`, `Ctrl+1..6`, `Ctrl+Shift+P`,
-`Ctrl+Shift+G`). `Ctrl+Shift+P` opens **Configurações** (Settings), a full-screen
-view with a menu of categories — Interface, Terminal, Editor de código, Agentes,
+`Ctrl+Shift+G`). `Ctrl+Shift+P` opens **Configurações** (Settings), a centered
+window with a menu of categories — Interface, Terminal, Editor de código, Agentes,
 Comportamento, Atalhos, Dados e backup and Extensões (Interface, Terminal, Code
 editor, Agents, Behavior, Shortcuts, Data & backup and Extensions).
+
+**Status bar.** The window's footer reads the whole workspace at once, not
+only the group on screen: agents *waiting on you* (yellow, pulsing — the chip
+is a button and runs the same tour as `Ctrl+Shift+A`), running and finished;
+the active project's branch (the front's worktree branch when on a front) with
+the changed-file count and `+/−` line totals, opening the Controle tab; any
+flow still walking, opening its card on the canvas; and RAM pressure with the
+sidebar HUD's thresholds (`src/lib/ramPressure.ts`, shared by both). On the
+right, the three surfaces that had no button until then: Busca (`Ctrl+P`), the
+prompt composer (`Ctrl+Enter`) and the shortcut map (`Ctrl+Shift+H`).
+Right-click gives the same map the title bar's menu offers — with the bar's own
+entry on it — and **Configurações → Interface** hides it; the Busca action
+"Barra de status" toggles it too. The readings are pure functions
+(`src/components/StatusBar/statusBar.ts`) so each rule — a blocked agent is
+*also* `finished`, an exited process still has a row — is locked by a test.
 
 **F3 — Persistence.** SQLite with WAL and versioned migrations; `save_workspace`
 with a **monotonic revision guard** (a lagging UI doesn't overwrite newer state);
@@ -66,7 +81,7 @@ nothing, because the answers already live here (and the two it used to ask that
 are per-invocation, the destination and the folder, have a right answer with
 nobody to ask — the pane that asked for the tab, and the project's own path).
 The ways with no dialog at all — `yard recruit` on the canvas, a fan-out of
-floors, a resumed session — get the same thing applied straight to their argv
+fronts, a resumed session — get the same thing applied straight to their argv
 and environment. Per agent:
 
 - **The name and the role it is born with.** The name the tab and the card
@@ -147,7 +162,7 @@ the group to the right side first.
 next to a Codex in another repo, each card carrying its own folder. Boards live
 in their own section at the top of the sidebar, above `PROJETOS`, because they
 are not inside any project; the tree below is where you pick which project a
-new card runs in. A board has no panes and no floors — it is a board — and
+new card runs in. A board has no panes and no fronts — it is a board — and
 "Nova CLI neste quadro" asks for the folder instead of inferring it, which is
 the one question that only exists here. Modeled as a group with no project
 (`terminals` still hang off it), so cards, wires, roles, routines, flows and
@@ -201,7 +216,7 @@ arrives from agents through the CLI, so a `src` is untrusted input.
 
 **Search** (`Ctrl+P`). One box over everything that finds anything in the whole
 workspace — not just the active group: agents and terminals (with the process
-state right there), groups and floors, projects, everything on the canvas
+state right there), groups and fronts, projects, everything on the canvas
 (notes, portals, grupos, fichários, arquivos and árvores), files
 changed/touched/already open, bench prompts and tasks, addresses the processes
 announced, and the app's actions. Accent-insensitive, word-by-word search
@@ -237,6 +252,15 @@ with one button per hunk and clicks on the `+`/`−` lines to pick less than tha
 The patch is assembled in `src/lib/scmPatch.ts`: an unpicked `+` line vanishes,
 an unpicked `−` line **becomes context**, and the `@@` counts are recomputed —
 the three rules `git apply` enforces and nobody gets right the first time.
+
+Any row also opens **as a tab beside the CLIs** — `ScmPane.tsx (Alterações)`,
+`(Preparado)`, or `(64726be)` for a file inside a commit — the way VS Code's
+diff editor does, from the row's hover button or its menu ("Abrir o diff numa
+aba"). The tab is a document without a file behind it (`OpenDoc.diff`,
+`src/lib/diffTab.ts`): read-only, dragged and restored like any other tab, and
+it follows the repository — every write of the Source Control tab and every new
+`git status` re-read it, so the diff keeps up with the agent. Unified or side
+by side, whole-file context and wrapping are the review viewer's own settings.
 
 The rest is there: commit (with amend, which brings the whole message back —
 subject *and* body), local and remote branches with each one's tracking, merge,
@@ -311,10 +335,10 @@ environment (details in
   chains work. A note **locked** by the user refuses writes from the CLI.
 - `connect` / `recruit` / `dismiss` — assemble the team on your own canvas.
   `recruit --replace "Old"` swaps a card's process while preserving position,
-  connections and role. `recruit --floor "Floor"` makes the recruit spawn on the
-  floor's canvas, with its worktree as cwd.
+  connections and role. `recruit --floor "Frente"` makes the recruit spawn on the
+  front's canvas, with its worktree as cwd.
 - `floor list` / `floor create` / `floor land` / `floor compare` / `floor fanout`
-  — floors from the CLI. Creation is silent: the user's screen doesn't switch
+  — fronts from the CLI. Creation is silent: the user's screen doesn't switch
   groups.
 - `role` — a role per card and a library of reusable roles
   (`--scope global|current`). Setting a live agent's role hands it the
@@ -354,22 +378,22 @@ reapplicable in another project with fresh ids. The working folder does **not**
 go along: it comes from the target project. Group or project menu →
 "Partituras…" (Scores…).
 
-**Floors.** An isolated copy of the work per task: each floor is a
+**Fronts.** An isolated copy of the work per task: each front is a
 `git worktree` at `<project>\.yard\floors\<slug>` (branch `yard/<slug>` by
 default), with its own group and canvas — the ground stays untouched. A
-"camadas" (layers) button in the bottom-right corner of the workspace: create
+"camadas" (layers) button in the bottom-right corner of the workspace: open
 (with the option to clone the ground's layout — terminals spawn stopped, with
 the worktree as cwd), unload (suspends the PTYs, preserving the session),
 **land** (preview of the merge onto the ground; refuses a dirty tree or a
 predicted conflict; a merge that conflicts anyway is aborted) and close (refused
 with uncommitted work; option to delete the branch). **Nova tarefa** (New task)
-fires the same request on N floors, one agent each; **Comparar andares**
-(Compare floors) shows the diffstat side by side and lands the winner (the
+fires the same request on N fronts, one agent each; **Comparar frentes**
+(Compare fronts) shows the diffstat side by side and lands the winner (the
 others from the same task are closed). Optional setup/run/teardown hooks run in
 the worktree with `YARD_FLOOR_*` in the environment. The file pane and
-`git status` follow the active group: on a floor, they show the worktree, not
+`git status` follow the active group: on a front, they show the worktree, not
 the ground. The metadata lives in `layout_json.floor`; a project without git
-still gets a "floor" (`kind: plain`), just without isolation. From the CLI:
+still gets a "front" (`kind: plain`), just without isolation. From the CLI:
 `yard floor land`, `yard floor compare`, `yard floor fanout`.
 
 **File editor, with a face for markdown.** Clicking a file in the tree opens
@@ -393,7 +417,13 @@ opens as a portal on the canvas. The shortcuts are the same as the canvas
 note's (`Ctrl+B`, `Ctrl+1..6`, `Ctrl+Shift+8`…), by physical key — the grammar
 lives in one place, `src/lib/mdedit.ts`, and the document is parsed by
 `src/lib/mddoc.ts`. HTML inside markdown shows up as source: this preview
-doesn't execute what an agent wrote into a file.
+doesn't execute what an agent wrote into a file. The chrome around the text is
+a **document header** rather than a toolbar: the path reads as a title (folder
+dimmed, name lit) and clicking it opens the file's menu — save, reload from
+disk, copy path, show in folder, line wrapping, close — while the row keeps
+only the four modes, the outline and search; *Salvar* appears with the first
+unsaved keystroke and leaves with the write. The formatting bar is a floating
+capsule in the page's top margin, the same instrument the canvas note wears.
 
 **Anotações (Notes) — the markdown notebook (`Ctrl+Shift+N`).** Knowledge that
 belongs to no project — decisions, studies, plans, bug recipes — gets a
@@ -438,7 +468,7 @@ for the moments a team waits on the same answer: the `y` after a fan-out, a
 group is armed at a time, and the mode is **session-only on purpose**: it is
 never written to `kv`, because a broadcast that came back on at boot would
 type into terminals nobody was looking at. It also follows the group out of
-the workspace (a floor closed, a group deleted). While armed, every terminal
+the workspace (a front closed, a group deleted). While armed, every terminal
 of the group wears a yellow strip — `⇶ Transmitindo para N CLIs ·
 Ctrl+Shift+U desliga` — that counts the receivers and says so when the count
 is zero; the palette has the same toggle ("Transmitir teclado para o grupo").

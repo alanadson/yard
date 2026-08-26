@@ -41,7 +41,7 @@
 | `agents/resolver.rs`                 | Discover the CLIs installed on Windows: `where`, npm `.cmd` shims, registry                      |
 | `agents/sessions.rs`                 | Read the agents' local sessions (`~/.claude/projects/*.jsonl`, `~/.codex/sessions`…) for "resume" |
 | `agents/tail.rs`                     | Tail of the agent's active session → `session://feed` event (feeds the "Ao Vivo" (Live) overlay) |
-| `git.rs`                             | *Reading* the repository: `git status --porcelain=v2` (with both sides — index and disk — per file), per-file diff, the floors' worktrees |
+| `git.rs`                             | *Reading* the repository: `git status --porcelain=v2` (with both sides — index and disk — per file), per-file diff, the fronts' worktrees |
 | `scm.rs`                             | *Writing* to the repository (the "Controle" (Source Control) tab): stage/unstage/discard, commit, branch, merge/rebase/revert/reset, stash, tags, fetch/pull/push, `git apply` of a single hunk, per-side diff. Every path goes through `rel_paths` and every name through `check_branch_name` |
 | `persistence/db.rs`                  | SQLite (bundled rusqlite), migrations, monotonic write guard                                      |
 | `persistence/workspace.rs`           | Snapshot/restore of projects, groups, layouts and terminals                                      |
@@ -65,12 +65,13 @@ src/
 │   └── uiStore.ts           # theme, modals, focused pane, zoom
 ├── components/
 │   ├── TitleBar/            # custom bar (decorations: false), min/max/close buttons
+│   ├── StatusBar/           # footer: agents waiting, branch, flows, RAM; Busca/composer/shortcuts buttons
 │   ├── ProjectSidebar/      # tree: projects → groups → terminals
 │   ├── WorkspaceGrid/       # react-resizable-panels: automatic/grid/spotlight layouts
 │   ├── CanvasView/          # the group's other surface: infinite canvas (cards, notes, drawing)
 │   ├── TerminalPane/        # frame: title, sub-tabs, actions (restart/suspend/kill)
 │   ├── XTermView/           # the xterm itself (attach, resize, input)
-│   ├── Settings/            # Settings (Ctrl+Shift+P): category menu + full-screen page
+│   ├── Settings/            # Settings (Ctrl+Shift+P): centered sheet, category menu + page
 │   └── modals/              # NewTerminalModal, ExtensionsModal, ScoresModal, RoutinesModal…
 ├── hooks/                   # useGlobalEvents, useKeybindings, useRoutines…
 └── lib/
@@ -208,7 +209,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (   -- index of what the agents save l
 );
 ```
 
-The canvas, the floors, the routines and the roles live inside the group's
+The canvas, the fronts, the routines and the roles live inside the group's
 `layout_json` (`layoutJson.canvas`, `layout_json.floor`) — that is what let the
 whole canvas fit with almost no schema. The one column it did end up costing is
 `terminals.surface` (schema v6): the canvas and the pane grid used to draw the

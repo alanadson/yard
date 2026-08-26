@@ -38,8 +38,8 @@ UI or switching layouts never disturbs an agent in the middle of a task.
   `yard` on its PATH: agents ask each other questions, wait on one another,
   share notes as memory, recruit teammates, schedule routines — and the wires
   drawn on the canvas decide who may talk to whom.
-- **Floors.** One `git worktree` per task, with its own group and canvas; fan
-  a request out to N floors, compare the results, land the winner.
+- **Fronts.** One `git worktree` per task, with its own group and canvas; fan
+  a request out to N fronts, compare the results, land the winner.
 - **A bench beside the terminals.** Files, tasks, prompts and full source
   control (stage by hunk or by line, branches, stash, history) one shortcut
   away. A file or markdown document opens as a tab next to the agent editing it.
