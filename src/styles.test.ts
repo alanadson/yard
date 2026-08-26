@@ -21,7 +21,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { AA_MIN, passesAA, contrastRatio, blendOver } from "./lib/contrast";
+import { AA_MIN, passesAA, contrastRatio, blendOver, lightness } from "./lib/contrast";
 
 // `?raw` instead of `fs`: it is the same loader the app uses, and the suite
 // stays free of new dependencies (there is no `@types/node` here, on purpose).
@@ -192,13 +192,26 @@ describe("chrome contrast", () => {
     tokens.set(m[1], m[2].trim());
   }
 
-  /** `var(--x)` → the final value; `#fff`/`rgb(…)` → itself; anything else → null. */
+  /**
+   * `var(--x)` → the final value; `#fff`/`rgb(…)` → itself; anything else →
+   * null.
+   *
+   * A colour can also be a *channel* token plus an alpha of its own —
+   * `rgb(var(--veil) / 9%)` — which is how relief and recess are written now
+   * that they have to flip with the appearance (see the note in the `:root`
+   * of `styles.css`). So the substitution happens inside `rgb()` too, not
+   * only when the whole value is one reference.
+   */
   function resolveVar(theValue: string, hop = 0): string | null {
     const v = theValue.trim();
     const ref = /^var\((--[\w-]+)\)$/.exec(v);
     if (ref) {
       const target = tokens.get(ref[1]);
       return target && hop < 5 ? resolveVar(target, hop + 1) : null;
+    }
+    if (v.includes("var(") && hop < 5) {
+      const filled = v.replace(/var\((--[\w-]+)\)/g, (whole, name: string) => tokens.get(name) ?? whole);
+      if (filled !== v) return resolveVar(filled, hop + 1);
     }
     return /^(#|rgba?\()/.test(v) ? v : null;
   }
@@ -273,6 +286,126 @@ describe("chrome contrast", () => {
     const theColor = resolveVar(/color:\s*([^;]+)/.exec(rule![1])![1]);
     const background = blendOver(resolveVar("var(--red-bg)")!, BASE);
     expect(contrastRatio(theColor!, background)).toBeGreaterThanOrEqual(AA_MIN);
+  });
+});
+
+/**
+ * The dark appearance's elevation ladder, as a number instead of an intention.
+ *
+ * `docs/DESIGN.md` promises "instrument windows over a deep ambient ground":
+ * mini-windows that lift off a desktop, lateral glass you can see through,
+ * wells that sink. Every one of those readings is a *difference between two
+ * surfaces*, and for a long time the tokens did not carry one. The whole
+ * chrome sat between L* 4 and L* 15 with 3 points between neighbouring
+ * steps — the ground, the sidebar, the status bar and the terminal well all
+ * measured within two points of each other, `--material-thin` composited to
+ * within half a point of the floor behind it (glass over its own value shows
+ * nothing), and the shadows had no ground bright enough to fall on. The
+ * window read as one flat slab of near-black.
+ *
+ * Why L* and not the contrast ratio the rest of this file uses: the ratio is
+ * a ratio of luminances, and luminance is crushed at the dark end. Down here
+ * a step the eye reads and a step it does not are both about 1.2:1. L* is
+ * spaced the way the eye is — see `lib/contrast.ts`.
+ *
+ * The floors below are deliberately floors and not targets: the design has
+ * room above them, and the test only refuses the collapse.
+ */
+describe("dark elevation ladder", () => {
+  const tokens = new Map<string, string>();
+  for (const m of bootCss.matchAll(/(--[\w-]+):\s*([^;]+);/g)) tokens.set(m[1], m[2].trim());
+
+  const value = (name: string) => tokens.get(name)!;
+
+  /**
+   * The ground is one flat colour, so its floor is that colour — there is no
+   * darkest stop to hunt for any more. Kept as "every hex in `--ambient`" so
+   * the moment someone puts a gradient back, the two tests below say so
+   * instead of quietly measuring the first stop.
+   */
+  const ambientHexes = [...value("--ambient").matchAll(/#[0-9a-f]{6}/gi)].map((m) => m[0]);
+  const ambientFloor = ambientHexes[0];
+
+  /**
+   * The ground was a three-stop gradient with a blue bloom top-left, a second
+   * blue one bottom-left and a violet one in the far corner — "two cold,
+   * almost subliminal glows behind the glass". On the graphite it was drawn
+   * for they were subliminal. Dropped to black they stopped being: the same
+   * alphas over L* 0 read as a wash of navy across the top of the sidebar and
+   * a visible fall down its height, which is what the author saw and called
+   * out. On a black ground there is no such thing as a subliminal glow, so the
+   * ground gives up light altogether and relief moves entirely onto the
+   * surfaces — see `docs/DESIGN.md`.
+   */
+  it("the ground is one flat colour — no gradient, no bloom", () => {
+    expect(value("--ambient")).not.toMatch(/gradient/);
+    expect(ambientHexes).toHaveLength(1);
+  });
+
+  it("and the ground is the same colour `--bg` names", () => {
+    expect(ambientFloor.toLowerCase()).toBe(value("--bg").toLowerCase());
+  });
+
+  /**
+   * No cast. Every neutral in the dark used to carry `b ≈ r × 1.16`, a cold
+   * graphite rather than a grey — which is a good idea over an ambient with
+   * blue in it and a residue once the ambient is black. It is also the last
+   * thing standing between this palette and the neutral one the author asked
+   * for.
+   */
+  it.each(["--bg", "--bg-panel", "--bg-raised", "--bg-overlay", "--well-code", "--well-stage"])(
+    "`%s` is achromatic — grey has no hue to leak",
+    (name) => {
+      const [r, g, b] = /^#(..)(..)(..)$/.exec(value(name))!.slice(1).map((h) => parseInt(h, 16));
+      expect([g, b]).toEqual([r, r]);
+    },
+  );
+
+  const LADDER = ["--bg", "--bg-panel", "--bg-raised", "--bg-overlay"] as const;
+
+  /**
+   * Four surfaces the user is meant to tell apart at a glance — the ground, a
+   * pane's body, a pane's header, a note on the board — stacked in that order.
+   */
+  it.each(LADDER.slice(1).map((step, i) => [LADDER[i], step] as const))(
+    "`%s` and `%s` are far enough apart to be seen as two surfaces",
+    (below, above) => {
+      const step = lightness(value(above)) - lightness(value(below));
+      expect(step).toBeGreaterThanOrEqual(4);
+    },
+  );
+
+  it("a mini-window lifts off the desktop it floats on", () => {
+    expect(lightness(value("--bg-panel")) - lightness(ambientFloor)).toBeGreaterThanOrEqual(4);
+  });
+
+  it("the lateral glass is not the floor behind it, repainted", () => {
+    const glass = blendOver(value("--material-thin"), ambientFloor);
+    expect(lightness(glass) - lightness(ambientFloor)).toBeGreaterThanOrEqual(3);
+  });
+
+  /**
+   * This one used to demand two points of *sink*, and it was right to: a well
+   * level with the ground is a well nobody can see. The contract changed when
+   * the ground went to black — there is nothing under black, so the well
+   * cannot sink and the two are the same colour by construction. What is left
+   * to refuse is a well that floats *above* its ground, and the separation the
+   * sink used to provide is now the frame's job: the pane draws a border and a
+   * hairline around whatever holds a well.
+   */
+  it.each(["--well-code", "--well-stage"])("`%s` never sits above the ground the chrome stands on", (well) => {
+    expect(lightness(value(well))).toBeLessThanOrEqual(lightness(ambientFloor));
+  });
+
+  it("and the pane that holds one draws the edge the sink no longer draws", () => {
+    const pane = /\.pane \{([^}]*)\}/.exec(bootCss);
+    expect(pane, "the .pane rule is gone").not.toBeNull();
+    expect(pane![1]).toMatch(/border:\s*1px solid/);
+  });
+
+  it("the hairline draws a line on the surface it edges", () => {
+    const surface = value("--bg-panel");
+    expect(lightness(blendOver(value("--border"), surface)) - lightness(surface)).toBeGreaterThanOrEqual(6);
   });
 });
 

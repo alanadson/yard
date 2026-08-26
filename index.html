@@ -5,8 +5,40 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <title>Yard</title>
+    <!--
+      The ground, painted before any sheet arrives, so the window never opens
+      as a white slab. It used to be `style="background: #131316"` on the
+      <body> — which worked, and then went on outranking every stylesheet
+      forever: an inline declaration beats an author rule, so the light
+      appearance kept compositing its translucent materials over a black
+      floor and came out as grey mud. Here it is a rule like any other, on
+      <html> instead of <body>, so `body { background: var(--ambient) }`
+      still wins the moment styles.css lands.
+
+      Two cases, in the order they resolve: the OS preference — all this file
+      can know — and then the attribute `lib/theme.ts` stamps, which
+      `restoreTheme` puts back from the last session at the top of `main.tsx`,
+      so a light user does not watch the shell flash dark on every launch.
+      That restore lives in the module and not in an inline <script> here on
+      purpose: the production CSP is `script-src 'self'` (tauri.conf.json) and
+      would refuse it.
+
+      This block costs something, and it is not obvious: in a packaged build
+      Tauri stamps a nonce on every <style> it finds here and adds it to
+      `style-src`, which makes the browser ignore the `'unsafe-inline'` next
+      to it — and CodeMirror, whose entire stylesheet is written by JS at
+      runtime, opens with no CSS at all. `tauri.conf.json` pays for it with
+      `dangerousDisableAssetCspModification: ["style-src"]`; the whole chain
+      is in `src/lib/csp.ts` and `src/lib/csp.test.ts` holds it.
+    -->
+    <style>
+      html { background: #000000; }
+      @media (prefers-color-scheme: light) { html { background: #eceef3; } }
+      html[data-theme="light"] { background: #eceef3; }
+      html[data-theme="dark"] { background: #000000; }
+    </style>
   </head>
-  <body style="background: #131316">
+  <body>
     <!--
       impeccable:direction-contract
       THESIS: an agent orchestrator that looks like a premium desktop

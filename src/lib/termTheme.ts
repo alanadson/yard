@@ -11,15 +11,18 @@
 import type { TermPalette } from "./colorSchemes";
 import type { ResolvedTheme } from "./theme";
 
-// Dark premium theme, matching the chrome (styles.css): the background is the
-// panel's terminal well (#121215), cursor and selection in system blue. ANSI
-// colors keep their semantics, tuned for the cold ground without shouting
-// over it.
+// Dark premium theme, matching the chrome (styles.css): the background is
+// `--well-code`, cursor and selection in system blue. ANSI colors keep their
+// semantics, tuned for the cold ground without shouting over it. The well went
+// to pure black with the 2026-08-26 re-grade, which only widened every ratio
+// below — the ANSI `black` (#1d1d22) is the one that had to stay off the
+// bottom, so a CLI drawing in it is still visible against the background.
+// `termTheme.test.ts` holds this against the sheet's own declaration.
 export const DARK_TERM: TermPalette = {
-  background: "#121215",
+  background: "#000000",
   foreground: "#d9d9de",
   cursor: "#8ec2ff",
-  cursorAccent: "#121215",
+  cursorAccent: "#000000",
   selectionBackground: "#2b446b",
   black: "#1d1d22",
   red: "#ff6e64",
@@ -46,7 +49,7 @@ export const LIGHT_TERM: TermPalette = {
   background: "#fafafc",
   foreground: "#1f2028",
   cursor: "#0a5fc4",
-  cursorAccent: "#ffffff",
+  cursorAccent: "#fafafc",
   selectionBackground: "#bcd6ff",
   black: "#1d1d22",
   red: "#c62828",

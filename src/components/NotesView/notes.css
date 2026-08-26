@@ -13,7 +13,7 @@
   z-index: 122; /* under the editor (125) and the composer; above the viewer (120) — lib/layers.ts tracks it */
   display: grid;
   place-items: center;
-  background: rgb(0 0 0 / 45%);
+  background: rgb(var(--shade) / 45%);
   backdrop-filter: blur(6px);
   animation: fade-in 140ms ease-out;
 }
@@ -24,9 +24,9 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: rgb(26 26 33 / 86%);
+  background: var(--material-notes);
   backdrop-filter: var(--blur-sheet);
-  border: 1px solid rgb(255 255 255 / 12%);
+  border: 1px solid rgb(var(--veil) / 12%);
   border-radius: var(--r-xl);
   box-shadow: var(--shadow-3), var(--hairline);
 }
@@ -43,7 +43,7 @@
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   box-shadow:
-    0 4px 16px rgb(0 0 0 / 25%),
+    0 4px 16px rgb(var(--shade) / 25%),
     var(--hairline);
 }
 
@@ -142,7 +142,7 @@
   min-height: 0;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
-  background: rgb(0 0 0 / 14%);
+  background: rgb(var(--well) / 14%);
 }
 
 .notes-rail-body {
@@ -306,7 +306,7 @@
   gap: 6px;
   height: 28px;
   padding: 0 4px 0 9px;
-  background: rgb(0 0 0 / 26%);
+  background: rgb(var(--well) / 26%);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   color: var(--text-dim);
@@ -467,7 +467,7 @@
   padding: 1px 8px;
   font-size: var(--fs-xs);
   color: var(--text-dim);
-  background: rgb(255 255 255 / 5%);
+  background: rgb(var(--veil) / 5%);
   border: 1px solid var(--border-soft);
   border-radius: 20px;
 }
@@ -662,7 +662,7 @@
   flex-direction: column;
   background: var(--material-menu);
   backdrop-filter: var(--blur-menu);
-  border: 1px solid rgb(255 255 255 / 11%);
+  border: 1px solid rgb(var(--veil) / 11%);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-2), var(--hairline);
   animation: menu-in var(--dur-1) var(--ease);

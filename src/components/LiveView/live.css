@@ -11,7 +11,7 @@
   position: fixed;
   inset: 0;
   z-index: 110;
-  background: rgb(0 0 0 / 45%);
+  background: rgb(var(--shade) / 45%);
   backdrop-filter: blur(6px);
   animation: fade-in 140ms ease-out;
 }
@@ -26,7 +26,7 @@
   flex-direction: column;
   background: var(--material-sheet);
   backdrop-filter: var(--blur-sheet);
-  border: 1px solid rgb(255 255 255 / 12%);
+  border: 1px solid rgb(var(--veil) / 12%);
   border-radius: var(--r-xl);
   box-shadow: var(--shadow-3), var(--hairline);
   animation: modal-in var(--dur-2) var(--ease-pop);
@@ -149,7 +149,7 @@
 .live-stat {
   font-size: var(--fs-xs);
   color: var(--text-dim);
-  background: rgb(0 0 0 / 22%);
+  background: rgb(var(--well) / 22%);
   border: 1px solid var(--border-soft);
   border-radius: 20px;
   padding: 3px 9px;
@@ -375,7 +375,7 @@
 
 .live-mark-badge--r {
   color: var(--text-dim);
-  background: rgb(255 255 255 / 7%);
+  background: rgb(var(--veil) / 7%);
 }
 
 /* The ellipsis eats the directory, never the file name: the dir shrinks,
@@ -430,7 +430,7 @@
 
 .live-chip--dim {
   color: var(--text-dim);
-  background: rgb(255 255 255 / 7%);
+  background: rgb(var(--veil) / 7%);
 }
 
 .live-side {
@@ -513,7 +513,7 @@
 
 @keyframes live-file-flash {
   from {
-    background: rgb(255 255 255 / 10%);
+    background: rgb(var(--veil) / 10%);
   }
 }
 
@@ -553,7 +553,7 @@
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  background: rgb(0 0 0 / 18%);
+  background: rgb(var(--well) / 18%);
   border: 1px solid var(--border-soft);
   border-radius: var(--r-lg);
   padding: 8px;
@@ -586,7 +586,7 @@
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   box-shadow:
-    0 1px 2px rgb(0 0 0 / 25%),
+    0 1px 2px rgb(var(--shade) / 25%),
     var(--hairline);
   font-size: var(--fs-xs);
   line-height: 1.4;

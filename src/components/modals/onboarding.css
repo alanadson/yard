@@ -14,7 +14,7 @@
   font-size: var(--fs-sm);
   padding: 1px 5px;
   border-radius: var(--r-sm);
-  background: rgb(255 255 255 / 8%);
+  background: rgb(var(--veil) / 8%);
   color: var(--text-bright);
 }
 
@@ -65,7 +65,7 @@
   min-width: 0;
   padding: 5px 8px;
   border-radius: var(--r-md);
-  background: rgb(255 255 255 / 3%);
+  background: rgb(var(--veil) / 3%);
   font-size: var(--fs-sm);
 }
 

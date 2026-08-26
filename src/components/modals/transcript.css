@@ -17,7 +17,7 @@
   height: 28px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: rgb(0 0 0 / 22%);
+  background: rgb(var(--well) / 22%);
   color: var(--text-dim);
   transition:
     border-color var(--dur-1) ease,
@@ -129,7 +129,7 @@
 }
 
 .tr-say {
-  background: rgb(255 255 255 / 3.5%);
+  background: rgb(var(--veil) / 3.5%);
   border: 1px solid var(--border);
   box-shadow: var(--hairline);
 }
@@ -192,7 +192,7 @@
   margin: 4px 0 6px 22px;
   padding: 6px 8px;
   border-radius: var(--r-sm);
-  background: rgb(0 0 0 / 26%);
+  background: rgb(var(--well) / 26%);
   font-size: var(--fs-xs);
   max-height: 240px;
   overflow: auto;
@@ -220,7 +220,7 @@
 
 .tr-mark--open {
   color: var(--text-dim);
-  background: rgb(255 255 255 / 6%);
+  background: rgb(var(--veil) / 6%);
 }
 
 .tr-op {

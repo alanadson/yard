@@ -1,29 +1,48 @@
-/* --- Settings (the full screen, Ctrl+Shift+P) --------------------------------
+/* --- Settings (the window, Ctrl+Shift+P) -------------------------------------
 
-   Opaque menu on the left, reading column on the right. The screen is
-   permanent while open — whoever spends ten minutes tuning a font does not
-   want trembling glass underneath — so the material is solid, as the
-   styles.css contract demands: a surface that covers a terminal for long is
-   opaque.
+   A sheet in the middle of the window — menu on the left, reading column on
+   the right — over the same veil as every other dialog: `.modal-backdrop`
+   is borrowed as is (same dimming, same layer, same fade), and the sheet is
+   the dialogs' material, 68% + deep blur. What shows through is the
+   workspace already darkened by 45% and blurred by 6px, which is calm enough
+   to read a form over. It was a full screen with a solid ground for a while;
+   a screen is a place you go to, and a setting is something you open, flip
+   and leave.
 
-   The title bar is left out on purpose: `top: var(--titlebar-h)` keeps the
-   window buttons and the drag area alive. Covering them would turn a screen
-   you linger in into a trap with no minimize. */
+   Two panes in one sheet: the menu darkens its band by 14%, the same paint
+   the dialogs' footer uses for "a different region of the same sheet". */
 
 .settings {
-  position: fixed;
-  top: var(--titlebar-h);
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 130; /* same layer as the dialogs — lib/layers.ts treats both as "modal" */
+  position: relative;
   display: flex;
-  /* The same ground as `body` (and the same fixed anchor): the screen covers
-     the window, and a flat `--bg` would open a rectangular slab in the middle
-     of the ambient. */
-  background: var(--ambient);
-  background-attachment: fixed;
-  animation: fade-in 140ms ease-out;
+  width: min(960px, 94vw);
+  height: min(680px, 88vh);
+  /* The menu collapses on the sheet's own width, not the window's (rules at
+     the end): a sheet narrower than its window would otherwise keep a full
+     menu it cannot afford. */
+  container-type: inline-size;
+  /* The rounded corners clip the two panes; the balloons all point inward
+     (`data-tip-at="right"`), so nothing that matters is cut. */
+  overflow: hidden;
+  background: var(--material-sheet);
+  backdrop-filter: var(--blur-sheet);
+  border: 1px solid rgb(var(--veil) / 12%);
+  border-radius: var(--r-xl);
+  /* Contact shadow, like `.modal`: the blurred backdrop already separates
+     the sheet from the background. */
+  box-shadow:
+    0 4px 14px rgb(var(--shade) / 28%),
+    var(--hairline);
+  animation: modal-in var(--dur-2) var(--ease-pop);
+}
+
+/* Where every dialog keeps its ×: the sheet's top-right corner, level with
+   the page title. */
+.set-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
 }
 
 /* The explanation paragraphs align with the text inside the card, not with
@@ -37,10 +56,10 @@
 .set-nav {
   display: flex;
   flex-direction: column;
-  width: 232px;
+  width: 224px;
   flex-shrink: 0;
-  padding: 14px 10px 12px;
-  background: var(--bg-panel);
+  padding: 16px 10px 12px;
+  background: rgb(var(--well) / 14%);
   border-right: 1px solid var(--border);
 }
 
@@ -111,7 +130,7 @@
   flex: 1;
   min-width: 0;
   overflow-y: auto;
-  padding: 22px 28px 44px;
+  padding: 20px 28px 28px;
 }
 
 /* 620px is where a line of text still reads whole without the eye going back
@@ -122,12 +141,11 @@
   margin: 0 auto;
 }
 
+/* Room on the right for the × in the corner, for the sheet widths where
+   the column reaches it. */
 .set-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 18px;
+  margin-bottom: 16px;
+  padding-right: 32px;
 }
 
 .set-head h2 {
@@ -156,10 +174,10 @@
 }
 
 .set-card {
-  background: rgb(255 255 255 / 3.5%);
+  background: rgb(var(--veil) / 3.5%);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
+  box-shadow: inset 0 1px 0 rgb(var(--veil) / 6%);
   overflow: hidden;
 }
 
@@ -245,7 +263,7 @@
   padding: 7px 12px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  background: rgb(0 0 0 / 25%);
+  background: rgb(var(--well) / 25%);
   color: var(--text);
   font-family: var(--mono);
   letter-spacing: normal;
@@ -423,21 +441,22 @@
 
 /* At the width where the label is in view, the balloon would only repeat what
    is already readable — the `data-tip` stays in place for when the label
-   disappears (rule below). */
-@media (width > 860px) {
+   disappears (rule below). The queries ask the sheet (`container-type` on
+   `.settings`), not the window: it is the sheet that gets narrow. */
+@container (width > 720px) {
   .set-nav-item::after {
     content: none;
   }
 }
 
-/* Narrow window: the menu becomes a column of icons with the label hidden —
+/* Narrow sheet: the menu becomes a column of icons with the label hidden —
    the text goes, not the destination; the `data-tip` balloon is what says the
    name. */
-@media (width <= 860px) {
+@container (width <= 720px) {
   .set-nav {
     width: 64px;
     align-items: center;
-    padding: 14px 8px 12px;
+    padding: 16px 8px 12px;
   }
 
   .set-nav-title,
@@ -454,7 +473,7 @@
   }
 
   .set-main {
-    padding: 22px 18px 44px;
+    padding: 20px 18px 28px;
   }
 }
 
@@ -498,7 +517,7 @@
   gap: 10px;
   padding: 12px;
   border-top: 1px solid var(--border-soft);
-  background: rgb(255 255 255 / 2%);
+  background: rgb(var(--veil) / 2%);
 }
 .set-mcp-field {
   display: flex;

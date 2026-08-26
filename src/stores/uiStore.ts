@@ -97,6 +97,13 @@ export interface Prefs {
    * with nothing to show, and there was no door to hide it.
    */
   usageWidget: boolean;
+  /**
+   * The footer (`StatusBar`): agents waiting, the project's branch, flows
+   * walking and RAM, plus the mouse's way into Busca, the composer and the
+   * shortcut map. On by default — it is the one place the whole workspace
+   * is read at once — with a door to hide it for whoever wants the height.
+   */
+  statusBar: boolean;
   confirmOnExit: boolean;
   cursorBlink: boolean;
   /** Appearance: dark is the shipped look; light and system live in `lib/theme.ts`. */
@@ -144,6 +151,7 @@ export const DEFAULT_PREFS: Prefs = {
   notifyOnFinish: true,
   notifyBlocked: true,
   usageWidget: true,
+  statusBar: true,
   confirmOnExit: true,
   cursorBlink: true,
   // Dark by default: the light appearance is a choice, the dark one is the

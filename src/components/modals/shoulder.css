@@ -26,7 +26,7 @@
 .shoulder-chip {
   font-size: var(--fs-xs);
   color: var(--text-dim);
-  background: rgb(0 0 0 / 22%);
+  background: rgb(var(--well) / 22%);
   border: 1px solid var(--border-soft);
   border-radius: 20px;
   padding: 2px 8px;

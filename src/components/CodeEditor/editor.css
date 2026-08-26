@@ -146,7 +146,7 @@
 }
 
 .ftree-row.is-draft {
-  background: rgb(255 255 255 / 4%);
+  background: rgb(var(--veil) / 4%);
 }
 
 .ftree-note {
@@ -234,29 +234,122 @@
   min-height: 0;
 }
 
-/* The path bar: where the file is on disk, and what can be done to it. */
-/* Follows the tab bar above it: a 40px row of tabs over a 26px hairline read
-   as a bar with a crack under it. */
+/* --- the document header ---
+
+   Not a bar: the top margin of the page. It used to be a third strip under the
+   tabs — raw path on the left, nine icons on the right, hairline under it —
+   which is the anatomy of every markdown editor there is. Now it is the
+   document's title line: no fill, no rule, the path set like a title (folder
+   dimmed, name lit) with the file's menu behind it, and on the right only
+   how to *look* at the text. Anything that acts on the file as a thing on
+   disk went into the menu. */
 .editor-pathbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 8px 6px 14px;
+  min-height: 38px;
+  padding: 4px 10px 2px 8px;
   flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
 }
 
-.editor-fullpath {
-  flex: 1;
+/* The path as a pop-up button, the way a Mac window's title is: press it and
+   the file's menu drops from it. The caret is the only hint, and it is enough
+   — the same dimmed caret every pop-up button in the app wears. */
+.editor-crumb {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  height: 26px;
+  padding: 0 7px 0 8px;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: default;
+  transition:
+    background-color var(--dur-1) ease,
+    color var(--dur-1) ease;
+}
+
+.editor-crumb > svg {
+  flex-shrink: 0;
+  opacity: 0.55;
+  transition: opacity var(--dur-1) ease;
+}
+
+.editor-crumb:hover,
+.editor-crumb.is-open {
+  background: var(--bg-hover);
+}
+
+.editor-crumb:hover > svg,
+.editor-crumb.is-open > svg {
+  opacity: 1;
+}
+
+/* The name survives the cut. Folder and name are two flex items: the folder
+   chain is the only one that shrinks, and it loses its *start* — `rtl` on
+   the box is what moves the ellipsis to the drive's side. The name keeps its
+   width until it alone is wider than the row, and only then truncates. */
+.editor-crumb-path {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.editor-crumb-dir {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
   direction: rtl;
   text-align: left;
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  color: var(--text-dim);
+}
+
+/* One LTR run inside the RTL box: without it the trailing `\` of the folder
+   chain is a neutral at the end of an RTL line and jumps to the front. */
+.editor-crumb-ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.editor-crumb-base {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.editor-crumb:hover .editor-crumb-base,
+.editor-crumb.is-open .editor-crumb-base {
+  color: var(--text-bright);
+}
+
+/* Lands at the right edge of the row, and comes with the first unsaved
+   keystroke — a control that is present only while it means something. */
+.editor-save {
+  margin-left: 2px;
+  animation: editor-save-in var(--dur-1) var(--ease-pop);
+}
+
+@keyframes editor-save-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-save {
+    animation: none;
+  }
 }
 
 .editor-backdrop {
@@ -265,7 +358,7 @@
   z-index: 125;
   display: grid;
   place-items: center;
-  background: rgb(0 0 0 / 45%);
+  background: rgb(var(--shade) / 45%);
   backdrop-filter: blur(6px);
   animation: fade-in 140ms ease-out;
 }
@@ -278,9 +371,9 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: rgb(28 28 34 / 94%);
+  background: var(--material-doc);
   backdrop-filter: var(--blur-sheet);
-  border: 1px solid rgb(255 255 255 / 12%);
+  border: 1px solid rgb(var(--veil) / 12%);
   border-radius: var(--r-xl);
   box-shadow: var(--shadow-3), var(--hairline);
   animation: modal-in var(--dur-2) var(--ease-pop);
@@ -334,10 +427,10 @@
 }
 
 .editor-tab-slot.is-active {
-  background: rgb(255 255 255 / 12%);
+  background: rgb(var(--veil) / 12%);
   box-shadow:
-    0 1px 3px rgb(0 0 0 / 30%),
-    inset 0 1px 0 rgb(255 255 255 / 8%);
+    0 1px 3px rgb(var(--shade) / 30%),
+    inset 0 1px 0 rgb(var(--veil) / 8%);
 }
 
 .editor-tab {
@@ -383,7 +476,7 @@
 }
 
 .editor-tab-close:hover {
-  background: rgb(255 255 255 / 12%);
+  background: rgb(var(--veil) / 12%);
   color: var(--text-bright);
 }
 
@@ -396,6 +489,29 @@
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* --- a comparison as a tab (DiffTab) ---
+   The editor's header and status line, with the viewer's body between them.
+   The chip after the name says which comparison it is; the counts are the
+   file's, in the same colours the rows use. */
+.dtab-which {
+  flex-shrink: 0;
+}
+
+.dtab-stat {
+  display: inline-flex;
+  gap: 5px;
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* `.viewer-body` already scrolls; inside the editor's flex column it also
+   has to be allowed to be shorter than its content. */
+.dtab-body {
+  min-height: 0;
 }
 
 /* Inside the body: the stage and, when markdown asks for it, the outline. */
@@ -418,7 +534,7 @@
   overflow: auto;
   padding: 6px 4px;
   border-right: 1px solid var(--border);
-  background: rgb(0 0 0 / 14%);
+  background: rgb(var(--well) / 14%);
 }
 
 .editor-stage {
@@ -450,7 +566,7 @@
   font-size: var(--fs-sm);
   color: var(--text);
   border-bottom: 1px solid var(--border);
-  background: rgb(255 255 255 / 4%);
+  background: rgb(var(--veil) / 4%);
 }
 
 .editor-banner--warn {
@@ -507,7 +623,7 @@
   padding: 0 7px;
   border-radius: 20px;
   border: 1px solid var(--border);
-  background: rgb(255 255 255 / 6%);
+  background: rgb(var(--veil) / 6%);
 }
 
 .editor-chip--dirty {
@@ -587,7 +703,7 @@
   min-width: 0;
   overflow: auto;
   padding: 14px;
-  background: #0f0f12;
+  background: var(--well-stage);
 }
 
 /* The checkerboard is the "there is no pixel here" convention: it belongs
@@ -595,9 +711,9 @@
    card — there it would be pure noise. */
 .media-view--image .media-stage {
   background:
-    repeating-conic-gradient(rgb(255 255 255 / 3%) 0% 25%, transparent 0% 50%)
+    repeating-conic-gradient(rgb(var(--veil) / 3%) 0% 25%, transparent 0% 50%)
       50% / 22px 22px,
-    #0f0f12;
+    var(--well-stage);
 }
 
 .media-stage--center {
@@ -748,7 +864,7 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  background: rgb(0 0 0 / 8%);
+  background: rgb(var(--well) / 8%);
 }
 
 .editor-preview:focus-visible {
@@ -756,81 +872,203 @@
   outline-offset: -2px;
 }
 
-/* The mode switcher: a segmented control, as in the toolbar of a Mac app. */
+/* The mode switcher is the app's segmented control — the title bar's
+   `.layout-switch` at icon scale: a recessed capsule track with the active
+   segment raised out of it. It was a square grey group of icon-buttons,
+   which is what every editor's view switcher looks like. */
 .md-modes {
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 2px;
-  border-radius: 8px;
-  background: rgb(0 0 0 / 24%);
-  box-shadow: inset 0 0 0 1px var(--border-soft);
+  border-radius: 999px;
+  background: rgb(var(--well) / 28%);
+  border: 1px solid rgb(var(--veil) / 6%);
+  box-shadow: inset 0 1px 2px rgb(var(--well) / 20%);
 }
 
-/* The formatting bar — the note's bar (`.cv-mdbar`) laid across the editor:
-   same slots, same dividers, same pressed state. */
+.md-modes > button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 20px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--text-dim);
+  transition:
+    background-color var(--dur-1) ease,
+    color var(--dur-1) ease;
+}
+
+.md-modes > button:hover {
+  color: var(--text);
+}
+
+.md-modes > button.is-active {
+  background: rgb(var(--veil) / 14%);
+  color: var(--text-bright);
+  box-shadow:
+    0 1px 3px rgb(var(--shade) / 35%),
+    inset 0 1px 0 rgb(var(--veil) / 9%);
+}
+
+/* --- the formatting capsule ---
+
+   The note's bar (`.cv-mdbar`), brought into the page: the same instrument
+   the canvas already taught — round 26px slots, short fillets between the
+   groups, a blue dome on the block under the caret, the ⋯ opening a second
+   row *inside* the capsule. It sits in the page's top margin, centred, with
+   air on every side: an object on the page, not a strip of the window. The
+   old bar was a full-width band with a hairline under it — the third such
+   band in a row — and read as the chrome of any other markdown editor.
+
+   Same recipe as the canvas glass, one step quieter: the board is the deepest
+   surface in the app and its floaters carry a long shadow; a page inside a
+   pane is already close to the eye, so the capsule flies low (`--shadow-1`)
+   and takes its relief from the lit edge on top and the dark one underneath.
+   No blur — nothing scrolls under it, and a filter with nothing behind it
+   is pure cost. */
 .md-bar {
+  --mdbar-edge:
+    inset 0 1px 0 rgb(255 255 255 / 15%),
+    inset 0 -1px 0 rgb(0 0 0 / 22%);
   display: flex;
   flex-direction: column;
+  align-items: center;
+  align-self: center;
   gap: 4px;
-  padding: 4px 8px;
+  max-width: calc(100% - 20px);
+  margin: 1px 10px 8px;
+  padding: 5px 7px;
   flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-  background: rgb(255 255 255 / 2.5%);
+  background: rgb(var(--veil) / 5.5%);
+  border: 1px solid rgb(var(--veil) / 10%);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-1), var(--mdbar-edge);
+  animation: md-bar-in var(--dur-1) var(--ease-pop);
+}
+
+@keyframes md-bar-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md-bar {
+    animation: none;
+  }
 }
 
 .md-bar-row {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 2px;
   flex-wrap: wrap;
 }
 
-.md-bar-sep {
+.md-bar .icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+}
+
+/* Held: the blue dome the canvas puts on the tool in hand. */
+.md-bar .icon-btn.is-active {
+  background: var(--accent-grad);
+  color: var(--on-accent);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 42%),
+    0 2px 6px rgb(10 132 255 / 35%);
+}
+
+.md-bar .icon-btn:disabled {
+  opacity: 0.35;
+}
+
+/* One family per group, and the group wraps as one piece: in a narrow pane
+   the bar breaks between families, never leaving an orphan slot on a line of
+   its own. The fillet between two groups is a short thread, not an
+   edge-to-edge rule — inside a capsule a full rule would have to be clipped
+   by the curve. */
+.md-bar-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.md-bar-group + .md-bar-group::before {
+  content: "";
   width: 1px;
-  height: 16px;
-  margin: 0 4px;
-  background: var(--border);
+  height: 14px;
+  margin: 0 3px 0 4px;
+  background: rgb(var(--veil) / 10%);
   flex-shrink: 0;
 }
 
+/* The second row lives inside the capsule — the bar grows, nothing drops over
+   the text. Stretched, not measured: the top row sets the width and the chips
+   wrap inside it. */
 .md-bar-extra {
+  align-self: stretch;
   display: flex;
-  align-items: center;
-  gap: 4px;
   flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 2px;
   padding-top: 4px;
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid rgb(var(--veil) / 9%);
 }
 
+/* Named chips: these are the commands nobody carries a picture of. */
 .md-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 9px 3px 7px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: rgb(255 255 255 / 4%);
-  color: var(--text-dim);
+  gap: 6px;
+  height: 24px;
+  padding: 0 9px 0 7px;
+  border-radius: 8px;
+  color: var(--text);
   font-size: var(--fs-xs);
   cursor: pointer;
   white-space: nowrap;
+  transition:
+    background-color var(--dur-1) ease,
+    color var(--dur-1) ease;
 }
 
-.md-chip:hover {
-  background: var(--bg-hover);
-  color: var(--text);
+.md-chip > svg {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.md-chip:hover,
+.md-chip:focus-visible {
+  background: var(--accent-fill);
+  color: var(--on-accent);
+}
+
+.md-chip:hover > svg,
+.md-chip:focus-visible > svg {
+  color: inherit;
 }
 
 .md-chip.is-active {
-  border-color: var(--accent-border);
   background: var(--accent-soft);
   color: var(--text-bright);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 
 .md-chip:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: default;
+}
+
+.md-chip:disabled:hover {
+  background: none;
+  color: var(--text);
 }
 
 /* --- the rendered page --- */
@@ -929,7 +1167,7 @@
 .md-doc .md-list li.is-done > p {
   color: var(--text-dim);
   text-decoration: line-through;
-  text-decoration-color: rgb(255 255 255 / 25%);
+  text-decoration-color: rgb(var(--veil) / 25%);
 }
 
 /* Same checkbox as the note's, in the document's proportions: ticking a task
@@ -991,7 +1229,7 @@
 .md-doc code {
   padding: 0.12em 0.36em;
   border-radius: 4px;
-  background: rgb(255 255 255 / 8%);
+  background: rgb(var(--veil) / 8%);
   font-family: var(--mono);
   font-size: 0.88em;
 }
@@ -1030,7 +1268,7 @@
   margin: 0.4em 0;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  background: rgb(0 0 0 / 20%);
+  background: rgb(var(--well) / 20%);
 }
 
 /* A picture that could not be drawn says which one it was. */
@@ -1060,7 +1298,7 @@
   margin: 0 0 1em;
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  background: rgb(0 0 0 / 26%);
+  background: rgb(var(--well) / 26%);
   overflow: hidden;
 }
 
@@ -1165,7 +1403,7 @@
   margin: 0 0 1em;
   border: 1px dashed var(--border-strong);
   border-radius: var(--r-md);
-  background: rgb(0 0 0 / 18%);
+  background: rgb(var(--well) / 18%);
 }
 
 /* HTML shows as source, never rendered: this preview does not run what an
@@ -1211,7 +1449,7 @@
 }
 
 .md-table th {
-  background: rgb(255 255 255 / 4%);
+  background: rgb(var(--veil) / 4%);
   color: var(--text-bright);
   font-weight: 600;
   white-space: nowrap;
@@ -1222,7 +1460,7 @@
 }
 
 .md-table tbody tr:hover {
-  background: rgb(255 255 255 / 2.5%);
+  background: rgb(var(--veil) / 2.5%);
 }
 
 .md-noteref {
@@ -1261,7 +1499,7 @@
   overflow: auto;
   padding: 8px 6px;
   border-left: 1px solid var(--border);
-  background: rgb(0 0 0 / 14%);
+  background: rgb(var(--well) / 14%);
 }
 
 .md-outline ul {
@@ -1343,13 +1581,13 @@
 }
 
 .cm-md-quote {
-  background: rgb(255 255 255 / 3%);
+  background: rgb(var(--veil) / 3%);
   box-shadow: inset 2px 0 0 var(--border-strong);
   color: var(--text-dim);
 }
 
 .cm-md-fence {
-  background: rgb(0 0 0 / 22%);
+  background: rgb(var(--well) / 22%);
 }
 
 .cm-md-strong {
@@ -1368,8 +1606,8 @@
 
 .cm-md-code {
   border-radius: 3px;
-  background: rgb(255 255 255 / 8%);
-  color: #8fd694;
+  background: rgb(var(--veil) / 8%);
+  color: var(--syn-string, #8fd694);
 }
 
 .cm-md-highlight {
@@ -1396,7 +1634,7 @@
 }
 
 .cm-md-quotemark {
-  color: rgb(255 255 255 / 22%);
+  color: rgb(var(--veil) / 22%);
 }
 
 .cm-md-hr {
@@ -1485,7 +1723,7 @@
 }
 
 .psearch-file-head:hover {
-  background: rgb(255 255 255 / 5%);
+  background: rgb(var(--veil) / 5%);
 }
 
 .psearch-file-head > svg {
@@ -1513,7 +1751,7 @@
   flex-shrink: 0;
   padding: 0 6px;
   border-radius: 20px;
-  background: rgb(255 255 255 / 8%);
+  background: rgb(var(--veil) / 8%);
   color: var(--text-dim);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
@@ -1535,14 +1773,14 @@
 }
 
 .psearch-hit:hover {
-  background: rgb(255 255 255 / 5%);
+  background: rgb(var(--veil) / 5%);
 }
 
 .psearch-line {
   flex-shrink: 0;
   min-width: 3ch;
   text-align: right;
-  color: rgb(255 255 255 / 32%);
+  color: rgb(var(--veil) / 32%);
   font-size: var(--fs-xs);
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
@@ -1723,9 +1961,9 @@
   height: 26px;
   padding: 0 8px;
   border-radius: var(--r-md);
-  background: rgb(0 0 0 / 26%);
+  background: rgb(var(--well) / 26%);
   border: 1px solid var(--border);
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 18%);
+  box-shadow: inset 0 1px 2px rgb(var(--well) / 18%);
   color: var(--text-dim);
 }
 
@@ -1790,7 +2028,7 @@
   gap: 2px;
   padding: 2px;
   border-radius: 8px;
-  background: rgb(0 0 0 / 24%);
+  background: rgb(var(--well) / 24%);
   box-shadow: inset 0 0 0 1px var(--border-soft);
 }
 
@@ -1875,24 +2113,24 @@
   height: 24px;
   padding: 0 10px;
   border-radius: 8px;
-  background: rgb(255 255 255 / 7.5%);
-  border: 1px solid rgb(255 255 255 / 9%);
+  background: rgb(var(--veil) / 7.5%);
+  border: 1px solid rgb(var(--veil) / 9%);
   box-shadow:
-    0 1px 2px rgb(0 0 0 / 22%),
-    inset 0 1px 0 rgb(255 255 255 / 7%);
+    0 1px 2px rgb(var(--shade) / 22%),
+    inset 0 1px 0 rgb(var(--veil) / 7%);
   color: var(--text);
   font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
 .ysearch-text:hover:not(:disabled) {
-  background: rgb(255 255 255 / 11%);
-  border-color: rgb(255 255 255 / 13%);
+  background: rgb(var(--veil) / 11%);
+  border-color: rgb(var(--veil) / 13%);
   color: var(--text-bright);
 }
 
 .ysearch-text:active:not(:disabled) {
-  background: rgb(255 255 255 / 15%);
+  background: rgb(var(--veil) / 15%);
 }
 
 /* With no match there is nowhere to go and nothing to replace: the buttons

@@ -1,23 +1,23 @@
 ---
 name: Yard
-description: Agent orchestrator that looks like a premium desktop instrument — dark mini-windows and translucent materials over a deep ambient ground.
+description: Agent orchestrator that looks like a premium desktop instrument — grey mini-windows and translucent materials on a flat black ground.
 colors:
-  bg: "#131316"
-  bg-panel: "#1a1a1e"
-  bg-raised: "#202025"
-  bg-overlay: "#26262c"
-  terminal-well: "#121215"
+  bg: "#000000"
+  bg-panel: "#191919"
+  bg-raised: "#222222"
+  bg-overlay: "#2c2c2c"
+  terminal-well: "#000000"
   bg-hover: "rgb(255 255 255 / 6.5%)"
   bg-active: "rgb(255 255 255 / 11%)"
-  material-thin: "rgb(22 22 27 / 46%)"
-  material-menu: "rgb(38 38 45 / 80%)"
-  material-sheet: "rgb(30 30 36 / 82%)"
-  border-soft: "rgb(255 255 255 / 4%)"
-  border: "rgb(255 255 255 / 8%)"
-  border-strong: "rgb(255 255 255 / 16%)"
-  text: "#e2e2e6"
-  text-dim: "#9e9ea6"
-  text-bright: "#f7f7f9"
+  material-thin: "rgb(47 47 47 / 36%)"
+  material-menu: "rgb(51 51 51 / 62%)"
+  material-sheet: "rgb(45 45 45 / 68%)"
+  border-soft: "rgb(255 255 255 / 5%)"
+  border: "rgb(255 255 255 / 9%)"
+  border-strong: "rgb(255 255 255 / 18%)"
+  text: "#e2e2e2"
+  text-dim: "#a6a6a6"
+  text-bright: "#f7f7f7"
   accent: "#0a84ff"
   accent-bright: "#409cff"
   accent-text: "#7ab8ff"
@@ -105,7 +105,7 @@ components:
     rounded: "{rounded.md}"
     padding: "6px 9px"
   tooltip:
-    backgroundColor: "rgb(46 46 52 / 96%)"
+    backgroundColor: "rgb(47 47 47 / 96%)"
     textColor: "{colors.text-bright}"
     rounded: "{rounded.control}"
     padding: "4px 9px"
@@ -134,8 +134,10 @@ components:
 **Creative North Star: "Instrument windows over the ambient ground"**
 
 Yard looks like a premium desktop instrument, dark and translucent: terminal
-mini-windows floating over a deep graphite "desktop" with two cold, almost
-subliminal glows (blue and violet) behind the glass. The floating and lateral
+mini-windows floating on a flat black "desktop". The ground carried a graphite
+gradient and two cold, subliminal glows (blue and violet) behind the glass
+until 2026-08-26; on black neither could stay subliminal, and the ground gave
+up light altogether so that every bit of relief sits on the surfaces instead. The floating and lateral
 surfaces are translucent materials with blur (vibrancy); the surfaces that hold
 a live terminal are solid — xterm repaints constantly and glass would cost
 frames. Relief comes from material and light — translucent white hairlines
@@ -152,7 +154,7 @@ easings), and `prefers-reduced-motion` switches the whole theatre off.
 
 **Key Characteristics:**
 
-- Always dark (`color-scheme: dark`); ambient ground with blue/violet blooms.
+- Dark by default (`color-scheme: dark`), on a flat, achromatic **#000000** ground with content wells at the same black; an elevation ladder graded ~4.5 CIE L\* points per step, so a surface can be told from the one under it without any of them leaving the black.
 - Vibrancy (blur + saturate) only on transient or lateral surfaces; terminal panes solid.
 - System blue as the single action colour; the remaining chroma strictly semantic.
 - Hairlines of light (`inset 0 1px 0 rgb(255 255 255 / 12%)`) along the top of raised surfaces.
@@ -162,12 +164,12 @@ easings), and `prefers-reduced-motion` switches the whole theatre off.
 
 ## Colors
 
-An achromatic world of cold graphites where the system blue is the only voice
+An achromatic world of neutral greys on black, where the system blue is the only voice
 of command and the little chroma that remains is information, never decoration.
 
 ### Primary
 
-- **System blue** (`--accent`, #0a84ff): the chrome's only action colour. Primary button, sidebar selection, pane focus, full menu highlight, resize rails, HUD bar, changes badge, `::selection` (35%), focus ring (55%).
+- **System blue** (`--accent`, #0a84ff): the chrome's only action colour. Primary button, sidebar selection, pane focus, full menu highlight, resize rails, HUD bar, the open-panel toggles in the title bar, `::selection` (35%), focus ring (55%).
 - **Light blue** (`--accent-bright`, #409cff): unread dots and details that need one more step of light.
 - **Text blue** (`--accent-text`, #7ab8ff): readable blue text/icon over dark backgrounds — always paired with `--accent-dim` as a chip/pill (card roles, composer chips, restart button).
 - **Blue veils** (`--accent-dim` 20%, `--accent-soft` 18%, `--accent-border` 55%): backgrounds and outlines in the same blue for selected/active states without shouting.
@@ -185,17 +187,44 @@ The only chroma besides blue — process state and diffs, each colour with its b
 
 ### Neutral
 
-From the deepest surface to the highest (elevation is tonal as well as shadowed):
+From the deepest surface to the highest (elevation is tonal as well as shadowed).
 
-- **Ground** (`--bg`, #131316): the window's base colour; the `<body>` paints the ambient gradient on top (`linear-gradient(178deg, #1b1b21 → #121216 → #141419)`) with three radial blooms — blue 14% top-left, blue 6% bottom-left, violet `rgb(191 90 242 / 9%)` in the bottom-right corner.
-- **Terminal well** (#121215): the deepest step — background of `.xterm-host`, of the viewer body and of the diffs; matches the xterm theme's `background`.
-- **Panel** (`--bg-panel`, #1a1a1e): body of the mini-windows (panes) — solid, always. On the canvas the card uses the same paint at 92% (`rgb(26 26 30 / 92%)`, no blur): the dot grid shows faintly through the chrome, which says there is a table underneath, and the terminal body stays opaque.
-- **Raised** (`--bg-raised`, #202025): pane/card headers, banners, search strips.
-- **Overlay** (`--bg-overlay`, #26262c): canvas notes and contrast supports.
-- **Translucent materials**: `--material-thin` (36%), `--material-menu` (62%), `--material-sheet` (68%) — see Elevation & Depth.
+The ladder is graded in **CIE L\***, not in the contrast ratio the rest of this
+document uses, because a ratio is a ratio of luminances and luminance is
+crushed at the dark end: down where this whole world lives, a step the eye
+reads and a step it does not both measure about 1.2:1. Adjacent surfaces sit
+**five L\* points apart** — enough to be told apart at a glance, never enough
+to leave the dark. `lib/contrast.ts` carries the measure and the
+`dark elevation ladder` block of `src/styles.test.ts` refuses the collapse.
+
+> Re-graded three times on 2026-08-26, each pass only legible once the one
+> before it was done. The four steps were #131316 / #1a1a1e / #202025 /
+> #26262c — L\* 6 → 9.4 → 12.4 → 15.4, three points apart, over an ambient
+> whose darkest stop sat level with the terminal well. Every reading this
+> world is built on is a difference between two surfaces, and at that spacing
+> none arrived: the sidebar was the floor, the status bar was the floor,
+> `--material-thin` composited to within half a point of the ambient behind
+> it. The window read as one flat slab of near-black. **Opening** the steps to
+> five points fixed that and exposed the complaint underneath — it was not
+> black *enough* — so the ladder **dropped** in one piece to YouTube's depth,
+> keeping the openness. Which exposed the last one: with the ground that dark
+> the gradient and its blooms stopped being subliminal and became a visible
+> wash of navy across the top of the sidebar. So the ground went **flat and
+> black**, and the greys gave up the cold tilt they carried (`b ≈ r × 1.16`) —
+> a good idea over an ambient with blue in it, a residue once there is none.
+
+- **Ground** (`--bg` and `--ambient`, both #000000): the window's base colour, and one flat opaque black — no gradient, no bloom, no hue. `src/styles.test.ts` refuses a `gradient` in `--ambient` and refuses a chromatic value in any surface token, because a wash on the ground is exactly what creeps back.
+- **Terminal well** (#000000): the floor, with nothing under it — background of `.xterm-host`, of the viewer body and of the diffs. It is this app's video player, and it went to pure black when the ladder dropped: every ANSI ratio only widened, and the one that had to stay off the bottom is the palette's own `black` (#1d1d22), so a CLI drawing in it is still visible against the background. `lib/termTheme.ts` opens the xterm palette on this exact colour — a seam no CSS token can cross, since xterm paints its background on a canvas, and one `termTheme.test.ts` now holds against the sheet's own declaration instead of against a sentence in a comment.
+- **Panel** (`--bg-panel`, #191919): body of the mini-windows (panes) — solid, always. On the canvas the card uses the same paint at 92% (`rgb(26 26 26 / 92%)`, no blur): the dot grid shows faintly through the chrome, which says there is a table underneath, and the terminal body stays opaque.
+- **Raised** (`--bg-raised`, #222222): pane/card headers, banners, search strips.
+- **Overlay** (`--bg-overlay`, #2c2c2c): canvas notes and contrast supports.
+- **Translucent materials**: `--material-thin` (36%), `--material-menu` (62%), `--material-sheet` (68%) — see Elevation & Depth. Their paint is lighter than the ground they sit on, which is the point: glass mixed from the same value as its backdrop is a no-op with a GPU cost.
 - **Interaction veils** (`--bg-hover` white 6.5%, `--bg-active` white 11%): the universal hover/pressed of the neutral chrome.
-- **Hairlines** (`--border-soft` 4%, `--border` 8%, `--border-strong` 16%): borders are always translucent white, as in a dark glass theme — never opaque grey.
-- **Text** (`--text` #e2e2e6, `--text-dim` #9e9ea6, `--text-bright` #f7f7f9): all ≥ 4.5:1 over `--bg` and `--bg-raised`. `--text-bright` marks what is active/focused; `--text-dim` is the resting default for icons and metadata.
+- **Hairlines** (`--border-soft` 5%, `--border` 9%, `--border-strong` 18%): borders are always translucent white, as in a dark glass theme — never opaque grey. One point each above what they were: a white veil buys less separation as the surface under it climbs.
+- **The three channels** (`--veil` white, `--well` black, `--shade` black): everything neutral in the app is one of three gestures — a surface *lifted* off its ground, a surface *sunk* into it, or a shadow a surface *throws*. Each is written as `rgb(var(--veil) / 9%)`, channel in the token and alpha at the call site, so the appearance re-values three lines instead of six hundred declarations. A veil on a **chromatic** fill (the inner light of the blue button, the glow of a status dot, a note in the colour its author chose) is not neutral and stays literal white in both appearances.
+- **Floating surfaces** (`--material-panel` the bench 60%, `--material-doc` the editor and diff viewer 94%, `--material-notes` the notebook 86%, `--material-tip` balloons 96%, `--material-sticky` a header content slides under 96%, `--slab` the body of a board node at 92% and of the empty pane at 55%): each of these was a literal in one component sheet before it was a token.
+- **Content wells** (`--well-code` and `--well-stage`, both #000000): where the app stops being chrome and shows code, a terminal or a picture. In the dark they *are* the ground — black has no step below it — so the sink that used to separate a well from its floor is gone and the frame pays for it instead: the pane draws a border and a hairline around whatever holds one. They stay two tokens because on paper they differ (#fafafc and #eef0f5).
+- **Text** (`--text` #e2e2e2, `--text-dim` #a6a6a6, `--text-bright` #f7f7f7): all ≥ 4.5:1 over every surface of the ladder — and the one that decides it is the highest, the tooltip — at L\* 24 when the ladder was opened, where the dim ink measured 3.97:1 and had to move up with it, and at L\* 19 now that the ladder has dropped, where it reads 5.58:1. `--text-bright` marks what is active/focused; `--text-dim` is the resting default for icons and metadata.
 
 ### Light theme
 
@@ -214,12 +243,21 @@ setting.
 - **Ink** (`--text` #1d1d22, `--text-dim` #5c5d66, `--text-bright` #0a0a0c):
   all ≥ 4.5:1 over every paper; `--accent-text` deepens to #0b5ec2 for the
   same reason.
-- **Veils and lines are black on paper** (`--bg-hover` black 5%, `--border`
-  black 9%): a white veil vanishes on a light surface, so every white relief
-  the dark sheet paints by hand has a black twin in the light sheet, same
-  selector. Shadows get shorter and lighter (daylight, not a spotlight).
-- **Semantic inks one step deeper** (`--green` #1a7f37, `--red` #c8352b at
-  4.5:1; `--yellow` #b07a00 at the 3:1 floor of a state color).
+- **The three channels flip, and the app follows** — `--veil` white → black
+  (relief on paper is ink; white would vanish), `--well` black → slate
+  `120 122 134` (the same alpha that dents a #202025 surface would punch a
+  hole in a #f7f8fb one), `--shade` black → `46 50 62` (a shadow keeps its
+  weight and loses its blackness). `--bg-hover` and `--border` are black on
+  paper for the same reason. This is what makes the light appearance a
+  re-valuation and not a rewrite: the first version of the sheet tried to
+  patch the literals selector by selector, could only reach `styles.css`, and
+  shipped with the bench dark under dark ink, every tooltip in the app black
+  on black and some three hundred hover states painted white on paper.
+- **Semantic inks deep enough for their own tint** (`--green` #146c2e,
+  `--red` #b3261e, `--yellow` #7f5500): the floor a state colour has to clear
+  is not the panel but the chip it sits in — every state in this app paints
+  `--x-bg` behind `--x`. `--accent-bright` deepens to #0a4fa8: on the dark
+  side "brighter" means lighter, on paper it means deeper.
 - **The terminal well** has its own palette (`lib/termTheme.ts`,
   `LIGHT_TERM`: paper #fafafc, body text 7:1, every ANSI hue ≥ 3:1); the
   editor's `yardHighlight` reads `--syn-*` tokens with the dark values as
@@ -227,8 +265,19 @@ setting.
 - A color-scheme extension still wins over both palettes: it is the user's
   explicit choice.
 
-`src/theme-light.test.ts` locks the boot order and the contrast floors
-against the real CSS; `lib/termTheme.test.ts` does the same for the well.
+The ground is painted **before any sheet arrives**, by an inline `<style>` in
+`index.html` that keys on `prefers-color-scheme` and on `data-theme`, plus a
+three-line script that restores the last resolved appearance from
+`localStorage` (`applyTheme` writes it). It used to be
+`<body style="background: #131316">`, which never stopped winning: an inline
+declaration outranks every author rule, so the light appearance composited
+every one of its translucent materials over a black floor.
+
+`src/theme-light.test.ts` locks the boot order, the contrast floors, the fact
+that no sheet writes a neutral veil as a literal any more, and — the mirror of
+the sweeper in `styles.test.ts` — that no rule paints text under 4.5:1 over
+its own background once the light table is in hand. `lib/termTheme.test.ts`
+does the same for the well.
 
 ### Named Rules
 
@@ -278,18 +327,20 @@ above 700 do not exist in the world.
 
 ## Layout
 
-The chassis is a column: title bar (40px, `--titlebar-h`) over a flex
+The chassis is a column: title bar (44px, `--titlebar-h`) over a flex
 `app-body` with three regions — sidebar (vibrancy, resizable), central
-workspace and the files/git panel on the right (vibrancy, resizable). The
-workspace has 10px of breathing room, collapsing on the side where an open
-lateral already provides the divider (`data-sidebar="open"` zeroes
-`padding-left`).
+workspace and the files/git panel on the right (vibrancy, resizable) — and,
+under it, the status bar (28px, `--statusbar-h`; hideable from Settings, and
+`.app[data-statusbar]` tells whoever is anchored to the bottom edge how much
+to climb). The workspace has 10px of breathing room, collapsing on the side
+where an open lateral already provides the divider (`data-sidebar="open"`
+zeroes `padding-left`).
 
 - **Dividers**: invisible 7px strips (`.resizer`, `.resize-handle`); the blue rail (2px radius) only lights up on hover, drag or keyboard focus, at 60% opacity.
 - **Instrument density**: icon-buttons 25px (20px inside rows), tree rows ≥ 27px, pane header 33px, canvas card header 34px, portal bar 28px, window controls 46px (the Windows metric). On the canvas the slots are round: 30px in the tool palette (the most targeted control on the board), 26px in the card header, in the camera and in the flyout.
 - **Pane grid**: each pane is a complete mini-window; 7px gaps between panes.
-- **Infinite canvas**: an origin point (`.cv-world`) translated and scaled by `transform` (`screen = (world − viewport.xy) × zoom`); a dot grid (`radial-gradient` white 5%, 1px) as the table, with an ambient glow on top (`.cv-glow`, a white 3.5% ellipse coming out of the top) that lights the table from above; hairline frame with radius 20 and an inner thread of light at 6%.
-- **Fixed anchors**: tool palette in a vertical capsule on the left (centred), **camera** in the bottom-right corner (minimap and zoom in a single glass — see Canvas), the Floors control next to it (offset 204px on the canvas, 230px when the minimap is open, 16px on the grid), canvas status at top-centre, composer in the bottom-right corner of the window (fixed, 22px), toast at bottom-centre.
+- **Infinite canvas**: an origin point (`.cv-world`) translated and scaled by `transform` (`screen = (world − viewport.xy) × zoom`); a dot grid (`radial-gradient` white 5%, 1px) as the table — the board used to carry an ambient glow on top of it (`.cv-glow`, a white 3.5% ellipse out of the top) and gave it up with the shell's, for the same reason: it was light painted on the ground; hairline frame with radius 20 and an inner thread of light at 6%.
+- **Fixed anchors**: tool palette in a vertical capsule on the left (centred), **camera** in the bottom-right corner (minimap and zoom in a single glass — see Canvas), the Fronts control next to it (offset 204px on the canvas, 230px when the minimap is open, 16px on the grid), canvas status at top-centre, composer in the bottom-right corner of the window (fixed, 22px), toast at bottom-centre (18px above the status bar when it shows — `--statusbar-gap`).
 - **Sticky for orientation**: section titles of the git review and diff hunk headers stick to the top while scrolling, with a solid background so the content underneath doesn't bleed through.
 
 There are no breakpoints: it is a desktop window (Tauri, `decorations: false`);
@@ -307,9 +358,9 @@ deep frosted glass, not glow.
 Each material is a pair of translucent colour + `backdrop-filter`, always
 accompanied by a white hairline border (10–12%) and the top hairline:
 
-- **Thin** (`--material-thin` rgb(20 20 27 / 36%) + `--blur-thin` blur(30px) saturate(180%)): title bar, sidebar, changes panel — the permanent lateral surfaces over the static ambient ground.
+- **Thin** (`--material-thin` rgb(47 47 47 / 36%) + `--blur-thin` blur(30px) saturate(180%)): title bar, sidebar, changes panel — the permanent lateral surfaces over the static ambient ground.
 - **Floating glass** (rgb(22 22 27 / 60%) + blur(72px) saturate(185%)): the bench. Denser and blurrier than thin because the surface **floats** — it has 10px of clearance on all four sides and the ground shows around it, so the edge needs weight of its own (10% hairline + `inset 0 1px 0` 14% + a two-layer shadow) instead of leaning against the window.
-- **Menu** (`--material-menu` rgb(38 38 47 / 62%) + `--blur-menu` blur(40px) saturate(180%)): menus, popovers, toasts, diff peek, status capsule, Floors button.
+- **Menu** (`--material-menu` rgb(38 38 47 / 62%) + `--blur-menu` blur(40px) saturate(180%)): menus, popovers, toasts, diff peek, status capsule, Fronts button.
 - **Canvas glass** (`--cv-glass` rgb(30 30 40 / 44%) + `--cv-glass-blur` blur(72px) saturate(190%), tokens declared on `.cv`): everything that floats over the board — tool palette, flyout, camera, selection bar, markup bar, flow HUD. Less paint and more blur than the menu because the board is the deepest surface in the app: what hovers over it hovers **higher** than a menu over the shell. It comes with a 14% border, `--cv-float` (`0 20px 48px` 44% + `0 2px 8px` 30%) and a two-faced `--cv-glass-edge` (white 22% on top, black 18% at the base) — glass only reads as glass with a light edge on top *and* a dark one underneath.
 - **Sheet** (`--material-sheet` rgb(28 28 36 / 68%) + `--blur-sheet` blur(64px) saturate(180%)): modals and the prompt composer. The diff viewer uses near-opaque rgb(28 28 34 / 94%) — it has code inside.
 - **Modal backdrop**: rgb(0 0 0 / 45%) + blur(6px).
@@ -318,7 +369,7 @@ accompanied by a white hairline border (10–12%) and the top hairline:
 
 Always vertical offset + soft blur, in layers; never a symmetric halo as elevation:
 
-- **`--shadow-1`** (`0 1px 2px rgb(0 0 0 / 28%), 0 3px 10px rgb(0 0 0 / 22%)`): low-flying controls — status capsule, Floors button.
+- **`--shadow-1`** (`0 1px 2px rgb(0 0 0 / 28%), 0 3px 10px rgb(0 0 0 / 22%)`): low-flying controls — status capsule, Fronts button.
 - **`--shadow-2`** (`0 12px 32px rgb(0 0 0 / 42%), 0 2px 8px rgb(0 0 0 / 30%)`): menus, popovers, toasts.
 - **Canvas elevation** (`.cv` tokens): `--cv-lift` (`0 24px 64px` 44% + `0 6px 18px` 30%) on cards, flow cards and notes; `--cv-lift-hi` (`0 32px 80px` 48% + `0 8px 24px` 32%) on the focused card; `--cv-float` on the floating chrome. All one step above the rest of the app — on the board the shadow is what separates the object from the table.
 - **`--shadow-3`** (`0 32px 80px rgb(0 0 0 / 55%), 0 8px 24px rgb(0 0 0 / 35%)`): modals, viewer, composer — the top of the stack.
@@ -347,7 +398,7 @@ Shape language: generous, continuous corners, capsules for everything that is
 a count or a status, circles for everything that is a state light.
 
 - **Radius scale**: 6px (`--r-sm`, micro-targets), **8px (literal, the radius of controls inside the chrome** — menu items, icon-buttons, tooltips — used in a dozen and a half places), 9px (`--r-md`, buttons, inputs, tree rows), 10px (pane tabs), 14px (`--r-lg`, panels, menus, canvas notes, palette flyout), 20px (`--r-xl`, modals, viewer, composer, canvas cards and frame), 16px (toast), 18px (the bench's grouped list card; and the canvas camera — 12px of the map plus 6px of clearance), 24px (floating bench panel). The segmented control is a capsule: track and segments at 999px.
-- **Capsules** (border-radius 20px, or 999px when the height demands it): count pills, review chips, branch/role badges, the portal's URL field, status capsule, Floors counters and — inside the bench — every control: tab track and segments, scope filter, new-task field, row buttons and the due-date/scope badges.
+- **Capsules** (border-radius 20px, or 999px when the height demands it): count pills, review chips, branch/role badges, the portal's URL field, status capsule, Fronts counters and — inside the bench — every control: tab track and segments, scope filter, new-task field, row buttons and the due-date/scope badges.
 - **Circles**: state dots, colour swatches, unread/done badges, routine.
 - **No radius**: only the window controls, which touch the corner and follow Windows.
 - **Brand squircle** (border-radius 27%): the "Y" in a rounded square with a blue gradient (165deg, #55a9ff → #0a72e8 → #085ec4) and inner light coming from above — app icon at 18px (bar), 44px (welcome) and 48px (boot, breathing).
@@ -360,8 +411,27 @@ a count or a status, circles for everything that is a state light.
 
 Thin material with blur over the ground; black 35% bottom border + hairline.
 Breadcrumb on the left: project (with the project's icon and colour) › group,
-with a capsule branch badge when the group is an isolated floor. In the centre,
+with a capsule branch badge when the group is an isolated front. In the centre,
 the segmented layout control; on the right, the actions.
+
+The right cluster reads in two families, split by a hairline
+(`.titlebar-sep`): first the three **doors** — Arquivos e alterações
+(`FileDiff`), Bancada (`PanelRight`, the outermost right drawer, pairing with
+the sidebar's `PanelLeft` at the far left) and Anotações — then the two
+**windows** (Extensões, Configurações). Doors are `.dock-toggle`s and show
+**open** as the sidebar's blue pill (blue 26% + 18% inset ring + bright glyph,
+driven by `aria-pressed`): the `.is-active` white veil sits 4.5% away from
+hover and never read as a state. A door carries no count: 58 changed files is
+the state of the tree, not a queue for the user, and a number pill in the
+corner of the eye reads as unread mail — the count lives in the balloon
+("Mostrar arquivos e alterações — 58 alterados"), in the accessible name, in
+the status bar's branch chip and inside the panel. The one mark a door wears
+is the 6px attention dot (`.dock-toggle-dot`, the footer's yellow) on the
+bench, only while a task is due today or overdue. Balloons name the action by
+state — *Mostrar…* closed, *Esconder…* open — so a lit button teaches both what
+it opens and that it is open; the accessible name stays the panel's name, the
+pressed state is the button's own. The rule is `TitleBar/dockToggle.ts`,
+tested.
 
 Window controls in the Windows pattern, glued to the top-right corner
 (`TitleBar/index.tsx`): minimise, maximise/restore and close, each 46px wide by
@@ -372,6 +442,20 @@ system red (#c42b1c, #b0271a when pressed) with a white glyph. It is the only
 place in the app that obeys the OS instead of the style: obeying halfway would
 read as a bug. Focus uses an inner ring (`outline-offset: -3px`) because the
 button touches the window edge.
+
+### Status bar
+
+The footer (`StatusBar/index.tsx`, 28px): the title bar's thin material
+mirrored — black 35% border on *top* (a contact shadow, because this bar sits
+under content) with the hairline just inside it. Everything in it is caption
+(11px) and tabular. Readouts and actions share one shape, the 22px chip with
+the micro-target radius (6px): on the left, agents by state (a yellow pulsing
+dot for *waiting on you* — the chip takes the yellow veil, the one time the
+footer asks for attention — green for up, a hollow green ring for finished),
+the project's branch with `+/−` in mono and the diff's colours, and any flow
+still walking, in the action blue; on the right, the RAM meter (the sidebar
+HUD's recipe at 44×3px, same three steps) and three 24×22 icon-buttons —
+Busca, composer, shortcut map. Tooltips open upward (`data-tip-side="top"`).
 
 ### In-world tooltip (`[data-tip]`)
 
@@ -579,7 +663,41 @@ hairline, `modal-in` entry (fade + translateY(10px) + scale 0.97, 200ms,
 ease-pop) over a darkened backdrop with blur. Footer with black 14% background.
 Diff viewer: the same window in near-opaque (94%) with a lateral file rail
 (selection as a blue pill). Composer: a sheet anchored in the bottom-right
-corner, mono body, mentions menu that **rises**.
+corner, mono body, mentions menu that **rises**. Settings: the same sheet at
+up to 960×680, in two panes — the category menu on the left over black 14%
+(the footer's paint, "another region of the same sheet"), the 620px reading
+column on the right; below 720px of sheet width the menu collapses to icons
+with balloons.
+
+### File editor (document header & formatting capsule)
+
+A file is a tab in the pane's bar, and under that bar it used to wear two more
+strips — raw path on the left with nine icons on the right, then a full-width
+band of formatting icons — three hairlined bars in a row, the anatomy of every
+markdown editor there is (and the category's "flat grey chrome"). Since
+2026-08-26 the body opens with the **document header**: no fill, no rule, the
+page's own top margin. The path is set like a title — folder chain in
+`--text-dim`, file name in `--text` at 500, both mono — and it is a **pop-up
+button** (the same dimmed caret as `components/Select`): pressing it drops the
+file's menu (the tab's own entries — save, reload, copy path, show in folder,
+close… — plus what this view adds: "Quebra de linha" as a checked item, or
+"Abrir no aplicativo padrão" on a picture). Truncation cuts the *folder's
+start*, never the name (`splitOsPath` + an LTR isolate inside an RTL box).
+On the right only how to *look* at the text: the four markdown modes as the
+app's segmented control at icon scale (recessed capsule track, raised active
+segment), the outline toggle, search. **Salvar exists only while there is a
+draft** (`chrome.ts`, tested) — the button *is* the state.
+
+The **formatting capsule** (`.md-bar`) is the note's `.cv-mdbar` brought into
+the page: centred in the top margin with air on every side, radius 20, round
+26px slots with 14px icons, a blue dome on the block under the caret, short
+fillets between families, the ⋯ opening a second row of named chips *inside*
+the capsule. One step quieter than the canvas glass — white 5.5% paint, 10%
+border, lit top edge (15%) and dark bottom edge (22%), `--shadow-1` — because
+a page inside a pane is already close to the eye; no blur, since nothing
+scrolls under it. Each family is one flex group: in a narrow pane the bar
+breaks *between* families, never leaving an orphan slot on a line of its own.
+It hides in *Ler*; read-only files keep it, greyed.
 
 ### Ao Vivo (Live — agent mission control)
 
@@ -682,7 +800,7 @@ of the chrome — app background, action blue and tokens stay intact.
 - **Do** compose elevation as `box-shadow: var(--shadow-N), var(--hairline)` — soft offset shadow + thread of light on top.
 - **Do** use `tabular-nums` on any number that changes on its own.
 - **Do** keep transitions on hot paths restricted to colour/border/opacity/shadow, at 130/200ms with `--ease`/`--ease-pop`.
-- **Do** keep the focus ring visible (`outline: 3px solid rgb(10 132 255 / 55%)`) on everything clickable, and states visible without hover (focus, process, lock, active floor).
+- **Do** keep the focus ring visible (`outline: 3px solid rgb(10 132 255 / 55%)`) on everything clickable, and states visible without hover (focus, process, lock, active front).
 - **Do** bundle every resource (fonts via @fontsource) — no network at runtime; chrome text ≥ 4.5:1.
 - **Do** mark the draggable areas of the title bar with `data-tauri-drag-region` (undecorated window).
 

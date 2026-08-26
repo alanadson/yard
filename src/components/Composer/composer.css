@@ -16,7 +16,7 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgb(0 0 0 / 45%);
+  background: rgb(var(--shade) / 45%);
   backdrop-filter: blur(6px);
   animation: fade-in 140ms ease-out;
 }
@@ -28,7 +28,7 @@
   flex-direction: column;
   background: var(--material-sheet);
   backdrop-filter: var(--blur-sheet);
-  border: 1px solid rgb(255 255 255 / 12%);
+  border: 1px solid rgb(var(--veil) / 12%);
   border-radius: var(--r-xl);
   box-shadow: var(--shadow-3), var(--hairline);
   animation: modal-in var(--dur-2) var(--ease-pop);
@@ -62,7 +62,7 @@
   max-width: 210px;
   padding: 3px 8px;
   font-size: var(--fs-sm);
-  background: rgb(255 255 255 / 5%);
+  background: rgb(var(--veil) / 5%);
   box-shadow: none;
 }
 
@@ -138,7 +138,7 @@
   overflow-y: auto;
   background: var(--material-menu);
   backdrop-filter: var(--blur-menu);
-  border: 1px solid rgb(255 255 255 / 11%);
+  border: 1px solid rgb(var(--veil) / 11%);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-2), var(--hairline);
 }

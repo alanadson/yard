@@ -7,15 +7,26 @@
 
    What stays: the system blue as the only action color (`--accent`,
    `--accent-fill`, the gradients), the semantic hues' meaning, the radii, the
-   materials' blur. What changes: the paper, the ink, the veils (white veils
-   vanish on paper — every `rgb(255 255 255 / n%)` relief in the dark sheet
-   has a `rgb(0 0 0 / n%)` twin below), and the shadows, which get shorter and
-   lighter because a light room has softer light.
+   materials' blur. What changes: the paper, the ink, the semantic inks (one
+   step deeper, so a chip reads over its own tint), and the three channels the
+   whole app paints its neutrals with — `--veil`, `--well`, `--shade`.
+
+   Those three are the reason this sheet is short. The first version of it was
+   a list of per-selector patches, and it could only ever cover `styles.css`:
+   the app has twenty sheets and some six hundred colour declarations, so the
+   bench stayed dark under dark ink, every tooltip in the app went black on
+   black, and three hundred hover states painted white on paper. A patch list
+   cannot win that race. The channels can, because they are read at the call
+   site — see the long note in the `:root` of `styles.css`.
+
+   What is left below is what a patch list is actually for: the handful of
+   rules whose light version is a different *decision*, not a different value.
 
    Loaded on boot right after `styles.css` (`App.tsx`; `theme-light.test.ts`
-   locks the order and the contrast floors). Rules for lazy sheets (the
-   editor, the diffs, the canvas) live here too: the attribute selector wins
-   on specificity, so it does not matter which sheet arrives first. */
+   locks the order, the contrast floors, and the fact that no sheet writes a
+   neutral veil as a literal any more). Rules for lazy sheets (the editor, the
+   diffs, the canvas) live here too: the attribute selector wins on
+   specificity, so it does not matter which sheet arrives first. */
 
 :root[data-theme="light"] {
   --ambient:
@@ -32,11 +43,38 @@
   --bg-hover: rgb(0 0 0 / 5%);
   --bg-active: rgb(0 0 0 / 9%);
 
+  /* The two channels every neutral veil in the app paints with (see the long
+     note in `styles.css`). This pair is what makes the light appearance a
+     re-valuation instead of a rewrite: relief becomes ink, because white on
+     paper is nothing; and a recess becomes slate rather than soot, because
+     the same alpha that dents a #202025 surface would punch a hole in a
+     #f7f8fb one — 22% black over paper is #c1c2c6, a bruise. The slate lands
+     it at #d6d7db, which is a well. */
+  --veil: 0 0 0;
+  --well: 120 122 134;
+  /* The shadow keeps almost all of its weight — it is what tells a modal from
+     the page under it — but loses the last of its blackness, which on paper
+     reads as dirt rather than depth. */
+  --shade: 46 50 62;
+
   /* translucent materials: more paint than the dark ones — a light room
      needs opacity to keep text readable over whatever floats underneath */
   --material-thin: rgb(246 247 250 / 62%);
   --material-menu: rgb(251 251 253 / 80%);
   --material-sheet: rgb(247 248 251 / 84%);
+
+  /* The big modules' surfaces. On paper they are near-white and *more*
+     opaque than their dark twins: a dark room forgives a transparent panel,
+     a light one turns whatever is behind it into noise under the text. */
+  --material-panel: rgb(250 250 253 / 82%);
+  --material-doc: rgb(252 252 254 / 96%);
+  --material-notes: rgb(251 251 253 / 92%);
+  --material-tip: rgb(252 252 254 / 97%);
+  --material-sticky: rgb(250 250 253 / 96%);
+  --slab: 250 250 253;
+
+  --well-code: #fafafc;
+  --well-stage: #eef0f5;
 
   /* lines: translucent black hairlines on paper */
   --border-soft: rgb(0 0 0 / 5%);
@@ -52,22 +90,29 @@
   --text-dim: #5c5d66;
   --text-bright: #0a0a0c;
 
-  /* the blue is the same; only its *text* and veils change, because blue
-     text over paper needs the deeper step to reach 4.5:1 */
-  --accent-bright: #2b8cff;
+  /* The blue is the same; only its *text* and veils change, because blue text
+     over paper needs the deeper step to reach 4.5:1. `--accent-bright` is the
+     emphatic one — on the dark side that means lighter, here it means deeper:
+     the light version was #2b8cff, which measured 2.69:1 on the blue tint it
+     is used over (the "served" button's hover, the selected minimap box). */
+  --accent-bright: #0a4fa8;
   --accent-text: #0b5ec2;
   --accent-dim: rgb(10 132 255 / 13%);
   --accent-border: rgb(10 132 255 / 55%);
   --accent-soft: rgb(10 132 255 / 11%);
 
-  /* semantic inks, one step deeper for paper: green and red read at 4.5:1,
-     yellow — the hard one — at 3:1, the floor for a state color */
-  --green: #1a7f37;
-  --green-bg: rgb(26 127 55 / 14%);
-  --yellow: #b07a00;
-  --yellow-bg: rgb(176 122 0 / 16%);
-  --red: #c8352b;
-  --red-bg: rgb(200 53 43 / 12%);
+  /* Semantic inks, deep enough for paper. The floor they have to clear is not
+     the panel — it is *their own tint*: every state in this app is a chip that
+     paints `--x-bg` behind `--x` (a badge in the diff, a stage on the board, a
+     banner in Controle). The first light values cleared the panel and failed
+     the chip: green measured 3.97:1 on `--green-bg`, red 4.14, yellow 2.94.
+     One step deeper each, and the tints one point thinner to meet them. */
+  --green: #146c2e;
+  --green-bg: rgb(20 108 46 / 14%);
+  --yellow: #7f5500;
+  --yellow-bg: rgb(127 85 0 / 14%);
+  --red: #b3261e;
+  --red-bg: rgb(179 38 30 / 12%);
 
   /* elevation: shorter and lighter — soft daylight, not a spotlight */
   --shadow-1:
@@ -91,7 +136,9 @@
   /* syntax on paper: the same ten roles as `yardHighlight`, deeper */
   --syn-comment: #6a737d;
   --syn-keyword: #8a3fc0;
-  --syn-string: #1a7f37;
+  /* The same green as `--green`: the markdown editor paints inline code with
+     this role over a grey chip, where the lighter step measured 3.99:1. */
+  --syn-string: #146c2e;
   --syn-number: #a15c00;
   --syn-function: #0a5fc4;
   --syn-definition: #1d1d22;
@@ -165,15 +212,6 @@
 :root[data-theme="light"] [data-tip]::after,
 :root[data-theme="light"] .pane-tabtip {
   box-shadow: 0 6px 18px rgb(0 0 0 / 14%), var(--hairline);
-}
-
-:root[data-theme="light"] .crumb-branch {
-  background: rgb(0 0 0 / 4%);
-}
-
-:root[data-theme="light"] .usage-meter,
-:root[data-theme="light"] .hud-bar {
-  background: rgb(0 0 0 / 9%);
 }
 
 :root[data-theme="light"] .usage-plan,
@@ -269,11 +307,6 @@
   background: rgb(0 0 0 / 9%);
 }
 
-/* The terminal well — matches `LIGHT_TERM.background` in lib/termTheme.ts. */
-:root[data-theme="light"] .xterm-host {
-  background: #fafafc;
-}
-
 :root[data-theme="light"] .cv-portal-body {
   background: #ffffff;
 }
@@ -305,24 +338,11 @@
 
 /* --- lazy sheets: the wells and the few inks they hard-code ---------------- */
 
-/* Diffs and viewers (`ChangesPanel/changes.css`, `BenchPanel/scm.css`). */
-:root[data-theme="light"] .diff,
-:root[data-theme="light"] .viewer-body,
-:root[data-theme="light"] .scm-diff > pre,
-:root[data-theme="light"] .scm-hunk {
-  background: #fafafc;
-}
-
 :root[data-theme="light"] .review-section-title {
   background: #f2f3f7;
 }
 
 :root[data-theme="light"] .dline--hunk {
-  background: #eef0f5;
-}
-
-/* The media stage of the viewer (`CodeEditor/editor.css`). */
-:root[data-theme="light"] .media-stage {
   background: #eef0f5;
 }
 
@@ -389,6 +409,19 @@
   color: #0a4fa8;
 }
 
+/* The scope chip (bench → Tarefas): on the dark side a blue veil that
+   thickens under the pointer, with white ink at the end of the gesture. On
+   paper a blue at 50% is a pastel — white over it measures 1.96:1 — so the
+   hover lands on the fill the rest of the app already uses for blue that has
+   to carry white, and the resting state thins out to meet `--accent-text`. */
+:root[data-theme="light"] .task-scope {
+  background: var(--accent-soft);
+}
+
+:root[data-theme="light"] .task-scope:hover {
+  background: var(--accent-fill);
+}
+
 /* --- the canvas: its own materials, on paper --------------------------------
    `CanvasView/canvas.css` declares the board's elevation tokens in `.cv`;
    the light board keeps the same *steps* with daylight values. */
@@ -409,6 +442,18 @@
     0 32px 80px rgb(0 0 0 / 18%),
     0 8px 24px rgb(0 0 0 / 10%);
   --cv-edge: inset 0 1px 0 rgb(255 255 255 / 80%);
+  /* A wire has to be the darkest thing on the board, not the brightest; and
+     the veil that hides a far-away terminal fades it into paper, not into
+     soot — the HUD printed on top of it is dark ink now. */
+  --cv-wire: #5a5e6b;
+  --cv-scrim: 250 250 253;
+}
+
+/* The floors button lifts on hover: on the dark side by growing brighter than
+   its own menu material, here by growing darker than it. */
+:root[data-theme="light"] .floors-btn:hover,
+:root[data-theme="light"] .floors-btn.is-active {
+  background: rgb(226 228 236 / 92%);
 }
 
 :root[data-theme="light"] .cv-card-head {

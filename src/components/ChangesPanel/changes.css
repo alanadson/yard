@@ -11,7 +11,7 @@
   min-width: 260px; /* CHANGES_MIN */
   background: var(--material-thin);
   backdrop-filter: var(--blur-thin);
-  border-left: 1px solid rgb(0 0 0 / 32%);
+  border-left: 1px solid rgb(var(--well) / 32%);
 }
 
 .changes-header {
@@ -69,11 +69,11 @@
 }
 
 .changes-tabs button.is-active {
-  background: rgb(255 255 255 / 12%);
+  background: rgb(var(--veil) / 12%);
   color: var(--text-bright);
   box-shadow:
-    0 1px 3px rgb(0 0 0 / 30%),
-    inset 0 1px 0 rgb(255 255 255 / 8%);
+    0 1px 3px rgb(var(--shade) / 30%),
+    inset 0 1px 0 rgb(var(--veil) / 8%);
 }
 
 .changes-count {
@@ -82,7 +82,7 @@
   padding: 0 5px;
   border-radius: 20px;
   color: var(--text-dim);
-  background: rgb(255 255 255 / 7%);
+  background: rgb(var(--veil) / 7%);
   border: 1px solid var(--border);
 }
 
@@ -136,7 +136,7 @@
   padding: 6px 9px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: rgb(255 255 255 / 3.5%);
+  background: rgb(var(--veil) / 3.5%);
   color: var(--text-dim);
   font-size: var(--fs-xs);
   line-height: 1.5;
@@ -278,7 +278,7 @@
   padding: 2px 9px;
   border: 1px solid var(--border);
   border-radius: 20px;
-  background: rgb(255 255 255 / 4%);
+  background: rgb(var(--veil) / 4%);
   color: var(--text-dim);
   font-size: var(--fs-xs);
 }
@@ -315,7 +315,7 @@
   gap: 6px;
   margin: 0 0 4px;
   padding: 8px 6px 4px;
-  background: #1c1c21;
+  background: var(--material-sticky);
   font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
@@ -411,7 +411,7 @@ button.file-row:hover {
   margin: 4px 4px 8px 12px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  background: #121215;
+  background: var(--well-code);
   overflow: hidden;
 }
 
@@ -442,7 +442,7 @@ button.file-row:hover {
 
 .diff-hunk {
   color: var(--text-dim);
-  background: rgb(255 255 255 / 4%);
+  background: rgb(var(--veil) / 4%);
 }
 
 .diff-meta {
@@ -471,7 +471,7 @@ button.file-row:hover {
   z-index: 120;
   display: grid;
   place-items: center;
-  background: rgb(0 0 0 / 45%);
+  background: rgb(var(--shade) / 45%);
   backdrop-filter: blur(6px);
   animation: fade-in 140ms ease-out;
 }
@@ -484,9 +484,9 @@ button.file-row:hover {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: rgb(28 28 34 / 94%);
+  background: var(--material-doc);
   backdrop-filter: var(--blur-sheet);
-  border: 1px solid rgb(255 255 255 / 12%);
+  border: 1px solid rgb(var(--veil) / 12%);
   border-radius: var(--r-xl);
   box-shadow: var(--shadow-3), var(--hairline);
   animation: modal-in var(--dur-2) var(--ease-pop);
@@ -549,10 +549,10 @@ button.file-row:hover {
   display: flex;
   gap: 2px;
   padding: 2px;
-  background: rgb(0 0 0 / 26%);
-  border: 1px solid rgb(255 255 255 / 5%);
+  background: rgb(var(--well) / 26%);
+  border: 1px solid rgb(var(--veil) / 5%);
   border-radius: 999px;
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 20%);
+  box-shadow: inset 0 1px 2px rgb(var(--well) / 20%);
 }
 
 .viewer-seg button {
@@ -567,18 +567,18 @@ button.file-row:hover {
 }
 
 .viewer-seg button.is-active {
-  background: rgb(255 255 255 / 14%);
+  background: rgb(var(--veil) / 14%);
   color: var(--text-bright);
   box-shadow:
-    0 1px 3px rgb(0 0 0 / 35%),
-    inset 0 1px 0 rgb(255 255 255 / 9%);
+    0 1px 3px rgb(var(--shade) / 35%),
+    inset 0 1px 0 rgb(var(--veil) / 9%);
 }
 
 .viewer-toggle {
   padding: 4px 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  background: rgb(255 255 255 / 5%);
+  background: rgb(var(--veil) / 5%);
   font-size: var(--fs-xs);
   color: var(--text-dim);
 }
@@ -617,7 +617,7 @@ button.file-row:hover {
   flex-shrink: 0;
   overflow-y: auto;
   padding: 8px 6px;
-  background: rgb(0 0 0 / 18%);
+  background: rgb(var(--well) / 18%);
   border-right: 1px solid var(--border);
 }
 
@@ -662,7 +662,7 @@ button.file-row:hover {
   flex: 1;
   min-width: 0;
   overflow: auto;
-  background: #121215;
+  background: var(--well-code);
 }
 
 .viewer-note {
@@ -682,7 +682,7 @@ button.file-row:hover {
   gap: 10px;
   padding: 6px 14px;
   border-top: 1px solid var(--border);
-  background: rgb(0 0 0 / 14%);
+  background: rgb(var(--well) / 14%);
   color: var(--text-dim);
   font-size: var(--fs-xs);
   flex-shrink: 0;
@@ -771,7 +771,7 @@ button.file-row:hover {
   top: 0;
   z-index: 2;
   padding: 2px 0;
-  background: #202027;
+  background: var(--material-sticky);
   color: var(--text-dim);
   box-shadow: var(--hairline);
 }
@@ -829,7 +829,7 @@ button.file-row:hover {
   background: repeating-linear-gradient(
     45deg,
     transparent 0 6px,
-    rgb(255 255 255 / 2.5%) 6px 8px
+    rgb(var(--veil) / 2.5%) 6px 8px
   );
 }
 
@@ -1048,7 +1048,7 @@ button.file-row:hover {
   overflow: hidden;
   background: var(--material-menu);
   backdrop-filter: var(--blur-menu);
-  border: 1px solid rgb(255 255 255 / 11%);
+  border: 1px solid rgb(var(--veil) / 11%);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-2), var(--hairline);
   animation: fade-in 120ms ease-out;

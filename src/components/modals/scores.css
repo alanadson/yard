@@ -24,7 +24,7 @@
   align-items: center;
   gap: 9px;
   padding: 10px 11px;
-  background: rgb(255 255 255 / 3.5%);
+  background: rgb(var(--veil) / 3.5%);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   box-shadow: var(--hairline);

@@ -30,7 +30,7 @@
   padding: 6px 9px;
   background: var(--material-menu);
   backdrop-filter: var(--blur-menu);
-  border: 1px solid rgb(255 255 255 / 11%);
+  border: 1px solid rgb(var(--veil) / 11%);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-1), var(--hairline);
   color: var(--text-dim);
@@ -57,7 +57,7 @@
   flex-direction: column;
   background: var(--material-menu);
   backdrop-filter: var(--blur-menu);
-  border: 1px solid rgb(255 255 255 / 11%);
+  border: 1px solid rgb(var(--veil) / 11%);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-2), var(--hairline);
   overflow: hidden;
@@ -151,7 +151,7 @@
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   color: var(--text-bright);
-  background: rgb(255 255 255 / 10%);
+  background: rgb(var(--veil) / 10%);
   border-radius: 20px;
   padding: 0 4px;
 }
@@ -351,7 +351,7 @@
   font-family: var(--mono, monospace);
   font-size: var(--fs-sm);
   color: var(--text-bright);
-  background: rgb(0 0 0 / 26%);
+  background: rgb(var(--well) / 26%);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   padding: 7px 9px;
@@ -383,7 +383,7 @@
   padding: 4px 14px;
   background: var(--material-menu);
   backdrop-filter: var(--blur-menu);
-  border: 1px solid rgb(255 255 255 / 11%);
+  border: 1px solid rgb(var(--veil) / 11%);
   border-radius: 20px;
   box-shadow: var(--shadow-1), var(--hairline);
   font-size: var(--fs-xs);

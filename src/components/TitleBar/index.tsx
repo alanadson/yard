@@ -16,9 +16,9 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Blocks,
+  FileDiff,
   Frame,
   GitBranch,
-  GitCompare,
   LayoutGrid,
   NotebookPen,
   PanelLeft,
@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 
 // i18n-scan: tables
+import { useNow } from "../../hooks/useNow";
 import { useT } from "../../hooks/useT";
 import { tn } from "../../lib/i18n";
 import { show } from "../../lib/navigate";
@@ -35,7 +36,8 @@ import { projectIcon } from "../../lib/projectStyle";
 import { AsyncDisposer } from "../../lib/disposables";
 import { Select } from "../Select";
 import { StatusChip } from "./StatusChip";
-import { relevantTasks, useBench } from "../../stores/benchStore";
+import { dockToggle, dueTasks } from "./dockToggle";
+import { useBench } from "../../stores/benchStore";
 import { useChanges } from "../../stores/changesStore";
 import { useNotes } from "../../stores/notesStore";
 import { ContextMenu, type MenuAnchor } from "../ContextMenu";
@@ -91,15 +93,24 @@ export function TitleBar() {
   const toggleBench = useBench((s) => s.toggle);
   const notesOpen = useNotes((s) => s.open);
   const toggleNotes = useNotes((s) => s.toggleView);
+  const statusBarOpen = useUI((s) => s.prefs.statusBar);
+  const setPref = useUI((s) => s.setPref);
   const activeProjectId = useProjects((s) => s.activeProjectId);
-  // The project on screen plus the global list — the badge counts what is
-  // pending *here*, not in a project the user closed hours ago.
-  const pendingTasks = useBench((s) =>
-    relevantTasks(s.tasks, activeProjectId).reduce((n, t) => n + (t.done ? 0 : 1), 0),
-  );
+  // A minute clock: the dot cares about "today", and a task due today turns
+  // overdue at midnight with nobody touching the list.
+  const now = useNow(60_000);
+  // The project on screen plus the global list — what is due *here*, not in
+  // a project the user closed hours ago.
+  const due = useBench((s) => dueTasks(s.tasks, activeProjectId, now));
   const changedCount = useChanges((s) =>
     activeProjectId ? (s.gitByProject[activeProjectId]?.files.length ?? 0) : 0,
   );
+  // Doors, not gauges: what each panel toggle says and whether it wears the
+  // attention dot (`dockToggle.ts`, tested).
+  const sidebarDoor = dockToggle("sidebar", { open: sidebarOpen });
+  const changesDoor = dockToggle("changes", { open: changesOpen, changed: changedCount });
+  const benchDoor = dockToggle("bench", { open: benchOpen, due });
+  const notesDoor = dockToggle("notes", { open: notesOpen });
 
   const group = groups.find((g) => g.id === activeGroupId);
   const project = activeGroupId ? projectOfGroup(activeGroupId) : undefined;
@@ -159,6 +170,7 @@ export function TitleBar() {
               changes: changesOpen,
               bench: benchOpen,
               notes: notesOpen,
+              statusBar: statusBarOpen,
               maximized,
             },
             {
@@ -166,6 +178,7 @@ export function TitleBar() {
               toggleChanges,
               toggleBench,
               toggleNotes,
+              toggleStatusBar: () => setPref("statusBar", !statusBarOpen),
               openModal,
               toggleMaximize: () => void appWindow.toggleMaximize(),
               minimize: () => void appWindow.minimize(),
@@ -175,10 +188,10 @@ export function TitleBar() {
       )}
       <div className="titlebar-left">
         <button
-          className="icon-btn"
-          data-tip={t("Mostrar ou esconder a barra lateral (Ctrl+B)")}
+          className="icon-btn dock-toggle"
+          data-tip={sidebarDoor.tip}
           data-tip-at="left"
-          aria-label={t("Mostrar ou esconder a barra lateral")}
+          aria-label={sidebarDoor.label}
           aria-pressed={sidebarOpen}
           onClick={toggleSidebar}
         >
@@ -221,7 +234,7 @@ export function TitleBar() {
                 {floor?.kind === "isolated" && floor.branch && (
                   <span
                     className="crumb-branch"
-                    data-tip={t("Andar isolado — worktree em {path}", { path: floor.worktreePath ?? "?" })}
+                    data-tip={t("Frente isolada — worktree em {path}", { path: floor.worktreePath ?? "?" })}
                   >
                     <GitBranch size={10} aria-hidden="true" />
                     {floor.branch}
@@ -302,54 +315,47 @@ export function TitleBar() {
         >
           <Plus size={13} aria-hidden="true" /> {t("Nova aba")}
         </button>
+        {/* The three doors, in the order their panels sit on screen: changes
+            slots in between the workspace and the bench, the bench is the
+            outermost right drawer (its glyph pairs with the sidebar's), the
+            notebook floats. Open = the sidebar's blue pill; the count of
+            changed files lives in the balloon and in the status bar, never
+            as a pill here — see `dockToggle.ts`. */}
         <button
-          className={`icon-btn changes-toggle ${changesOpen ? "is-active" : ""}`}
-          data-tip={t("Arquivos e alterações (Ctrl+Shift+D)")}
+          className="icon-btn dock-toggle"
+          data-tip={changesDoor.tip}
           data-tip-at="right"
-          aria-label={
-            changedCount > 0
-              ? t("Arquivos e alterações ({n} alterados)", { n: changedCount })
-              : t("Arquivos e alterações")
-          }
+          aria-label={changesDoor.label}
           aria-pressed={changesOpen}
           onClick={toggleChanges}
         >
-          <GitCompare size={14} />
-          {changedCount > 0 && (
-            <span className="changes-toggle-badge" aria-hidden="true">
-              {changedCount > 99 ? "99+" : changedCount}
-            </span>
-          )}
+          <FileDiff size={14} />
         </button>
         <button
-          className={`icon-btn changes-toggle ${benchOpen ? "is-active" : ""}`}
-          data-tip={t("Bancada — tarefas e prompts (Ctrl+Shift+B)")}
+          className="icon-btn dock-toggle"
+          data-tip={benchDoor.tip}
           data-tip-at="right"
-          aria-label={
-            pendingTasks > 0
-              ? t("Bancada — tarefas e prompts ({n} pendentes)", { n: pendingTasks })
-              : t("Bancada — tarefas e prompts")
-          }
+          aria-label={benchDoor.label}
           aria-pressed={benchOpen}
           onClick={toggleBench}
         >
           <PanelRight size={14} />
-          {pendingTasks > 0 && (
-            <span className="changes-toggle-badge" aria-hidden="true">
-              {pendingTasks > 99 ? "99+" : pendingTasks}
-            </span>
-          )}
+          {benchDoor.dot && <span className="dock-toggle-dot" aria-hidden="true" />}
         </button>
         <button
-          className={`icon-btn ${notesOpen ? "is-active" : ""}`}
-          data-tip={t("Anotações — caderno markdown (Ctrl+Shift+N)")}
+          className="icon-btn dock-toggle"
+          data-tip={notesDoor.tip}
           data-tip-at="right"
-          aria-label={t("Anotações")}
+          aria-label={notesDoor.label}
           aria-pressed={notesOpen}
           onClick={toggleNotes}
         >
           <NotebookPen size={14} />
         </button>
+        {/* What opens a panel, then what opens a window: five identical
+            squares in a row give the eye no seam, so the two families get a
+            hairline between them. */}
+        <span className="titlebar-sep" aria-hidden="true" />
         <button
           className="icon-btn"
           data-tip={t("Extensões (Ctrl+Shift+X)")}

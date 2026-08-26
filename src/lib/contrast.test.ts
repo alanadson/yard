@@ -11,7 +11,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { passesAA, contrastRatio, blendOver } from "./contrast";
+import { passesAA, contrastRatio, blendOver, lightness } from "./contrast";
 
 describe("contrast ratio", () => {
   it("black and white is the far end of the scale", () => {
@@ -62,5 +62,40 @@ describe("passaAA", () => {
   it("4.5:1 is the floor for normal text — and it passes", () => {
     expect(passesAA(4.5)).toBe(true);
     expect(passesAA(4.49)).toBe(false);
+  });
+});
+
+/**
+ * Contrast answers "can this be read". It cannot answer "can these two
+ * surfaces be told apart", which is the other half of a dark appearance: the
+ * whole chrome of this app lives in the bottom tenth of the scale, where the
+ * ratio between two neighbouring surfaces is a number like 1.4:1 for a step
+ * the eye reads clearly and 1.4:1 again for one it does not.
+ *
+ * CIE L* is the measure that behaves the same at both ends — the ladder in
+ * `src/styles.test.ts` is written in it.
+ */
+describe("perceptual lightness", () => {
+  it("spans the scale from black to white", () => {
+    expect(lightness("#000000")).toBeCloseTo(0, 4);
+    expect(lightness("#ffffff")).toBeCloseTo(100, 4);
+  });
+
+  it("puts middle grey in the middle, which is the whole point of using it", () => {
+    // #777 is ~18% luminance — the ratio scale calls it dark, the eye does not.
+    expect(lightness("#777777")).toBeGreaterThan(48);
+    expect(lightness("#777777")).toBeLessThan(52);
+  });
+
+  it("stays linear down in the dark, where a ratio stops saying anything", () => {
+    // The app's ground and the surface above it: two steps the eye reads as
+    // equal, and the ratio calls 1.24:1 and 1.19:1.
+    const low = lightness("#202025") - lightness("#1a1a1e");
+    const high = lightness("#c8c8cc") - lightness("#c0c0c4");
+    expect(Math.abs(low - high)).toBeLessThan(1.5);
+  });
+
+  it("reads the same forms the CSS writes", () => {
+    expect(lightness("#fff")).toBeCloseTo(lightness("rgb(255 255 255)"), 4);
   });
 });

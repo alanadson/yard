@@ -89,6 +89,24 @@ export function contrastRatio(a: string, b: string): number {
   return (light + 0.05) / (dark + 0.05);
 }
 
+/**
+ * CIE L*, from 0 (black) to 100 (white) — how light a color *looks*, not how
+ * much light it emits.
+ *
+ * The ratio above is the right tool for "can this be read" and the wrong one
+ * for "can these two surfaces be told apart". It is a ratio of luminances,
+ * and luminance is crushed at the dark end: down where this app's entire
+ * chrome lives, a step the eye reads clearly and a step it does not both come
+ * out around 1.2:1. L* is spaced the way the eye is, so an elevation ladder
+ * can be stated as a number — see the dark ladder in `src/styles.test.ts`.
+ */
+export function lightness(theColor: string): number {
+  const y = luminance(parseColor(theColor));
+  // The CIE cutoff, in the exact rational form the spec writes it, so the two
+  // branches meet without a step.
+  return y > 216 / 24389 ? 116 * Math.cbrt(y) - 16 : (24389 / 27) * y;
+}
+
 /** The WCAG AA floor for normal text. */
 export const AA_MIN = 4.5;
 

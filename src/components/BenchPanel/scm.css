@@ -10,6 +10,16 @@
   padding: 8px 8px 12px;
 }
 
+/* The body is the scroller, and nothing in a scroller yields height. Without
+   this, a flex column shrinks any child that clips its overflow — and
+   `.scm-rows` clips (to round the card), so the history drew the 18 commits
+   that fit, put "Carregar mais" right under them and hid the other 42 with
+   nothing to scroll. The groups of the changes section only escaped because
+   their wrapper does not clip. */
+.bench-body--scm > * {
+  flex-shrink: 0;
+}
+
 /* --- top bar: branch, remote, tools --- */
 
 .scm-bar {
@@ -28,7 +38,7 @@
   padding: 3px 10px;
   border-radius: 20px;
   border: 1px solid var(--border);
-  background: rgb(255 255 255 / 4%);
+  background: rgb(var(--veil) / 4%);
   color: var(--text);
   font-size: var(--fs-xs);
   transition:
@@ -163,7 +173,7 @@
   padding: 8px 10px;
   border-radius: var(--r-md);
   border: 1px solid var(--border);
-  background: rgb(255 255 255 / 4%);
+  background: rgb(var(--veil) / 4%);
   color: var(--text);
   font-family: inherit;
   font-size: var(--fs-sm);
@@ -174,7 +184,7 @@
 .scm-message:focus {
   outline: none;
   border-color: var(--accent-border);
-  background: rgb(255 255 255 / 6%);
+  background: rgb(var(--veil) / 6%);
 }
 
 .scm-message::placeholder {
@@ -244,7 +254,7 @@
   padding: 4px 8px;
   border-radius: var(--r-sm);
   border: 1px solid var(--border);
-  background: rgb(0 0 0 / 25%);
+  background: rgb(var(--well) / 25%);
   color: var(--text-bright);
   font-family: var(--mono);
   font-size: var(--fs-xs);
@@ -274,7 +284,7 @@
   margin-left: 5px;
   padding: 0 5px;
   border-radius: 20px;
-  background: rgb(255 255 255 / 8%);
+  background: rgb(var(--veil) / 8%);
   color: var(--text-dim);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
@@ -302,7 +312,7 @@
   flex-direction: column;
   border-radius: var(--r-md);
   overflow: hidden;
-  background: rgb(255 255 255 / 3%);
+  background: rgb(var(--veil) / 3%);
 }
 
 .scm-row-wrap {
@@ -403,7 +413,7 @@
   flex-shrink: 0;
   padding: 0 6px;
   border-radius: 20px;
-  background: rgb(255 255 255 / 8%);
+  background: rgb(var(--veil) / 8%);
   color: var(--text-dim);
   font-size: 10px;
 }
@@ -469,7 +479,7 @@
   margin: 0 0 6px;
   padding: 6px 8px;
   border-radius: var(--r-sm);
-  background: rgb(0 0 0 / 22%);
+  background: rgb(var(--well) / 22%);
   color: var(--text-dim);
   font-family: var(--mono);
   font-size: var(--fs-xs);
@@ -520,7 +530,7 @@
 .scm-diff > pre {
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: #121215;
+  background: var(--well-code);
 }
 
 .scm-diff span {
@@ -532,7 +542,7 @@
 .scm-hunk {
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: #121215;
+  background: var(--well-code);
   overflow: hidden;
 }
 
@@ -541,7 +551,7 @@
   align-items: center;
   gap: 6px;
   padding: 4px 6px;
-  background: rgb(255 255 255 / 4%);
+  background: rgb(var(--veil) / 4%);
   border-bottom: 1px solid var(--border-soft);
   font-size: var(--fs-xs);
 }
@@ -578,7 +588,7 @@
 }
 
 .scm-hunk .is-pickable:hover {
-  background: rgb(255 255 255 / 8%);
+  background: rgb(var(--veil) / 8%);
 }
 
 .scm-hunk .is-picked {

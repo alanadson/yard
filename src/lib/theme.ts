@@ -39,14 +39,42 @@ export interface ThemeRoot {
   };
 }
 
+/** The two halves of `localStorage` this module needs — injectable, for the test. */
+export interface ThemeMemory {
+  setItem(key: string, value: string): void;
+}
+
+export interface ThemeRecall {
+  getItem(key: string): string | null;
+}
+
+/** Where the resolved appearance waits for the next boot. */
+export const THEME_MEMORY_KEY = "yard.theme";
+
 /**
  * Stamps (or clears) the attribute the light sheet keys on, and tells the
  * browser which way its own widgets — scrollbars, `<select>` pop-ups — go.
  * `color-scheme` is set inline because the sheet's own declaration only
  * reaches elements the sheet paints; the inline one is what the webview
  * reads for its chrome.
+ *
+ * It also leaves the resolved appearance where the next boot can find it
+ * synchronously. The preference itself lives in SQLite, an `await` away: with
+ * no mirror the shell paints its default for the whole boot and flips once
+ * the store answers, which a light user sees as a black flash every launch.
+ * Storage can be refused (a locked-down webview, a private profile) and that
+ * is not worth a broken window, so the write never escapes.
  */
-export function applyTheme(root: ThemeRoot, resolved: ResolvedTheme): void {
+export function applyTheme(root: ThemeRoot, resolved: ResolvedTheme, memory?: ThemeMemory | null): void {
+  try {
+    // Reading the global is inside the `try` on purpose: a webview with
+    // storage switched off does not hand back `undefined`, it throws on the
+    // property itself.
+    const store = memory === undefined ? globalThis.localStorage : memory;
+    store?.setItem(THEME_MEMORY_KEY, resolved);
+  } catch {
+    // A window that opens in the wrong appearance for one frame beats no window.
+  }
   if (resolved === "light") {
     root.setAttribute("data-theme", "light");
     root.style.setProperty("color-scheme", "light");
@@ -54,6 +82,30 @@ export function applyTheme(root: ThemeRoot, resolved: ResolvedTheme): void {
   }
   root.removeAttribute("data-theme");
   root.style.removeProperty("color-scheme");
+}
+
+/**
+ * Puts the last resolved appearance back on `<html>`, before the first render.
+ *
+ * `index.html` paints a ground of its own, but all it can key on is
+ * `prefers-color-scheme`: whoever picked an appearance that disagrees with the
+ * machine used to watch the whole shell open in the wrong one and flip when
+ * the preference came back from SQLite. Called at the top of `main.tsx` — not
+ * from an inline `<script>` in the page, which the production CSP
+ * (`script-src 'self'`) would refuse.
+ *
+ * Anything other than the two known words is left alone: a first run has
+ * nothing stored, and the OS preference is the better guess than a coin flip.
+ */
+export function restoreTheme(root: ThemeRoot, memory?: ThemeRecall | null): void {
+  let remembered: string | null = null;
+  try {
+    const store = memory === undefined ? globalThis.localStorage : memory;
+    remembered = store ? store.getItem(THEME_MEMORY_KEY) : null;
+  } catch {
+    return; // Storage refused; the sheet's own default is already on screen.
+  }
+  if (remembered === "light" || remembered === "dark") applyTheme(root, remembered, null);
 }
 
 /** The next appearance for a one-key toggle: the opposite of what is on screen. */

@@ -4431,7 +4431,6 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       {/* Light falling on the table from above. Its own element because
           `.cv-bg` carries the pan offset inline and `background-position`
           would tile the glow along with the dots. */}
-      <div className="cv-glow" />
 
       {/* Wiring under the cards and notes — needs to come before them in the
           DOM so the z-index tie with .cv-note/.cv-text resolves in their

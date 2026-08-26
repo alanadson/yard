@@ -10,6 +10,10 @@ import { describe, expect, it } from "vitest";
 import { contrastRatio } from "./contrast";
 import { DARK_TERM, LIGHT_TERM, termThemeFor } from "./termTheme";
 
+// The two sheets that paint the host the canvas sits in.
+import darkCss from "../styles.css?raw";
+import lightCss from "../theme-light.css?raw";
+
 const ANSI = ["red", "green", "yellow", "blue", "magenta", "cyan"] as const;
 const BRIGHT = {
   red: "brightRed",
@@ -48,5 +52,51 @@ describe("the light palette", () => {
   it("the cursor is visible over the paper and the paper's text over the cursor", () => {
     expect(contrastRatio(LIGHT_TERM.cursor, LIGHT_TERM.background)).toBeGreaterThanOrEqual(3);
     expect(contrastRatio(LIGHT_TERM.cursorAccent, LIGHT_TERM.cursor)).toBeGreaterThanOrEqual(3);
+  });
+});
+
+/**
+ * The seam nothing was watching. `.xterm-host` paints `--well-code` and xterm
+ * paints its own `background` on a canvas an inch above it — two numbers, in
+ * two languages, that have to be the same colour or the terminal wears a halo
+ * of the wrong black around its own text.
+ *
+ * They were kept in sync by a sentence in the header of `termTheme.ts` ("the
+ * background is the panel's terminal well (#121215)"), which is the same kind
+ * of promise `contrast.ts` was written because comments cannot keep. It came
+ * due when the well went to pure black for the YouTube-strength dark and the
+ * palette stayed at #121215.
+ */
+describe("the well the palette paints and the well the CSS paints", () => {
+  /** `--well-code` as declared from `scope` onwards — the first one wins. */
+  const wellOf = (css: string, scope: RegExp): string => {
+    const at = css.search(scope);
+    expect(at, `the ${scope.source} block is gone`).toBeGreaterThan(-1);
+    const declared = /--well-code:\s*([^;]+);/.exec(css.slice(at));
+    expect(declared, "nothing declares --well-code after it").not.toBeNull();
+    return declared![1].trim().toLowerCase();
+  };
+
+  it("reads the declaration and not the sentence about it", () => {
+    expect(wellOf("/* the well is #ffffff */\n:root { --well-code: #123456; }", /:root\s*\{/)).toBe("#123456");
+  });
+
+  it.each([
+    ["dark", DARK_TERM, () => wellOf(darkCss, /:root\s*\{/)],
+    ["light", LIGHT_TERM, () => wellOf(lightCss, /:root\[data-theme="light"\]\s*\{/)],
+  ])("the %s palette opens on the same well the sheet paints behind it", (_name, palette, well) => {
+    expect(palette.background.toLowerCase()).toBe(well());
+  });
+
+  /**
+   * And the block cursor inverts: the glyph under it is drawn in
+   * `cursorAccent`, so anything other than the well itself leaves a coloured
+   * notch where the cursor sits.
+   */
+  it.each([
+    ["dark", DARK_TERM],
+    ["light", LIGHT_TERM],
+  ])("the %s cursor punches the well's own colour through the glyph", (_name, palette) => {
+    expect(palette.cursorAccent.toLowerCase()).toBe(palette.background.toLowerCase());
   });
 });

@@ -40,13 +40,13 @@
   display: flex;
   flex-direction: column;
   border-radius: var(--r-2xl);
-  background: rgb(22 22 27 / 60%);
+  background: var(--material-panel);
   backdrop-filter: blur(72px) saturate(185%);
-  border: 1px solid rgb(255 255 255 / 10%);
+  border: 1px solid rgb(var(--veil) / 10%);
   box-shadow:
-    0 24px 60px rgb(0 0 0 / 50%),
-    0 2px 8px rgb(0 0 0 / 30%),
-    inset 0 1px 0 rgb(255 255 255 / 14%);
+    0 24px 60px rgb(var(--shade) / 50%),
+    0 2px 8px rgb(var(--shade) / 30%),
+    inset 0 1px 0 rgb(var(--veil) / 14%);
 }
 
 /* Title block + the round close button, sheet header. The title names
@@ -94,9 +94,9 @@
      border-box grid — the same trap `.task-check` documents below. */
   padding: 0;
   border-radius: 50%;
-  border: 1px solid rgb(255 255 255 / 12%);
-  background: rgb(255 255 255 / 9%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 14%);
+  border: 1px solid rgb(var(--veil) / 12%);
+  background: rgb(var(--veil) / 9%);
+  box-shadow: inset 0 1px 0 rgb(var(--veil) / 14%);
   color: var(--text-dim);
   cursor: pointer;
   transition:
@@ -105,7 +105,7 @@
 }
 
 .bench-close:hover {
-  background: rgb(255 255 255 / 16%);
+  background: rgb(var(--veil) / 16%);
   color: var(--text-bright);
 }
 
@@ -117,11 +117,11 @@
   gap: 2px;
   margin: 0 16px 12px;
   padding: 3px;
-  background: rgb(0 0 0 / 28%);
+  background: rgb(var(--well) / 28%);
   border-radius: 999px;
   box-shadow:
-    inset 0 1px 3px rgb(0 0 0 / 30%),
-    inset 0 -0.5px 0 rgb(255 255 255 / 6%);
+    inset 0 1px 3px rgb(var(--well) / 30%),
+    inset 0 -0.5px 0 rgb(var(--veil) / 6%);
 }
 
 .bench-tabs button {
@@ -145,11 +145,11 @@
 }
 
 .bench-tabs button.is-active {
-  background: rgb(255 255 255 / 16%);
+  background: rgb(var(--veil) / 16%);
   color: var(--text-bright);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 20%),
-    0 1px 4px rgb(0 0 0 / 35%);
+    inset 0 1px 0 rgb(var(--veil) / 20%),
+    0 1px 4px rgb(var(--shade) / 35%);
 }
 
 /* The count rides *beside* the icon now, not on its corner: on a capsule
@@ -263,7 +263,7 @@
   padding: 1px 9px;
   border-radius: 20px;
   border: 1px solid var(--border);
-  background: rgb(255 255 255 / 4%);
+  background: rgb(var(--veil) / 4%);
   color: var(--text-dim);
   font-size: var(--fs-xs);
 }
@@ -300,10 +300,10 @@
   align-items: center;
   gap: 7px;
   padding: 0 4px 0 9px;
-  background: rgb(0 0 0 / 26%);
+  background: rgb(var(--well) / 26%);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 18%);
+  box-shadow: inset 0 1px 2px rgb(var(--well) / 18%);
   transition:
     border-color var(--dur-1) ease,
     box-shadow var(--dur-1) ease;
@@ -364,10 +364,10 @@
   height: 34px;
   margin: 0 14px 10px;
   padding: 0 5px 0 12px;
-  background: rgb(255 255 255 / 8.5%);
-  border-color: rgb(255 255 255 / 10%);
+  background: rgb(var(--veil) / 8.5%);
+  border-color: rgb(var(--veil) / 10%);
   border-radius: 999px;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%);
+  box-shadow: inset 0 1px 0 rgb(var(--veil) / 10%);
 }
 
 .task-add input {
@@ -396,13 +396,13 @@
 
 .task-scope.is-global {
   color: var(--text-dim);
-  background: rgb(255 255 255 / 10%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%);
+  background: rgb(var(--veil) / 10%);
+  box-shadow: inset 0 1px 0 rgb(var(--veil) / 12%);
 }
 
 .task-scope.is-global:hover {
   color: var(--text-bright);
-  background: rgb(255 255 255 / 18%);
+  background: rgb(var(--veil) / 18%);
 }
 
 /* Scope filter as a compact segmented control — the same recessed-track /
@@ -414,10 +414,10 @@
   gap: 2px;
   margin: 0 14px 12px;
   padding: 3px;
-  background: rgb(0 0 0 / 28%);
+  background: rgb(var(--well) / 28%);
   border: none;
   border-radius: 999px;
-  box-shadow: inset 0 1px 3px rgb(0 0 0 / 30%);
+  box-shadow: inset 0 1px 3px rgb(var(--well) / 30%);
 }
 
 .task-seg button {
@@ -442,11 +442,11 @@
 }
 
 .task-seg button.is-active {
-  background: rgb(255 255 255 / 16%);
+  background: rgb(var(--veil) / 16%);
   color: var(--text-bright);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 18%),
-    0 1px 4px rgb(0 0 0 / 30%);
+    inset 0 1px 0 rgb(var(--veil) / 18%),
+    0 1px 4px rgb(var(--shade) / 30%);
 }
 
 /* A project name can be long; the segment yields the name, never the count. */
@@ -467,10 +467,10 @@
   height: 30px;
   margin: 0 14px 10px;
   padding: 0 4px 0 12px;
-  background: rgb(255 255 255 / 8.5%);
-  border-color: rgb(255 255 255 / 10%);
+  background: rgb(var(--veil) / 8.5%);
+  border-color: rgb(var(--veil) / 10%);
   border-radius: 999px;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%);
+  box-shadow: inset 0 1px 0 rgb(var(--veil) / 10%);
 }
 
 .task-search input {
@@ -486,16 +486,16 @@
   margin: 0 14px;
   padding: 0;
   min-width: 0;
-  background: rgb(255 255 255 / 6%);
-  border: 1px solid rgb(255 255 255 / 8%);
+  background: rgb(var(--veil) / 6%);
+  border: 1px solid rgb(var(--veil) / 8%);
   border-radius: var(--r-card);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 7%);
+  box-shadow: inset 0 1px 0 rgb(var(--veil) / 7%);
 }
 
 /* "Concluídas" (done): the same card, one step quieter — it is a record, not a queue. */
 .task-list--done {
-  background: rgb(255 255 255 / 4.5%);
-  border-color: rgb(255 255 255 / 7%);
+  background: rgb(var(--veil) / 4.5%);
+  border-color: rgb(var(--veil) / 7%);
   box-shadow: none;
 }
 
@@ -514,13 +514,13 @@
   align-items: flex-start;
   gap: 10px;
   padding: 11px 12px;
-  border-bottom: 1px solid rgb(255 255 255 / 6%);
+  border-bottom: 1px solid rgb(var(--veil) / 6%);
   min-width: 0;
   transition: background-color var(--dur-1) ease;
 }
 
 .task-list--done .task-row {
-  border-bottom-color: rgb(255 255 255 / 5.5%);
+  border-bottom-color: rgb(var(--veil) / 5.5%);
 }
 
 /* The card's own corners, carried by the rows so the hover plate follows
@@ -539,11 +539,11 @@
 }
 
 .task-row:hover {
-  background: rgb(255 255 255 / 5%);
+  background: rgb(var(--veil) / 5%);
 }
 
 .task-list--done .task-row:hover {
-  background: rgb(255 255 255 / 4%);
+  background: rgb(var(--veil) / 4%);
 }
 
 .task-row.is-fresh {
@@ -606,7 +606,7 @@
      of the circle. The ring only reads centred with the padding cleared. */
   padding: 0;
   border-radius: 50%;
-  border: 1.5px solid rgb(255 255 255 / 35%);
+  border: 1.5px solid rgb(var(--veil) / 35%);
   color: var(--on-accent);
   transition:
     border-color var(--dur-1) ease,
@@ -726,8 +726,8 @@
   align-items: center;
   padding: 0 8px;
   border-radius: 999px;
-  border: 1px solid rgb(255 255 255 / 10%);
-  background: rgb(255 255 255 / 8%);
+  border: 1px solid rgb(var(--veil) / 10%);
+  background: rgb(var(--veil) / 8%);
   font-size: var(--fs-xs);
   line-height: 18px;
   font-weight: 500;
@@ -810,7 +810,7 @@
 }
 
 .task-row .icon-btn:hover {
-  background: rgb(255 255 255 / 12%);
+  background: rgb(var(--veil) / 12%);
 }
 
 .task-row .icon-btn.is-flagged {
@@ -915,7 +915,7 @@
   padding: 6px 8px 7px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  background: rgb(255 255 255 / 3.5%);
+  background: rgb(var(--veil) / 3.5%);
   transition:
     background-color var(--dur-1) ease,
     border-color var(--dur-1) ease;
@@ -923,7 +923,7 @@
 
 .prompt-card:hover,
 .prompt-card:focus-within {
-  background: rgb(255 255 255 / 6%);
+  background: rgb(var(--veil) / 6%);
   border-color: var(--border-strong);
 }
 
@@ -1017,7 +1017,7 @@
   line-height: 15px;
   border-radius: 20px;
   border: 1px solid var(--border);
-  background: rgb(255 255 255 / 4%);
+  background: rgb(var(--veil) / 4%);
   color: var(--text-dim);
   font-size: 10px;
 }
@@ -1047,7 +1047,7 @@
   margin-top: 6px;
   padding: 8px;
   border-radius: 8px;
-  background: rgb(0 0 0 / 20%);
+  background: rgb(var(--well) / 20%);
   animation: menu-in var(--dur-1) var(--ease);
 }
 
@@ -1106,7 +1106,7 @@
   padding: 8px;
   border: 1px solid rgb(94 160 255 / 45%);
   border-radius: var(--r-md);
-  background: rgb(255 255 255 / 3%);
+  background: rgb(var(--veil) / 3%);
   box-shadow: 0 0 0 3px rgb(10 132 255 / 10%);
   animation: menu-in var(--dur-1) var(--ease);
 }
@@ -1123,12 +1123,12 @@
   font-size: var(--fs-sm);
   line-height: 1.6;
   color: var(--text-bright);
-  background: rgb(0 0 0 / 26%);
+  background: rgb(var(--well) / 26%);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   padding: 7px 9px;
   outline: none;
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 18%);
+  box-shadow: inset 0 1px 2px rgb(var(--well) / 18%);
 }
 
 .prompt-editor textarea::placeholder {

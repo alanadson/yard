@@ -17,6 +17,7 @@ export interface TitleBarMenuActions {
   toggleChanges: () => void;
   toggleBench: () => void;
   toggleNotes: () => void;
+  toggleStatusBar: () => void;
   openModal: (modal: ModalKind) => void;
   toggleMaximize: () => void;
   minimize: () => void;
@@ -27,6 +28,8 @@ export interface TitleBarMenuContext {
   changes: boolean;
   bench: boolean;
   notes: boolean;
+  /** The footer (`StatusBar`) — hidden from Settings, shown again from here. */
+  statusBar: boolean;
   maximized: boolean;
 }
 
@@ -63,6 +66,12 @@ export function titleBarMenu(
       checked: ctx.notes,
       shortcut: "Ctrl+Shift+N",
       onSelect: act.toggleNotes,
+    },
+    {
+      id: "statusbar",
+      label: "Barra de status",
+      checked: ctx.statusBar,
+      onSelect: act.toggleStatusBar,
     },
     { kind: "sep" },
     { id: "prefs", label: t("Preferências…"), shortcut: "Ctrl+,", onSelect: () => act.openModal("preferences") },

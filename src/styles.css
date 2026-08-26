@@ -30,45 +30,138 @@
    cover terminals are transient; permanent ones are solid. */
 
 :root {
-  /* The app's floor: the gradient the `body` paints and that any opaque
-     surface covering the whole window has to repeat, so it does not open a
-     flat slab in the middle of the ambient (the Settings screen is the case).
-     Became a token when it got its second owner. */
-  --ambient:
-    radial-gradient(1100px 640px at 10% -12%, rgb(10 132 255 / 14%), transparent 62%),
-    radial-gradient(700px 480px at -8% 84%, rgb(10 132 255 / 6%), transparent 60%),
-    radial-gradient(900px 560px at 106% 112%, rgb(191 90 242 / 9%), transparent 60%),
-    linear-gradient(178deg, #1b1b21 0%, #121216 58%, #141419 100%);
+  /* The app's floor: what the `body` paints and what any opaque surface
+     covering the whole window has to repeat, so it does not open a flat slab
+     in the middle of the ambient. Became a token when the Settings screen was
+     its second owner; Settings is a sheet now, and the token stays for the
+     next surface that covers the window.
 
-  /* ambient floor and surfaces, from deepest to highest */
-  --bg: #131316;
-  --bg-panel: #1a1a1e;
-  --bg-raised: #202025;
-  --bg-overlay: #26262c;
+     It is one flat black. It used to be a three-stop graphite gradient under
+     a blue bloom top-left, a second blue one bottom-left and a violet one in
+     the far corner — "two cold, almost subliminal glows behind the glass".
+     Over the graphite they were drawn for, they were subliminal. Dropped to
+     black they stopped being: the same alphas over L* 0 read as a wash of
+     navy across the top of the sidebar and a visible fall down its height.
+     On a black ground there is no such thing as a subliminal glow, so the
+     ground gives up light altogether and every bit of relief moves onto the
+     surfaces. `src/styles.test.ts` refuses a gradient here. */
+  --ambient: #000000;
+
+  /* The dark ladder — the black floor and the surfaces above it, from
+     deepest to highest.
+
+     Three passes, and each one only became visible once the one before it was
+     done. The steps were #131316 / #1a1a1e / #202025 / #26262c — three L*
+     points apart, over an ambient whose darkest stop sat level with the
+     terminal well. Every reading this world is built on is a *difference
+     between two surfaces*, and at three points none of them arrived: the
+     sidebar was the floor, the status bar was the floor, `--material-thin`
+     composited to within half a point of the ambient behind it. The window
+     read as one flat slab.
+
+     Opening the steps to five points fixed that and exposed the complaint
+     underneath — it was not *black* enough — so the whole ladder dropped in
+     one piece to the depth of the reference the author named, YouTube's
+     #0f0f0f. Which in turn exposed the last one: with the ground that dark,
+     the gradient and the blooms it carried stopped being subliminal and
+     started being a visible wash. So the ground went to flat #000000, the
+     greys gave up their cold tilt (`b ≈ r × 1.16`, a good idea over an
+     ambient with blue in it and a residue once there is none), and the wells
+     are the ground: there is nothing under black.
+
+     What that costs is the sink — a well used to read because it was two
+     points darker than the floor, and now it cannot be. The frame pays for
+     it instead: the pane draws a border and a hairline around whatever holds
+     one. `src/styles.test.ts` holds all of it. */
+  --bg: #000000;
+  --bg-panel: #191919;
+  --bg-raised: #222222;
+  --bg-overlay: #2c2c2c;
   --bg-hover: rgb(255 255 255 / 6.5%);
   --bg-active: rgb(255 255 255 / 11%);
 
-  /* translucent materials (vibrancy) — only on floating or side surfaces;
-     the content behind them is static or transient */
-  --material-thin: rgb(20 20 27 / 36%);
-  --material-menu: rgb(38 38 47 / 62%);
-  --material-sheet: rgb(28 28 36 / 68%);
+  /* Translucent materials (vibrancy) — only on floating or side surfaces;
+     the content behind them is static or transient.
+
+     Their paint is lighter than the ground they sit on, which is the whole
+     point: glass mixed from the same value as its backdrop is a no-op with a
+     GPU cost. The alphas are unchanged — what changed is what is being
+     mixed. */
+  --material-thin: rgb(47 47 47 / 36%);
+  --material-menu: rgb(51 51 51 / 62%);
+  --material-sheet: rgb(45 45 45 / 68%);
   --blur-thin: blur(30px) saturate(180%);
   --blur-menu: blur(40px) saturate(180%);
   --blur-sheet: blur(64px) saturate(180%);
 
-  /* lines: translucent white hairlines, never opaque gray */
-  --border-soft: rgb(255 255 255 / 4%);
-  --border: rgb(255 255 255 / 8%);
-  --border-strong: rgb(255 255 255 / 16%);
+  /* The surfaces the big modules float on. Each of these was a literal
+     repeated in one component sheet — and a literal is exactly what the
+     light appearance cannot re-value, which is why the bench, the editor,
+     the notebook and the board all stayed dark while their ink turned dark
+     with them. Each lands one step of the ladder above the ambient once it
+     is composited (the comment after each is where it ends up). */
+  --material-panel: rgb(36 36 36 / 60%); /* the bench → L* 7 */
+  --material-doc: rgb(24 24 24 / 94%); /* the editor, the diff viewer → L* 7.5 */
+  --material-notes: rgb(27 27 27 / 86%); /* the notebook → L* 7.9 */
+  --material-tip: rgb(47 47 47 / 96%); /* balloons → L* 19, the highest thing in the app */
+  --material-sticky: rgb(35 35 35 / 96%); /* a header that content slides under → L* 13.5 */
+
+  /* And one more channel, for the surface that appears at two strengths: the
+     body of a card on the board (92%) and of the empty pane (55%). */
+  --slab: 26 26 26;
+
+  /* Content wells: where the app stops being chrome and shows code, a
+     terminal or a picture. On the dark side they are the absolute floor —
+     black, with nothing under them — and near-white on paper. Never the
+     ambient. `lib/termTheme.ts` opens the xterm palette on the same colour
+     `--well-code` names, which is a seam no CSS token can cross on its own:
+     xterm paints its background on a canvas. */
+  --well-code: #000000;
+  --well-stage: #000000;
+
+  /* Relief and recess, as *channels* rather than colors.
+     Almost every surface in this app is a neutral veil over its ground: white
+     to lift something off the dark floor (a hover, a raised segment, a
+     hairline) and black to sink one into it (an input well, a code block, a
+     track). Written as literals — which is how they were written, three
+     hundred times across twenty sheets — they cannot follow the appearance,
+     and `theme-light.css` had no chance of chasing them one by one: on paper
+     a white veil is invisible and a black one is a hole. So the channel is
+     the token and the alpha stays at the call site: `rgb(var(--veil) / 9%)`.
+     Dark is untouched by construction (`255 255 255` and `0 0 0` are what was
+     there); light re-values the two lines and the whole app follows.
+
+     What does NOT go through here: a veil painted on a *chromatic* fill. The
+     inner light of the blue button, the glow of a status dot, a note in the
+     color its author picked — those stay literal white in both appearances,
+     because they are relief on a color, not on the ground. */
+  --veil: 255 255 255;
+  --well: 0 0 0;
+  /* And a third, for what a surface throws rather than what it is: a cast
+     shadow, and the scrim a modal drops over the app. It is separate from
+     `--well` because the two want opposite things on paper — a recess has to
+     get much lighter there or it reads as a hole, while a shadow only has to
+     get a little lighter or the surface stops floating. */
+  --shade: 0 0 0;
+
+  /* Lines: translucent white hairlines, never opaque gray. One point each
+     above what they were — a white veil buys less separation as the surface
+     under it climbs, and these are the app's only edges. */
+  --border-soft: rgb(255 255 255 / 5%);
+  --border: rgb(255 255 255 / 9%);
+  --border-strong: rgb(255 255 255 / 18%);
 
   /* thread of light on top of raised surfaces — relief without color */
   --hairline: inset 0 1px 0 rgb(255 255 255 / 12%);
 
-  /* text (all ≥ 4.5:1 over --bg and --bg-raised) */
-  --text: #e2e2e6;
-  --text-dim: #9e9ea6;
-  --text-bright: #f7f7f9;
+  /* Text. The floor is 4.5:1 over every surface the chrome has, and the
+     surface that decides it is the highest one — the tooltip, at L* 24. The
+     dim ink measured 3.97:1 there once the ladder moved up, so it moved with
+     it (#9e9ea6 → #a5a5ad, 4.74:1). `--text` and `--text-bright` had room
+     already and stayed put. */
+  --text: #e2e2e2;
+  --text-dim: #a6a6a6;
+  --text-bright: #f7f7f7;
 
   /* action: system blue, the chrome's only non-semantic color */
   --accent: #0a84ff;
@@ -114,16 +207,20 @@
   --r-2xl-in: 23px;
   --r-card-in: 17px;
 
-  /* elevation — always offset + soft blur, never a halo */
+  /* Elevation — always offset + soft blur, never a halo. Each is a contact
+     shadow tight under the edge plus the long soft one that says how high the
+     surface is. They gained weight along with the ladder: a shadow is only as
+     deep as the ground it darkens, and the old floor was already so close to
+     black that 42% of black on it was a two-point move nobody could see. */
   --shadow-1:
-    0 1px 2px rgb(0 0 0 / 28%),
-    0 3px 10px rgb(0 0 0 / 22%);
+    0 1px 2px rgb(0 0 0 / 34%),
+    0 4px 12px rgb(0 0 0 / 26%);
   --shadow-2:
-    0 12px 32px rgb(0 0 0 / 42%),
-    0 2px 8px rgb(0 0 0 / 30%);
+    0 14px 36px rgb(0 0 0 / 48%),
+    0 3px 10px rgb(0 0 0 / 34%);
   --shadow-3:
-    0 32px 80px rgb(0 0 0 / 55%),
-    0 8px 24px rgb(0 0 0 / 35%);
+    0 36px 88px rgb(0 0 0 / 60%),
+    0 10px 28px rgb(0 0 0 / 40%);
 
   /* typography */
   --fs-xs: 11px;
@@ -153,6 +250,9 @@
      vertical padding to fit, and read as a strip of text rather than a control
      you press. The extra 4px are what let it be a real one. */
   --titlebar-h: 44px;
+  /* The footer (`StatusBar`): caption-sized readouts and 22px controls need
+     28px to breathe — 24px squeezed the chips against the contact shadow. */
+  --statusbar-h: 28px;
 
   color-scheme: dark;
   font-family: var(--ui-font);
@@ -185,7 +285,7 @@ textarea,
   padding: 7px 12px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  background: rgb(0 0 0 / 25%);
+  background: rgb(var(--well) / 25%);
   color: var(--text);
   font-size: 14px;
   letter-spacing: normal;
@@ -344,12 +444,12 @@ input,
 select {
   font: inherit;
   color: var(--text-bright);
-  background: rgb(0 0 0 / 26%);
+  background: rgb(var(--well) / 26%);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   padding: 6px 9px;
   outline: none;
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 18%);
+  box-shadow: inset 0 1px 2px rgb(var(--well) / 18%);
 }
 
 input::placeholder {
@@ -388,7 +488,7 @@ input[type="radio"] {
    altogether; this is only the floor under a stray one. */
 select,
 input[list] {
-  background-color: #17171b;
+  background-color: var(--bg-raised);
 }
 
 select option,
@@ -410,12 +510,12 @@ select optgroup {
   font: inherit;
   text-align: left;
   color: var(--text-bright);
-  background: rgb(0 0 0 / 26%);
+  background: rgb(var(--well) / 26%);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   padding: 6px 9px;
   outline: none;
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 18%);
+  box-shadow: inset 0 1px 2px rgb(var(--well) / 18%);
 }
 
 .select-value {
@@ -487,7 +587,7 @@ select optgroup {
 .select-group + .select-group {
   margin-top: 3px;
   padding-top: 3px;
-  border-top: 1px solid rgb(255 255 255 / 8%);
+  border-top: 1px solid rgb(var(--veil) / 8%);
 }
 
 /* The row is a checkmark column plus the label — a native pop-up menu
@@ -509,8 +609,8 @@ kbd {
   font-size: var(--fs-xs);
   line-height: 1.5;
   color: var(--text-bright);
-  background: rgb(255 255 255 / 8%);
-  border: 1px solid rgb(255 255 255 / 13%);
+  background: rgb(var(--veil) / 8%);
+  border: 1px solid rgb(var(--veil) / 13%);
   border-bottom-width: 2px;
   border-radius: var(--r-sm);
   padding: 1px 5px;
@@ -541,6 +641,14 @@ kbd {
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* How much of the window's bottom the footer takes — what anything anchored
+     to the bottom edge (the toast stack) has to climb over. Zero without the
+     bar, so hiding it in Settings drops the toasts back to the edge. */
+  --statusbar-gap: 0px;
+}
+
+.app[data-statusbar="open"] {
+  --statusbar-gap: var(--statusbar-h);
 }
 
 .app-body {
@@ -593,8 +701,8 @@ kbd {
   display: block;
   border-radius: 27%;
   box-shadow:
-    0 8px 24px rgb(0 0 0 / 35%),
-    0 2px 6px rgb(0 0 0 / 40%);
+    0 8px 24px rgb(var(--shade) / 35%),
+    0 2px 6px rgb(var(--shade) / 40%);
 }
 
 .boot-mark {
@@ -626,7 +734,7 @@ kbd {
   border: 1px solid var(--border);
   border-radius: var(--r-xl);
   background: var(--bg-raised);
-  box-shadow: var(--shadow-2, 0 12px 32px rgb(0 0 0 / 35%));
+  box-shadow: var(--shadow-2, 0 12px 32px rgb(var(--shade) / 35%));
 }
 
 .boot-fail-icon {
@@ -657,7 +765,7 @@ kbd {
   overflow: auto;
   padding: 9px 11px;
   border-radius: var(--r-sm);
-  background: rgb(0 0 0 / 22%);
+  background: rgb(var(--well) / 22%);
   color: var(--text-dim);
   font-family: var(--mono);
   font-size: 12px;
@@ -711,7 +819,7 @@ kbd {
   padding-left: 10px;
   background: var(--material-thin);
   backdrop-filter: var(--blur-thin);
-  border-bottom: 1px solid rgb(0 0 0 / 35%);
+  border-bottom: 1px solid rgb(var(--well) / 35%);
   box-shadow: var(--hairline);
   user-select: none;
   flex-shrink: 0;
@@ -746,31 +854,52 @@ kbd {
   margin-right: 4px;
 }
 
-/* Count over the icon (changes, bench). Lives here, and not in the panel's
-   CSS: the bar mounts on boot and the panel is lazy — when the rule travelled
-   along with `ChangesPanel/changes.css`, the app opened with the number loose
-   under the icon, and it only became a pill after someone opened the changes
-   panel. */
-.changes-toggle {
+/* Panel toggles — doors, not gauges. Each opens a panel and shows whether it
+   is open, in the sidebar's blue pill: the app's one word for "this is what
+   is on screen right now", and the only rest state a hover cannot be
+   mistaken for (the white veil of `.is-active` sits 4.5% away from hover).
+   A count never rides here: 58 changed files is the state of the tree, not
+   a queue for the user, and a number in the corner of the eye reads as
+   unread mail. The number lives in the balloon, in the status bar's branch
+   chip and inside the panel. The one mark a door wears is the attention dot
+   — a task due today or overdue — in the footer's yellow, still, in the
+   corner the 14px glyph leaves free.
+   These rules live here and not in a panel's CSS: the bar mounts on boot and
+   the panels are lazy, and a rule that travels with a lazy chunk paints the
+   bar raw until someone opens that panel. */
+.dock-toggle {
   position: relative;
 }
 
-.changes-toggle-badge {
+.dock-toggle[aria-pressed="true"] {
+  background: rgb(10 132 255 / 26%);
+  color: var(--text-bright);
+  box-shadow: inset 0 0 0 1px rgb(10 132 255 / 18%);
+}
+
+.dock-toggle[aria-pressed="true"]:hover {
+  background: rgb(10 132 255 / 34%);
+}
+
+.dock-toggle-dot {
   position: absolute;
-  top: -3px;
-  right: -5px;
-  min-width: 14px;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--yellow);
+  box-shadow: 0 0 6px rgb(240 195 60 / 60%);
+}
+
+/* What opens a panel, then what opens a window: five identical squares in a
+   row give the eye no seam, so the two families get a hairline between them. */
+.titlebar-sep {
+  flex: none;
+  width: 1px;
   height: 14px;
-  padding: 0 3px;
-  border-radius: 8px;
-  background: var(--accent-fill);
-  color: var(--on-accent);
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 14px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 40%);
+  margin: 0 3px;
+  background: var(--border-strong);
 }
 
 /* Windows window controls: minimize, maximize/restore, close — on the right,
@@ -851,10 +980,10 @@ kbd {
   z-index: 300;
   padding: 4px 9px;
   border-radius: 8px;
-  background: rgb(46 46 52 / 96%);
-  border: 1px solid rgb(255 255 255 / 10%);
+  background: var(--material-tip);
+  border: 1px solid rgb(var(--veil) / 10%);
   box-shadow:
-    0 6px 18px rgb(0 0 0 / 45%),
+    0 6px 18px rgb(var(--shade) / 45%),
     var(--hairline);
   color: var(--text-bright);
   font-size: var(--fs-xs);
@@ -956,8 +1085,7 @@ body.tips-off [data-tip]:focus-visible::after {
   display: block;
   object-fit: contain;
   border-radius: 27%;
-  box-shadow:
-    0 1px 3px rgb(0 0 0 / 35%);
+  box-shadow: 0 1px 3px rgb(var(--shade) / 35%);
 }
 
 /* Breadcrumb: the group is "where I am"; the project is context. */
@@ -1005,7 +1133,7 @@ body.tips-off [data-tip]:focus-visible::after {
   padding: 1px 8px;
   border: 1px solid var(--border);
   border-radius: 20px;
-  background: rgb(255 255 255 / 4%);
+  background: rgb(var(--veil) / 4%);
   font-size: var(--fs-xs);
   color: var(--text-dim);
   white-space: nowrap;
@@ -1129,7 +1257,7 @@ body.tips-off [data-tip]:focus-visible::after {
   width: 30px;
   height: 3px;
   border-radius: 2px;
-  background: rgb(255 255 255 / 9%);
+  background: rgb(var(--veil) / 9%);
   overflow: hidden;
 }
 
@@ -1160,7 +1288,7 @@ body.tips-off [data-tip]:focus-visible::after {
   padding: 9px 12px 7px;
   background: var(--material-menu);
   backdrop-filter: var(--blur-menu);
-  border: 1px solid rgb(255 255 255 / 11%);
+  border: 1px solid rgb(var(--veil) / 11%);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-2), var(--hairline);
   animation: menu-in var(--dur-1) var(--ease);
@@ -1229,7 +1357,7 @@ body.tips-off [data-tip]:focus-visible::after {
   flex-shrink: 0;
   padding: 1px 7px;
   border-radius: 20px;
-  background: rgb(255 255 255 / 7.5%);
+  background: rgb(var(--veil) / 7.5%);
   font-size: 10px;
   color: var(--text-dim);
 }
@@ -1406,11 +1534,11 @@ body.tips-off [data-tip]:focus-visible::after {
   align-items: center;
   gap: 2px;
   padding: 3px;
-  background: rgb(0 0 0 / 28%);
-  border: 1px solid rgb(255 255 255 / 6%);
+  background: rgb(var(--well) / 28%);
+  border: 1px solid rgb(var(--veil) / 6%);
   border-radius: 999px;
   color: var(--text-dim);
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 20%);
+  box-shadow: inset 0 1px 2px rgb(var(--well) / 20%);
 }
 
 .layout-switch button {
@@ -1426,11 +1554,11 @@ body.tips-off [data-tip]:focus-visible::after {
 }
 
 .layout-switch button.is-active {
-  background: rgb(255 255 255 / 14%);
+  background: rgb(var(--veil) / 14%);
   color: var(--text-bright);
   box-shadow:
-    0 1px 3px rgb(0 0 0 / 35%),
-    inset 0 1px 0 rgb(255 255 255 / 9%);
+    0 1px 3px rgb(var(--shade) / 35%),
+    inset 0 1px 0 rgb(var(--veil) / 9%);
 }
 
 /* With the canvas up, the pane switch describes what is *behind* it: still
@@ -1447,10 +1575,10 @@ body.tips-off [data-tip]:focus-visible::after {
   gap: 6px;
   margin-left: 8px;
   padding: 6px 13px;
-  border: 1px solid rgb(255 255 255 / 6%);
+  border: 1px solid rgb(var(--veil) / 6%);
   border-radius: 999px;
-  background: rgb(0 0 0 / 28%);
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 20%);
+  background: rgb(var(--well) / 28%);
+  box-shadow: inset 0 1px 2px rgb(var(--well) / 20%);
   color: var(--text-dim);
   font-size: var(--fs-md);
   font-weight: 500;
@@ -1461,12 +1589,12 @@ body.tips-off [data-tip]:focus-visible::after {
 }
 
 .layout-canvas.is-active {
-  background: rgb(255 255 255 / 14%);
-  border-color: rgb(255 255 255 / 12%);
+  background: rgb(var(--veil) / 14%);
+  border-color: rgb(var(--veil) / 12%);
   color: var(--text-bright);
   box-shadow:
-    0 1px 3px rgb(0 0 0 / 35%),
-    inset 0 1px 0 rgb(255 255 255 / 9%);
+    0 1px 3px rgb(var(--shade) / 35%),
+    inset 0 1px 0 rgb(var(--veil) / 9%);
 }
 
 /* Inside the segmented control the pop-up button is one more segment: no
@@ -1491,7 +1619,233 @@ body.tips-off [data-tip]:focus-visible::after {
 
 .layout-switch .select-trigger.is-open {
   color: var(--text-bright);
-  background: rgb(255 255 255 / 14%);
+  background: rgb(var(--veil) / 14%);
+}
+
+/* --- status bar --- */
+
+/* The footer (`StatusBar/index.tsx`): the title bar's thin material,
+   mirrored — the contact shadow sits on top, because this is a bar *under*
+   content, and the thread of light just inside it. Everything here is
+   caption-sized and tabular: these numbers change on their own and must not
+   dance. Like the title bar, it mounts with `App`, so every class of it lives
+   in this file (`StatusBar/styles.test.ts` locks that). */
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--statusbar-h);
+  padding: 0 6px 0 8px;
+  background: var(--material-thin);
+  backdrop-filter: var(--blur-thin);
+  border-top: 1px solid rgb(var(--well) / 35%);
+  box-shadow: var(--hairline);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.statusbar-left,
+.statusbar-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* Only the readouts flex: in a narrow window the branch name gives way, the
+   three buttons on the right never do. */
+.statusbar-left {
+  flex: 1 1 0;
+}
+
+.statusbar-right {
+  flex: none;
+}
+
+/* Readout or action, one shape: a 22px chip with the micro-target radius.
+   Buttons and spans share it — a readout hovers too, because it carries a
+   tooltip and the veil says "there is more here". */
+.sb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.sb-chip:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+button.sb-chip:active {
+  background: var(--bg-active);
+}
+
+.sb-chip > svg {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.sb-muted {
+  color: var(--text-dim);
+}
+
+/* One count per state, separated by a middle dot — the count in text colour,
+   the word dimmed by inheritance, so "1 esperando você" reads number first. */
+.sb-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+}
+
+.sb-seg + .sb-seg::before {
+  content: "·";
+  color: var(--text-dim);
+}
+
+/* State lights in the tree's grammar: yellow pulsing = stopped on a question
+   (`.badge-blocked`), green = up (`.dot--running`), a green ring = finished
+   and not yet read — the same hue as "up", hollow, so the two are told apart
+   at 6px without a second colour. */
+.sb-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sb-dot--waiting {
+  width: 7px;
+  height: 7px;
+  background: var(--yellow);
+  box-shadow: 0 0 7px rgb(240 195 60 / 70%);
+  animation: dot-pulse 1.4s ease-in-out infinite;
+}
+
+.sb-dot--running {
+  background: var(--green);
+  box-shadow: 0 0 6px rgb(64 209 110 / 60%);
+}
+
+.sb-dot--finished {
+  box-shadow: inset 0 0 0 1.5px var(--green);
+}
+
+/* A waiting agent is the bar's headline: the chip takes the yellow veil so
+   the eye lands on it from across the window — the one time the footer is
+   allowed to ask for attention. */
+.sb-chip--agents.is-waiting {
+  background: var(--yellow-bg);
+  color: var(--text-bright);
+}
+
+.sb-chip--agents.is-waiting:hover {
+  background: rgb(240 195 60 / 20%);
+  color: var(--text-bright);
+}
+
+.sb-branch {
+  color: var(--text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+/* +/− in mono, the diff's own colours (semantic chroma: addition, removal). */
+.sb-diff {
+  display: inline-flex;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.sb-add {
+  color: var(--green);
+}
+
+.sb-del {
+  color: var(--red);
+}
+
+/* A pipeline walking is an action in progress, and blue is the action colour
+   — the same tint the flow HUD wears on the canvas. */
+.sb-chip--flow {
+  color: var(--accent-text);
+}
+
+/* RAM: the sidebar HUD's meter at chip size, with the same three steps. */
+.sb-meter {
+  width: 44px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgb(var(--veil) / 9%);
+  overflow: hidden;
+}
+
+.sb-meter-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transform-origin: left;
+  transition:
+    transform 400ms ease,
+    background-color 400ms ease;
+}
+
+.sb-chip--ram.is-warn .sb-meter-fill {
+  background: var(--yellow);
+}
+
+.sb-chip--ram.is-crit .sb-meter-fill {
+  background: var(--red);
+}
+
+.sb-chip--ram.is-warn .sb-pct {
+  color: var(--yellow);
+}
+
+.sb-chip--ram.is-crit .sb-pct {
+  color: var(--red);
+}
+
+.sb-pct {
+  min-width: 3ch;
+  text-align: right;
+}
+
+/* Icon-buttons at the footer's density: the "inside rows" size of DESIGN.md
+   (the bar is a row), radius 6. `padding: 0` for the same reason as
+   `.icon-btn`: the UA's own padding shoves the glyph off-centre. */
+.sb-btn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.sb-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+.sb-btn:active {
+  background: var(--bg-active);
 }
 
 /* --- buttons --- */
@@ -1542,7 +1896,11 @@ body.tips-off [data-tip]:focus-visible::after {
 
 .icon-btn--served:hover {
   background: var(--accent-dim);
-  color: var(--accent-bright);
+  /* The ink stays `--accent-text`: that is the readable blue, and the blue
+     veil is what the hover adds. `--accent-bright` was here and is the
+     *darker* of the two (L* 63 against 73) — the state was dimming the icon
+     while claiming to brighten it, and once the panel under it came up the
+     ladder the pair measured 4.32:1. */
 }
 
 .icon-btn:disabled {
@@ -1577,29 +1935,29 @@ body.tips-off [data-tip]:focus-visible::after {
   gap: 6px;
   padding: 5px 12px;
   border-radius: var(--r-md);
-  background: rgb(255 255 255 / 7.5%);
-  border: 1px solid rgb(255 255 255 / 9%);
+  background: rgb(var(--veil) / 7.5%);
+  border: 1px solid rgb(var(--veil) / 9%);
   color: var(--text);
   white-space: nowrap;
   box-shadow:
-    0 1px 2px rgb(0 0 0 / 25%),
-    inset 0 1px 0 rgb(255 255 255 / 7%);
+    0 1px 2px rgb(var(--shade) / 25%),
+    inset 0 1px 0 rgb(var(--veil) / 7%);
 }
 
 .btn:hover {
-  background: rgb(255 255 255 / 11%);
+  background: rgb(var(--veil) / 11%);
   color: var(--text-bright);
-  border-color: rgb(255 255 255 / 13%);
+  border-color: rgb(var(--veil) / 13%);
 }
 
 .btn:active {
-  background: rgb(255 255 255 / 15%);
+  background: rgb(var(--veil) / 15%);
 }
 
 .btn:disabled {
   opacity: 0.4;
   cursor: default;
-  background: rgb(255 255 255 / 5%);
+  background: rgb(var(--veil) / 5%);
 }
 
 /* Primary: system blue, with the inner light of a push button. */
@@ -1626,7 +1984,7 @@ body.tips-off [data-tip]:focus-visible::after {
 /* A disabled primary was the gradient at 0.4 — which dropped the white text
    far below any threshold. It steps out of the blue instead. */
 .btn--primary:disabled {
-  background: rgb(255 255 255 / 9%);
+  background: rgb(var(--veil) / 9%);
   border-color: var(--border);
   color: var(--text-dim);
   box-shadow: none;
@@ -1664,7 +2022,7 @@ body.tips-off [data-tip]:focus-visible::after {
 }
 
 .btn--danger:disabled {
-  background: rgb(255 255 255 / 9%);
+  background: rgb(var(--veil) / 9%);
   border-color: var(--border);
   color: var(--text-dim);
   box-shadow: none;
@@ -1737,7 +2095,7 @@ body.tips-off [data-tip]:focus-visible::after {
   min-width: 190px; /* SIDEBAR_MIN */
   background: var(--material-thin);
   backdrop-filter: var(--blur-thin);
-  border-right: 1px solid rgb(0 0 0 / 32%);
+  border-right: 1px solid rgb(var(--well) / 32%);
 }
 
 .sidebar-header {
@@ -1964,7 +2322,7 @@ body.tips-off [data-tip]:focus-visible::after {
   padding: 5px;
   background: var(--material-menu);
   backdrop-filter: var(--blur-menu);
-  border: 1px solid rgb(255 255 255 / 11%);
+  border: 1px solid rgb(var(--veil) / 11%);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-2), var(--hairline);
   display: flex;
@@ -2057,7 +2415,7 @@ body.tips-off [data-tip]:focus-visible::after {
 .menu-sep {
   height: 1px;
   margin: 5px 9px;
-  background: rgb(255 255 255 / 9%);
+  background: rgb(var(--veil) / 9%);
 }
 
 /* Customization rows (color/size) inside the menu: buttons leave the
@@ -2208,7 +2566,7 @@ body.tips-off [data-tip]:focus-visible::after {
   margin-top: 6px;
   height: 3px;
   border-radius: 2px;
-  background: rgb(255 255 255 / 9%);
+  background: rgb(var(--veil) / 9%);
   overflow: hidden;
 }
 
@@ -2341,7 +2699,7 @@ body.tips-off [data-tip]:focus-visible::after {
      the scrolling strip without escaping the pane. */
   position: relative;
   box-shadow:
-    0 4px 16px rgb(0 0 0 / 25%),
+    0 4px 16px rgb(var(--shade) / 25%),
     var(--hairline);
   transition:
     border-color var(--dur-2) ease,
@@ -2354,12 +2712,18 @@ body.tips-off [data-tip]:focus-visible::after {
   border-color: rgb(10 132 255 / 55%);
   box-shadow:
     0 0 0 3px rgb(10 132 255 / 14%),
-    0 4px 16px rgb(0 0 0 / 25%),
+    0 4px 16px rgb(var(--shade) / 25%),
     var(--hairline);
 }
 
+/* A whisper above the resting header — through the veil channel, not a hex one
+   step up the ladder, which is what was here and what stopped being one step
+   up the moment the ladder was re-graded. On paper the veil is ink, so the
+   focused header goes a whisper *darker*, which is the same gesture. */
 .pane--focused .pane-header {
-  background: #24242b;
+  background:
+    linear-gradient(0deg, rgb(var(--veil) / 5%), rgb(var(--veil) / 5%)),
+    var(--bg-raised);
 }
 
 .pane--dragover {
@@ -2373,7 +2737,7 @@ body.tips-off [data-tip]:focus-visible::after {
   display: grid;
   place-items: center;
   border-style: dashed;
-  background: rgb(26 26 30 / 55%);
+  background: rgb(var(--slab) / 55%);
   box-shadow: none;
 }
 
@@ -2476,7 +2840,7 @@ body.tips-off [data-tip]:focus-visible::after {
   height: 40px;
   padding: 0 8px 0 6px;
   background: var(--bg-raised);
-  border-bottom: 1px solid rgb(0 0 0 / 28%);
+  border-bottom: 1px solid rgb(var(--well) / 28%);
   box-shadow: var(--hairline);
   flex-shrink: 0;
   transition: background-color var(--dur-2) ease;
@@ -2535,10 +2899,10 @@ body.tips-off [data-tip]:focus-visible::after {
   max-width: min(420px, 90%);
   padding: 4px 9px;
   border-radius: 8px;
-  background: rgb(46 46 52 / 96%);
-  border: 1px solid rgb(255 255 255 / 10%);
+  background: var(--material-tip);
+  border: 1px solid rgb(var(--veil) / 10%);
   box-shadow:
-    0 6px 18px rgb(0 0 0 / 45%),
+    0 6px 18px rgb(var(--shade) / 45%),
     var(--hairline);
   color: var(--text-bright);
   font-size: var(--fs-xs);
@@ -2615,10 +2979,10 @@ body.is-tab-drag .pane-dropnew {
 }
 
 .pane-tab-slot.is-active {
-  background: rgb(255 255 255 / 12%);
+  background: rgb(var(--veil) / 12%);
   box-shadow:
-    0 1px 3px rgb(0 0 0 / 30%),
-    inset 0 1px 0 rgb(255 255 255 / 8%);
+    0 1px 3px rgb(var(--shade) / 30%),
+    inset 0 1px 0 rgb(var(--veil) / 8%);
 }
 
 .pane-tab-slot.is-active .pane-tab {
@@ -2650,10 +3014,10 @@ body.is-tab-drag .pane-dropnew {
   align-items: center;
   padding-right: 5px;
   border-radius: var(--r-tab);
-  background: #303038;
+  background: var(--bg-overlay);
   box-shadow:
-    0 10px 28px rgb(0 0 0 / 45%),
-    inset 0 1px 0 rgb(255 255 255 / 8%),
+    0 10px 28px rgb(var(--shade) / 45%),
+    inset 0 1px 0 rgb(var(--veil) / 8%),
     var(--hairline);
   opacity: 0.92;
   pointer-events: none;
@@ -2718,7 +3082,7 @@ body.is-tab-drag * {
   flex-shrink: 0;
   padding: 0 6px;
   border-radius: 20px;
-  background: rgb(255 255 255 / 8%);
+  background: rgb(var(--veil) / 8%);
   color: var(--text-dim);
   font-size: var(--fs-xs);
   line-height: 17px;
@@ -2793,7 +3157,7 @@ body.is-tab-drag * {
 }
 
 .pane-tab-close:hover {
-  background: rgb(255 255 255 / 18%);
+  background: rgb(var(--veil) / 18%);
   color: var(--text-bright);
   opacity: 1;
 }
@@ -3016,12 +3380,12 @@ body.is-tab-drag * {
   flex: 1;
   min-height: 0;
   padding: 6px 0 3px 8px;
-  background: #121215;
+  background: var(--well-code);
 }
 
 .xterm .xterm-viewport {
   scrollbar-width: thin;
-  scrollbar-color: rgb(255 255 255 / 14%) transparent;
+  scrollbar-color: rgb(var(--veil) / 14%) transparent;
 }
 
 /* Inside the terminal the scrollbar is a true overlay: thinner and more
@@ -3031,14 +3395,14 @@ body.is-tab-drag * {
 }
 
 .xterm .xterm-viewport::-webkit-scrollbar-thumb {
-  background: rgb(255 255 255 / 12%);
+  background: rgb(var(--veil) / 12%);
   border: 1px solid transparent;
   background-clip: padding-box;
   border-radius: 8px;
 }
 
 .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
-  background: rgb(255 255 255 / 24%);
+  background: rgb(var(--veil) / 24%);
   background-clip: padding-box;
 }
 
@@ -3049,7 +3413,8 @@ body.is-tab-drag * {
    The column itself is click-through: its gaps sit over the canvas. */
 .toast-stack {
   position: fixed;
-  bottom: 18px;
+  /* Clears the status bar when it shows (`.app[data-statusbar]`). */
+  bottom: calc(18px + var(--statusbar-gap, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 200;
@@ -3071,7 +3436,7 @@ body.is-tab-drag * {
   border-radius: 16px;
   background: var(--material-menu);
   backdrop-filter: var(--blur-menu);
-  border: 1px solid rgb(255 255 255 / 11%);
+  border: 1px solid rgb(var(--veil) / 11%);
   box-shadow: var(--shadow-2), var(--hairline);
   font-size: var(--fs-sm);
   max-width: 70vw;
@@ -3130,7 +3495,7 @@ body.is-tab-drag * {
 
 .toast .icon-btn:hover {
   opacity: 1;
-  background: rgb(255 255 255 / 10%);
+  background: rgb(var(--veil) / 10%);
 }
 
 /* --- scrollbars --- */
@@ -3142,14 +3507,14 @@ body.is-tab-drag * {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgb(255 255 255 / 18%);
+  background: rgb(var(--veil) / 18%);
   border: 2px solid transparent;
   background-clip: padding-box;
   border-radius: var(--r-tab);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgb(255 255 255 / 32%);
+  background: rgb(var(--veil) / 32%);
   background-clip: padding-box;
 }
 
@@ -3186,7 +3551,7 @@ body.is-tab-drag * {
   height: 28px;
   padding: 0 4px;
   background: var(--bg-raised);
-  border-bottom: 1px solid rgb(0 0 0 / 28%);
+  border-bottom: 1px solid rgb(var(--well) / 28%);
   box-shadow: var(--hairline);
   flex-shrink: 0;
 }
@@ -3203,7 +3568,7 @@ body.is-tab-drag * {
   padding: 0 8px;
   border: 1px solid var(--border);
   border-radius: 20px;
-  background: rgb(0 0 0 / 26%);
+  background: rgb(var(--well) / 26%);
   color: var(--text);
   font-size: 11px;
   font-family: inherit;
@@ -3218,7 +3583,7 @@ body.is-tab-drag * {
 
 .cv-portal-body {
   position: relative;
-  background: #1c1c21;
+  background: var(--bg-panel);
 }
 
 .cv-portal-ph {

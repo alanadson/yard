@@ -198,7 +198,7 @@
   color: #1c1c1e;
   border-radius: 2px;
   padding: 0 2px;
-  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 16%);
+  box-shadow: inset 0 0 0 1px rgb(var(--well) / 16%);
 }
 
 .cv-note-md s {
@@ -309,7 +309,7 @@
 .cv-note.ink-dark .cv-note-lock {
   color: var(--note-ink-dim);
   background: rgb(255 255 255 / 45%);
-  border-color: rgb(0 0 0 / 12%);
+  border-color: rgb(var(--well) / 12%);
 }
 
 .cv-note.ink-dark.is-locked .cv-note-lock {
@@ -388,7 +388,7 @@
 }
 
 .cv-toolbar .icon-btn:hover {
-  background: rgb(255 255 255 / 9%);
+  background: rgb(var(--veil) / 9%);
 }
 
 /* The tool in hand: a lit dome, not a flat blue square. It is the one thing
@@ -407,7 +407,7 @@
 .cv-toolbar-sep {
   width: 18px;
   height: 1px;
-  background: rgb(255 255 255 / 12%);
+  background: rgb(var(--veil) / 12%);
   margin: 2px 0;
 }
 
@@ -500,7 +500,7 @@
 .cv-flyout-sep {
   align-self: stretch;
   width: 1px;
-  background: rgb(255 255 255 / 9%);
+  background: rgb(var(--veil) / 9%);
   margin: 2px 0;
 }
 
@@ -509,7 +509,7 @@
   display: block;
   border-radius: 50%;
   box-shadow:
-    inset 0 0 0 1px rgb(0 0 0 / 25%),
+    inset 0 0 0 1px rgb(var(--well) / 25%),
     inset 0 1px 0 rgb(255 255 255 / 35%);
 }
 
@@ -565,7 +565,7 @@
 }
 
 .cv-zoomctl .icon-btn:hover {
-  background: rgb(255 255 255 / 9%);
+  background: rgb(var(--veil) / 9%);
 }
 
 /* Splits the row into "change the zoom" and "change the frame" — two
@@ -573,7 +573,7 @@
 .cv-zoom-sep {
   width: 1px;
   align-self: stretch;
-  background: rgb(255 255 255 / 12%);
+  background: rgb(var(--veil) / 12%);
   margin: 4px 3px;
 }
 
@@ -592,7 +592,7 @@
 }
 
 .cv-zoom-pct:hover {
-  background: rgb(255 255 255 / 9%);
+  background: rgb(var(--veil) / 9%);
   color: var(--text-bright);
 }
 
@@ -670,7 +670,7 @@
   font-size: 15px;
   font-weight: 620;
   color: var(--text);
-  background: rgb(0 0 0 / 26%);
+  background: rgb(var(--well) / 26%);
   border: 1px solid var(--cv-glass-border);
   border-radius: var(--r-sm);
   padding: 2px 6px;
@@ -734,28 +734,28 @@
 
 .cv-md-table th {
   font-weight: 620;
-  background: rgb(255 255 255 / 6%);
+  background: rgb(var(--veil) / 6%);
 }
 
 /* Zebra, quietly: a note is small and a table in it is usually short, so the
    stripe is there to guide the eye across a row, not to decorate. */
 .cv-md-table tbody tr:nth-child(even) td {
-  background: rgb(255 255 255 / 3%);
+  background: rgb(var(--veil) / 3%);
 }
 
 /* A note with a dark fill flips the ink; the rules and the header have to
    follow, or a yellow note shows a table drawn in invisible white. */
 .cv-note.ink-dark .cv-md-table th,
 .cv-note.ink-dark .cv-md-table td {
-  border-color: rgb(0 0 0 / 22%);
+  border-color: rgb(var(--well) / 22%);
 }
 
 .cv-note.ink-dark .cv-md-table th {
-  background: rgb(0 0 0 / 10%);
+  background: rgb(var(--well) / 10%);
 }
 
 .cv-note.ink-dark .cv-md-table tbody tr:nth-child(even) td {
-  background: rgb(0 0 0 / 5%);
+  background: rgb(var(--well) / 5%);
 }
 
 .cv-md-img {
@@ -764,7 +764,7 @@
   margin: 0.4em 0;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
-  background: rgb(0 0 0 / 20%);
+  background: rgb(var(--well) / 20%);
 }
 
 /* A picture that could not be drawn says which one it was, instead of
@@ -790,7 +790,7 @@
   display: flex;
   flex-direction: column;
   z-index: 2;
-  background: rgb(26 26 30 / 92%);
+  background: rgb(var(--slab) / 92%);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   box-shadow: var(--cv-lift), var(--cv-edge);
@@ -843,13 +843,13 @@
   height: 18px;
   border: none;
   border-radius: var(--r-sm);
-  background: rgb(0 0 0 / 12%);
+  background: rgb(var(--well) / 12%);
   color: inherit;
   cursor: pointer;
 }
 
 .cv-media-btn:hover {
-  background: rgb(0 0 0 / 22%);
+  background: rgb(var(--well) / 22%);
 }
 
 .cv-media-body {
@@ -859,7 +859,7 @@
   place-items: center;
   padding: 6px;
   cursor: grab;
-  background: rgb(0 0 0 / 24%);
+  background: rgb(var(--well) / 24%);
 }
 
 .cv-media-img,
@@ -924,7 +924,7 @@
   display: flex;
   flex-direction: column;
   z-index: 2;
-  background: rgb(26 26 30 / 92%);
+  background: rgb(var(--slab) / 92%);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   box-shadow: var(--cv-lift), var(--cv-edge);
@@ -972,13 +972,13 @@
   height: 18px;
   border: none;
   border-radius: var(--r-sm);
-  background: rgb(0 0 0 / 12%);
+  background: rgb(var(--well) / 12%);
   color: inherit;
   cursor: pointer;
 }
 
 .cv-binder-btn:hover {
-  background: rgb(0 0 0 / 22%);
+  background: rgb(var(--well) / 22%);
 }
 
 .cv-binder-page {
@@ -1021,7 +1021,7 @@
   overflow-x: auto;
   scrollbar-width: none;
   border-top: 1px solid var(--border);
-  background: rgb(0 0 0 / 22%);
+  background: rgb(var(--well) / 22%);
 }
 
 .cv-binder-tabs::-webkit-scrollbar {
@@ -1037,14 +1037,14 @@
   padding: 2px 6px;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
-  background: rgb(255 255 255 / 6%);
+  background: rgb(var(--veil) / 6%);
   color: var(--text-dim);
   font-size: var(--fs-xs);
   cursor: pointer;
 }
 
 .cv-binder-tab:hover {
-  background: rgb(255 255 255 / 12%);
+  background: rgb(var(--veil) / 12%);
   color: var(--text);
 }
 
@@ -1077,7 +1077,7 @@
 
 .cv-binder-tab-off:hover {
   opacity: 1;
-  background: rgb(255 255 255 / 18%);
+  background: rgb(var(--veil) / 18%);
 }
 
 .cv-binder.is-selected::after {
@@ -1109,7 +1109,7 @@
   display: flex;
   flex-direction: column;
   z-index: 2;
-  background: rgb(26 26 30 / 92%);
+  background: rgb(var(--slab) / 92%);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   box-shadow: var(--cv-lift), var(--cv-edge);
@@ -1151,7 +1151,7 @@
   height: 18px;
   border: none;
   border-radius: var(--r-sm);
-  background: rgb(0 0 0 / 12%);
+  background: rgb(var(--well) / 12%);
   color: inherit;
   font-size: 11px;
   line-height: 1;
@@ -1159,7 +1159,7 @@
 }
 
 .cv-tree-btn:hover {
-  background: rgb(0 0 0 / 22%);
+  background: rgb(var(--well) / 22%);
 }
 
 .cv-tree-modes {
@@ -1168,7 +1168,7 @@
   flex: 0 0 auto;
   padding: 4px 5px;
   border-bottom: 1px solid var(--border);
-  background: rgb(0 0 0 / 22%);
+  background: rgb(var(--well) / 22%);
 }
 
 .cv-tree-mode {
@@ -1183,7 +1183,7 @@
 }
 
 .cv-tree-mode:hover {
-  background: rgb(255 255 255 / 8%);
+  background: rgb(var(--veil) / 8%);
   color: var(--text);
 }
 
@@ -1217,7 +1217,7 @@
 }
 
 .cv-tree-row:hover {
-  background: rgb(255 255 255 / 7%);
+  background: rgb(var(--veil) / 7%);
 }
 
 .cv-tree-row.is-selected {
@@ -1288,7 +1288,7 @@
   padding: 4px;
   border: 1px solid transparent;
   border-radius: var(--r-md);
-  background: rgb(255 255 255 / 4%);
+  background: rgb(var(--veil) / 4%);
   color: var(--text);
   font: inherit;
   cursor: pointer;
@@ -1296,7 +1296,7 @@
 
 .cv-tree-tile:hover {
   border-color: var(--border-strong);
-  background: rgb(255 255 255 / 9%);
+  background: rgb(var(--veil) / 9%);
 }
 
 .cv-tree-thumb {
@@ -1306,7 +1306,7 @@
   height: 48px;
   object-fit: cover;
   border-radius: var(--r-sm);
-  background: rgb(0 0 0 / 28%);
+  background: rgb(var(--well) / 28%);
 }
 
 .cv-tree-tile-name {

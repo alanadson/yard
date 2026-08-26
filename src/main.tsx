@@ -4,10 +4,18 @@ import "@fontsource-variable/inter";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { installErrorBridge, uiLog } from "./lib/log";
+import { restoreTheme } from "./lib/theme";
 
 // Before any render: if boot breaks, the error needs to reach the log.
 installErrorBridge();
 uiLog.info("UI iniciando");
+
+// And before the first pixel of the shell: the preference itself lives in
+// SQLite, an `await` away, so without this the window opens in whatever
+// appearance the OS prefers and flips when the store answers. `index.html`
+// already painted a ground; this puts the attribute the light sheet keys on
+// back, from what the last session resolved.
+restoreTheme(document.documentElement);
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   // StrictMode mounts every effect twice in dev. That is intentional here:

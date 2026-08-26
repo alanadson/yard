@@ -22,6 +22,7 @@ function actions(): TitleBarMenuActions {
     toggleChanges: vi.fn(),
     toggleBench: vi.fn(),
     toggleNotes: vi.fn(),
+    toggleStatusBar: vi.fn(),
     openModal: vi.fn(),
     toggleMaximize: vi.fn(),
     minimize: vi.fn(),
@@ -39,6 +40,7 @@ const isOpen = {
   changes: false,
   bench: false,
   notes: false,
+  statusBar: true,
   maximized: false,
 };
 
@@ -48,6 +50,20 @@ describe("titleBarMenu", () => {
     expect(findItem(menu, "sidebar")?.checked).toBe(true);
     expect(findItem(menu, "bench")?.checked).toBe(true);
     expect(findItem(menu, "changes")?.checked).toBe(false);
+  });
+
+  /**
+   * The status bar is the newest surface with no button of its own: once
+   * hidden from Settings, this menu (and the bar's own) is the way to see it
+   * is off and bring it back without opening Preferences.
+   */
+  it("the status bar is on the map too — checked while it shows, and the entry toggles it", () => {
+    const act = actions();
+    expect(findItem(titleBarMenu(isOpen, act), "statusbar")?.checked).toBe(true);
+    const hidden = titleBarMenu({ ...isOpen, statusBar: false }, act);
+    expect(findItem(hidden, "statusbar")?.checked).toBe(false);
+    findItem(hidden, "statusbar")?.onSelect?.();
+    expect(act.toggleStatusBar).toHaveBeenCalledTimes(1);
   });
 
   it("the shortcuts are on show — the menu teaches the keyboard too", () => {
