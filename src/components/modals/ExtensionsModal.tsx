@@ -24,11 +24,10 @@ import { useT } from "../../hooks/useT";
 import { BUNDLED_FONTS, loadBundledFonts } from "../../lib/bundledFonts";
 import { schemeFor } from "../../lib/colorSchemes";
 import {
-  extensionControl,
+  extensionInput,
   EXTENSION_KINDS,
   EXTENSIONS,
   type ExtensionDef,
-  type ExtensionId,
   type ExtensionKind,
 } from "../../lib/extensions";
 import { useExtensions } from "../../stores/extensionsStore";
@@ -180,7 +179,6 @@ function ExtensionCard({ ext }: { ext: ExtensionDef }) {
   const t = useT();
   const on = useExtensions((s) => s.enabled[ext.id] === true);
   const setEnabled = useExtensions((s) => s.setEnabled);
-  const radio = extensionControl(ext) === "radio";
 
   return (
     <article className={`ext-card ${on ? "is-on" : ""}`}>
@@ -199,23 +197,10 @@ function ExtensionCard({ ext }: { ext: ExtensionDef }) {
         <Preview ext={ext} />
       </div>
       <div className="ext-actions">
-        {/* Themes take turns: turning one on turns its sibling off. A toggle
-            promised independence and lied — the card being switched off could
-            be far away, off screen. A radio tells the truth of the rule;
-            clicking the one already on turns it off (no theme at all is a
-            valid choice too). */}
-        <input
-          type={radio ? "radio" : "checkbox"}
-          role={radio ? undefined : "switch"}
-          name={ext.category}
-          className={radio ? "ext-radio" : "switch"}
-          checked={on}
-          onChange={() => setEnabled(ext.id as ExtensionId, true)}
-          onClick={() => {
-            if (ext.category && on) setEnabled(ext.id as ExtensionId, false);
-          }}
-          aria-label={t(ext.name)}
-        />
+        {/* Color themes take turns among nine and come as a radio; everything
+            else is a switch, the icon themes included — the store retires the
+            sibling. What a click asks is decided in `extensionInput`. */}
+        <input {...extensionInput(ext, on, setEnabled)} aria-label={t(ext.name)} />
       </div>
     </article>
   );

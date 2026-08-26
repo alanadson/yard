@@ -283,12 +283,43 @@ export function settingsExtensions(): ExtensionDef[] {
 /**
  * Which control the extension asks for in a list.
  *
- * A switch promises independence; whoever has a `category` takes turns with
- * its siblings, and the card that turns itself off may be far away, off
- * screen. A radio tells the truth about the rule — clicking the one already
- * on turns it off (no theme is a valid choice too). The store already did it
- * this way; the rule left its JSX to apply in both places.
+ * A radio is for picking one from a list: the color themes, nine palettes
+ * chosen by looking, with a preview. The two icon themes also take turns,
+ * but they are a pair sitting side by side (`settingsExtensions` keeps them
+ * adjacent, with a test), and two switches that retire each other read as
+ * one rule — two radios in a column of switches read as a broken design.
+ * The store retires the sibling either way (`setEnabled`).
  */
 export function extensionControl(ext: ExtensionDef): "radio" | "switch" {
-  return ext.category ? "radio" : "switch";
+  return ext.category === "color-theme" ? "radio" : "switch";
+}
+
+/**
+ * The props of the `<input>` that switches an extension — the same in the
+ * Settings row and in the store's card, so what a click asks of the store is
+ * decided in one place, where a test can see it.
+ *
+ * The regression that motivated it: the switch asked for "on" on every
+ * click, and once on it could never be turned off.
+ */
+export function extensionInput(
+  ext: ExtensionDef,
+  on: boolean,
+  setEnabled: (id: ExtensionId, on: boolean) => void,
+) {
+  const radio = extensionControl(ext) === "radio";
+  return {
+    type: radio ? ("radio" as const) : ("checkbox" as const),
+    role: radio ? undefined : ("switch" as const),
+    name: radio ? ext.category : undefined,
+    className: radio ? "ext-radio" : "switch",
+    checked: on,
+    // A click asks for the opposite of what is on screen.
+    onChange: () => setEnabled(ext.id, !on),
+    // A radio already on fires no change event — the click is the only way
+    // to hear it, and no theme at all is a valid choice too.
+    onClick: () => {
+      if (radio && on) setEnabled(ext.id, false);
+    },
+  };
 }

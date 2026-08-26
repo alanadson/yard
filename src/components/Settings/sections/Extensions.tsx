@@ -7,15 +7,16 @@
  * color themes stay out because they take turns and are chosen by palette
  * (`extensoesDeAjustes`, with a test).
  *
- * The two icon themes, which also take turns, come in as a radio: a switch
- * would promise independence and lie — the same rule as the store, now
- * written in a single place (`controleDeExtensao`).
+ * The two icon themes also take turns, and still come in as switches: they
+ * sit side by side, so the one that goes off is in sight — the store retires
+ * it. What a click asks of the store is decided in one place, shared with the
+ * store's card (`extensionInput`, with a test).
  *
  * The catalog (`lib/extensions.ts`) keeps its Portuguese; name, line and
  * chip are translated here, where they are drawn.
  */
 import {
-  extensionControl,
+  extensionInput,
   EXTENSION_KINDS,
   settingsExtensions,
   type ExtensionDef,
@@ -30,7 +31,6 @@ function ExtensionRow({ ext }: { ext: ExtensionDef }) {
   const t = useT();
   const on = useExtensions((s) => s.enabled[ext.id] === true);
   const setEnabled = useExtensions((s) => s.setEnabled);
-  const radio = extensionControl(ext) === "radio";
   const chip = EXTENSION_KINDS.find((k) => k.id === ext.kind)?.chip ?? ext.kind;
 
   return (
@@ -43,20 +43,7 @@ function ExtensionRow({ ext }: { ext: ExtensionDef }) {
         <small className="set-row-desc set-ext-desc">{t(ext.description)}</small>
       </span>
       <span className="set-chip">{t(chip)}</span>
-      <input
-        type={radio ? "radio" : "checkbox"}
-        role={radio ? undefined : "switch"}
-        name={ext.category}
-        className={radio ? "ext-radio" : "switch"}
-        checked={on}
-        onChange={() => setEnabled(ext.id, true)}
-        onClick={() => {
-          // Clicking the radio that is already on turns it off: no icon theme
-          // at all is a valid choice too.
-          if (radio && on) setEnabled(ext.id, false);
-        }}
-        aria-label={t(ext.name)}
-      />
+      <input {...extensionInput(ext, on, setEnabled)} aria-label={t(ext.name)} />
     </div>
   );
 }
