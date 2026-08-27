@@ -37,14 +37,19 @@ import benchCss from "./components/BenchPanel/bench.css?raw";
 import canvasTailCss from "./components/CanvasView/canvas-tail.css?raw";
 import changesCss from "./components/ChangesPanel/changes.css?raw";
 import composerCss from "./components/Composer/composer.css?raw";
+import costsCss from "./components/modals/costs.css?raw";
 import editorCss from "./components/CodeEditor/editor.css?raw";
 import liveCss from "./components/LiveView/live.css?raw";
 import modalCss from "./components/modals/modal.css?raw";
 import notesCss from "./components/NotesView/notes.css?raw";
+import onboardingCss from "./components/modals/onboarding.css?raw";
 import paletteCss from "./components/Palette/palette.css?raw";
 import routinesCss from "./components/modals/routines.css?raw";
+import scmCss from "./components/BenchPanel/scm.css?raw";
 import scoresCss from "./components/modals/scores.css?raw";
 import settingsCss from "./components/Settings/settings.css?raw";
+import shoulderCss from "./components/modals/shoulder.css?raw";
+import transcriptCss from "./components/modals/transcript.css?raw";
 
 import designMd from "../docs/DESIGN.md?raw";
 import appSrc from "./App.tsx?raw";
@@ -56,22 +61,36 @@ import sidebarSrc from "./components/ProjectSidebar/index.tsx?raw";
 /** The CSS that exists before the first pixel. */
 const BOOT_CHUNK_CSS = [bootCss, canvasCss, floorsCss].join("\n");
 
+/**
+ * Every sheet the app has, named — the name is what a failure message
+ * shows. The list has to stay level with the `.css` files on disk: a sheet
+ * missing from here is a sheet no rule in this file ever reads.
+ */
+const SHEETS = [
+  ["styles.css", bootCss],
+  ["CanvasView/canvas.css", canvasCss],
+  ["Floors/floors.css", floorsCss],
+  ["BenchPanel/bench.css", benchCss],
+  ["BenchPanel/scm.css", scmCss],
+  ["CanvasView/canvas-tail.css", canvasTailCss],
+  ["ChangesPanel/changes.css", changesCss],
+  ["CodeEditor/editor.css", editorCss],
+  ["Composer/composer.css", composerCss],
+  ["LiveView/live.css", liveCss],
+  ["NotesView/notes.css", notesCss],
+  ["Palette/palette.css", paletteCss],
+  ["Settings/settings.css", settingsCss],
+  ["modals/costs.css", costsCss],
+  ["modals/modal.css", modalCss],
+  ["modals/onboarding.css", onboardingCss],
+  ["modals/routines.css", routinesCss],
+  ["modals/scores.css", scoresCss],
+  ["modals/shoulder.css", shoulderCss],
+  ["modals/transcript.css", transcriptCss],
+] as const;
+
 /** All of the app's CSS — to tell "not styled" from "styled late". */
-const ALL_CSS = [
-  BOOT_CHUNK_CSS,
-  benchCss,
-  canvasTailCss,
-  changesCss,
-  composerCss,
-  editorCss,
-  liveCss,
-  modalCss,
-  notesCss,
-  paletteCss,
-  routinesCss,
-  scoresCss,
-  settingsCss,
-].join("\n");
+const ALL_CSS = SHEETS.map(([, css]) => css).join("\n");
 
 /** Marks the place of a `${…}`: whatever was glued to it is not a literal class. */
 const INTERPOLATION = "\u0000";
@@ -526,6 +545,75 @@ describe("focus signal on fields", () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  /** Every `selector { body }` of a sheet, comments already stripped. */
+  function rulesOf(css: string) {
+    return [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(
+      (r) => ({ selector: r[1].trim().replace(/\s+/g, " "), body: r[2] }),
+    );
+  }
+
+  /**
+   * The browser traces `outline` along the `border-radius` the element
+   * already has: the ring is drawn around a shape, it does not choose one.
+   * A focus rule that sets `border-radius` therefore stops describing a state
+   * and starts redefining the geometry — and it wins, because
+   * `:focus-visible` (0,1,0) beats the `input, select` that rounds every
+   * field (0,0,1). That is how each field in the app narrowed from `--r-md`
+   * to `--r-sm` the moment it took focus, with the ring tracing the smaller
+   * shape around a well that stayed the bigger one.
+   *
+   * A rounding *fallback* for what nobody rounded is still fair — but only
+   * at zero specificity (`:where(...)`), where it can never beat the shape
+   * the element declares for itself.
+   */
+  it("the ring traces the shape it circles — no focus rule redraws the radius", () => {
+    const offenders = SHEETS.flatMap(([name, css]) =>
+      rulesOf(css)
+        .filter((r) => /:focus(-visible|-within)?(?![\w-])/.test(r.selector))
+        .filter((r) => /(?:^|;)\s*border-radius:/.test(r.body))
+        .filter((r) => !r.selector.startsWith(":where("))
+        .map((r) => `${name}: ${r.selector}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  /**
+   * A field inside a well — the file filter and the new-task capsule on the
+   * bench, the transcript search, the palette, the notebook — gives up its
+   * own frame: no border, no background, no shadow. The well around it is
+   * what draws the box and what lights up blue on `:focus-within`.
+   *
+   * The global ring on the bare input drew a *second* frame inside the first,
+   * and with the input's own radius — zero — so a hard rectangle appeared
+   * inside a 9px well and inside a 999px capsule. Every such field says
+   * `outline: none`; two on the bench had been forgotten.
+   */
+  it("a field with no frame of its own draws no ring — the well around it is the signal", () => {
+    const offenders = SHEETS.flatMap(([name, css]) => {
+      const rules = rulesOf(css);
+      /** Selectors this sheet already strips the ring from, focus state aside. */
+      const ringless = new Set<string>();
+      for (const r of rules) {
+        if (!/(?:^|;)\s*outline:\s*(none|0)(?![\w-])/.test(r.body)) continue;
+        for (const s of r.selector.split(",")) {
+          ringless.add(s.trim().replace(/\s+/g, " ").replace(/:focus(-visible|-within)?/g, ""));
+        }
+      }
+      const bare: string[] = [];
+      for (const r of rules) {
+        if (!/(?:^|;)\s*border:\s*(none|0)(?![\w-])/.test(r.body)) continue;
+        for (const s of r.selector.split(",")) {
+          const selector = s.trim().replace(/\s+/g, " ");
+          if (!/(\binput\b|\btextarea\b|-input(?![\w-]))/.test(selector)) continue;
+          if (ringless.has(selector.replace(/:focus(-visible|-within)?/g, ""))) continue;
+          bare.push(`${name}: ${selector}`);
+        }
+      }
+      return bare;
+    });
+    expect([...new Set(offenders)]).toEqual([]);
   });
 });
 

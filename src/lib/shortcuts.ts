@@ -44,7 +44,6 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       [["Ctrl", "Shift", "D"], "Painel de arquivos e alterações"],
       [["Ctrl", "Shift", "N"], "Anotações — o caderno de notas markdown"],
       [["Ctrl", "Shift", "P"], "Configurações"],
-      [["Ctrl", "Shift", "X"], "Extensões — a loja de recursos do Yard"],
       [["Ctrl", "Shift", "A"], "Ir para o próximo agente que está esperando você"],
       [["Ctrl", "Shift", "W"], "Fechar a aba em foco (CLI, arquivo, navegador ou notas)"],
       [["Ctrl", "Shift", "H"], "A lista completa de atalhos"],

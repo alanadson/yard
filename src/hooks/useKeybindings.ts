@@ -120,15 +120,6 @@ export function useKeybindings() {
         return;
       }
 
-      // Ctrl+Shift+X — extensions (the same key VS Code means by it). Inside
-      // a note or the editor the combination is strikethrough; those are text
-      // fields, so `emCampoDeTexto` above already keeps this from firing.
-      if (e.shiftKey && e.code === "KeyX") {
-        e.preventDefault();
-        useUI.getState().openModal("extensions");
-        return;
-      }
-
       // Ctrl+B — toggle sidebar
       if (!e.shiftKey && e.code === "KeyB") {
         e.preventDefault();

@@ -61,7 +61,6 @@ export default {
   "Procurar de novo": "Search again",
   "A lista vem das fontes instaladas na máquina; as famílias que vêm com o Yard entram quando a":
     "The list comes from the fonts installed on this machine; the families that ship with Yard join it when the",
-  "extensão Fontes de código": "Code fonts extension",
   "está ligada.": "is on.",
   "Barra de título": "Title bar",
   "Medidor de limites de uso": "Usage-limit meter",
@@ -329,6 +328,10 @@ export default {
   "não instalada nesta máquina": "not installed on this machine",
   "Esta CLI ainda não é suportada aqui.": "This CLI is not supported here yet.",
   "Nenhum servidor configurado.": "No server configured.",
+  "Removendo…": "Removing…",
+  "Ligando…": "Turning on…",
+  "Desligando…": "Turning off…",
+  "Copiando…": "Copying…",
   "Adicionar servidor": "Add server",
   desligado: "off",
   "{n} valor guardado": "{n} stored value",
@@ -366,4 +369,63 @@ export default {
   Ligado: "On",
   Salvar: "Save",
   Adicionar: "Add",
+  // Ajustes → Terminal and Ajustes → Editor: one colour-scheme slot each
+  "Tema de cor": "Color theme",
+
+  // -- the features that ship turned off ------------------------------------
+  // They had a store shelf of their own until it was retired; each one is a
+  // row now, on the page of the surface it changes. The labels below were the
+  // cards' names.
+  "Ícones de arquivo": "File icons",
+  "Tema de ícones": "Icon theme",
+  Nenhum: "None",
+  "Os ícones valem para a árvore de arquivos, a Busca e as abas. Em Nenhum, o Yard usa o glifo neutro de sempre e só o estado do git colore a árvore. Os dois temas vêm embutidos: o mapa de ícones só é carregado quando um deles é escolhido.":
+    "The icons apply to the file tree, Search and the tabs. On None, Yard uses its usual neutral glyph and only the git state colors the tree. Both themes are bundled: the icon map is only loaded once one of them is chosen.",
+
+  "Recursos do editor": "Editor features",
+  Minimapa: "Minimap",
+  "O arquivo inteiro em miniatura na borda direita, com a janela visível marcada":
+    "The whole file in miniature on the right edge, with the visible window marked",
+  "Guias de indentação": "Indent guides",
+  "Linhas verticais marcando cada nível de recuo, com o bloco ativo destacado":
+    "Vertical lines marking each indent level, with the active block highlighted",
+  "Parênteses arco-íris": "Rainbow brackets",
+  "Cada nível de ( ) [ ] { } numa cor; colchete dentro de texto ou comentário não conta":
+    "Each level of ( ) [ ] { } in a color; a bracket inside text or a comment does not count",
+  "Realce de TODO": "TODO highlight",
+  "TODO, FIXME, HACK e NOTE viram etiquetas coloridas no meio do arquivo":
+    "TODO, FIXME, HACK and NOTE become colored tags in the middle of the file",
+  "Cores no CSS": "Colors in CSS",
+  "Um quadradinho da cor real ao lado de cada #hex e rgb(), clicável para trocar":
+    "A small square of the real color beside each #hex and rgb(), clickable to change it",
+  "Formatar ao salvar": "Format on save",
+  "Ctrl+S passa o arquivo pelo Prettier antes de gravar; com erro de sintaxe, salva como está":
+    "Ctrl+S runs the file through Prettier before writing; with a syntax error, it saves as is",
+
+  "Diagramas Mermaid": "Mermaid diagrams",
+  "Blocos ```mermaid viram diagramas na leitura e no modo dividido":
+    "```mermaid blocks become diagrams in the read and split modes",
+  "Fórmulas KaTeX": "KaTeX formulas",
+  "Blocos ```math viram fórmulas na leitura e no modo dividido":
+    "```math blocks become formulas in the read and split modes",
+  "Vale para os arquivos .md do editor e para as Anotações. Um bloco com erro de sintaxe continua aparecendo como código, nunca como uma tela quebrada.":
+    "Applies to the editor's .md files and to Notes. A block with a syntax error keeps showing as code, never as a broken screen.",
+
+  "Recursos do terminal": "Terminal features",
+  "Imagens no terminal": "Images in the terminal",
+  "Os protocolos sixel e iTerm desenham imagens de verdade no histórico — gráficos de ferramentas, prévias, o timg da vida":
+    "The sixel and iTerm protocols draw real images in the scrollback — tool charts, previews, the odd timg",
+
+  "Fontes de código embutidas": "Bundled code fonts",
+  "Dez famílias monoespaçadas que vêm com o Yard (JetBrains Mono, Fira Code, Iosevka…) entram nos seletores de fonte, sem instalar nada no Windows":
+    "Ten monospaced families that come with Yard (JetBrains Mono, Fira Code, Iosevka…) join the font pickers, with nothing installed on Windows",
+  "A lista vem das fontes instaladas na máquina, mais as que vêm com o Yard quando a chave acima está ligada. A fonte da interface vale para o cromo do aplicativo; a do terminal e a do código são escolhidas em Ajustes → Terminal e Ajustes → Editor de código.":
+    "The list comes from the fonts installed on the machine, plus the ones that come with Yard while the switch above is on. The interface font applies to the app's chrome; the terminal's and the code's are chosen in Settings → Terminal and Settings → Code editor.",
+
+  "O tema de cor troca os 16 tons ANSI, o fundo e o cursor dos terminais; o editor tem o dele, em Ajustes → Editor de código. O cromo do Yard não muda: tema é cor de conteúdo, não de moldura.":
+    "The color theme swaps the 16 ANSI tones, the background and the cursor of the terminals; the editor has its own, in Settings → Code editor. Yard's chrome does not change: a theme is content color, not frame color.",
+  "O tema de cor pinta a sintaxe do editor, dos diffs e dos trechos de código; os terminais têm o deles, em Ajustes → Terminal. Escolher o mesmo nos dois deixa a tela inteira na mesma paleta.":
+    "The color theme paints the syntax of the editor, the diffs and the code snippets; the terminals have their own, in Settings → Terminal. Choosing the same one in both puts the whole screen on one palette.",
+  "Escuro é a cara do Yard; Claro troca o papel, não a linguagem — o azul, os raios e a semântica das cores ficam. Sistema segue o Windows. O tema de cor do terminal e o do editor são escolhidos à parte, na página de cada um.":
+    "Dark is Yard's face; Light swaps the paper, not the language — the blue, the radii and the semantics of the colors stay. System follows Windows. The terminal's color theme and the editor's are chosen apart, on the page of each.",
 } satisfies Record<string, string>;

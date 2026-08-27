@@ -408,10 +408,25 @@ select,
   pointer-events: none;
 }
 
-/* Focus ring: system blue halo, visible over any surface. */
+/* Focus ring: system blue halo, visible over any surface. The browser traces
+   `outline` along the `border-radius` the element already has, so nothing
+   here sets one — the ring circles the shape, it does not choose it. */
 :focus-visible {
   outline: 3px solid rgb(10 132 255 / 55%);
   outline-offset: 1px;
+}
+
+/* Rounding for whatever nobody rounded (a bare `button`, a `div` with
+   `tabindex`): square corners on a chrome made of curves read as a foreign
+   object. `:where()` drops the specificity to zero, which turns it into a
+   *fallback* — the moment an element declares a radius of its own, however
+   weak the selector, that is the radius the ring traces.
+
+   Written flat, this beat `input, select` (0,1,0 against 0,0,1) and every
+   field in the app narrowed from `--r-md` to `--r-sm` the instant it took
+   focus, with the ring drawing the smaller shape around the bigger one.
+   `src/styles.test.ts` locks it. */
+:where(:focus-visible) {
   border-radius: var(--r-sm);
 }
 
@@ -822,15 +837,11 @@ kbd {
   flex-shrink: 0;
 }
 
-.titlebar-left,
-.titlebar-right {
+.titlebar-left {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-}
-
-.titlebar-left {
   flex: 1 1 0;
 }
 
@@ -840,15 +851,29 @@ kbd {
   justify-content: center;
 }
 
-.titlebar-right {
+/* The empty half, over the panels. Growing on nothing is what keeps the
+   layout switch off the last control, and the 10px floor is what stops the
+   Canvas button from touching the window controls in a narrow window (the
+   old right-hand cluster did it with `padding-right`). Nothing goes in here:
+   `dragRegion.test.ts` locks it, because a control here would sit over the
+   panel's own header and eat the drag surface. */
+.titlebar-slack {
   flex: 1 1 0;
-  justify-content: flex-end;
-  gap: 4px;
-  padding-right: 10px;
+  min-width: 10px;
 }
 
-.titlebar-right .btn {
-  margin-right: 4px;
+/* The two panel doors, at the far corner. They open the panels that live in
+   that column, so each button sits over what it opens, and the hand already
+   goes to that corner for the window buttons. The 10px margin is the whole
+   safety of the arrangement: `.win-btn` is a 46px square with no radius and
+   minimising by accident, aiming at the bench, would be the app's cheapest
+   irritation. */
+.titlebar-doors {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  margin-right: 10px;
 }
 
 /* Panel toggles — doors, not gauges. Each opens a panel and shows whether it
@@ -887,16 +912,6 @@ kbd {
   border-radius: 50%;
   background: var(--yellow);
   box-shadow: 0 0 6px rgb(240 195 60 / 60%);
-}
-
-/* What opens a panel, then what opens a window: five identical squares in a
-   row give the eye no seam, so the two families get a hairline between them. */
-.titlebar-sep {
-  flex: none;
-  width: 1px;
-  height: 14px;
-  margin: 0 3px;
-  background: var(--border-strong);
 }
 
 /* Windows window controls: minimize, maximize/restore, close — on the right,
@@ -941,10 +956,10 @@ kbd {
 }
 
 /* Inset ring — the button touches the window edge, so an outset one would be
-   clipped by the corner. */
+   clipped by the corner. The square is already the button's own shape, above:
+   the ring follows it with no help. */
 .win-btn:focus-visible {
   outline-offset: -3px;
-  border-radius: 0;
 }
 
 /* In-world tooltip (replaces the native `title` in the chrome): a dark
@@ -1145,18 +1160,22 @@ body.tips-off [data-tip]:focus-visible::after {
   min-width: 0;
 }
 
-/* Agent usage limits + Energético (TitleBar/StatusChip.tsx): chips with a
-   meter in the bar + a detail popover with the keep-awake radio group at the
-   bottom. The meters inherit the memory HUD's recipe — blue at rest, yellow
-   on warning (≥75%), red near the ceiling (≥90%): the same "this needs
-   attention" reading as everywhere else. */
+/* Agent usage limits + Energético (StatusBar/StatusChip.tsx): chips with a
+   meter in the footer + a detail popover with the keep-awake radio group at
+   the bottom. The meters inherit the memory HUD's recipe, blue at rest,
+   yellow on warning (≥75%), red near the ceiling (≥90%): the same "this
+   needs attention" reading as everywhere else.
+
+   The metrics are the footer's, not the title bar's: 22px tall on `--r-sm`,
+   like every `.sb-chip` beside it, so the row of gauges reads as one line and
+   not as a control parked in a bar of readings. */
 .usage-strip {
   display: flex;
   align-items: center;
-  gap: 12px;
-  height: 25px;
-  padding: 0 9px;
-  border-radius: 8px;
+  gap: 10px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--r-sm);
   color: var(--text-dim);
   flex-shrink: 0;
   transition:
@@ -1180,33 +1199,32 @@ body.tips-off [data-tip]:focus-visible::after {
   gap: 5px;
 }
 
-/* The bar is three groups: title on the left, view tabs centered, actions on
-   the right. Only the sides flex, so in a narrow window the right group runs
-   out of room and — being a flex item, which overflows without clipping —
-   paints its first chip *under* the centered tabs. The window goes down to
-   900px, so this is not a hypothetical.
+/* The footer is two groups: readings on the left (agents, branch, flow),
+   gauges and buttons on the right. Only the left flexes, so when the window
+   narrows the branch name is what gives way; but past a point the right group
+   itself runs out of room and, being a flex item that overflows without
+   clipping, would paint its first chip over the left one. The window goes
+   down to 900px, so this is not a hypothetical.
 
-   What goes first is what is least needed to read a meter: the agent's name
-   (the color and the number still say everything), then the whole strip,
-   which is glanceable information and not an action. */
-@media (max-width: 1440px) {
+   The thresholds used to be 1440/1400: the strip lived in the title bar and
+   the fight was with the centred layout switch. In the footer there is no
+   centre, so the same policy starts far later. What goes first is what is
+   least needed to read a meter, the agent's name (the colour and the number
+   still say everything), then the meters, which are glanceable information
+   and not an action. */
+@media (max-width: 1100px) {
   .usage-chip-name {
     display: none;
   }
 
   .usage-strip {
-    gap: 9px;
+    gap: 8px;
   }
 }
 
 /* Below this only the meters leave; the chip (and with it the popover and the
-   Energético state) stays reachable — before, the whole meter vanished.
-
-   The threshold was 1180px while the centre was a single pill of four
-   segments. Splitting Canvas out of that pill into a button of its own added
-   about a hundred pixels to the centre, and at 1296px the first meter was
-   painting *under* it again. Same policy as above, one step earlier. */
-@media (max-width: 1400px) {
+   Energético state) stays reachable — before, the whole meter vanished. */
+@media (max-width: 920px) {
   .usage-strip .usage-chip {
     display: none;
   }
@@ -2107,6 +2125,68 @@ button.sb-chip:active {
   color: var(--text-dim);
 }
 
+/* The doors that belong to no project, at the top of the bar: an icon and
+   the name, nothing else. They are deliberately **bigger than a tree row**:
+   the tree is a dense list you scan, these are three or four destinations you
+   aim at, and at the tree's 27px they read as one more branch of the project
+   below instead of as the head of the bar. So: 34px of height, a 16px glyph,
+   14px ink and 10px between glyph and name, the metrics of a menu line.
+   Everything else is the tree's, so the bar still reads as one list: the same
+   9px pill, the same hover veil and the same blue of the active group while
+   the notebook is on screen. */
+.sidebar-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 8px 8px;
+}
+.sidebar-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: var(--r-md);
+  color: var(--text);
+  text-align: left;
+}
+
+.sidebar-action:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+.sidebar-action[aria-pressed="true"] {
+  background: rgb(10 132 255 / 26%);
+  color: var(--text-bright);
+  box-shadow: inset 0 0 0 1px rgb(10 132 255 / 18%);
+}
+
+.sidebar-action[aria-pressed="true"]:hover {
+  background: rgb(10 132 255 / 34%);
+}
+
+.sidebar-action-icon {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.sidebar-action:hover .sidebar-action-icon,
+.sidebar-action[aria-pressed="true"] .sidebar-action-icon {
+  color: inherit;
+}
+
+.sidebar-action-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-lg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sidebar-tree {
   flex: 1;
   overflow-y: auto;
@@ -2540,11 +2620,43 @@ button.sb-chip:active {
   border-radius: var(--r-sm);
 }
 
+/* The footer reads in one line: the numbers on the left, the app's own door
+   on the right. The gear used to be a full row above this block, 34px of
+   height and a printed name for something opened once a week; icon-only in
+   the corner it costs the footer nothing and is still where the hand looks
+   for it. */
 .sidebar-hud {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   border-top: 1px solid var(--border);
-  padding: 10px 14px;
+  padding: 10px 8px 10px 14px;
   font-size: var(--fs-xs);
   color: var(--text-dim);
+}
+
+.hud-readings {
+  flex: 1;
+  min-width: 0;
+}
+
+.hud-settings {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+}
+
+.hud-settings:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}
+
+.hud-settings:active {
+  background: var(--bg-active);
 }
 
 .hud-row {
@@ -2601,6 +2713,53 @@ button.sb-chip:active {
   color: var(--text-dim);
   text-align: center;
   padding: 24px;
+}
+
+/* The canvas chunk's waiting screen. It has to live in the boot sheet: it is
+   drawn precisely while `canvas.css` is still in flight. Three bars, not a
+   blank rectangle — `grid-empty` already means "this group has nothing", and
+   two states must not share one look (`WorkspaceGrid/loading.test.ts`).
+   The universal reduced-motion rule settles the shimmer on its own; the bars
+   stay legible either way. */
+.grid-loading {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 24px;
+}
+
+.grid-loading-bar {
+  height: 10px;
+  width: min(260px, 40%);
+  border-radius: var(--r-sm);
+  background: linear-gradient(
+    90deg,
+    rgb(var(--veil) / 3%) 0%,
+    rgb(var(--veil) / 8%) 50%,
+    rgb(var(--veil) / 3%) 100%
+  );
+  background-size: 200% 100%;
+  animation: grid-loading-pulse 1.4s ease-in-out infinite;
+}
+
+/* Staggered, so it reads as one object breathing and not three blinks. */
+.grid-loading-bar:nth-child(2) {
+  width: min(200px, 30%);
+  animation-delay: 0.15s;
+}
+
+.grid-loading-bar:nth-child(3) {
+  width: min(150px, 22%);
+  animation-delay: 0.3s;
+}
+
+@keyframes grid-loading-pulse {
+  to {
+    background-position: -200% 0;
+  }
 }
 
 .welcome {
@@ -3406,12 +3565,20 @@ body.is-tab-drag * {
 }
 
 /* The terminal well: one step deeper than the pane chrome, so the content
-   settles like paper in a frame. Matches the xterm theme bg. */
+   settles like paper in a frame.
+
+   The gutter around the canvas — and the sliver the fit leaves where the last
+   column ends — is *inside* the well, so it has to be the colour xterm just
+   opened on. That is never a token: a colour-scheme extension replaces the
+   whole palette (Ayu opens on #0b0e14) and CSS cannot follow it, which left
+   the terminal wearing a black frame down its left edge. `XTermView` writes
+   the palette's background here as `--term-well`; `--well-code` is only the
+   colour before the first paint. Guarded in `lib/termTheme.test.ts`. */
 .xterm-host {
   flex: 1;
   min-height: 0;
   padding: 6px 0 3px 8px;
-  background: var(--well-code);
+  background: var(--term-well, var(--well-code));
 }
 
 .xterm .xterm-viewport {

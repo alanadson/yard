@@ -4,8 +4,9 @@
  * The dialog stacked five sections on one 720px scrolling sheet: to reach
  * "Data" you went past font, editor, terminal and behavior, and what you were
  * looking for showed up in the middle of everything you were not. Shortcuts
- * and Extensions were not even there — they were two other dialogs, each with
- * its own door.
+ * was not even there — another dialog, with its own door. And the features
+ * that ship turned off had a store shelf of their own; they are rows now, on
+ * the page of the surface each one changes.
  *
  * Here there is a menu on the left and a 620px reading column on the right:
  * each category is a page, each row carries its own explanation, and the
@@ -21,7 +22,6 @@
  */
 import { useEffect, useRef, useState } from "react";
 import {
-  Blocks,
   Bot,
   Code,
   Database,
@@ -34,7 +34,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-// `.modal-backdrop`, `.switch`, `.ext-radio`, `.hint` and `.paths` were born
+// `.modal-backdrop`, `.switch`, `.hint` and `.paths` were born
 // in the dialogs' CSS and are the same pieces here; the window imports that
 // sheet instead of keeping a second copy of the five rules.
 import "../modals/modal.css";
@@ -56,7 +56,6 @@ import { SecAgents } from "./sections/Agents";
 import { SecBehavior } from "./sections/Behavior";
 import { SecData } from "./sections/Data";
 import { SecEditor } from "./sections/Editor";
-import { SecExtensions } from "./sections/Extensions";
 import { SecInterface } from "./sections/Interface";
 import { SecShortcuts } from "./sections/Shortcuts";
 import { SecTerminal } from "./sections/Terminal";
@@ -70,7 +69,6 @@ const ICONS: Record<SettingsCategory, LucideIcon> = {
   comportamento: Settings2,
   atalhos: Keyboard,
   dados: Database,
-  extensoes: Blocks,
   mcp: Plug,
 };
 
@@ -176,14 +174,13 @@ export function SettingsScreen() {
               <p>{t(info.desc)}</p>
             </header>
 
-            {cat === "interface" && <SecInterface fontes={fonts} goTo={setCat} />}
+            {cat === "interface" && <SecInterface fontes={fonts} />}
             {cat === "terminal" && <SecTerminal fontes={fonts} />}
             {cat === "editor" && <SecEditor fontes={fonts} />}
             {cat === "agentes" && <SecAgents />}
             {cat === "comportamento" && <SecBehavior />}
             {cat === "atalhos" && <SecShortcuts />}
             {cat === "dados" && <SecData />}
-            {cat === "extensoes" && <SecExtensions />}
             {cat === "mcp" && <SecMcp />}
           </div>
         </main>

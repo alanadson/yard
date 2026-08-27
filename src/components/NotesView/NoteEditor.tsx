@@ -52,8 +52,6 @@ import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
 import { captureTextTarget, textMenuEntries } from "../../lib/textMenu";
 import { Select } from "../Select";
 import { useMarkdownNavigation } from "../../hooks/useMarkdownNavigation";
-import { SCHEME_IDS } from "../../lib/colorSchemes";
-import type { ExtensionId } from "../../lib/extensions";
 import { ipc } from "../../lib/ipc";
 import { LruCache } from "../../lib/lru";
 import { openWebAddress } from "../../lib/openLink";
@@ -612,9 +610,9 @@ function NoteSurface({
   scrollRef.current = onScrollLine;
   const lastCaret = useRef<{ line: number; block: BlockKind } | null>(null);
 
-  const schemeId = useExtensions((s) =>
-    SCHEME_IDS.find((id) => s.enabled[id as ExtensionId] === true),
-  );
+  // The editor's half of a colour scheme: the `code` slot, which the store
+  // keeps apart from the terminal's (`lib/schemeChoice.ts`).
+  const schemeId = useExtensions((s) => s.scheme.code);
 
   const makeState = useCallback(
     (id: string, text: string) =>

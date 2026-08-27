@@ -33,7 +33,6 @@ export type ModalKind =
   | "compare-floors"
   | "project-style"
   | "preferences"
-  | "extensions"
   | "sessions"
   | "shortcuts"
   | "routines"

@@ -28,8 +28,10 @@ import {
   History,
   Layers,
   MoreVertical,
+  NotebookPen,
   Palette,
   PauseCircle,
+  Settings,
   Pencil,
   Plus,
   Terminal as TerminalIcon,
@@ -46,6 +48,7 @@ import { closeGroup, closeProject } from "../../lib/lifecycle";
 import { goToTerminal } from "../../lib/navigate";
 import { projectIcon } from "../../lib/projectStyle";
 import { ramPressure } from "../../lib/ramPressure";
+import { notesAction, settingsAction } from "./actions";
 import { cardOrigin, sectionsFor, treeRows, type TreeKind } from "./rows";
 import { terminalActionEntries } from "../../lib/terminalMenu";
 import { baseName } from "../../lib/terminals";
@@ -54,6 +57,7 @@ import { unsavedWarning } from "../../stores/editorStore";
 import { useT } from "../../hooks/useT";
 import { t } from "../../lib/i18n";
 import { useProjects } from "../../stores/projectsStore";
+import { useNotes } from "../../stores/notesStore";
 import { isLive, useTerminals } from "../../stores/terminalsStore";
 import {
   useUI,
@@ -108,6 +112,12 @@ export function ProjectSidebar() {
   const moveGroup = useProjects((s) => s.moveGroup);
   const moveTerminalBy = useProjects((s) => s.moveTerminalBy);
   const openModal = useUI((s) => s.openModal);
+  // The notebook is a place, not a panel of this bar: the row summons it
+  // wherever the user left it (overlay, tab or centre) and lights up while
+  // it is on screen.
+  const notesOpen = useNotes((s) => s.open);
+  const toggleNotes = useNotes((s) => s.toggleView);
+  const notes = notesAction({ open: notesOpen });
   const showToast = useUI((s) => s.showToast);
   const t = useT();
   const focusedTerminalId = useUI((s) => s.focusedTerminalId);
@@ -770,6 +780,25 @@ export function ProjectSidebar() {
       // Now it answers for what the whole bar does.
       onContextMenu={(e) => openMenu(e, "sidebar", "")}
     >
+      {/* The doors that belong to no project, above the tree. In the title
+          bar the notebook was one more square with no name, spelling out
+          which panel it even was inside the balloon; here it is a named row
+          at the top of the one surface that is already a list of places to
+          go. The shortcut stays in the balloon (`actions.ts`): printed next
+          to the name it would be chrome to re-read on every glance. */}
+      <div className="sidebar-actions">
+        <button
+          className="sidebar-action"
+          data-tip={notes.tip}
+          data-tip-at="left"
+          aria-pressed={notesOpen}
+          onClick={toggleNotes}
+        >
+          <NotebookPen size={16} className="sidebar-action-icon" aria-hidden="true" />
+          <span className="sidebar-action-label">{notes.label}</span>
+        </button>
+      </div>
+
       {/* A board is not inside any project — it is the canvas as its own
           container, mixing cards from several. The two sections are
           surface-exclusive: boards on Canvas, projects on the pane grid. */}
@@ -1191,6 +1220,8 @@ export function ProjectSidebar() {
  */
 function ResourceHud() {
   const t = useT();
+  const openModal = useUI((s) => s.openModal);
+  const settings = settingsAction();
   const totalRssMb = useTerminals((s) => s.totalRssMb);
   const systemAvailableMb = useTerminals((s) => s.systemAvailableMb);
   const systemTotalMb = useTerminals((s) => s.systemTotalMb);
@@ -1202,37 +1233,55 @@ function ResourceHud() {
 
   return (
     <div className="sidebar-hud">
-      <div className="hud-row">
-        <span>{t("Terminais")}</span>
-        <strong data-tip-side="top" data-tip-wrap="" data-tip={t("RAM somada das árvores de processo das CLIs")}>
-          {totalRssMb > 0 ? `${totalRssMb.toFixed(0)} MB` : "—"}
-        </strong>
-      </div>
-      <div className="hud-row">
-        <span>{t("RAM livre")}</span>
-        <strong>
-          {systemAvailableMb > 0
-            ? `${(systemAvailableMb / 1024).toFixed(1)} / ${(systemTotalMb / 1024).toFixed(0)} GB`
-            : "—"}
-        </strong>
-      </div>
-      {systemAvailableMb > 0 && (
-        <div
-          className="hud-bar"
-          data-tip-side="top" data-tip-wrap="" data-tip={
-            ramLevel === "ok"
-              ? t("{pct}% da memória em uso", { pct: Math.round(ramUsage * 100) })
-              : t("{pct}% da memória em uso — suspenda grupos ociosos para liberar RAM", {
-                  pct: Math.round(ramUsage * 100),
-                })
-          }
-        >
-          <div
-            className={`hud-bar-fill ${ramLevel !== "ok" ? `hud-bar-fill--${ramLevel}` : ""}`}
-            style={{ transform: `scaleX(${ramUsage})` }}
-          />
+      <div className="hud-readings">
+        <div className="hud-row">
+          <span>{t("Terminais")}</span>
+          <strong data-tip-side="top" data-tip-wrap="" data-tip={t("RAM somada das árvores de processo das CLIs")}>
+            {totalRssMb > 0 ? `${totalRssMb.toFixed(0)} MB` : "—"}
+          </strong>
         </div>
-      )}
+        <div className="hud-row">
+          <span>{t("RAM livre")}</span>
+          <strong>
+            {systemAvailableMb > 0
+              ? `${(systemAvailableMb / 1024).toFixed(1)} / ${(systemTotalMb / 1024).toFixed(0)} GB`
+              : "—"}
+          </strong>
+        </div>
+        {systemAvailableMb > 0 && (
+          <div
+            className="hud-bar"
+            data-tip-side="top" data-tip-wrap="" data-tip={
+              ramLevel === "ok"
+                ? t("{pct}% da memória em uso", { pct: Math.round(ramUsage * 100) })
+                : t("{pct}% da memória em uso — suspenda grupos ociosos para liberar RAM", {
+                    pct: Math.round(ramUsage * 100),
+                  })
+            }
+          >
+            <div
+              className={`hud-bar-fill ${ramLevel !== "ok" ? `hud-bar-fill--${ramLevel}` : ""}`}
+              style={{ transform: `scaleX(${ramUsage})` }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* The app's own door, icon only. It was the last square of the title
+          bar, the same 26px as a panel toggle for something that opens a
+          window, in the strip the eye crosses all day for something opened
+          once a week. Here it costs the footer no height at all and sits in
+          the corner this kind of app has always kept it in. */}
+      <button
+        className="hud-settings"
+        data-tip={settings.tip}
+        data-tip-side="top"
+        data-tip-at="left"
+        aria-label={settings.label}
+        onClick={() => openModal("preferences")}
+      >
+        <Settings size={15} aria-hidden="true" />
+      </button>
     </div>
   );
 }

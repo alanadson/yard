@@ -313,11 +313,16 @@
   color: var(--text-dim);
 }
 
+/* Bare text inside the well: no frame, and no ring either. The well is what
+   announces the focus, on `:focus-within` below — the global ring here had
+   nothing to trace but the input's own radius, zero, so it drew a hard
+   rectangle inside the 9px filter and inside the 999px new-task capsule. */
 .bench-search input,
 .task-add input {
   flex: 1;
   min-width: 0;
   border: none;
+  outline: none;
   background: transparent;
   box-shadow: none;
   padding: 6px 0;

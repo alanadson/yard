@@ -1,10 +1,11 @@
 /**
- * The code fonts the "Fontes de código" extension ships — all OFL 1.1, all
+ * The code fonts the "Fontes de código embutidas" switch ships (Ajustes →
+ * Interface → Fontes) — all OFL 1.1, all
  * packaged via Fontsource (the repo rule: every resource bundled, nothing
  * fetched at runtime — §DESIGN "empacotar todo recurso").
  *
  * The CSS files are imported dynamically, so the woff2 payload stays out of
- * every profile that never turns the extension on. Loading is idempotent and
+ * every profile that never turns the switch on. Loading is idempotent and
  * the `@font-face` rules stay for the session once in — a font that vanished
  * mid-session would leave the terminal measuring a family that no longer
  * resolves.

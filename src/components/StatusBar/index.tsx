@@ -35,6 +35,7 @@ import { useNotes } from "../../stores/notesStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useTerminals } from "../../stores/terminalsStore";
 import { useUI } from "../../stores/uiStore";
+import { StatusChip } from "./StatusChip";
 import { agentSegments, agentsCaption, flowChip, gitChip } from "./statusBar";
 
 const appWindow = getCurrentWindow();
@@ -68,6 +69,10 @@ export function StatusBar() {
       </div>
 
       <div className="statusbar-right">
+        {/* Usage and Energético, one chip and one popover. They were the two
+            "read all day, clicked once a week" readings of the title bar, at
+            the size of a control; here they stand with the other gauges. */}
+        <StatusChip />
         <RamChip />
         <button
           className="sb-btn"

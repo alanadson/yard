@@ -1332,51 +1332,59 @@
    (`classHighlighter`), painted with the same palette `yardHighlight` gives
    the editor. Two homes share them: the preview's fenced blocks (`.md-pre`)
    and the diff viewer's lines (`.dgrid`), so a line of Rust reads the same
-   in the editor, in a README and in a review. */
+   in the editor, in a README and in a review.
+
+   Every one goes through its `--syn-*` token with the dark value as the
+   fallback, exactly as `yardHighlightSpecs` does. That is what lets the same
+   three worlds follow a colour-scheme extension: a scheme writes these eleven
+   properties onto the root (`syntaxVars`, in `lib/colorSchemes.ts`) and the
+   diff stops disagreeing with the editor tab next to it. Written out as
+   literal hex, they did — with Dracula on, a keyword was pink in the editor
+   and the Yard's purple in a diff of the same file. */
 :is(.md-pre, .dgrid) .tok-comment {
-  color: #7b8494;
+  color: var(--syn-comment, #7b8494);
   font-style: italic;
 }
 
 :is(.md-pre, .dgrid) .tok-keyword {
-  color: #c792ea;
+  color: var(--syn-keyword, #c792ea);
 }
 
 :is(.md-pre, .dgrid) .tok-string,
 :is(.md-pre, .dgrid) .tok-string2 {
-  color: #8fd694;
+  color: var(--syn-string, #8fd694);
 }
 
 :is(.md-pre, .dgrid) .tok-number,
 :is(.md-pre, .dgrid) .tok-bool,
 :is(.md-pre, .dgrid) .tok-atom,
 :is(.md-pre, .dgrid) .tok-literal {
-  color: #e3b341;
+  color: var(--syn-number, #e3b341);
 }
 
 :is(.md-pre, .dgrid) .tok-typeName,
 :is(.md-pre, .dgrid) .tok-className,
 :is(.md-pre, .dgrid) .tok-namespace {
-  color: #5ecfbb;
+  color: var(--syn-type, #5ecfbb);
 }
 
 :is(.md-pre, .dgrid) .tok-propertyName {
-  color: #a9c7ff;
+  color: var(--syn-property, #a9c7ff);
 }
 
 :is(.md-pre, .dgrid) .tok-variableName {
-  color: var(--text);
+  color: var(--syn-variable, var(--text));
 }
 
 :is(.md-pre, .dgrid) .tok-definition {
-  color: #e2e2e6;
+  color: var(--syn-definition, #e2e2e6);
 }
 
 :is(.md-pre, .dgrid) .tok-operator,
 :is(.md-pre, .dgrid) .tok-punctuation,
 :is(.md-pre, .dgrid) .tok-meta,
 :is(.md-pre, .dgrid) .tok-macroName {
-  color: #9e9ea6;
+  color: var(--syn-operator, #9e9ea6);
 }
 
 :is(.md-pre, .dgrid) .tok-link,

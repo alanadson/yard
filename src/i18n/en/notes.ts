@@ -264,6 +264,7 @@ export default {
   "Buscar agentes, arquivos, notas, ações…": "Search agents, files, notes, actions…",
   "Buscar no workspace": "Search the workspace",
   "Nada encontrado para “{text}”.": "Nothing found for “{text}”.",
+  "Indexando os arquivos do projeto… os que já entraram aparecem aqui.": "Indexing the project's files… the ones already in show up here.",
   "Nada por aqui ainda — adicione um projeto para começar.": "Nothing here yet — add a project to get started.",
   "A busca cobre todos os arquivos do projeto, menos dependências e saída de build (node_modules, target, dist…). Para procurar por conteúdo, use a lupa da aba Arquivos (Ctrl+Shift+F).":
     "The search covers every file of the project except dependencies and build output (node_modules, target, dist…). To search by content, use the magnifier on the Files tab (Ctrl+Shift+F).",

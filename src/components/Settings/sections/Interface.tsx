@@ -11,18 +11,10 @@ import { isLangPref } from "../../../lib/i18n";
 import { isThemePref } from "../../../lib/theme";
 import { useT } from "../../../hooks/useT";
 import { useUI } from "../../../stores/uiStore";
-import { type SettingsCategory } from "../categories";
-import { Card, GroupTitle, PickerRow, SwitchRow } from "../rows";
+import { Card, FeatureRow, GroupTitle, PickerRow, SwitchRow } from "../rows";
 import { type Fonts } from "../useFonts";
 
-export function SecInterface({
-  fontes: fontList,
-  goTo,
-}: {
-  fontes: Fonts;
-  /** Goes to another category — the menu, called from inside the text. */
-  goTo: (cat: SettingsCategory) => void;
-}) {
+export function SecInterface({ fontes: fontList }: { fontes: Fonts }) {
   const t = useT();
   const uiFontFamily = useUI((s) => s.prefs.uiFontFamily);
   const theme = useUI((s) => s.prefs.theme);
@@ -46,7 +38,7 @@ export function SecInterface({
       </Card>
       <p className="hint">
         {t(
-          "Escuro é a cara do Yard; Claro troca o papel, não a linguagem — o azul, os raios e a semântica das cores ficam. Sistema segue o Windows. As extensões de tema de cor continuam mandando no terminal e no editor.",
+          "Escuro é a cara do Yard; Claro troca o papel, não a linguagem — o azul, os raios e a semântica das cores ficam. Sistema segue o Windows. O tema de cor do terminal e o do editor são escolhidos à parte, na página de cada um.",
         )}
       </p>
 
@@ -79,6 +71,16 @@ export function SecInterface({
           options={fontOptions(fontList.lista, false, uiFontFamily, t("Padrão do Yard"))}
           onChange={(v) => setPref("uiFontFamily", v)}
         />
+        {/* The bundled families are ~2 MB of woff2 behind a lazy import: the
+            switch is what drags them in, and what puts them in every font
+            picker of this window. */}
+        <FeatureRow
+          id="code-fonts"
+          label={t("Fontes de código embutidas")}
+          desc={t(
+            "Dez famílias monoespaçadas que vêm com o Yard (JetBrains Mono, Fira Code, Iosevka…) entram nos seletores de fonte, sem instalar nada no Windows",
+          )}
+        />
       </Card>
       {/* A failed scan left the pickers with the handful of bundled fonts and
           no explanation — reading the machine seemed to say it has no fonts
@@ -95,11 +97,9 @@ export function SecInterface({
         </p>
       )}
       <p className="hint">
-        {t("A lista vem das fontes instaladas na máquina; as famílias que vêm com o Yard entram quando a")}{" "}
-        <button className="linkish" onClick={() => goTo("extensoes")}>
-          {t("extensão Fontes de código")}
-        </button>{" "}
-        {t("está ligada.")}
+        {t(
+          "A lista vem das fontes instaladas na máquina, mais as que vêm com o Yard quando a chave acima está ligada. A fonte da interface vale para o cromo do aplicativo; a do terminal e a do código são escolhidas em Ajustes → Terminal e Ajustes → Editor de código.",
+        )}
       </p>
 
       <GroupTitle>{t("Barra de título")}</GroupTitle>

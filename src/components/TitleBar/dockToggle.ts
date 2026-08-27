@@ -23,7 +23,7 @@
 import { t, tn } from "../../lib/i18n";
 import { daysUntil, relevantTasks, type BenchTask } from "../../stores/benchStore";
 
-export type DockPanel = "sidebar" | "changes" | "bench" | "notes";
+export type DockPanel = "sidebar" | "changes" | "bench";
 
 export interface DockToggleState {
   open: boolean;
@@ -46,7 +46,6 @@ const SHORTCUT: Record<DockPanel, string> = {
   sidebar: "Ctrl+B",
   changes: "Ctrl+Shift+D",
   bench: "Ctrl+Shift+B",
-  notes: "Ctrl+Shift+N",
 };
 
 export function dockToggle(panel: DockPanel, state: DockToggleState): DockToggleLabel {
@@ -89,14 +88,6 @@ export function dockToggle(panel: DockPanel, state: DockToggleState): DockToggle
         dot: due > 0,
       };
     }
-    case "notes":
-      return {
-        tip: state.open
-          ? t("Esconder as anotações ({key})", { key })
-          : t("Mostrar as anotações — caderno markdown ({key})", { key }),
-        label: t("Anotações"),
-        dot: false,
-      };
   }
 }
 

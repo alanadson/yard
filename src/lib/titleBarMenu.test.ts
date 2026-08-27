@@ -87,11 +87,16 @@ describe("titleBarMenu", () => {
     expect(act.openModal).toHaveBeenCalledWith("preferences");
   });
 
-  it("extensions and shortcuts are here too — it is the application's menu", () => {
+  /**
+   * The store shelf had an item of its own here, next to the shortcuts, and
+   * it went out with the shelf: everything it switched is a row in
+   * Configurações now. What the menu still owes is the pair of windows that
+   * have no other door of their own.
+   */
+  it("the shortcuts are here too — it is the application's menu", () => {
     const act = actions();
     const menu = titleBarMenu(isOpen, act);
-    findItem(menu, "extensions")?.onSelect?.();
-    expect(act.openModal).toHaveBeenCalledWith("extensions");
+    expect(findItem(menu, "extensions")).toBeUndefined();
     findItem(menu, "shortcuts")?.onSelect?.();
     expect(act.openModal).toHaveBeenLastCalledWith("shortcuts");
   });

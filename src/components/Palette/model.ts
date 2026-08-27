@@ -173,3 +173,29 @@ export function fieldsOf(entry: PaletteEntry): string[] {
   if (entry.keywords) fields.push(...entry.keywords);
   return fields;
 }
+
+/** Why the result list is empty — the three cases read very differently. */
+export type EmptyReason =
+  /** Nothing typed yet. */
+  | "sem-busca"
+  /** The project's file index has not been walked, and files were in scope. */
+  | "indexando"
+  /** Everything that could answer was asked, and nothing matched. */
+  | "nada-encontrado";
+
+/**
+ * `indexed` is `editorStore.fileIndex !== null`. Saying "nada encontrado"
+ * while the walk is still running is the search denying a file that is right
+ * there — see the note on `emptyReason` in `model.test.ts`.
+ */
+export function emptyReason(input: {
+  text: string;
+  scope: Scope | null;
+  indexed: boolean;
+}): EmptyReason {
+  if (!input.text.trim()) return "sem-busca";
+  // No prefix searches everything, so files are in the mix as well.
+  const wantsFiles = input.scope === null || input.scope.kinds.includes("file");
+  if (wantsFiles && !input.indexed) return "indexando";
+  return "nada-encontrado";
+}

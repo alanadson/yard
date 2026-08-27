@@ -99,9 +99,14 @@ export function OnboardingModal() {
           <button className="btn" onClick={leave}>
             {t("Pular")}
           </button>
+          {/* Only the work in flight closes this button. Gating it on the
+              empty folder made `start()`'s "Escolha uma pasta." unreachable
+              for the one user it was written for: a fresh install, first
+              screen, the single primary action grey and silent. */}
           <button
             className="btn btn--primary"
-            disabled={busy || (!path.trim() && !hasProjects)}
+            disabled={busy}
+            aria-busy={busy}
             onClick={() => void start()}
           >
             {busy ? t("Adicionando…") : t("Começar")}

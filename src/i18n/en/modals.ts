@@ -170,6 +170,10 @@ export default {
   "não vai junto": "does not go along",
   ": ao aplicar, ela vem do projeto de destino.": ": when applying, it comes from the target project.",
   "Não consegui ler as partituras: {reason}.": "Could not read the scores: {reason}.",
+  "Dê um nome à partitura antes de salvar.": "Name the score before saving it.",
+  "Abra um grupo para salvar o arranjo dele.": "Open a group to save its arrangement.",
+  "Salvando…": "Saving…",
+  "Aplicando…": "Applying…",
   "Nenhuma partitura salva ainda.": "No score saved yet.",
   "Acrescentar o arranjo ao grupo “{name}” — as CLIs e notas entram ao lado do que já existe. Não dá para desfazer com Ctrl+Z: para tirar, exclua os cartões.":
     "Add the arrangement to the group “{name}” — the CLIs and notes land beside what is already there. Ctrl+Z cannot undo it: to remove, delete the cards.",
@@ -370,20 +374,6 @@ export default {
     "Nothing is sent to the terminal on connecting: Yard intercepts your Enter — the request becomes the task and each stage arrives as a one-line stamp; the agent fetches the instructions with ",
   ", sem encher o seu prompt. Desmarcado, o fluxo só roda quando pedido (▶ no rodapé do canvas ou ":
     ", without cluttering your prompt. Unchecked, the flow only runs when asked (▶ in the canvas footer or ",
-
-  // -- Extensões -----------------------------------------------------------
-  "→ diagrama desenhado na leitura": "→ diagram drawn in reading mode",
-  "→ fórmula desenhada na leitura": "→ formula drawn in reading mode",
-  Extensões: "Extensions",
-  "Buscar extensões": "Search extensions",
-  "Limpar busca": "Clear search",
-  "Filtrar por categoria": "Filter by category",
-  Todas: "All",
-  "Recursos que já vêm com o Yard, desligados até você querer. O interruptor vale na hora, para o aplicativo inteiro — temas (de ícones ou de cor) se revezam: ligar um desliga o irmão.":
-    "Features that already ship with Yard, off until you want them. The switch takes effect at once, app-wide — themes (icon or color) take turns: turning one on turns its sibling off.",
-  "um de cada vez": "one at a time",
-  "Nenhuma extensão para ": "No extension for ",
-  " nesta categoria": " in this category",
 
   // -- Nova aba ------------------------------------------------------------
   Navegador: "Browser",

@@ -1,12 +1,17 @@
 /**
  * Custom title bar (the window runs with `decorations: false`).
  *
+ * Every control lives on the left, packed against the breadcrumb, and the
+ * whole right half (`.titlebar-slack`, over the panels) is empty on purpose:
+ * those panels carry headers of their own, and that strip is where a hand
+ * goes to drag the window.
+ *
  * `data-tauri-drag-region="deep"` is what makes the area draggable — without
  * it the undecorated window is stuck in place. The value is the whole story:
  * bare, Tauri only drags when the click lands *directly* on the element that
  * carries the attribute, so any empty gap inside a child is a dead spot —
- * `.titlebar-right` is `flex: 1` and eats all the slack of the right half,
- * and the bar dragged only from the middle leftwards. A bare attribute on a
+ * the right-hand strip is `flex: 1` and eats all the slack of that half, and
+ * the bar dragged only from the middle leftwards. A bare attribute on a
  * child is worse still: it cuts the walk short and kills the drag over its
  * own children. `deep` covers the subtree, and the real controls — `<button>`,
  * `<input>`, anything with an interactive `role` — keep blocking the drag on
@@ -15,16 +20,12 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  Blocks,
   FileDiff,
   Frame,
   GitBranch,
   LayoutGrid,
-  NotebookPen,
   PanelLeft,
   PanelRight,
-  Plus,
-  Settings,
 } from "lucide-react";
 
 // i18n-scan: tables
@@ -35,7 +36,6 @@ import { show } from "../../lib/navigate";
 import { projectIcon } from "../../lib/projectStyle";
 import { AsyncDisposer } from "../../lib/disposables";
 import { Select } from "../Select";
-import { StatusChip } from "./StatusChip";
 import { dockToggle, dueTasks } from "./dockToggle";
 import { useBench } from "../../stores/benchStore";
 import { useChanges } from "../../stores/changesStore";
@@ -110,7 +110,6 @@ export function TitleBar() {
   const sidebarDoor = dockToggle("sidebar", { open: sidebarOpen });
   const changesDoor = dockToggle("changes", { open: changesOpen, changed: changedCount });
   const benchDoor = dockToggle("bench", { open: benchOpen, due });
-  const notesDoor = dockToggle("notes", { open: notesOpen });
 
   const group = groups.find((g) => g.id === activeGroupId);
   const project = activeGroupId ? projectOfGroup(activeGroupId) : undefined;
@@ -304,23 +303,23 @@ export function TitleBar() {
         )}
       </div>
 
-      <div className="titlebar-right">
-        {/* Usage + Energético share one chip: the two "read, rarely clicked"
-            controls out of what used to be eight simultaneous targets. */}
-        <StatusChip />
-        <button
-          className="btn btn--ghost"
-          data-tip={t("Nova aba — CLI ou navegador (Ctrl+T)")}
-          onClick={() => openModal("new-terminal")}
-        >
-          <Plus size={13} aria-hidden="true" /> {t("Nova aba")}
-        </button>
-        {/* The three doors, in the order their panels sit on screen: changes
-            slots in between the workspace and the bench, the bench is the
-            outermost right drawer (its glyph pairs with the sidebar's), the
-            notebook floats. Open = the sidebar's blue pill; the count of
-            changed files lives in the balloon and in the status bar, never
-            as a pill here — see `dockToggle.ts`. */}
+      {/* The empty half, over the panels. It is not decoration: `flex: 1 1 0`
+          on nothing is what keeps the layout switch off the last control, and
+          empty space with the header's `deep` drag region is the widest place
+          the user has to grab the window by. Nothing goes in here. */}
+      <div className="titlebar-slack" />
+
+      {/* The two doors, at the far corner. Each opens a panel that lives in
+          that column, so the button now sits over what it opens, and the hand
+          that goes to the corner for the window buttons is already there.
+          They keep their distance from the system's three (`margin-right`):
+          nobody wants to minimise the window aiming at the bench. The order
+          follows the screen: changes slots in between the workspace and the
+          bench, the bench is the outermost drawer (its glyph pairs with the
+          sidebar's). Open = the sidebar's blue pill; the count of changed
+          files rides in the balloon and in the status bar, never as a pill
+          here, see `dockToggle.ts`. */}
+      <div className="titlebar-doors">
         <button
           className="icon-btn dock-toggle"
           data-tip={changesDoor.tip}
@@ -341,38 +340,6 @@ export function TitleBar() {
         >
           <PanelRight size={14} />
           {benchDoor.dot && <span className="dock-toggle-dot" aria-hidden="true" />}
-        </button>
-        <button
-          className="icon-btn dock-toggle"
-          data-tip={notesDoor.tip}
-          data-tip-at="right"
-          aria-label={notesDoor.label}
-          aria-pressed={notesOpen}
-          onClick={toggleNotes}
-        >
-          <NotebookPen size={14} />
-        </button>
-        {/* What opens a panel, then what opens a window: five identical
-            squares in a row give the eye no seam, so the two families get a
-            hairline between them. */}
-        <span className="titlebar-sep" aria-hidden="true" />
-        <button
-          className="icon-btn"
-          data-tip={t("Extensões (Ctrl+Shift+X)")}
-          data-tip-at="right"
-          aria-label={t("Extensões")}
-          onClick={() => openModal("extensions")}
-        >
-          <Blocks size={14} />
-        </button>
-        <button
-          className="icon-btn"
-          data-tip={t("Configurações (Ctrl+Shift+P)")}
-          data-tip-at="right"
-          aria-label={t("Configurações")}
-          onClick={() => openModal("preferences")}
-        >
-          <Settings size={14} />
         </button>
       </div>
 

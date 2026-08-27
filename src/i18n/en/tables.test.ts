@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import EN from "./index";
 import { cacheChoicesOf, cacheNoteOf } from "../../lib/agentDefaults";
 import { RANGE_LABELS } from "../../lib/costs";
-import { EXTENSION_KINDS, EXTENSIONS } from "../../lib/extensions";
+import { ICON_THEMES } from "../../lib/iconTheme";
 import { FLOW_PRESETS } from "../../lib/flow";
 import { STATUS_META } from "../../lib/notes";
 import { FIRST_RUN_SHORTCUTS } from "../../lib/onboarding";
@@ -69,6 +69,7 @@ const SAME_IN_ENGLISH = new Set([
   "One Dark",
   "Ayu Dark",
   "GitHub Dark",
+  "Min Dark",
   "Prettier",
   "Mermaid",
   "KaTeX",
@@ -104,12 +105,16 @@ describe("tables rendered through t() have their English lines", () => {
     expect(missing(all)).toEqual([]);
   });
 
-  it("the extension catalog — kinds, names, descriptions and details", () => {
-    const all = [
-      ...EXTENSION_KINDS.flatMap((k) => [k.chip, k.label]),
-      ...EXTENSIONS.flatMap((e) => [e.name, e.description, e.details ?? ""]),
-    ].filter(Boolean);
-    expect(missing(all)).toEqual([]);
+  /**
+   * The catalog of bundled features used to be a table of prose — a name, a
+   * sentence and a paragraph per card on the store shelf. The shelf is gone
+   * and each feature's words are written inside `t("…")` where its row is
+   * drawn, so the ordinary scan covers them. What is still a table is the
+   * icon themes' names, and they are brands: the guard is that a new one is
+   * either the same word in English or has a line of its own.
+   */
+  it("the icon themes' names", () => {
+    expect(missing(ICON_THEMES.map((theme) => theme.name))).toEqual([]);
   });
 
   it("each CLI's cache choices, cache note and skip-flag hint", () => {

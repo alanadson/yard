@@ -8,7 +8,7 @@
  * hue at 3:1. The color-scheme extensions (`lib/colorSchemes.ts`) still win
  * over either when one is enabled.
  */
-import type { TermPalette } from "./colorSchemes";
+import { schemeFor, type TermPalette } from "./colorSchemes";
 import type { ResolvedTheme } from "./theme";
 
 // Dark premium theme, matching the chrome (styles.css): the background is
@@ -72,4 +72,23 @@ export const LIGHT_TERM: TermPalette = {
 /** The well's palette for the appearance on screen. */
 export function termThemeFor(resolved: ResolvedTheme): TermPalette {
   return resolved === "light" ? LIGHT_TERM : DARK_TERM;
+}
+
+/**
+ * The custom property the CSS well reads for its gutter (`.xterm-host` in
+ * `styles.css`). `XTermView` writes it on the host from the palette below —
+ * the one place either side of the seam is allowed to pick a background.
+ */
+export const TERM_WELL_VAR = "--term-well";
+
+/**
+ * The palette on screen: an enabled colour-scheme extension wins over the
+ * appearance's own (it is the user's explicit choice), and both surfaces of
+ * the well — xterm's canvas and the gutter of CSS around it — open on it.
+ */
+export function termPaletteFor(
+  schemeId: string | undefined,
+  resolved: ResolvedTheme,
+): TermPalette {
+  return schemeFor(schemeId)?.term ?? termThemeFor(resolved);
 }

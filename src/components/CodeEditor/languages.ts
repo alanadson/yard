@@ -128,8 +128,22 @@ export const LANGUAGES: readonly LangSpec[] = [
   {
     key: "json",
     label: "JSON",
-    ext: ["json", "jsonc", "webmanifest", "geojson", "map"],
-    names: [".babelrc", ".eslintrc", ".prettierrc"],
+    // Only formats that really are strict JSON: the entry ships a linter, and
+    // pointing it at JSON5 or at a JSON-per-line file would squiggle every
+    // valid one of them.
+    ext: ["json", "jsonc", "webmanifest", "geojson", "map", "ipynb", "har", "avsc"],
+    names: [
+      ".babelrc",
+      ".eslintrc",
+      ".prettierrc",
+      ".swcrc",
+      ".releaserc",
+      ".stylelintrc",
+      ".lintstagedrc",
+      ".commitlintrc",
+      ".markdownlintrc",
+      ".postcssrc",
+    ],
     // The one grammar that ships a linter worth having: `JSON.parse` either
     // accepts the file or points at the byte it refused — squiggle and all.
     load: () =>
@@ -341,7 +355,21 @@ export const LANGUAGES: readonly LangSpec[] = [
     key: "ruby",
     label: "Ruby",
     ext: ["rb", "rake", "gemspec", "ru"],
-    names: ["gemfile", "rakefile"],
+    // The tools that name their config after themselves and write Ruby in it.
+    names: [
+      "gemfile",
+      "rakefile",
+      "vagrantfile",
+      "brewfile",
+      "podfile",
+      "fastfile",
+      "appfile",
+      "guardfile",
+      "capfile",
+      "berksfile",
+      "thorfile",
+      "dangerfile",
+    ],
     load: legacy(() => import("@codemirror/legacy-modes/mode/ruby").then((m) => m.ruby)),
   },
   {
@@ -514,32 +542,65 @@ export const LANGUAGES: readonly LangSpec[] = [
     key: "yaml",
     label: "YAML",
     ext: ["yml", "yaml"],
+    // The tools that write YAML into a file with no extension at all.
+    names: [".clang-format", ".clang-tidy", ".yamllint"],
     load: () => import("@codemirror/lang-yaml").then((m) => m.yaml()),
   },
   {
     key: "toml",
     label: "TOML",
     ext: ["toml"],
-    names: ["cargo.lock"],
+    names: ["cargo.lock", "pipfile", "pipfile.lock", "poetry.lock"],
     load: legacy(() => import("@codemirror/legacy-modes/mode/toml").then((m) => m.toml)),
   },
   {
     key: "ini",
     label: "Config",
     ext: ["ini", "cfg", "conf", "properties", "env", "editorconfig"],
+    // `.gitignore` used to be on this list and is not any more: it looks like
+    // a config file and is not one. Here `#`, `!` and `;` all open a comment;
+    // there, `!` *inverts* the line (see `ignoreSyntax.ts`).
     names: [
       ".env",
-      ".gitignore",
       ".gitattributes",
       ".gitmodules",
       ".gitconfig",
       ".editorconfig",
       ".npmrc",
+      ".yarnrc",
+      ".inputrc",
+      ".curlrc",
+      ".wgetrc",
+      ".hgrc",
+      ".flake8",
+      ".pylintrc",
+      ".coveragerc",
     ],
     fence: ["dotenv"],
     load: legacy(() =>
       import("@codemirror/legacy-modes/mode/properties").then((m) => m.properties),
     ),
+  },
+  {
+    /**
+     * One format under five filenames. It had been sharing the `.properties`
+     * mode with `.editorconfig`, which reads a leading `!` as a comment — so
+     * the negation, the line that un-ignores something, was drawn as the thing
+     * the editor uses to mean "this does not count". `ignoreSyntax.ts` says
+     * what the format actually is.
+     */
+    key: "ignore",
+    label: "Ignore", // i18n-ok — the format's name, not a sentence
+    names: [
+      ".gitignore",
+      ".dockerignore",
+      ".npmignore",
+      ".eslintignore",
+      ".prettierignore",
+      ".stylelintignore",
+      ".vercelignore",
+    ],
+    load: legacy(() => import("./ignoreSyntax").then((m) => m.ignoreParser)),
   },
   {
     key: "dockerfile",
@@ -591,7 +652,19 @@ export const LANGUAGES: readonly LangSpec[] = [
   { key: "zig", label: "Zig", ext: ["zig"] },
   { key: "graphql", label: "GraphQL", ext: ["graphql", "gql"] },
   { key: "batch", label: "Batch", ext: ["bat", "cmd"] },
-  { key: "makefile", label: "Makefile", names: ["makefile", "gnumakefile"] },
+  { key: "terraform", label: "Terraform", ext: ["tf", "tfvars"] },
+  { key: "hcl", label: "HCL", ext: ["hcl", "nomad"] },
+  { key: "prisma", label: "Prisma", ext: ["prisma"] },
+  { key: "solidity", label: "Solidity", ext: ["sol"] },
+  { key: "nix", label: "Nix", ext: ["nix"] },
+  { key: "restructuredtext", label: "reStructuredText", ext: ["rst"] },
+  { key: "asciidoc", label: "AsciiDoc", ext: ["adoc", "asciidoc"] },
+  {
+    key: "makefile",
+    label: "Makefile",
+    ext: ["mk", "mak"],
+    names: ["makefile", "gnumakefile", "makefile.am", "makefile.in"],
+  },
 ];
 
 // ---------------------------------------------------------------------------

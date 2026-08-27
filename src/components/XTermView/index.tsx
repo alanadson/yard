@@ -37,8 +37,6 @@ import { uiLog } from "../../lib/log";
 import { baseName } from "../../lib/terminals";
 import { openTermLink } from "../../lib/termLinkOpen";
 import { termLinkProvider } from "../../lib/termLinkProvider";
-import { schemeFor, SCHEME_IDS } from "../../lib/colorSchemes";
-import type { ExtensionId } from "../../lib/extensions";
 import { useExtensions } from "../../stores/extensionsStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useAdvertised } from "../../stores/advertisedStore";
@@ -47,7 +45,7 @@ import { feedTail, useTerminals } from "../../stores/terminalsStore";
 import { useUI } from "../../stores/uiStore";
 import { resolvedTheme, useResolvedTheme } from "../../stores/themeStore";
 import { t } from "../../lib/i18n";
-import { termThemeFor } from "../../lib/termTheme";
+import { TERM_WELL_VAR, termPaletteFor } from "../../lib/termTheme";
 
 export interface XTermHandle {
   /** Spawns the process (used by the "resume" button). */
@@ -557,12 +555,10 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
       macOptionIsMeta: false,
       // The active color-scheme extension recolors the well; the effect below
       // keeps it hot, this only spares one repaint on mount.
-      theme:
-        schemeFor(
-          SCHEME_IDS.find(
-            (s) => useExtensions.getState().enabled[s as ExtensionId] === true,
-          ),
-        )?.term ?? termThemeFor(resolvedTheme()),
+      theme: termPaletteFor(
+        useExtensions.getState().scheme.terminal,
+        resolvedTheme(),
+      ),
       // ConPTY repositions a lot; letting xterm convert \n to \r\n
       // avoids the "staircase" in tools that emit only LF.
       convertEol: false,
@@ -1012,17 +1008,16 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
   }, [id, px, fontFamily, scrollback, cursorBlink]);
 
   // --- color scheme (the Extensions store), applied hot like the prefs ---
-  const schemeId = useExtensions((s) =>
-    SCHEME_IDS.find((scheme) => s.enabled[scheme as ExtensionId] === true),
-  );
+  const schemeId = useExtensions((s) => s.scheme.terminal);
   // The light appearance swaps the well's palette the same way (a scheme
   // extension still wins over both — it is the user's explicit choice).
   const resolved = useResolvedTheme();
+  const palette = termPaletteFor(schemeId, resolved);
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    term.options.theme = schemeFor(schemeId)?.term ?? termThemeFor(resolved);
-  }, [id, schemeId, resolved]);
+    term.options.theme = palette;
+  }, [id, palette]);
 
   // --- sixel/iTerm images (extension): loaded in place, dropped in place ---
   const termImages = useExtensions((s) => s.enabled["term-images"] === true);
@@ -1098,7 +1093,9 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
     <div
       ref={hostRef}
       className="xterm-host"
-      style={style}
+      // The gutter around the canvas paints the same background xterm just
+      // opened on, so nothing frames the text (see `.xterm-host`).
+      style={{ ...style, [TERM_WELL_VAR]: palette.background } as CSSProperties}
       // Left button only: the right one is handled (and stopped) in the
       // capture listener installed at mount.
       onMouseDown={onFocus}

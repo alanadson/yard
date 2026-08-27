@@ -15,6 +15,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { Pencil, Plus, Power, Trash2 } from "lucide-react";
 
 import { useT } from "../../../hooks/useT";
+import { busyState, isBusy, refusesClick } from "../../../lib/busy";
 import { tn } from "../../../lib/i18n";
 import {
   copyTo,
@@ -72,7 +73,13 @@ export function SecMcp() {
   const agents = useMemo(() => Object.values(byId), [byId]);
   const groups = useMemo(() => groupByCli(rows, agents), [rows, agents]);
   const [editing, setEditing] = useState<Editing | null>(null);
-  const [busy, setBusy] = useState(false);
+  /**
+   * The id of the action in flight, not a shared boolean: the button that
+   * fired it is the one that announces it, and the neighbours only refuse the
+   * click (`lib/busy.ts`). Writing a server shells out to the CLI and takes
+   * seconds — as one flat `disabled` it read as a freeze.
+   */
+  const [busy, setBusy] = useState<string | null>(null);
 
   const startAdd = (cli: string) => {
     setEditing({ cli, scope: "user", draft: { ...EMPTY_DRAFT }, original: null });
@@ -106,9 +113,9 @@ export function SecMcp() {
       { title: t("Remover servidor MCP"), kind: "warning" },
     );
     if (!ok) return;
-    setBusy(true);
+    setBusy(`remove:${rowKey(row)}`);
     const done = await useMcp.getState().remove(row.cli, row.scope, row.name);
-    setBusy(false);
+    setBusy(null);
     if (done) showToast(t("Servidor “{name}” removido.", { name: row.name }));
   };
 
@@ -118,7 +125,7 @@ export function SecMcp() {
       showToast(t("Não consegui ler o servidor para ligá-lo/desligá-lo."), "error");
       return;
     }
-    setBusy(true);
+    setBusy(`toggle:${rowKey(row)}`);
     const done = await useMcp.getState().save(row.cli, row.scope, {
       name: row.name,
       transport: row.transport,
@@ -129,7 +136,7 @@ export function SecMcp() {
       headers: secrets.headers,
       enabled: !row.enabled,
     });
-    setBusy(false);
+    setBusy(null);
     if (done) {
       showToast(
         row.enabled
@@ -162,9 +169,9 @@ export function SecMcp() {
       showToast(result.reason, "error");
       return;
     }
-    setBusy(true);
+    setBusy(`copy:${rowKey(row)}`);
     const done = await useMcp.getState().save(targetCli, "user", result.server);
-    setBusy(false);
+    setBusy(null);
     if (done) {
       const copied = t("“{name}” copiado para {cli} (usuário).", {
         name: row.name,
@@ -181,9 +188,9 @@ export function SecMcp() {
       setErrors(v.errors);
       return;
     }
-    setBusy(true);
+    setBusy("submit");
     const done = await useMcp.getState().save(editing.cli, editing.scope, v.server);
-    setBusy(false);
+    setBusy(null);
     if (done) {
       showToast(
         editing.original
@@ -273,7 +280,11 @@ export function SecMcp() {
                 )}
                 {editing?.cli !== g.cli && (
                   <div className="set-row set-mcp-foot">
-                    <button className="btn" disabled={busy} onClick={() => startAdd(g.cli)}>
+                    <button
+                      className="btn"
+                      disabled={refusesClick(busyState(busy, `add:${g.cli}`))}
+                      onClick={() => startAdd(g.cli)}
+                    >
                       <Plus size={13} /> {t("Adicionar servidor")}
                     </button>
                   </div>
@@ -291,6 +302,11 @@ function nameOf(groups: CliGroup[], cli: string): string {
   return groups.find((g) => g.cli === cli)?.name ?? cli;
 }
 
+/** What identifies a row's action while it is in flight. */
+function rowKey(row: McpRow): string {
+  return `${row.cli}:${row.scope}:${row.name}`;
+}
+
 function McpRowView({
   row,
   groups,
@@ -302,7 +318,7 @@ function McpRowView({
 }: {
   row: McpRow;
   groups: CliGroup[];
-  busy: boolean;
+  busy: string | null;
   onEdit: () => void;
   onRemove: () => void;
   onToggle: () => void;
@@ -315,6 +331,13 @@ function McpRowView({
   }));
   const secretsCount = row.envKeys.length + row.headerKeys.length;
   const line = row.url ?? [row.command ?? "", ...row.args].join(" ").trim();
+  const key = rowKey(row);
+  const copying = busyState(busy, `copy:${key}`);
+  const toggling = busyState(busy, `toggle:${key}`);
+  const removing = busyState(busy, `remove:${key}`);
+  // Editing opens a form, it never runs: it can only ever be waiting on
+  // someone else, never the one announcing work.
+  const opening = busyState(busy, `edit:${key}`);
   return (
     <div className={`set-row set-mcp-row${row.enabled ? "" : " is-off"}`}>
       <div className="set-row-text">
@@ -337,32 +360,41 @@ function McpRowView({
         <Select
           className="set-picker set-mcp-copy"
           value=""
-          placeholder={t("Copiar para…")}
+          placeholder={isBusy(copying) ? t("Copiando…") : t("Copiar para…")}
           tip={t("Grava o mesmo servidor no escopo de usuário da outra CLI")}
           options={targets}
-          disabled={busy}
+          disabled={refusesClick(copying)}
           onChange={(v) => v && onCopy(v)}
         />
         {row.canToggle && (
           <button
             className="btn"
-            disabled={busy}
+            disabled={refusesClick(toggling)}
+            aria-busy={isBusy(toggling)}
             onClick={onToggle}
             title={row.enabled ? t("Desligar sem apagar") : t("Ligar de novo")}
           >
-            <Power size={13} /> {row.enabled ? t("Desligar") : t("Ligar")}
+            <Power size={13} />{" "}
+            {isBusy(toggling)
+              ? row.enabled
+                ? t("Desligando…")
+                : t("Ligando…")
+              : row.enabled
+                ? t("Desligar")
+                : t("Ligar")}
           </button>
         )}
-        <button className="btn" disabled={busy} onClick={onEdit}>
+        <button className="btn" disabled={refusesClick(opening)} onClick={onEdit}>
           <Pencil size={13} /> {t("Editar")}
         </button>
         <button
           className="btn"
-          disabled={busy}
+          disabled={refusesClick(removing)}
+          aria-busy={isBusy(removing)}
           onClick={onRemove}
           title={t("Reescreve o arquivo sem este servidor (pede confirmação)")}
         >
-          <Trash2 size={13} /> {t("Remover")}
+          <Trash2 size={13} /> {isBusy(removing) ? t("Removendo…") : t("Remover")}
         </button>
       </div>
     </div>
@@ -381,13 +413,14 @@ function McpForm({
   editing: Editing;
   errors: Partial<Record<keyof McpDraft, string>>;
   hasRoot: boolean;
-  busy: boolean;
+  busy: string | null;
   onChange: (next: Editing) => void;
   onCancel: () => void;
   onSubmit: () => void;
 }) {
   const t = useT();
   const { draft, cli, scope, original } = editing;
+  const saving = busyState(busy, "submit");
   const set = (patch: Partial<McpDraft>) => onChange({ ...editing, draft: { ...draft, ...patch } });
   const remote = draft.transport !== "stdio";
   const transports = [
@@ -499,11 +532,16 @@ function McpForm({
         </Field>
       )}
       <div className="set-actions set-mcp-form-actions">
-        <button className="btn" disabled={busy} onClick={onCancel}>
+        <button className="btn" disabled={refusesClick(saving)} onClick={onCancel}>
           {t("Cancelar")}
         </button>
-        <button className="btn btn--primary" disabled={busy} onClick={onSubmit}>
-          {original ? t("Salvar") : t("Adicionar")}
+        <button
+          className="btn btn--primary"
+          disabled={refusesClick(saving)}
+          aria-busy={isBusy(saving)}
+          onClick={onSubmit}
+        >
+          {isBusy(saving) ? t("Salvando…") : original ? t("Salvar") : t("Adicionar")}
         </button>
       </div>
     </div>

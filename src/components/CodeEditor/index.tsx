@@ -98,10 +98,8 @@ import {
   type OpenDoc,
 } from "../../stores/editorStore";
 import { useProjects } from "../../stores/projectsStore";
-import { SCHEME_IDS } from "../../lib/colorSchemes";
 import { useExtensions } from "../../stores/extensionsStore";
 import { useUI } from "../../stores/uiStore";
-import type { ExtensionId } from "../../lib/extensions";
 import { useT } from "../../hooks/useT";
 import { tn } from "../../lib/i18n";
 
@@ -1081,7 +1079,7 @@ function CmSurface({
   // decisions the user can flip without losing the buffer.
   const liveComp = useRef(new Compartment()).current;
   // Store-driven extras (rainbow brackets, TODO highlight, minimap, guides,
-  // CSS colors) and the active color scheme: the switch in the Extensões
+  // CSS colors) and the active color scheme: the switch in Ajustes
   // modal has to reach a file that is already open.
   const extrasComp = useRef(new Compartment()).current;
   const syntaxComp = useRef(new Compartment()).current;
@@ -1098,9 +1096,9 @@ function CmSurface({
   const minimap = useExtensions((s) => s.enabled.minimap === true);
   const indent = useExtensions((s) => s.enabled["indent-guides"] === true);
   const cssColors = useExtensions((s) => s.enabled["css-colors"] === true);
-  const schemeId = useExtensions((s) =>
-    SCHEME_IDS.find((id) => s.enabled[id as ExtensionId] === true),
-  );
+  // The editor's half of a colour scheme: the `code` slot, which the store
+  // keeps apart from the terminal's (`lib/schemeChoice.ts`).
+  const schemeId = useExtensions((s) => s.scheme.code);
   const flags = useMemo(
     () => ({ rainbow, todos: all, minimap, indent, cssColors }),
     [rainbow, all, minimap, indent, cssColors],
@@ -1443,7 +1441,7 @@ function CmSurface({
     view.requestMeasure();
   }, [metrics, metricsComp]);
 
-  // Flipped in the Extensões modal with a file on screen: same in-place swap.
+  // Flipped in Ajustes with a file on screen: same in-place swap.
   // The cached states of the other tabs catch up in the tab-switch dispatch.
   useEffect(() => {
     const view = viewRef.current;

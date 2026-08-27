@@ -9,7 +9,7 @@
  * itself. A bare parent does not count for a click that landed on a child.
  *
  * The regression this test locks: the bar had the bare attribute on the
- * `<header>` and on the left-hand strips, but not on `.titlebar-right`, which
+ * `<header>` and on the left-hand strips, but not on the right-hand slack, which
  * is `flex: 1 1 0` and therefore swallows all the empty slack of the right
  * half. Clicking there hit a `div` with no attribute, walked up to the bare
  * header, and `el === composedPath[0]` failed: the window only dragged from
@@ -66,5 +66,20 @@ describe("dragging the window by the title bar", () => {
 
   it("no other element repeats the attribute — bare, it becomes a dead spot", () => {
     expect(withoutComments(titleBarSrc).split(ATTR).length - 1).toBe(1);
+  });
+});
+
+/**
+ * The right half of the bar is over the right-hand panels (files and changes,
+ * the bench), each of which has a header of its own. Every control of the bar
+ * was piled up there, in the one strip where a window most wants to be
+ * dragged from and where a second row of chrome reads as a header the panel
+ * below did not ask for. They all sit on the left now, and what is left over
+ * there is `.titlebar-slack`: pure empty space, which is exactly what makes
+ * it draggable.
+ */
+describe("the empty half over the panels", () => {
+  it("the slack carries no control — anything here drags nothing and covers the panel's own header", () => {
+    expect(tagOf(titleBarSrc, "titlebar-slack")).toMatch(/\/>$/);
   });
 });

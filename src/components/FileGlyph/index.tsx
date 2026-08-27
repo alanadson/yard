@@ -4,9 +4,10 @@
  * this entry?" and this component answers, so every surface changes together
  * when a theme comes or goes.
  *
- * With the Symbols extension off (the default), it draws exactly what the
- * tree always drew: neutral Lucide glyphs, color left to the git state. With
- * it on, the vendored Symbols theme takes over — loaded lazily, with the
+ * With no icon theme picked (the default; the picker is in Ajustes → Editor
+ * de código → Ícones de arquivo), it draws exactly what the tree always drew:
+ * neutral Lucide glyphs, color left to the git state. With one on, the
+ * vendored theme takes over — loaded lazily, with the
  * neutral glyph standing in for the frame or two the chunk takes to arrive.
  */
 import { lazy, Suspense } from "react";

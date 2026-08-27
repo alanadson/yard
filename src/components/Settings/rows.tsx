@@ -15,6 +15,8 @@ import { type ReactNode } from "react";
 
 import { NumberField } from "../NumberField";
 import { Select, type SelectOption } from "../Select";
+import { type ExtensionId } from "../../lib/extensions";
+import { useExtensions } from "../../stores/extensionsStore";
 import { clampPref, useUI, type Prefs } from "../../stores/uiStore";
 
 /** Title of a group of rows — the small-caps label above the card. */
@@ -94,6 +96,30 @@ export function ToggleRow({
       />
     </Row>
   );
+}
+
+/**
+ * Switch row for a feature that ships with the Yard and starts off.
+ *
+ * These are the switches the old store shelf held. They are kept apart from
+ * the preferences (`kv ext.enabled`, not `Prefs`) because turning one on is
+ * what drags its code in — the minimap, Prettier and the icon maps are lazy
+ * chunks, and a profile that never asked for them never pays for them. On
+ * screen there is no such distinction: it is a row like any other, on the page
+ * of the surface it changes.
+ */
+export function FeatureRow({
+  id,
+  label,
+  desc,
+}: {
+  id: ExtensionId;
+  label: string;
+  desc?: string;
+}) {
+  const on = useExtensions((s) => s.enabled[id] === true);
+  const setEnabled = useExtensions((s) => s.setEnabled);
+  return <ToggleRow label={label} desc={desc} checked={on} onChange={(v) => setEnabled(id, v)} />;
 }
 
 /** Row with a fixed-width pop-up button, the design's measure. */

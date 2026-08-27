@@ -11,7 +11,7 @@
  * *content* is allowed (the diff already does that), color in the *frame*
  * remains blue only.
  */
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { HighlightStyle, syntaxHighlighting, type TagStyle } from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { EditorState, type Extension } from "@codemirror/state";
@@ -159,15 +159,15 @@ export const yardTheme = EditorView.theme(
  * the same ten names for paper — the light appearance never has to touch
  * this file.
  */
-export const yardHighlight = HighlightStyle.define([
+export const yardHighlightSpecs: TagStyle[] = [
   { tag: [t.comment, t.lineComment, t.blockComment], color: "var(--syn-comment, #7b8494)", fontStyle: "italic" },
   { tag: [t.keyword, t.moduleKeyword, t.controlKeyword], color: "var(--syn-keyword, #c792ea)" },
   { tag: [t.operatorKeyword, t.definitionKeyword, t.modifier], color: "var(--syn-keyword, #c792ea)" },
-  { tag: [t.string, t.special(t.string), t.regexp], color: "var(--syn-string, #8fd694)" },
+  { tag: [t.string, t.special(t.string), t.regexp, t.attributeValue], color: "var(--syn-string, #8fd694)" },
   { tag: [t.number, t.bool, t.null, t.atom], color: "var(--syn-number, #e3b341)" },
   { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "var(--syn-function, #6fb3ff)" },
   { tag: [t.definition(t.variableName), t.definition(t.propertyName)], color: "var(--syn-definition, #e2e2e6)" },
-  { tag: [t.typeName, t.className, t.namespace], color: "var(--syn-type, #5ecfbb)" },
+  { tag: [t.typeName, t.className, t.namespace, t.labelName], color: "var(--syn-type, #5ecfbb)" },
   { tag: [t.propertyName, t.attributeName], color: "var(--syn-property, #a9c7ff)" },
   { tag: [t.tagName, t.angleBracket], color: "var(--syn-tag, #ff8a80)" },
   { tag: [t.variableName, t.self], color: "var(--text)" },
@@ -185,7 +185,9 @@ export const yardHighlight = HighlightStyle.define([
     color: "var(--text-bright)",
   },
   { tag: [t.invalid], color: "var(--red)" },
-]);
+];
+
+export const yardHighlight = HighlightStyle.define(yardHighlightSpecs);
 
 /**
  * CodeMirror speaks the app's language. The panels (Ctrl+F, Ctrl+G) ship

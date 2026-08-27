@@ -20,6 +20,21 @@ const SAME_IN_ENGLISH = new Set(["Interface", "Terminal"]);
 const SECTION_SENTENCES = [
   // Terminal
   "Fonte do terminal",
+  // The colour-scheme slot each surface carries — one in Terminal, one in
+  // Editor, and the sentence that says where the other half lives.
+  "Tema de cor",
+  "O tema de cor troca os 16 tons ANSI, o fundo e o cursor dos terminais; o editor tem o dele, em Ajustes → Editor de código. O cromo do Yard não muda: tema é cor de conteúdo, não de moldura.",
+  // The features that used to live on the store shelf: one sentence per group
+  // they landed in, so a whole group with no English line fails here.
+  "Recursos do terminal",
+  "Imagens no terminal",
+  "Recursos do editor",
+  "Minimapa",
+  "Ícones de arquivo",
+  "Tema de ícones",
+  "Nenhum",
+  "Diagramas Mermaid",
+  "Fontes de código embutidas",
   "Tamanho da fonte",
   "Linhas de histórico",
   "Cursor piscante",
@@ -42,8 +57,6 @@ const SECTION_SENTENCES = [
   "Backup do workspace",
   "Relatar um problema",
   "Backup automático",
-  // Extensões
-  "A loja completa",
   // Servidores MCP
   "Adicionar servidor",
   // Interface — the status bar rows

@@ -75,7 +75,6 @@ export function titleBarMenu(
     },
     { kind: "sep" },
     { id: "prefs", label: t("Preferências…"), shortcut: "Ctrl+,", onSelect: () => act.openModal("preferences") },
-    { id: "extensions", label: t("Extensões…"), onSelect: () => act.openModal("extensions") },
     {
       id: "shortcuts",
       label: t("Atalhos"),

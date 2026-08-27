@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 
 import {
+  emptyReason,
   fieldsOf,
   parseQuery,
   restingOrder,
@@ -281,6 +282,9 @@ function PaletteInner() {
   }, [close]);
 
   const sections = useMemo(() => sectionsOf(results), [results]);
+  // `fileIndex === null` means the walk has not finished, not that the
+  // project has no files.
+  const vazio = emptyReason({ text, scope, indexed: fileIndex !== null });
   let painted = -1;
 
   return (
@@ -318,14 +322,21 @@ function PaletteInner() {
         <div className="busca-list" id="busca-lista" role="listbox" ref={listRef}>
           {results.length === 0 ? (
             <p className="busca-empty">
-              {text
-                ? t("Nada encontrado para “{text}”.", { text })
-                : t("Nada por aqui ainda — adicione um projeto para começar.")}
+              {/* Three different sentences, because the three states are
+                  different news. Denying a file while the index is still
+                  being walked is the worst of them (`model.ts`,
+                  `emptyReason`). */}
+              {vazio === "sem-busca" &&
+                t("Nada por aqui ainda — adicione um projeto para começar.")}
+              {vazio === "indexando" &&
+                t("Indexando os arquivos do projeto… os que já entraram aparecem aqui.")}
+              {vazio === "nada-encontrado" &&
+                t("Nada encontrado para “{text}”.", { text })}
               {/* The file rows come from the project index (every file under
                   the root, minus dependencies and build output) — "Nada
                   encontrado" is still not proof of absence: the file may live
-                  in a skipped folder, or the index may have just been born. */}
-              {scope?.prefix === "/" && text && (
+                  in a skipped folder. */}
+              {vazio === "nada-encontrado" && scope?.prefix === "/" && text && (
                 <span className="busca-empty-hint">
                   {t("A busca cobre todos os arquivos do projeto, menos dependências e saída de build (node_modules, target, dist…). Para procurar por conteúdo, use a lupa da aba Arquivos (Ctrl+Shift+F).")}
                 </span>
@@ -998,19 +1009,20 @@ function actions(world: World): PaletteEntry[] {
       run: () => ui().openModal("scores"),
     },
     {
-      id: "action:extensions",
+      // The store shelf is gone; what people searched it for is here. The old
+      // words keep working — whoever learned "extensões" types it.
+      id: "action:editor-features",
       kind: "action",
-      title: t("Extensões"),
-      subtitle: t("a loja — ativar e desativar recursos"),
-      keywords: ["loja", "plugins", "temas", "icones", "symbols", "store", "extensions", "themes", "icons"],
-      hint: "Ctrl+Shift+X",
-      run: () => ui().openModal("extensions"),
+      title: t("Tema, ícones e recursos do editor…"),
+      subtitle: t("tema de cor, tema de ícones, minimapa, Prettier, Mermaid"),
+      keywords: ["extensoes", "extensions", "loja", "store", "plugins", "temas", "themes", "icones", "icons", "symbols", "minimapa", "minimap", "prettier"],
+      run: () => ui().openModal("preferences", "editor"),
     },
     {
       id: "action:preferences",
       kind: "action",
       title: t("Configurações"),
-      subtitle: t("fonte, renderer, scrollback, avisos, atalhos, extensões"),
+      subtitle: t("fonte, renderer, scrollback, avisos, atalhos, recursos"),
       keywords: ["config", "ajustes", "opcoes", "settings", "preferencias", "preferences", "options"],
       hint: "Ctrl+Shift+P",
       run: () => ui().openModal("preferences"),

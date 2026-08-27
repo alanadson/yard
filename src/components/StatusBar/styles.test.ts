@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import bootCss from "../../styles.css?raw";
 import statusBarSrc from "./index.tsx?raw";
+import statusChipSrc from "./StatusChip.tsx?raw";
 
 /** Marks the place of a `${…}`: whatever was glued to it is not a literal class. */
 const INTERPOLATION = "§";
@@ -45,6 +46,14 @@ describe("status bar styling", () => {
 
   it("every class in StatusBar/index.tsx is in the CSS that loads at boot", () => {
     const orphans = classesInJsx(statusBarSrc).filter((c) => !definedIn(bootCss, c));
+    expect(orphans).toEqual([]);
+  });
+
+  /* The usage chip is part of the footer now, and it is not lazy either: it
+     mounts with the bar. Its popover is a body portal, so a class of it
+     missing from the boot CSS opens raw over everything. */
+  it("every class in StatusBar/StatusChip.tsx is in the CSS that loads at boot", () => {
+    const orphans = classesInJsx(statusChipSrc).filter((c) => !definedIn(bootCss, c));
     expect(orphans).toEqual([]);
   });
 });

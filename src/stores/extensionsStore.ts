@@ -4,17 +4,27 @@
  * extension disabled and the app looking exactly like it did before the store
  * existed. The catalog itself lives in `lib/extensions.ts`; this store only
  * remembers the switches.
+ *
+ * The colour schemes are the exception, and they sit in `ext.scheme`: a scheme
+ * is not one switch but two slots, terminal and code, because the sixteen ANSI
+ * tones a CLI draws in and the roles a grammar hands the editor are two
+ * different jobs (`lib/schemeChoice.ts` holds the rules). Every profile that
+ * exists still holds the old boolean, so `load` migrates it across on the way
+ * in and drops it from `enabled` — one colour, one source of truth.
  */
 import { create } from "zustand";
 
+import { SCHEME_IDS } from "../lib/colorSchemes";
 import { EXTENSIONS, type ExtensionId } from "../lib/extensions";
 import {
   persistJsonPref,
   readPrefs,
   type PrefsSnapshot,
 } from "../lib/prefs";
+import { NO_SCHEME, parseSchemeChoice, type SchemeChoice } from "../lib/schemeChoice";
 
 const KV_ENABLED = "ext.enabled";
+const KV_SCHEME = "ext.scheme";
 
 /**
  * kv gives back text; never trust the saved format. Ids that left the catalog
@@ -48,17 +58,28 @@ export function parseEnabled(
 
 interface ExtensionsState {
   enabled: Partial<Record<ExtensionId, boolean>>;
+  /** One scheme per surface; `undefined` on a slot is the Yard's own palette. */
+  scheme: SchemeChoice;
   load: (prefs?: PrefsSnapshot) => Promise<void>;
   setEnabled: (id: ExtensionId, on: boolean) => void;
+  setScheme: (next: SchemeChoice) => void;
 }
 
 export const useExtensions = create<ExtensionsState>((set, get) => ({
   enabled: {},
+  scheme: NO_SCHEME,
 
   load: async (prefs) => {
     try {
       const raw = prefs ?? (await readPrefs());
-      set({ enabled: parseEnabled(raw[KV_ENABLED]) });
+      // The old key is read first and *then* stripped: it is where a profile
+      // written before the split still keeps its theme, and leaving a scheme
+      // among the switches afterwards would give one colour two owners.
+      const saved = parseEnabled(raw[KV_ENABLED]);
+      const scheme = parseSchemeChoice(raw[KV_SCHEME], saved);
+      const enabled = { ...saved };
+      for (const id of SCHEME_IDS) delete enabled[id as ExtensionId];
+      set({ enabled, scheme });
     } catch (e) {
       console.warn("[yard] não consegui ler as extensões", e);
     }
@@ -82,6 +103,19 @@ export const useExtensions = create<ExtensionsState>((set, get) => ({
     set({ enabled });
     persistJsonPref(KV_ENABLED, enabled, (error) =>
       console.warn(`[yard] não consegui gravar ${KV_ENABLED}`, error),
+    );
+  },
+
+  /**
+   * Always writes, even for the choice that looks empty. An absent key means
+   * "the answer is still in the old place" — so a user who splits the surfaces
+   * and puts the terminal back on the Yard's own palette has to leave a mark,
+   * or the next launch migrates the old boolean straight over their choice.
+   */
+  setScheme: (next) => {
+    set({ scheme: next });
+    persistJsonPref(KV_SCHEME, next, (error) =>
+      console.warn(`[yard] não consegui gravar ${KV_SCHEME}`, error),
     );
   },
 }));

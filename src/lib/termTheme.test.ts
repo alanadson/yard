@@ -7,8 +7,15 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { schemeFor } from "./colorSchemes";
 import { contrastRatio } from "./contrast";
-import { DARK_TERM, LIGHT_TERM, termThemeFor } from "./termTheme";
+import {
+  DARK_TERM,
+  LIGHT_TERM,
+  TERM_WELL_VAR,
+  termPaletteFor,
+  termThemeFor,
+} from "./termTheme";
 
 // The two sheets that paint the host the canvas sits in.
 import darkCss from "../styles.css?raw";
@@ -98,5 +105,45 @@ describe("the well the palette paints and the well the CSS paints", () => {
     ["light", LIGHT_TERM],
   ])("the %s cursor punches the well's own colour through the glyph", (_name, palette) => {
     expect(palette.cursorAccent.toLowerCase()).toBe(palette.background.toLowerCase());
+  });
+});
+
+/**
+ * The same seam, reopened by the Extensions store. A colour-scheme extension
+ * replaces the terminal's whole palette — Ayu opens on `#0b0e14`, GitHub Dark
+ * on `#0d1117` — and `--well-code` stayed at the appearance's pure black. The
+ * gutter `.xterm-host` paints around the canvas is *inside* the well, so the
+ * terminal wore an 8 px black frame down its left edge (and a 6 px one over
+ * the first row) that no token in the sheet could follow.
+ *
+ * The fix is one name: the palette on screen is chosen once, in
+ * `termPaletteFor`, and its background is written onto the host as
+ * `TERM_WELL_VAR` — so the gutter and the canvas can only ever open on the
+ * same colour.
+ */
+describe("the well under a colour-scheme extension", () => {
+  it("opens on the enabled scheme's background, whatever the appearance", () => {
+    const ayu = schemeFor("theme-ayu");
+    expect(ayu, "the Ayu scheme is gone from the store").toBeDefined();
+    expect(termPaletteFor("theme-ayu", "dark")).toBe(ayu!.term);
+    expect(termPaletteFor("theme-ayu", "light")).toBe(ayu!.term);
+  });
+
+  it("falls back to the appearance's own palette with no scheme on", () => {
+    expect(termPaletteFor(undefined, "dark")).toBe(DARK_TERM);
+    expect(termPaletteFor(undefined, "light")).toBe(LIGHT_TERM);
+  });
+
+  /** The `.xterm-host` rule's `background`, as declared in the sheet. */
+  const gutterOf = (css: string): string => {
+    const at = css.search(/^\.xterm-host \{/m);
+    expect(at, "the .xterm-host rule is gone").toBeGreaterThan(-1);
+    const declared = /background:\s*([^;]+);/.exec(css.slice(at));
+    expect(declared, "the well paints nothing").not.toBeNull();
+    return declared![1].trim();
+  };
+
+  it("is painted from the palette the terminal opened, not from a fixed token", () => {
+    expect(gutterOf(darkCss)).toBe(`var(${TERM_WELL_VAR}, var(--well-code))`);
   });
 });

@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  emptyReason,
   fieldsOf,
   parseQuery,
   SCOPES,
@@ -129,5 +130,48 @@ describe("fieldsOf", () => {
 
   it("skips what is not there", () => {
     expect(fieldsOf(entry("a", "action", "Só o título"))).toEqual(["Só o título"]);
+  });
+});
+
+/**
+ * The empty list has three different things to say, and it used to say the
+ * wrong one at the worst moment.
+ *
+ * `editorStore.fileIndex` is `string[] | null`, and `null` means "not walked
+ * yet" — the index is built off the critical path when a project opens. The
+ * Busca did `if (world.fileIndex)`, contributed no rows, and fell through to
+ * "Nada encontrado para X". So right after adding a project, searching for a
+ * file that is plainly there answered that it is not there. That is the
+ * search saying "no" about the only navigation this app has, on the one
+ * occasion it does not know yet.
+ */
+describe("emptyReason", () => {
+  const files = SCOPES.find((s) => s.prefix === "/")!;
+  const actions = SCOPES.find((s) => s.prefix === ">")!;
+
+  it("says nothing was typed when nothing was typed", () => {
+    expect(emptyReason({ text: "", scope: null, indexed: false })).toBe("sem-busca");
+    expect(emptyReason({ text: "  ", scope: files, indexed: false })).toBe("sem-busca");
+  });
+
+  it("owns up to the index still being built instead of denying the file", () => {
+    expect(emptyReason({ text: "App", scope: files, indexed: false })).toBe("indexando");
+    // No prefix: files are in the mix too, so the same caveat holds.
+    expect(emptyReason({ text: "App", scope: null, indexed: false })).toBe("indexando");
+  });
+
+  it("does not blame the index for a search that never touched files", () => {
+    expect(emptyReason({ text: "novo", scope: actions, indexed: false })).toBe(
+      "nada-encontrado",
+    );
+  });
+
+  it("with the index built, an empty list really is an empty list", () => {
+    expect(emptyReason({ text: "App", scope: files, indexed: true })).toBe(
+      "nada-encontrado",
+    );
+    expect(emptyReason({ text: "App", scope: null, indexed: true })).toBe(
+      "nada-encontrado",
+    );
   });
 });

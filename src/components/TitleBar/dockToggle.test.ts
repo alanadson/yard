@@ -42,21 +42,16 @@ describe("dockToggle — the balloon names the action by state", () => {
     expect(dockToggle("sidebar", { open: false }).tip).toBe("Mostrar a barra lateral (Ctrl+B)");
     expect(dockToggle("sidebar", { open: true }).tip).toBe("Esconder a barra lateral (Ctrl+B)");
     expect(dockToggle("bench", { open: true }).tip).toBe("Esconder a bancada (Ctrl+Shift+B)");
-    expect(dockToggle("notes", { open: true }).tip).toBe("Esconder as anotações (Ctrl+Shift+N)");
   });
 
   it("the accessible name stays the panel's name — the pressed state is the button's own", () => {
     expect(dockToggle("sidebar", { open: true }).label).toBe("Barra lateral");
     expect(dockToggle("sidebar", { open: false }).label).toBe("Barra lateral");
-    expect(dockToggle("notes", { open: false }).label).toBe("Anotações");
   });
 
   it("a closed door says what is behind it", () => {
     expect(dockToggle("bench", { open: false }).tip).toBe(
       "Mostrar a bancada — arquivos, controle, tarefas e prompts (Ctrl+Shift+B)",
-    );
-    expect(dockToggle("notes", { open: false }).tip).toBe(
-      "Mostrar as anotações — caderno markdown (Ctrl+Shift+N)",
     );
     expect(dockToggle("changes", { open: false, changed: 0 }).tip).toBe(
       "Mostrar arquivos e alterações (Ctrl+Shift+D)",

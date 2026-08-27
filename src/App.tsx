@@ -30,6 +30,7 @@ import { startBridge } from "./lib/bridgeListener";
 import { loadBundledFonts } from "./lib/bundledFonts";
 import { AsyncDisposer } from "./lib/disposables";
 import { applyFontPrefs } from "./lib/fonts";
+import { applySyntaxVars } from "./lib/schemeChoice";
 import { ipc } from "./lib/ipc";
 import { reconcileAliveFlags } from "./lib/lifecycle";
 import { uiLog } from "./lib/log";
@@ -54,6 +55,7 @@ import { installUpdate } from "./lib/updateFlow";
 import { useProjects } from "./stores/projectsStore";
 import { useReview } from "./stores/reviewStore";
 import { isLive, useTerminals } from "./stores/terminalsStore";
+import { fits } from "./lib/panelFit";
 import {
   BENCH_MIN,
   CHANGES_MIN,
@@ -132,9 +134,6 @@ const CompareModal = lazy(() =>
 const SettingsScreen = lazy(() =>
   import("./components/Settings").then((m) => ({ default: m.SettingsScreen })),
 );
-const ExtensionsModal = lazy(() =>
-  import("./components/modals/ExtensionsModal").then((m) => ({ default: m.ExtensionsModal })),
-);
 const ProjectStyleModal = lazy(() =>
   import("./components/modals/ProjectStyleModal").then((m) => ({ default: m.ProjectStyleModal })),
 );
@@ -183,6 +182,13 @@ export default function App() {
     changes: false,
     sidebar: false,
   });
+  /**
+   * The first fit runs at boot, against panels restored from preferences —
+   * nobody asked for anything yet, so nothing is announced. From the second
+   * run on, a panel giving way is always an answer to a gesture (a shortcut
+   * or a drag of the window edge) and gets said out loud.
+   */
+  const layoutSettled = useRef(false);
   const load = useProjects((s) => s.load);
   const loadError = useProjects((s) => s.loadError);
   const saveError = useProjects((s) => s.saveError);
@@ -234,6 +240,17 @@ export default function App() {
   useEffect(() => {
     applyFontPrefs({ uiFontFamily, codeFontFamily, codeLigatures });
   }, [uiFontFamily, codeFontFamily, codeLigatures]);
+
+  // The editor's colour scheme → the `--syn-*` properties on <html>. The
+  // editor itself swaps a whole HighlightStyle and needs none of this; the
+  // two surfaces that do are the ones with no CodeMirror in them — the diff
+  // viewer and the markdown preview paint `tok-*` classes, which the sheets
+  // colour through exactly these names. Without it, a file open in a diff tab
+  // kept the Yard's palette while the editor tab beside it wore Dracula.
+  const codeScheme = useExtensions((s) => s.scheme.code);
+  useEffect(() => {
+    applySyntaxVars(document.documentElement, codeScheme);
+  }, [codeScheme]);
 
   // The bundled code fonts arrive with their extension. Loaded on boot too
   // (not only on toggle): a terminal measured before the @font-face exists
@@ -443,20 +460,44 @@ export default function App() {
   useEffect(() => {
     const adjust = () => {
       const width = window.innerWidth;
-      const leftover = () =>
-        width -
-        (useUI.getState().sidebarOpen ? SIDEBAR_MIN : 0) -
-        (useChanges.getState().open ? CHANGES_MIN : 0) -
-        (useBench.getState().open ? BENCH_MIN : 0);
+      const openCosts = () =>
+        [
+          useUI.getState().sidebarOpen ? SIDEBAR_MIN : 0,
+          useChanges.getState().open ? CHANGES_MIN : 0,
+          useBench.getState().open ? BENCH_MIN : 0,
+        ].filter(Boolean);
+      const roomy = () => fits(width, openCosts(), WORKSPACE_MIN);
+
+      /**
+       * Fires once per transition (`closeIt` only runs on a panel that is
+       * still open), so a slow drag does not turn into a stack of notices.
+       */
+      const announceYield = (key: keyof typeof closedByLayout.current) => {
+        if (!layoutSettled.current) return;
+        const name = {
+          bench: t("a bancada"),
+          changes: t("as mudanças"),
+          sidebar: t("a barra lateral"),
+        }[key];
+        useUI
+          .getState()
+          .showToast(
+            t("Sem largura para {name} — ela volta quando a janela alargar.", { name }),
+          );
+      };
 
       const closeIt = (
         theKey: keyof typeof closedByLayout.current,
         isOpen: () => boolean,
         action: () => void,
       ) => {
-        if (leftover() >= WORKSPACE_MIN || !isOpen()) return;
+        if (roomy() || !isOpen()) return;
         closedByLayout.current[theKey] = true;
         action();
+        // The gesture that opened it deserves an answer. Without this the
+        // panel blinked and closed itself, and the shortcut read as broken —
+        // the app knew why and said nothing.
+        announceYield(theKey);
       };
 
       const reopen = (
@@ -471,7 +512,7 @@ export default function App() {
           closedByLayout.current[key] = false;
           return;
         }
-        if (leftover() - cost < WORKSPACE_MIN) return;
+        if (!fits(width, [...openCosts(), cost], WORKSPACE_MIN)) return;
         closedByLayout.current[key] = false;
         action();
       };
@@ -499,6 +540,7 @@ export default function App() {
       );
     };
     adjust();
+    layoutSettled.current = true;
     window.addEventListener("resize", adjust);
     return () => window.removeEventListener("resize", adjust);
     // Re-evaluates also when a panel is opened by shortcut in a tight window.
@@ -844,7 +886,6 @@ export default function App() {
           />
         )}
         {modal === "preferences" && <SettingsScreen />}
-        {modal === "extensions" && <ExtensionsModal />}
         {modal === "shortcuts" && <ShortcutsModal />}
         {modal === "role" && <RoleModal />}
         {modal === "routines" && <RoutinesModal />}

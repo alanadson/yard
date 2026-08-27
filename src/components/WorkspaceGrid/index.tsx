@@ -233,7 +233,24 @@ function GridBody({ groupId }: Props) {
   if (layout.surface === "canvas") {
     return (
       <ErrorBoundary where="o quadro">
-        <Suspense fallback={<div className="grid-empty" />}>
+        {/* Not `grid-empty`: that is the "no terminals here" screen, and a
+            blank rectangle while a heavy chunk loads reads as an empty group
+            or as a crash (`loading.test.ts`). The class lives in the boot
+            sheet on purpose — it is on screen exactly while `canvas.css` has
+            not arrived. */}
+        <Suspense
+          fallback={
+            <div
+              className="grid-loading"
+              role="status"
+              aria-label={t("Abrindo o quadro…")}
+            >
+              <span className="grid-loading-bar" />
+              <span className="grid-loading-bar" />
+              <span className="grid-loading-bar" />
+            </div>
+          }
+        >
           <CanvasView
             key={groupId}
             groupId={groupId}

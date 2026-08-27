@@ -1,22 +1,25 @@
 /**
- * Agent usage + Energético (keep-awake), in a single title-bar chip.
+ * Agent usage + Energético (keep-awake), in a single status-bar chip.
  *
- * The right side of the bar held eight simultaneous controls, two of them
- * (usage and keep-awake) read far more often than they are clicked — so they
- * share one chip and one popover: the usage blocks on top, the Energético
- * radio group below. Below 1180px the meters leave the strip but the chip
- * stays: the popover keeps every reading, where before the whole meter
- * simply vanished.
+ * The two readings here are read far more often than they are clicked, which
+ * is what took them out of the title bar: they sat in the strip over the
+ * panels, at the size of a control, for something that is information. In the
+ * footer they stand with the other gauges (RAM, branch, agents), which is
+ * where a reading belongs.
  *
  * The strip shows one chip per connected agent (name + meter + percentage of
  * the most consumed window); the popover has every window (Session, Week,
- * Fable, Month), reset time and account status. Data arrives live over
- * `usage://update`; the reset clocks re-render only the text, via `useNow`.
+ * Fable, Month), reset time and account status, plus the Energético radio
+ * group. Below 1180px the meters leave the strip but the chip stays: the
+ * popover keeps every reading, where before the whole meter simply vanished.
+ * Data arrives live over `usage://update`; the reset clocks re-render only
+ * the text, via `useNow`.
  *
- * Renders into the body portal like ContextMenu: the title bar has its own
+ * Renders into the body portal like ContextMenu: the bar has its own
  * blur/overflow and an internal `position: absolute` would be clipped. A body
- * portal also sits at the end of the Tab order — so opening moves focus into
- * the popover, and Esc gives it back to the chip.
+ * portal also sits at the end of the Tab order, so opening moves focus into
+ * the popover, and Esc gives it back to the chip. It opens **upward**
+ * (`popAnchor`): in a footer there is no room below.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -33,7 +36,7 @@ import { useUI } from "../../stores/uiStore";
 import { useUsage, worstWindow } from "../../stores/usageStore";
 import { useNow } from "../../hooks/useNow";
 import { useT } from "../../hooks/useT";
-import { buildUsageStrip } from "./usageStrip";
+import { buildUsageStrip, popAnchor, type PopAnchor } from "./usageStrip";
 
 /** Same steps as the memory HUD: blue → yellow (warning) → red. */
 function meterClass(pct: number): string {
@@ -203,7 +206,7 @@ export function StatusChip() {
   const [spinning, setSpinning] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ top: 0, right: 0 });
+  const [pos, setPos] = useState<PopAnchor>({ bottom: 0, right: 0 });
 
   // With the meter off the chip is just the Energético can; the popover
   // keeps every reading for whoever opens it (`usageStrip.ts`).
@@ -212,7 +215,10 @@ export function StatusChip() {
   useLayoutEffect(() => {
     if (!open) return;
     const r = btnRef.current?.getBoundingClientRect();
-    if (r) setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+    if (r)
+      setPos(
+        popAnchor(r, { width: window.innerWidth, height: window.innerHeight }),
+      );
   }, [open]);
 
   // The portal lives at the end of the body: without this, Tab after opening
@@ -326,7 +332,7 @@ export function StatusChip() {
             className="usage-pop"
             role="dialog"
             aria-label={t("Uso dos agentes e Energético")}
-            style={{ top: pos.top, right: pos.right }}
+            style={{ bottom: pos.bottom, right: pos.right }}
           >
             <div className="usage-pop-head">
               <span className="usage-pop-title">{t("Uso dos agentes")}</span>

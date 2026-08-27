@@ -4,12 +4,21 @@
 import { familyFromStack, stackFrom, TERM_FALLBACK } from "../../../lib/fonts";
 import { fontOptions } from "../../../lib/fontPicker";
 import { useT } from "../../../hooks/useT";
+import {
+  schemeOptions,
+  schemePick,
+  schemeValue,
+  setSurface,
+} from "../../../lib/schemeChoice";
+import { useExtensions } from "../../../stores/extensionsStore";
 import { useUI } from "../../../stores/uiStore";
-import { Card, GroupTitle, NumberRow, PickerRow, SwitchRow } from "../rows";
+import { Card, FeatureRow, GroupTitle, NumberRow, PickerRow, SwitchRow } from "../rows";
 import { type Fonts } from "../useFonts";
 
 export function SecTerminal({ fontes: fontList }: { fontes: Fonts }) {
   const t = useT();
+  const scheme = useExtensions((x) => x.scheme);
+  const setScheme = useExtensions((x) => x.setScheme);
   const fontFamily = useUI((s) => s.prefs.fontFamily);
   const renderer = useUI((s) => s.prefs.renderer);
   const setPref = useUI((s) => s.setPref);
@@ -46,9 +55,23 @@ export function SecTerminal({ fontes: fontList }: { fontes: Fonts }) {
           wide
         />
       </Card>
+      <p className="hint">
+        {t(
+          "O renderizador WebGL é mais rápido em telas grandes, mas depende do driver de vídeo; se o terminal piscar ou ficar em branco, volte para canvas.",
+        )}
+      </p>
 
       <GroupTitle>{t("Aparência do terminal")}</GroupTitle>
       <Card>
+        {/* The terminal's half of a colour scheme: the sixteen ANSI tones a CLI
+            draws its own output in, plus the well it draws them on. Separate
+            from the editor's, which lives in Ajustes → Editor. */}
+        <PickerRow
+          label={t("Tema de cor")}
+          value={schemeValue(scheme.terminal)}
+          options={schemeOptions(t("Padrão do Yard"))}
+          onChange={(v) => setScheme(setSurface(scheme, "terminal", schemePick(v)))}
+        />
         <SwitchRow
           pref="cursorBlink"
           label={t("Cursor piscante")}
@@ -66,9 +89,20 @@ export function SecTerminal({ fontes: fontList }: { fontes: Fonts }) {
       </Card>
       <p className="hint">
         {t(
-          "O renderizador WebGL é mais rápido em telas grandes, mas depende do driver de vídeo; se o terminal piscar ou ficar em branco, volte para canvas.",
+          "O tema de cor troca os 16 tons ANSI, o fundo e o cursor dos terminais; o editor tem o dele, em Ajustes → Editor de código. O cromo do Yard não muda: tema é cor de conteúdo, não de moldura.",
         )}
       </p>
+
+      <GroupTitle>{t("Recursos do terminal")}</GroupTitle>
+      <Card>
+        <FeatureRow
+          id="term-images"
+          label={t("Imagens no terminal")}
+          desc={t(
+            "Os protocolos sixel e iTerm desenham imagens de verdade no histórico — gráficos de ferramentas, prévias, o timg da vida",
+          )}
+        />
+      </Card>
     </>
   );
 }

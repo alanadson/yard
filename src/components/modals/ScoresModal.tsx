@@ -13,6 +13,7 @@ import { Download, FolderOpen, Save, Trash2 } from "lucide-react";
 
 import { Modal } from "./Modal";
 import { useT } from "../../hooks/useT";
+import { busyState, isBusy, refusesClick } from "../../lib/busy";
 import { LOADING, load, isEmpty, type LoadState } from "../../lib/loading";
 import { kb } from "../../lib/format";
 import { locale } from "../../lib/i18n";
@@ -43,7 +44,19 @@ export function ScoresModal() {
 
   const [items, setList] = useState<LoadState<ScoreMeta[]>>(LOADING);
   const [itemName, setName] = useState(group?.name ?? "");
-  const [occupied, setBusy] = useState(false);
+  /**
+   * The id of the action in flight (`lib/busy.ts`), not a flat boolean: the
+   * button that fired it says so, the others only refuse the click. Saving
+   * and applying both touch the disk and used to look like a freeze.
+   */
+  const [occupied, setBusy] = useState<string | null>(null);
+  /**
+   * Why the press did not go through. The button stays pressable on purpose:
+   * disabling it used to swallow the sentence this dialog already knew how to
+   * say (see `components/feedback.test.ts`).
+   */
+  const [err, setErr] = useState<string | null>(null);
+  const saving = busyState(occupied, "salvar");
 
   const reload = () => {
     setList(LOADING);
@@ -53,8 +66,16 @@ export function ScoresModal() {
 
   const saveIt = async () => {
     const stripped = itemName.trim();
-    if (!stripped || !groupId) return;
-    setBusy(true);
+    if (!stripped) {
+      setErr(t("Dê um nome à partitura antes de salvar."));
+      return;
+    }
+    if (!groupId) {
+      setErr(t("Abra um grupo para salvar o arranjo dele."));
+      return;
+    }
+    setErr(null);
+    setBusy("salvar");
     try {
       await persist(stripped, false);
     } catch (e) {
@@ -63,7 +84,7 @@ export function ScoresModal() {
       // decides — this used to overwrite in silence and report "salva".
       if (!scoreAlreadyExists(e)) {
         showToast(t("Falha ao salvar: {e}", { e: String(e) }), "error");
-        setBusy(false);
+        setBusy(null);
         return;
       }
       const replace = await ask(
@@ -80,7 +101,7 @@ export function ScoresModal() {
         }
       }
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -95,12 +116,14 @@ export function ScoresModal() {
   };
 
   const applyIt = async (score: ScoreMeta, inNewGroup: boolean) => {
-    setBusy(true);
+    setBusy(`aplicar:${score.name}:${inNewGroup ? "novo" : "aqui"}`);
     try {
       const data = await readScore(score.name);
       let target = groupId;
       if (inNewGroup || !target) {
         if (!projectId) {
+          // Reachable again: the button that gets here is no longer the one
+          // holding this sentence shut (`components/feedback.test.ts`).
           showToast(t("Escolha um projeto antes de aplicar a partitura."), "error");
           return;
         }
@@ -118,7 +141,7 @@ export function ScoresModal() {
     } catch (e) {
       showToast(t("Falha ao aplicar: {e}", { e: String(e) }), "error");
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -147,7 +170,12 @@ export function ScoresModal() {
             <input
               value={itemName}
               placeholder={t("nome da partitura")}
-              onChange={(e) => setName(e.target.value)}
+              aria-invalid={err ? true : undefined}
+              aria-describedby={err ? "partitura-erro" : undefined}
+              onChange={(e) => {
+                setName(e.target.value);
+                setErr(null);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void saveIt();
               }}
@@ -155,12 +183,18 @@ export function ScoresModal() {
           </label>
           <button
             className="btn btn--primary"
-            disabled={!itemName.trim() || occupied}
+            disabled={refusesClick(saving)}
+            aria-busy={isBusy(saving)}
             onClick={() => void saveIt()}
           >
-            <Save size={13} /> {t("Salvar arranjo")}
+            <Save size={13} /> {isBusy(saving) ? t("Salvando…") : t("Salvar arranjo")}
           </button>
         </div>
+      )}
+      {err && (
+        <p className="hint hint--error" id="partitura-erro" role="alert">
+          {err}
+        </p>
       )}
 
       <p className="hint">
@@ -185,7 +219,10 @@ export function ScoresModal() {
           </p>
         )}
         {isEmpty(items) && <p className="hint">{t("Nenhuma partitura salva ainda.")}</p>}
-        {(items.state === "pronto" ? items.data : []).map((s) => (
+        {(items.state === "pronto" ? items.data : []).map((s) => {
+          const here = busyState(occupied, `aplicar:${s.name}:aqui`);
+          const fresh = busyState(occupied, `aplicar:${s.name}:novo`);
+          return (
           <div key={s.path} className="score">
             <div className="score-body">
               <strong>{s.name}</strong>
@@ -196,7 +233,8 @@ export function ScoresModal() {
             {group && (
               <button
                 className="btn"
-                disabled={occupied}
+                disabled={refusesClick(here)}
+                aria-busy={isBusy(here)}
                 data-tip-wrap=""
                 data-tip={t(
                   "Acrescentar o arranjo ao grupo “{name}” — as CLIs e notas entram ao lado do que já existe. Não dá para desfazer com Ctrl+Z: para tirar, exclua os cartões.",
@@ -204,16 +242,22 @@ export function ScoresModal() {
                 )}
                 onClick={() => void applyIt(s, false)}
               >
-                <Download size={13} /> {t("Aplicar aqui")}
+                <Download size={13} />{" "}
+                {isBusy(here) ? t("Aplicando…") : t("Aplicar aqui")}
               </button>
             )}
+            {/* Not gated on `projectId`: without a project the press is what
+                says so ("Escolha um projeto antes de aplicar a partitura"),
+                and a dead button never got to say it. */}
             <button
               className="btn"
-              disabled={occupied || !projectId}
+              disabled={refusesClick(fresh)}
+              aria-busy={isBusy(fresh)}
               data-tip={t("Criar um grupo novo com este arranjo")}
               onClick={() => void applyIt(s, true)}
             >
-              <FolderOpen size={13} /> {t("Grupo novo")}
+              <FolderOpen size={13} />{" "}
+              {isBusy(fresh) ? t("Aplicando…") : t("Grupo novo")}
             </button>
             <button
               className="icon-btn icon-btn--danger"
@@ -224,7 +268,8 @@ export function ScoresModal() {
               <Trash2 size={13} />
             </button>
           </div>
-        ))}
+          );
+        })}
       </div>
     </Modal>
   );

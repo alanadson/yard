@@ -388,11 +388,6 @@
   color: var(--syn-operator);
 }
 
-/* Extension logos in the store (`modals/modal.css`) and two inks. */
-:root[data-theme="light"] .ext-logo {
-  background: #ffffff;
-}
-
 :root[data-theme="light"] .live-mark-badge--m {
   color: #0b5ec2;
   background: rgb(10 132 255 / 12%);

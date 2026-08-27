@@ -2,7 +2,7 @@
  * Settings stopped being a dialog with five stacked sections and became a
  * screen with a sidebar. That creates a piece of state that did not exist
  * before — *which category is open* — and that state arrives from outside:
- * from a button's `openModal("preferences", "extensoes")`, from a search item.
+ * from a button's `openModal("preferences", "dados")`, from a search item.
  *
  * A value from outside is a value to validate. An unknown category must not
  * leave the screen with nothing in the middle: it falls back to the first
@@ -14,8 +14,11 @@ import { SETTINGS_CATEGORIES, isValidCategory } from "./categories";
 
 describe("which category the screen opens", () => {
   it("what is not a category becomes the first one, instead of an empty screen", () => {
-    expect(isValidCategory("extensoes")).toBe("extensoes");
+    expect(isValidCategory("dados")).toBe("dados");
     expect(isValidCategory("teclado")).toBe("interface");
+    // "Extensões" was a category until the shelf was retired; an old search
+    // item or a stale link must not open the window on a blank page.
+    expect(isValidCategory("extensoes")).toBe("interface");
     expect(isValidCategory(undefined)).toBe("interface");
     expect(isValidCategory(null)).toBe("interface");
     expect(isValidCategory(7)).toBe("interface");

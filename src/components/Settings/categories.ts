@@ -4,7 +4,7 @@
  *
  * It lives here, outside the JSX, for two reasons. The first is validation:
  * the open category arrives from outside (`openModal("preferences",
- * "extensoes")`, a search item) and a value from outside is a value to
+ * "dados")`, a search item) and a value from outside is a value to
  * validate. The second is that the list is the screen's index — whoever adds
  * a category adds an entry here, and the menu, the routing and the header all
  * learn about it at once.
@@ -25,8 +25,7 @@ export type SettingsCategory =
   | "comportamento"
   | "atalhos"
   | "dados"
-  | "mcp"
-  | "extensoes";
+  | "mcp";
 
 export interface SettingsCategoryEntry {
   id: SettingsCategory;
@@ -89,13 +88,6 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategoryEntry[] = [
     title: "Dados e backup",
     desc: "Onde o Yard guarda o workspace, e como levá-lo junto",
     tone: "#ff9f0a",
-  },
-  {
-    id: "extensoes",
-    label: "Extensões",
-    title: "Extensões",
-    desc: "Recursos que já vêm com o Yard — ligar é instalar",
-    tone: "#0aa1dd",
   },
   {
     id: "mcp",

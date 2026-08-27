@@ -181,14 +181,15 @@
   overflow: hidden;
 }
 
-/* The first child gets no line on top: the card's border is already the stroke. */
 .set-row,
-.set-ext,
 .set-key-row {
   display: flex;
   /* Explicit `flex-direction` because the numeric field's row is a real
      `<label>`, and the dialogs' CSS stacks `label` by default (label on top,
-     field below) — right in a form, wrong in a settings row. */
+     field below) — right in a form, wrong in a settings row. The rule has a
+     test (`styles.test.ts`): it was once written as a grouped selector shared
+     with a class that got retired, and deleting that class took the rows with
+     it. */
   flex-direction: row;
   align-items: center;
   gap: 14px;
@@ -196,8 +197,8 @@
   border-top: 1px solid var(--border-soft);
 }
 
+/* The first child gets no line on top: the card's border is already the stroke. */
 .set-row:first-child,
-.set-ext:first-child,
 .set-key-row:first-child {
   border-top: none;
 }
@@ -285,36 +286,6 @@
   display: flex;
   gap: 3px;
   flex-shrink: 0;
-}
-
-/* --- extensions --- */
-
-.set-ext-logo {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-}
-
-.set-ext-logo svg,
-.set-ext-logo img {
-  width: 32px;
-  height: 32px;
-}
-
-.set-ext-text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  flex: 1;
-}
-
-.set-ext-desc {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .set-chip {

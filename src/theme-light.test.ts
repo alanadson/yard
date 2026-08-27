@@ -283,7 +283,6 @@ const CHROME_SURFACES: ReadonlyArray<{ sel: string; over: string; what: string }
   { sel: ".cv-media", over: "--bg", what: "a media node on the board" },
   { sel: ".cv-binder", over: "--bg", what: "a binder on the board" },
   { sel: ".cv-tree", over: "--bg", what: "a tree node on the board" },
-  { sel: ".ext-section-h", over: "--bg-overlay", what: "the store's section header" },
   { sel: ".pane--empty", over: "--bg", what: "the empty pane" },
   { sel: ".floors-btn:hover", over: "--bg-panel", what: "a floor button under the pointer" },
 ];

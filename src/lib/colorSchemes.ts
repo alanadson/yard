@@ -396,6 +396,53 @@ export const SCHEMES: readonly ColorScheme[] = [
       variable: "#e6edf3",
     },
   },
+  /**
+   * Min (miguelsolorio/min-theme, MIT) publishes no ANSI row for the dark
+   * side — `min-dark.json` sets exactly one, `terminal.ansiBrightBlack`, and
+   * leaves the rest to the editor's defaults. So the sixteen here are read off
+   * the theme's own token colours (the keyword red, the function purple, the
+   * constant blue, the tag orange, the punctuation grey), and the two hues Min
+   * has no token for — green and cyan — come from the ANSI row the same author
+   * publishes in `min-light.json`. Nothing below is invented; what is not
+   * `min-dark.json` is the author's other file, and the floors are asserted in
+   * `colorSchemes.test.ts`.
+   */
+  {
+    id: "theme-min-dark",
+    name: "Min Dark",
+    term: ansi({
+      background: "#1f1f1f",
+      foreground: "#bbbbbb",
+      cursor: "#fafafa",
+      cursorAccent: "#1f1f1f",
+      selectionBackground: "#3a3a3a",
+      black: "#333333",
+      red: "#f97583",
+      green: "#a3d900",
+      yellow: "#ffab70",
+      blue: "#79b8ff",
+      magenta: "#b392f0",
+      cyan: "#57d9ad",
+      white: "#bbbbbb",
+      brightBlack: "#5c5c5c",
+      brightRed: "#ff7a84",
+      brightWhite: "#f8f8f8",
+    }),
+    syntax: {
+      keyword: "#f97583",
+      // `string.quoted` (rule 13), not the bare `string` of rule 6: the
+      // specific selector is the one that wins, and quoted is what code has.
+      string: "#ffab70",
+      number: "#f8f8f8",
+      comment: "#6b737c",
+      function: "#b392f0",
+      type: "#b392f0",
+      property: "#79b8ff",
+      tag: "#ffab70",
+      operator: "#bbbbbb",
+      variable: "#bbbbbb",
+    },
+  },
 ];
 
 /** Scheme by extension id — `undefined` for anything else. */
@@ -405,3 +452,55 @@ export function schemeFor(id: string | undefined | null): ColorScheme | undefine
 
 /** All the ids, for "which one is on?" scans. */
 export const SCHEME_IDS: readonly string[] = SCHEMES.map((s) => s.id);
+
+/**
+ * The scheme the Extensions store has on, if any. Only `true` counts: the
+ * store keeps the ones the user turned back off, and the radio between the
+ * schemes writes `false` rather than forgetting the key.
+ */
+export function enabledScheme(
+  enabled: Readonly<Record<string, boolean | undefined>>,
+): string | undefined {
+  return SCHEME_IDS.find((id) => enabled[id] === true);
+}
+
+/**
+ * The scheme's ten roles as the eleven `--syn-*` custom properties the sheets
+ * already read.
+ *
+ * A scheme used to reach the editor and stop there. The diff viewer and the
+ * markdown preview run no CodeMirror — they paint `@lezer/highlight`'s `tok-*`
+ * classes as plain React trees — and those were written out as literal hex, so
+ * a `.ts` in the editor and the same `.ts` in a diff tab beside it disagreed
+ * about every keyword in the file. One palette, two worlds: the editor gets a
+ * `HighlightStyle` (`schemeSyntax.ts`), everything else gets these.
+ *
+ * Two of the names have no role of their own and borrow, exactly as the
+ * highlight table does: a definition is a variable, a constant is a number. Keeping the
+ * two sides in step is what `schemeSyntax.test.ts` checks — a scheme that said
+ * one thing in the editor and another in a diff would be worse than no scheme.
+ */
+/** Each custom property beside the role it takes its colour from. */
+const SYNTAX_VAR_ROLES: readonly [string, keyof SyntaxPalette][] = [
+  ["--syn-comment", "comment"],
+  ["--syn-keyword", "keyword"],
+  ["--syn-string", "string"],
+  ["--syn-number", "number"],
+  ["--syn-function", "function"],
+  ["--syn-type", "type"],
+  ["--syn-property", "property"],
+  ["--syn-tag", "tag"],
+  ["--syn-operator", "operator"],
+  // Three names with no role of their own, borrowing exactly as the highlight
+  // table does: a definition is a variable, a constant is a number.
+  ["--syn-definition", "variable"],
+  ["--syn-variable", "variable"],
+  ["--syn-constant", "number"],
+];
+
+/** The names, for whoever has to take them back off (`applySyntaxVars`). */
+export const SYNTAX_VARS: readonly string[] = SYNTAX_VAR_ROLES.map(([name]) => name);
+
+export function syntaxVars(p: SyntaxPalette): Record<string, string> {
+  return Object.fromEntries(SYNTAX_VAR_ROLES.map(([name, role]) => [name, p[role]]));
+}

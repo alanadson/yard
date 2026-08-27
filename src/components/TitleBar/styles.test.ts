@@ -17,7 +17,6 @@ import { describe, expect, it } from "vitest";
 // `?raw` instead of `fs`: it is the same loader the app uses, and the suite
 // stays free of new dependencies (there is no `@types/node` here, on purpose).
 import bootCss from "../../styles.css?raw";
-import statusChipSrc from "./StatusChip.tsx?raw";
 import titleBarSrc from "./index.tsx?raw";
 
 /**
@@ -41,7 +40,6 @@ function definedIn(css: string, className: string): boolean {
 describe("title bar styling", () => {
   const sources = [
     ["TitleBar/index.tsx", titleBarSrc],
-    ["TitleBar/StatusChip.tsx", statusChipSrc],
   ] as const;
 
   it("extracts the classes from the JSX, including those inside a template", () => {
