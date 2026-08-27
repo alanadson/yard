@@ -43,8 +43,13 @@ spotlight); sub-tabs per pane; drag & drop of terminals between panes; search in
 the scrollback; shortcuts (`Ctrl+T`, `Ctrl+B`, `Ctrl+1..6`, `Ctrl+Shift+P`,
 `Ctrl+Shift+G`). `Ctrl+Shift+P` opens **Configurações** (Settings), a centered
 window with a menu of categories — Interface, Terminal, Editor de código, Agentes,
-Comportamento, Atalhos, Dados e backup and Extensões (Interface, Terminal, Code
-editor, Agents, Behavior, Shortcuts, Data & backup and Extensions).
+Comportamento, Atalhos, Dados e backup and Servidores MCP (Interface, Terminal,
+Code editor, Agents, Behavior, Shortcuts, Data & backup and MCP servers).
+Everything that ships with the Yard switched off — the colour themes, the file
+icon themes, the minimap, Prettier, Mermaid, KaTeX, the images in the terminal
+— is a row on the page of the surface it changes. There was a store shelf of
+its own (`Ctrl+Shift+X`) until 2026-08-27; it was retired, and its switches
+moved into Configurações with the state they were in.
 
 **Status bar.** The window's footer reads the whole workspace at once, not
 only the group on screen: agents *waiting on you* (yellow, pulsing — the chip
@@ -433,7 +438,7 @@ an icon and a count for the whole branch), **colored tags** and **note status**
 and come back through their own row or the list's eye icon) on the left; the
 list with preview, task progress (`- [ ]`), relative date and pinned ones at the
 top in the middle; and the note in the **same markdown editor as the files** on
-the right (four modes, formatting bar, Mermaid/KaTeX through the extensions, an
+the right (four modes, formatting bar, Mermaid/KaTeX when those rows are on, an
 image pasted from the clipboard embedded in the note). Search understands
 qualifiers — `caderno:` (notebook), `tag:`, `status:`, `titulo:` (title), a
 quoted phrase, `-term` to exclude — accent-insensitive and by substring, with
@@ -506,7 +511,7 @@ black twin — never the system blue, the radii or the semantic hues' meaning.
 The terminal gets a second ANSI palette (`lib/termTheme.ts`: paper well,
 body text at 7:1, every hue at 3:1), the editor's syntax reads `--syn-*`
 tokens with the dark values as fallbacks, and the canvas keeps its elevation
-steps with daylight values; a color-scheme extension still wins over both.
+steps with daylight values; a colour scheme still wins over both.
 Details and the token table in [DESIGN.md](./DESIGN.md#light-theme).
 **Tray icon, summon hotkey, close to the tray.** Yard runs for hours behind
 other windows, so it gained the two things a background app owes its user. An

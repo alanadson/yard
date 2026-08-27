@@ -214,7 +214,7 @@ to leave the dark. `lib/contrast.ts` carries the measure and the
 > a good idea over an ambient with blue in it, a residue once there is none.
 
 - **Ground** (`--bg` and `--ambient`, both #000000): the window's base colour, and one flat opaque black — no gradient, no bloom, no hue. `src/styles.test.ts` refuses a `gradient` in `--ambient` and refuses a chromatic value in any surface token, because a wash on the ground is exactly what creeps back.
-- **Terminal well** (#000000): the floor, with nothing under it — background of `.xterm-host`, of the viewer body and of the diffs. It is this app's video player, and it went to pure black when the ladder dropped: every ANSI ratio only widened, and the one that had to stay off the bottom is the palette's own `black` (#1d1d22), so a CLI drawing in it is still visible against the background. `lib/termTheme.ts` opens the xterm palette on this exact colour — a seam no CSS token can cross, since xterm paints its background on a canvas, and one `termTheme.test.ts` now holds against the sheet's own declaration instead of against a sentence in a comment.
+- **Terminal well** (#000000): the floor, with nothing under it — background of `.xterm-host`, of the viewer body and of the diffs. It is this app's video player, and it went to pure black when the ladder dropped: every ANSI ratio only widened, and the one that had to stay off the bottom is the palette's own `black` (#1d1d22), so a CLI drawing in it is still visible against the background. `lib/termTheme.ts` opens the xterm palette on this exact colour — a seam no CSS token can cross, since xterm paints its background on a canvas, and one `termTheme.test.ts` now holds against the sheet's own declaration instead of against a sentence in a comment. And the well is only #000000 while it is the Yard's own: a colour scheme replaces the whole palette (Ayu opens on #0b0e14) and the gutter of CSS around the canvas has to go with it, or the terminal wears an 8 px black frame down its left edge. So the direction is reversed — the palette on screen is picked once, in `termPaletteFor`, and its background is written onto the host as `--term-well`; the token is the colour before the first paint, not the contract.
 - **Panel** (`--bg-panel`, #191919): body of the mini-windows (panes) — solid, always. On the canvas the card uses the same paint at 92% (`rgb(26 26 26 / 92%)`, no blur): the dot grid shows faintly through the chrome, which says there is a table underneath, and the terminal body stays opaque.
 - **Raised** (`--bg-raised`, #222222): pane/card headers, banners, search strips.
 - **Overlay** (`--bg-overlay`, #2c2c2c): canvas notes and contrast supports.
@@ -262,8 +262,44 @@ setting.
   `LIGHT_TERM`: paper #fafafc, body text 7:1, every ANSI hue ≥ 3:1); the
   editor's `yardHighlight` reads `--syn-*` tokens with the dark values as
   fallbacks, and the canvas keeps its elevation steps with daylight values.
-- A color-scheme extension still wins over both palettes: it is the user's
+- A colour scheme still wins over both palettes: it is the user's
   explicit choice.
+
+**A scheme is two choices, not one.** The palettes on the shelf carry two
+surfaces — the sixteen ANSI tones a CLI draws its own output in, and the roles
+a grammar hands the editor — and those are different jobs: wanting Ayu under an
+agent and GitHub Dark under the code is an ordinary thing to want. So the store
+keeps a slot per surface (`terminal`, `code`, in `lib/schemeChoice.ts`, saved
+under `ext.scheme`), and Ajustes → Terminal and Ajustes → Editor each carry the
+picker for their own. **Linked is the default and costs nothing**: the two
+slots holding the same scheme *is* the link — it is read off them, never stored
+beside them, because a third field claiming they are equal is a third field
+that can be wrong. The store's themes section shows one radio while they agree
+and two, labelled, once they do not; joining them again keeps the terminal's,
+and says so under the header.
+
+**A scheme has to reach past the editor.** The editor swaps a whole
+`HighlightStyle` (`schemeSyntax.ts`), but the diff viewer and the markdown
+preview run no CodeMirror at all — they paint `@lezer/highlight`'s `tok-*`
+classes on plain React trees. Those classes were literal hex, so with Dracula
+on, a file in a diff tab kept the Yard's purple while the editor tab beside it
+went pink: the same file disagreeing with itself. Every `tok-*` rule now reads
+its `--syn-*` token with the dark value as the fallback, and the active code
+scheme is written onto `<html>` as those eleven properties (`syntaxVars`).
+One palette, two mechanisms, and a test holding them token for token — drift
+there is worse than no theme at all.
+
+**And the colour has to have something to colour.** A theme cannot reach a file
+the editor opens as plain text, which is what the whole long tail of a
+repository was doing — the rc files, the manifests, the dotfiles. `.gitignore`
+was the worst of them, and not because it was uncoloured: it resolved to the
+`.properties` mode, where a leading `!` opens a comment. So the negation — the
+line whose entire job is to say "except this" — was drawn in the ink the editor
+uses for "this does not count", and `[Bb]uild/` was read as a section header.
+It has its own grammar now (`ignoreSyntax.ts`). The rule the registry already
+had still holds for the rest: a near-miss grammar reads worse than none, so
+Terraform, Prisma, Solidity and Nix are **named** and left uncoloured rather
+than guessed at.
 
 The ground is painted **before any sheet arrives**, by an inline `<style>` in
 `index.html` that keys on `prefers-color-scheme` and on `data-theme`, plus a
@@ -407,6 +443,7 @@ Shape language: generous, continuous corners, capsules for everything that is
 a count or a status, circles for everything that is a state light.
 
 - **Radius scale**: 6px (`--r-sm`, micro-targets), **8px (literal, the radius of controls inside the chrome** — menu items, icon-buttons, tooltips — used in a dozen and a half places), 9px (`--r-md`, buttons, inputs, tree rows), 10px (pane tabs), 14px (`--r-lg`, panels, menus, canvas notes, palette flyout), 20px (`--r-xl`, modals, viewer, composer, canvas cards), 16px (toast), 18px (the bench's grouped list card; and the canvas camera — 12px of the map plus 6px of clearance). `--r-2xl` (24px) is the scale's last step and nothing wears it since the bench was seated. **Zero is a shape too**: whatever is flush with the chassis — pane, board, seated bench, the notebook in the central area — has no radius at all, because a curve against the window's edge only cuts a wedge of black out of the corner. The segmented control is a capsule: track and segments at 999px.
+- **The ring traces the shape, it never chooses one**: the focus ring (`:focus-visible`, 3px blue at 55%, 1px of offset) is drawn by the browser along the `border-radius` the element already has. A focus rule that sets a radius of its own stops describing a state and starts redefining geometry — that is how every field used to narrow from 9px to 6px the instant it took focus, and how a bare input inside a well drew a hard rectangle inside a capsule. The 6px survives only as a **fallback** for whatever nobody rounded (a plain `button`, a `div` with `tabindex`), written at zero specificity (`:where(:focus-visible)`) so any radius the element declares wins. And a field that gives its frame up to a well — the bench filter and new-task capsule, the transcript search, the palette, the notebook — gives the ring up as well: the well is what lights up, on `:focus-within`.
 - **Capsules** (border-radius 20px, or 999px when the height demands it): count pills, review chips, branch/role badges, the portal's URL field, status capsule, Fronts counters and — inside the bench — every control: tab track and segments, scope filter, new-task field, row buttons and the due-date/scope badges.
 - **Circles**: state dots, colour swatches, unread/done badges, routine.
 - **No radius**: only the window controls, which touch the corner and follow Windows.
@@ -419,15 +456,37 @@ a count or a status, circles for everything that is a state light.
 ### Title bar & window controls
 
 Thin material with blur over the ground; black 35% bottom border + hairline.
-Breadcrumb on the left: project (with the project's icon and colour) › group,
-with a capsule branch badge when the group is an isolated front. In the centre,
-the segmented layout control; on the right, the actions.
+It carries almost nothing now, and that is the design: on the left the
+breadcrumb, project (with the project's icon and colour) › group, with a
+capsule branch badge when the group is an isolated front; in the centre the
+segmented layout control; then a wide nothing, and at the far corner the two
+panel **doors** (`.titlebar-doors`) with the window buttons.
 
-The right cluster reads in two families, split by a hairline
-(`.titlebar-sep`): first the three **doors** — Arquivos e alterações
-(`FileDiff`), Bancada (`PanelRight`, the outermost right drawer, pairing with
-the sidebar's `PanelLeft` at the far left) and Anotações — then the two
-**windows** (Extensões, Configurações). Doors are `.dock-toggle`s and show
+What left, and where to: the usage chips and Energético went to the footer,
+where a reading belongs (see *Status bar*); Configurações to the corner of the
+sidebar's own footer; Anotações to a named row at the top of the sidebar; and
+*Nova aba* was **deleted**, not moved, because the `+` glued to the last tab
+of each pane is the same dialog, one hand-travel from the tabs it creates, the
+way every browser has done it for fifteen years. `Ctrl+T`, Busca, the group
+rows of the sidebar and the empty pane keep their own paths to it.
+
+The empty stretch (`.titlebar-slack`) is the point, not a leftover: it is the
+strip over the right-hand panels, each of which carries a header of its own,
+and it is where a hand reaches to drag the window. `dragRegion.test.ts` locks
+the stretch empty.
+
+The doors are the exception that earns the corner: Arquivos e alterações
+(`FileDiff`) and Bancada (`PanelRight`, the outermost right drawer, pairing
+with the sidebar's `PanelLeft` at the far left) open the panels that live in
+that very column, so each button sits over what it opens, in the corner the
+hand is already going to. They keep a 10px margin from the window buttons:
+`.win-btn` is a 46px radiusless square, and minimising by accident while
+aiming at the bench would be the app's cheapest irritation. Anotações was a
+third door until 2026-08-27, and Configurações a fourth square next to them
+until the same day: the notebook is nobody's drawer, and settings is a window,
+not a panel, opened once a week from the strip the eye crosses all day. Both
+read as named rows in the sidebar now (see *Sidebar*), the notebook at the
+top, settings at the foot. Doors are `.dock-toggle`s and show
 **open** as the sidebar's blue pill (blue 26% + 18% inset ring + bright glyph,
 driven by `aria-pressed`): the `.is-active` white veil sits 4.5% away from
 hover and never read as a state. A door carries no count: 58 changed files is
@@ -462,9 +521,19 @@ the micro-target radius (6px): on the left, agents by state (a yellow pulsing
 dot for *waiting on you* — the chip takes the yellow veil, the one time the
 footer asks for attention — green for up, a hollow green ring for finished),
 the project's branch with `+/−` in mono and the diff's colours, and any flow
-still walking, in the action blue; on the right, the RAM meter (the sidebar
-HUD's recipe at 44×3px, same three steps) and three 24×22 icon-buttons —
-Busca, composer, shortcut map. Tooltips open upward (`data-tip-side="top"`).
+still walking, in the action blue; on the right, the agent usage strip with
+Energético (`StatusChip`), the RAM meter (the sidebar HUD's recipe at 44×3px,
+same three steps) and three 24×22 icon-buttons — Busca, composer, shortcut
+map. Tooltips open upward (`data-tip-side="top"`).
+
+Usage and Energético came down from the title bar on 2026-08-27, at the
+footer's metrics (22px, `--r-sm`) instead of the bar's 25px pill: they are
+read all day and clicked once a week, which is the definition of a gauge, and
+gauges live with the other gauges. Their popover is the one thing the move
+changed for real: it is anchored by its **bottom** now (`popAnchor`, tested),
+because a panel opened from the last row of the window has no room below it.
+In a narrow window the agent names go first (≤1100px) and the meters after
+(≤920px), never the can, which is a state and not a number.
 
 ### In-world tooltip (`[data-tip]`)
 
@@ -502,6 +571,26 @@ receives the keys announces itself). Row actions appear only on hover/focus.
 System HUD in the footer: a 3px blue bar that turns yellow (warning) and red
 (critical) — the only HUD reading that demands action is the only one with
 chroma.
+
+Above the tree sit the **action rows** (`.sidebar-action`): the doors that
+belong to no project, an icon at the left and the name beside it, nothing
+else. They are the one thing in the bar deliberately **bigger** than a tree
+row: 34px tall, a 16px glyph, 14px ink and 10px between glyph and name, the
+metrics of a menu line, because they are three or four destinations you aim at
+and not a dense list you scan (at the tree's 27px they read as one more branch
+of the project below). Everything else is the tree's, so the bar still reads
+as one list: the same 9px pill, the same hover veil, the same blue of the
+active group while the panel is on screen. The shortcut is **not** printed in
+the row: a key spelled out beside the name is a second thing to read on every
+glance, for something learnt once, so it stays in the balloon, where every
+other door in the app keeps it. Only **Anotações** (`Ctrl+Shift+N`) wears the
+full row, at the top, above the tree, because the notebook is a destination.
+**Configurações** is the same door in its smallest form: an icon alone
+(`.hud-settings`, 28px) in the corner of the resource footer, on the line of
+the numbers, costing the bar no extra height, because it is opened once a week
+and the bottom corner is where this kind of app has always kept it. Icon-only
+means its name is spoken and not printed, which is why the rule still carries
+one. The rule is `ProjectSidebar/actions.ts`, tested.
 
 ### Bench (glass lateral)
 
@@ -789,16 +878,17 @@ chrome: outside here, action blue and semantic chroma. Whoever has no public mar
 **File icons** (`components/FileGlyph`) have the same decision shape:
 every place that shows a file (tree, "Busca" (Search), file tab) asks
 `FileGlyph`, which by default returns the neutral Lucide — the tree's colour is still
-only the git state. The store's **icon themes** (`Ctrl+Shift+X`) are the
-conscious opt-out of that contract, both official and vendored with their LICENSE
-alongside: **Symbols** by Miguel Solorio (`FileGlyph/symbols/`, MIT, lazy
+only the git state. The **icon themes** (Ajustes → Editor de código → Ícones de
+arquivo) are the conscious opt-out of that contract, both official and vendored
+with their LICENSE alongside: **Symbols** by Miguel Solorio (`FileGlyph/symbols/`, MIT, lazy
 chunk) and **Material Icon Theme** by Philipp Kief (`FileGlyph/material/`
 for the maps + `public/material-icons/` for the 1250 SVGs, MIT). They are a
-category: turning one on turns the other off. Off — the default — none of this
-exists on screen. The editor extensions (rainbow brackets, TODO highlight,
-minimap, guides, colours in CSS) follow the same rule as the diff: colour in the _content_
-is allowed, the chrome stays blue. The store's **colour themes** (Dracula, Nord,
-Catppuccin… — `lib/colorSchemes.ts`, a category with one active at a time) take that
+category: one picker, and picking one retires the other. On "Nenhum" — the
+default — none of this exists on screen. The editor's own features (rainbow
+brackets, TODO highlight, minimap, guides, colours in CSS) follow the same rule
+as the diff: colour in the _content_ is allowed, the chrome stays blue. The
+**colour themes** (Dracula, Nord, Catppuccin… — `lib/colorSchemes.ts`, one slot
+per surface: Ajustes → Terminal and Ajustes → Editor de código) take that
 rule to the limit: they recolour the terminal well (xterm `theme`) and the editor's
 syntax palette (`schemeSyntax.ts` swaps only the `HighlightStyle`), and **nothing**
 of the chrome — app background, action blue and tokens stay intact.

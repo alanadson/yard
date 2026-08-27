@@ -159,3 +159,32 @@ production opens a browser.
 **Apache-2.0** (`LICENSE` file at the root; `license` fields in `package.json`
 and in `Cargo.toml`). Chosen over MIT for the explicit patent grant, while
 keeping the same openness for contributions and commercial use.
+
+### Third-party work bundled into the app
+
+Everything below ships inside the Yard and is switched on from
+**Configurações**, one row per item on the page of the surface it changes.
+Until 2026-08-27 the author and the licence of each were printed on its card in
+a store shelf of its own; the shelf was retired, so the notice lives here — and
+beside the code, in the `LICENSE` file vendored with each drop.
+
+| What | Author | Version | Licence |
+| --- | --- | --- | --- |
+| Symbols icon theme (`FileGlyph/symbols/`) | Miguel Solorio | 0.0.25 | MIT |
+| Material Icon Theme (`FileGlyph/material/`, `public/material-icons/`) | Philipp Kief | 5.37.0 | MIT |
+| `@replit/codemirror-minimap` | Replit | 0.5.x | MIT |
+| `@replit/codemirror-indentation-markers` | Replit | 6.5.x | MIT |
+| `@replit/codemirror-css-color-picker` | Replit | 1.3.x | MIT |
+| Prettier (format on save) | Prettier | 3.x | MIT |
+| `@xterm/addon-image` (images in the terminal) | The xterm.js authors | 0.8.x | MIT |
+| Mermaid | Knut Sveidqvist and contributors | 11.x | MIT |
+| KaTeX | Khan Academy and contributors | 0.16.x | MIT |
+| Bundled code fonts (via Fontsource) | JetBrains, Mozilla, GitHub, IBM and others | — | OFL 1.1 |
+
+The colour palettes in `lib/colorSchemes.ts` are all MIT, and each is other
+people's work: **Dracula** (Zeno Rocha and contributors), **Nord** (Sven Greb,
+Nord Project), **Catppuccin Mocha** (Catppuccin Org), **Tokyo Night** (enkia),
+**Rosé Pine** (Rosé Pine Org), **Solarized Dark** (Ethan Schoonover), **One
+Dark** (Atom, GitHub), **Ayu Dark** (Ike Ku, dempfi), **GitHub Dark** (GitHub,
+Primer) and **Min Dark** (Miguel Solorio). A palette added to that file belongs
+in this paragraph on the same commit.
