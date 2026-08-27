@@ -11,7 +11,11 @@
   overflow: hidden;
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: var(--r-xl);
+  /* Flush with the chassis, like the pane grid it replaces: the board fills
+     the central area edge to edge, and a radius here would only cut wedges of
+     black out of the window's corners. The frame is the hairline + the thread
+     of light on top. */
+  border-radius: 0;
   box-shadow: inset 0 1px 0 rgb(var(--veil) / 6%);
   touch-action: none;
 

@@ -178,13 +178,14 @@ export const SIDEBAR_MAX = 460;
 export const CHANGES_MIN = 260;
 export const CHANGES_MAX = 620;
 /**
- * 248 of usable panel plus the 20px the floating glass spends on its own
- * gutter (10px each side, `.bench { padding: 10px }`). The width the user
- * drags is the whole slot, so the minimum has to pay for the gap too —
- * otherwise the narrowest bench is 20px narrower than the one this number
- * was measured for.
+ * The narrowest bench that still reads: 248px of panel. It was 268 while the
+ * glass floated with 10px of ambient on each side — the width the user drags
+ * is the whole slot, so the minimum had to pay for the gutter too. The shell
+ * is seamless now, the bench is seated against the window like the sidebar
+ * and the changes panel, and the slot is all panel again.
+ * `uiStore.test.ts` keeps this number and `.bench`'s `min-width` the same.
  */
-export const BENCH_MIN = 268;
+export const BENCH_MIN = 248;
 export const BENCH_MAX = 560;
 
 /**

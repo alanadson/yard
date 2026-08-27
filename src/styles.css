@@ -657,6 +657,14 @@ kbd {
   min-height: 0;
 }
 
+/* The central area is **seamless**: it used to keep 10px of breathing room on
+   every side it did not share with an open lateral, and on a black ground
+   that clearance stopped reading as air — it read as a moat of dead black
+   around the code, between the sidebar and the panel on the right. The window
+   is one continuous surface now: the workspace touches the title bar, the
+   status bar and whatever laterals are open, and every separation in the
+   chassis is a hairline (the panel's own border, the divider's rail), never a
+   strip of ground. */
 .workspace {
   position: relative; /* anchor for the Floors control (bottom-right corner) */
   flex: 1;
@@ -667,17 +675,6 @@ kbd {
      if it still does not fit, `App` collapses the lowest-priority one. */
   min-width: 320px;
   background: transparent;
-  padding: 10px;
-}
-
-/* With the sidebar open the divider already provides the left breathing room. */
-.app-body[data-sidebar="open"] .workspace {
-  padding-left: 0;
-}
-
-.app-body[data-changes="open"] .workspace,
-.app-body[data-bench="open"] .workspace {
-  padding-right: 0;
 }
 
 .boot {
@@ -2648,21 +2645,45 @@ button.sb-chip:active {
   gap: 8px;
 }
 
+/* The divider between two panes is a **seam**, not a gap: 1px, which the two
+   panes' own borders turn into a groove (light hairline · dark line · light
+   hairline), the same grammar the title bar and the status bar use where they
+   meet the body. It used to be a 7px strip of ambient — legible as a gutter
+   while the whole grid floated, and the last moat left once the shell was
+   seamless.
+
+   A 1px target is not grabbable, so the hit area stays 7px: `::before`
+   overhangs 3px into each neighbour and belongs to the handle, which sits
+   above the panes so the pointer finds it there. */
 .resize-handle {
   background: transparent;
   position: relative;
+  z-index: 5;
   transition: background var(--dur-1) ease;
 }
 
 .resize-handle--v {
-  width: 7px;
+  width: 1px;
 }
 
 .resize-handle--h {
-  height: 7px;
+  height: 1px;
 }
 
-/* Thin track in the middle of the gap, hover/drag only. */
+.resize-handle::before {
+  content: "";
+  position: absolute;
+}
+
+.resize-handle--v::before {
+  inset: 0 -3px;
+}
+
+.resize-handle--h::before {
+  inset: -3px 0;
+}
+
+/* Thin track over the seam, hover/drag only. */
 .resize-handle::after {
   content: "";
   position: absolute;
@@ -2673,11 +2694,11 @@ button.sb-chip:active {
 }
 
 .resize-handle--v::after {
-  inset: 8px 2px;
+  inset: 0 -1px;
 }
 
 .resize-handle--h::after {
-  inset: 2px 8px;
+  inset: -1px 0;
 }
 
 .resize-handle:hover::after,
@@ -2685,35 +2706,45 @@ button.sb-chip:active {
   opacity: 0.6;
 }
 
-/* Pane = mini window: solid (it holds a terminal), generous radius,
-   soft shadow and hairline on top. */
+/* Pane = a window of the shell: solid (it holds a terminal), framed by a
+   hairline, with the thread of light on top.
+
+   It used to be a *floating* mini-window — radius 14 and a drop shadow — and
+   both only worked while there was ground to float over. Seated flush against
+   the chassis, the radius cut four wedges of black out of the window's
+   corners and the shadow had nothing to fall on. What is left is the frame,
+   which is what the border and the hairline were always for. */
 .pane {
   display: flex;
   flex-direction: column;
   height: 100%;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: var(--r-lg);
+  border-radius: 0;
   overflow: hidden;
   /* Anchor for the tab balloon and the "new pane" strip — both need to leave
      the scrolling strip without escaping the pane. */
   position: relative;
-  box-shadow:
-    0 4px 16px rgb(var(--shade) / 25%),
-    var(--hairline);
+  box-shadow: var(--hairline);
   transition:
     border-color var(--dur-2) ease,
     box-shadow var(--dur-2) ease;
 }
 
-/* Focus must be obvious with 4+ panes open: blue border + soft halo,
-   not a gray one shade lighter. */
+/* Focus must be obvious with 4+ panes open. It was a blue border plus a 3px
+   halo around it; with the panes touching, that halo had to be painted over
+   the neighbour to exist at all. So the whole signal moves onto the edge the
+   pane already owns — a stronger blue on the same line — and onto the header,
+   which lifts a whisper. Not *much* stronger: seated flush, that border is no
+   longer the outline of a little card, it is a rectangle around a whole
+   region of the window, and at 80% it shouted.
+
+   (The halo would not have survived anyway: `react-resizable-panels` puts
+   `overflow: hidden` on every panel, so anything a pane painted outside its
+   own box — that halo, the drop shadow above — was already being clipped away
+   before it reached the screen.) */
 .pane--focused {
-  border-color: rgb(10 132 255 / 55%);
-  box-shadow:
-    0 0 0 3px rgb(10 132 255 / 14%),
-    0 4px 16px rgb(var(--shade) / 25%),
-    var(--hairline);
+  border-color: rgb(10 132 255 / 62%);
 }
 
 /* A whisper above the resting header — through the veil channel, not a hex one

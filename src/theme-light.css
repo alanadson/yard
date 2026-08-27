@@ -271,18 +271,11 @@
   background: rgb(0 0 0 / 22%);
 }
 
-/* Panes: a softer drop, the same hairline. */
-:root[data-theme="light"] .pane {
-  box-shadow: 0 4px 16px rgb(0 0 0 / 9%), var(--hairline);
-}
-
-:root[data-theme="light"] .pane--focused {
-  box-shadow:
-    0 0 0 3px rgb(10 132 255 / 16%),
-    0 4px 16px rgb(0 0 0 / 9%),
-    var(--hairline);
-}
-
+/* Panes: nothing to re-value any more. On paper they used to soften the drop
+   shadow and the focused halo — both went away with the floating grid (the
+   shell is seamless, a pane is seated against its neighbours), and what is
+   left, `var(--hairline)`, is a token this file already re-values. A rule
+   here repeating it would only be a second place to keep in step. */
 :root[data-theme="light"] .pane--focused .pane-header {
   background: #f2f3f7;
 }

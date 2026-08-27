@@ -2,28 +2,23 @@
 
 /* --- bench (tasks & prompts) --- */
 
-/* The bench is a pane of glass that *floats*: the `<aside>` is only the slot
-   in the row — it reserves the column, stays transparent, and anchors the
-   resizer, which has to live outside the rounded box to stay grabbable. The
-   inline `width` is still the whole footprint, so the resize math keeps
-   telling the truth; the 10px of padding is the gap the terminals show
-   through. */
+/* The bench used to be a pane of glass that *floated*: the `<aside>` reserved
+   the column and spent 10px of it on each side so the terminals showed
+   through around the card. Over a black ground that clearance read as a moat,
+   not as air — so the bench is seated now, like the sidebar and the changes
+   panel: the slot is all panel, the glass fills it, and a hairline on the
+   left is the whole separation.
+
+   The `<aside>` stays the vessel — it anchors the resizer, which has to live
+   outside the glass to stay grabbable — and the inline `width` is still the
+   whole footprint, so the resize math keeps telling the truth. */
 .bench {
   position: relative;
   flex-shrink: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  min-width: 268px; /* BENCH_MIN — 248 of glass + the 20px of gutter */
-  padding: 10px;
-}
-
-/* The handle straddles the glass's left edge instead of floating loose in the
-   gap, and stops where the card stops. */
-.bench > .resizer--left {
-  left: 6px;
-  top: 10px;
-  bottom: 10px;
+  min-width: 248px; /* BENCH_MIN — all of it panel now (uiStore.test.ts) */
 }
 
 /* The material itself: thicker and blurrier than the side panels' vibrancy,
@@ -39,14 +34,16 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  border-radius: var(--r-2xl);
+  /* Seated, not floating: no radius (it would cut wedges of black out of the
+     window's corners) and no drop shadow (there is no ground left for it to
+     fall on). The material and its blur are untouched — this is still the
+     densest glass in the shell, because what is behind it is live terminals.
+     What holds the edge is the dark hairline on the left, the same one the
+     sidebar and the changes panel use, plus the thread of light on top. */
   background: var(--material-panel);
   backdrop-filter: blur(72px) saturate(185%);
-  border: 1px solid rgb(var(--veil) / 10%);
-  box-shadow:
-    0 24px 60px rgb(var(--shade) / 50%),
-    0 2px 8px rgb(var(--shade) / 30%),
-    inset 0 1px 0 rgb(var(--veil) / 14%);
+  border-left: 1px solid rgb(var(--well) / 32%);
+  box-shadow: inset 0 1px 0 rgb(var(--veil) / 14%);
 }
 
 /* Title block + the round close button, sheet header. The title names
@@ -169,8 +166,10 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* The body is the bottom of the glass: it rounds its own scrollport so the
-   scrollbar cannot run past the card's curve. */
+/* The body is the bottom of the glass. It used to round its own scrollport
+   (23px, one inside the card's 24) so the scrollbar could not run past the
+   curve; the glass is seated square against the window now, and a curve here
+   would cut a notch out of the corner where the panel meets the status bar. */
 .bench-body {
   flex: 1;
   min-height: 0;
@@ -181,7 +180,6 @@
      scrolled nothing. They are clipped by the scrollport either way. */
   overflow-x: hidden;
   padding: 10px 8px 12px;
-  border-radius: 0 0 var(--r-2xl-in) var(--r-2xl-in);
 }
 
 .bench-empty {

@@ -8,10 +8,16 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { setPrefsTransport } from "../lib/prefs";
+// The sheets, as text: the floor of each panel is a number that lives here
+// *and* there, and only a test can keep the two copies honest.
+import bootCss from "../styles.css?raw";
+import benchCss from "../components/BenchPanel/bench.css?raw";
+import changesCss from "../components/ChangesPanel/changes.css?raw";
 import {
   BENCH_MAX,
   BENCH_MIN,
   CHANGES_MAX,
+  CHANGES_MIN,
   COMPOSER_SCRATCH,
   DEFAULT_PREFS,
   SIDEBAR_MAX,
@@ -347,5 +353,69 @@ describe("language preference", () => {
   it("falls back to Portuguese for a language the app does not speak", async () => {
     await useUI.getState().loadPrefs({ lang: "fr" });
     expect(useUI.getState().prefs.lang).toBe("pt-BR");
+  });
+});
+
+/**
+ * The floor of each lateral panel is written **twice**: here, as the number
+ * `App` subtracts from the window to decide which panel to collapse when it
+ * gets narrow, and again in the panel's own sheet as `min-width`. Nothing but
+ * a comment ties the two copies together, and the bench had already drifted
+ * once — its slot spent 20px of ambient on the floating glass's gutter, so
+ * the constant carried `248 + 20` while the sheet carried `268`, and the
+ * narrowest bench was 20px narrower than the one the number was measured for.
+ *
+ * The shell is seamless now: no panel spends the window's ground on a gutter,
+ * every separation is a hairline. These two tests are what keeps that true —
+ * the slot the user drags *is* the panel, and the two copies of the floor
+ * stay the same number.
+ */
+describe("panel floors", () => {
+  /** The body of the first rule whose selector is exactly `selector`. */
+  function block(css: string, selector: string): string {
+    const clean = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const r of clean.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (r[1].trim().replace(/\s+/g, " ") === selector) return r[2];
+    }
+    throw new Error(`the ${selector} rule is gone`);
+  }
+
+  const px = (body: string, prop: string): number | null => {
+    const m = new RegExp(String.raw`(?:^|;)\s*${prop}:\s*(-?[\d.]+)px`).exec(body);
+    return m ? Number(m[1]) : null;
+  };
+
+  /** What the slot spends on left+right padding before the panel starts. */
+  function sideGutter(body: string): number {
+    const short = /(?:^|;)\s*padding:\s*([^;]+)/.exec(body);
+    if (short) {
+      const parts = short[1].trim().split(/\s+/);
+      const left = parts[3] ?? parts[1] ?? parts[0];
+      const right = parts[1] ?? parts[0];
+      return [left, right].reduce((sum, v) => sum + (parseFloat(v) || 0), 0);
+    }
+    return (px(body, "padding-left") ?? 0) + (px(body, "padding-right") ?? 0);
+  }
+
+  it("reads the floor and the gutter out of a rule", () => {
+    const css = ".x { min-width: 268px; padding: 10px 4px }\n.x-y { min-width: 9px }";
+    expect(px(block(css, ".x"), "min-width")).toBe(268);
+    expect(sideGutter(block(css, ".x"))).toBe(8);
+    expect(sideGutter(".color: red")).toBe(0);
+  });
+
+  it("the bench's slot is all panel — it spends nothing on a gutter of ambient", () => {
+    const bench = block(benchCss, ".bench");
+    expect(sideGutter(bench)).toBe(0);
+    expect(px(bench, "min-width")).toBe(BENCH_MIN);
+  });
+
+  it.each([
+    ["sidebar", ".sidebar", SIDEBAR_MIN],
+    ["changes", ".changes", CHANGES_MIN],
+    ["bench", ".bench", BENCH_MIN],
+  ])("the %s floor in the sheet is the number the collapse math subtracts", (_name, selector, min) => {
+    const css = selector === ".sidebar" ? bootCss : selector === ".changes" ? changesCss : benchCss;
+    expect(px(block(css, selector), "min-width")).toBe(min);
   });
 });
