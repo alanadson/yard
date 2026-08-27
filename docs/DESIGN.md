@@ -332,14 +332,23 @@ The chassis is a column: title bar (44px, `--titlebar-h`) over a flex
 workspace and the files/git panel on the right (vibrancy, resizable) — and,
 under it, the status bar (28px, `--statusbar-h`; hideable from Settings, and
 `.app[data-statusbar]` tells whoever is anchored to the bottom edge how much
-to climb). The workspace has 10px of breathing room, collapsing on the side
-where an open lateral already provides the divider (`data-sidebar="open"`
-zeroes `padding-left`).
+to climb).
 
-- **Dividers**: invisible 7px strips (`.resizer`, `.resize-handle`); the blue rail (2px radius) only lights up on hover, drag or keyboard focus, at 60% opacity.
+The chassis is **seamless**: no region spends the window's ground on a gutter.
+The workspace used to keep 10px of breathing room on every side it did not
+share with an open lateral, and the bench floated with 10px of clearance all
+around — on a black ground that clearance stopped reading as air and started
+reading as a moat of dead black around the code. Every panel touches its
+neighbours now, and every separation is a **hairline**: the panel's own
+border, the divider's rail, the dark thread the title bar and the status bar
+draw where they meet the body. Nothing in the shell is a floating card any
+more — what used to say "this is a surface" with a radius and a drop shadow
+says it with a frame.
+
+- **Dividers**: 7px of grab, 1px or nothing of ink. The laterals' `.resizer` is an invisible 7px strip straddling the panel's edge; between panes `.resize-handle` is a **1px seam** which the two panes' borders turn into a groove, with the hit area kept at 7px by a `::before` overhanging 3px into each neighbour (the handle sits above the panes so the pointer finds it there). The blue rail (2px radius, 3px wide over the seam) only lights up on hover, drag or keyboard focus, at 60% opacity.
 - **Instrument density**: icon-buttons 25px (20px inside rows), tree rows ≥ 27px, pane header 33px, canvas card header 34px, portal bar 28px, window controls 46px (the Windows metric). On the canvas the slots are round: 30px in the tool palette (the most targeted control on the board), 26px in the card header, in the camera and in the flyout.
-- **Pane grid**: each pane is a complete mini-window; 7px gaps between panes.
-- **Infinite canvas**: an origin point (`.cv-world`) translated and scaled by `transform` (`screen = (world − viewport.xy) × zoom`); a dot grid (`radial-gradient` white 5%, 1px) as the table — the board used to carry an ambient glow on top of it (`.cv-glow`, a white 3.5% ellipse out of the top) and gave it up with the shell's, for the same reason: it was light painted on the ground; hairline frame with radius 20 and an inner thread of light at 6%.
+- **Pane grid**: each pane is a window of the shell — solid body, hairline frame, thread of light on top, no radius and no drop shadow (both only worked while it floated over ground). Panes touch: 1px of seam between them, and the focused one carries the signal on its own edge (blue at 62%) plus a header a whisper lighter — the 3px halo it used to wear had nowhere to live once there was no gap to wear it in.
+- **Infinite canvas**: an origin point (`.cv-world`) translated and scaled by `transform` (`screen = (world − viewport.xy) × zoom`); a dot grid (`radial-gradient` white 5%, 1px) as the table — the board used to carry an ambient glow on top of it (`.cv-glow`, a white 3.5% ellipse out of the top) and gave it up with the shell's, for the same reason: it was light painted on the ground; hairline frame, flush with the chassis (it fills the central area edge to edge, so no radius) and an inner thread of light at 6%.
 - **Fixed anchors**: tool palette in a vertical capsule on the left (centred), **camera** in the bottom-right corner (minimap and zoom in a single glass — see Canvas), the Fronts control next to it (offset 204px on the canvas, 230px when the minimap is open, 16px on the grid), canvas status at top-centre, composer in the bottom-right corner of the window (fixed, 22px), toast at bottom-centre (18px above the status bar when it shows — `--statusbar-gap`).
 - **Sticky for orientation**: section titles of the git review and diff hunk headers stick to the top while scrolling, with a solid background so the content underneath doesn't bleed through.
 
@@ -359,7 +368,7 @@ Each material is a pair of translucent colour + `backdrop-filter`, always
 accompanied by a white hairline border (10–12%) and the top hairline:
 
 - **Thin** (`--material-thin` rgb(47 47 47 / 36%) + `--blur-thin` blur(30px) saturate(180%)): title bar, sidebar, changes panel — the permanent lateral surfaces over the static ambient ground.
-- **Floating glass** (rgb(22 22 27 / 60%) + blur(72px) saturate(185%)): the bench. Denser and blurrier than thin because the surface **floats** — it has 10px of clearance on all four sides and the ground shows around it, so the edge needs weight of its own (10% hairline + `inset 0 1px 0` 14% + a two-layer shadow) instead of leaning against the window.
+- **Panel glass** (`--material-panel` rgb(36 36 36 / 60%) + blur(72px) saturate(185%)): the bench. Denser and blurrier than thin because what is behind it is live terminals rather than static ground. It used to *float* — 10px of clearance all round, a 24px radius and a two-layer shadow to hold the edge; seated flush against the window it keeps the material and gives the rest up, leaning on the same dark hairline the sidebar and the changes panel use, plus `inset 0 1px 0` at 14%.
 - **Menu** (`--material-menu` rgb(38 38 47 / 62%) + `--blur-menu` blur(40px) saturate(180%)): menus, popovers, toasts, diff peek, status capsule, Fronts button.
 - **Canvas glass** (`--cv-glass` rgb(30 30 40 / 44%) + `--cv-glass-blur` blur(72px) saturate(190%), tokens declared on `.cv`): everything that floats over the board — tool palette, flyout, camera, selection bar, markup bar, flow HUD. Less paint and more blur than the menu because the board is the deepest surface in the app: what hovers over it hovers **higher** than a menu over the shell. It comes with a 14% border, `--cv-float` (`0 20px 48px` 44% + `0 2px 8px` 30%) and a two-faced `--cv-glass-edge` (white 22% on top, black 18% at the base) — glass only reads as glass with a light edge on top *and* a dark one underneath.
 - **Sheet** (`--material-sheet` rgb(28 28 36 / 68%) + `--blur-sheet` blur(64px) saturate(180%)): modals and the prompt composer. The diff viewer uses near-opaque rgb(28 28 34 / 94%) — it has code inside.
@@ -397,7 +406,7 @@ blur. A symmetric halo never means height — a halo is the language of state
 Shape language: generous, continuous corners, capsules for everything that is
 a count or a status, circles for everything that is a state light.
 
-- **Radius scale**: 6px (`--r-sm`, micro-targets), **8px (literal, the radius of controls inside the chrome** — menu items, icon-buttons, tooltips — used in a dozen and a half places), 9px (`--r-md`, buttons, inputs, tree rows), 10px (pane tabs), 14px (`--r-lg`, panels, menus, canvas notes, palette flyout), 20px (`--r-xl`, modals, viewer, composer, canvas cards and frame), 16px (toast), 18px (the bench's grouped list card; and the canvas camera — 12px of the map plus 6px of clearance), 24px (floating bench panel). The segmented control is a capsule: track and segments at 999px.
+- **Radius scale**: 6px (`--r-sm`, micro-targets), **8px (literal, the radius of controls inside the chrome** — menu items, icon-buttons, tooltips — used in a dozen and a half places), 9px (`--r-md`, buttons, inputs, tree rows), 10px (pane tabs), 14px (`--r-lg`, panels, menus, canvas notes, palette flyout), 20px (`--r-xl`, modals, viewer, composer, canvas cards), 16px (toast), 18px (the bench's grouped list card; and the canvas camera — 12px of the map plus 6px of clearance). `--r-2xl` (24px) is the scale's last step and nothing wears it since the bench was seated. **Zero is a shape too**: whatever is flush with the chassis — pane, board, seated bench, the notebook in the central area — has no radius at all, because a curve against the window's edge only cuts a wedge of black out of the corner. The segmented control is a capsule: track and segments at 999px.
 - **Capsules** (border-radius 20px, or 999px when the height demands it): count pills, review chips, branch/role badges, the portal's URL field, status capsule, Fronts counters and — inside the bench — every control: tab track and segments, scope filter, new-task field, row buttons and the due-date/scope badges.
 - **Circles**: state dots, colour swatches, unread/done badges, routine.
 - **No radius**: only the window controls, which touch the corner and follow Windows.
@@ -494,11 +503,15 @@ System HUD in the footer: a 3px blue bar that turns yellow (warning) and red
 (critical) — the only HUD reading that demands action is the only one with
 chroma.
 
-### Bench (floating panel)
+### Bench (glass lateral)
 
-The only lateral surface that does **not** touch the window: `.bench` is just
-the vessel (it reserves the column and anchors the resizer), and `.bench-glass`
-is the slab — radius 24, floating glass, 10px of clearance on all four sides.
+`.bench` is just the vessel (it reserves the column and anchors the resizer)
+and `.bench-glass` is the slab that fills it. It was the one lateral that did
+**not** touch the window — radius 24, a drop shadow and 10px of clearance on
+all four sides — and it is seated now, like the sidebar and the changes panel:
+the slot the user drags is all panel (which is why `BENCH_MIN` went back from
+268 to the 248 it was measured at — `uiStore.test.ts` keeps that number and
+`.bench`'s `min-width` the same).
 Inside it only two shapes apply: a **capsule** for everything that gets pressed
 and a **grouped card** (radius 18, white 6%, hairline) for everything that is a
 list. The card's rows are divided by hairline, not by space — and the first and
