@@ -32,8 +32,14 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import "./editor.css";
 import { basicSetup } from "codemirror";
-import { completeAnyWord } from "@codemirror/autocomplete";
-import { Compartment, EditorSelection, EditorState, Prec } from "@codemirror/state";
+import { completeAnyWord, type CompletionContext } from "@codemirror/autocomplete";
+import {
+  Compartment,
+  EditorSelection,
+  EditorState,
+  Prec,
+  type StateEffect,
+} from "@codemirror/state";
 import { EditorView, highlightTrailingWhitespace, keymap } from "@codemirror/view";
 import { indentWithTab } from "@codemirror/commands";
 import { gotoLine, openSearchPanel } from "@codemirror/search";
@@ -55,6 +61,10 @@ import { diffLines } from "../../lib/lineDiff";
 import { isMarkdown, languageLabel, loadLanguage } from "./cm";
 import { editorExtras } from "./extras";
 import { fileUri, languageIdFor } from "../../lib/lsp/servers";
+import { flattenSymbols } from "../../lib/lsp/documentSymbols";
+import { readActions } from "../../lib/lsp/codeActions";
+import { diagnosticsAt, displayPath } from "../../lib/lsp/problems";
+import { applyTextEdits, editSpans, editsFor, urisIn } from "../../lib/lsp/edits";
 import { useLsp } from "../../stores/lspStore";
 import { codeMetrics } from "./metrics";
 import { formatBeforeSave } from "./format";
@@ -62,10 +72,15 @@ import { syntaxFor } from "./schemeSyntax";
 import {
   applyGitChanges,
   cachedHeadText,
-  dropHeadText,
   gitGutterExt,
+  gitStateOf,
   headTextFor,
+  keepHeadText,
+  peekHunkAt,
 } from "./gitGutter";
+import { hunkActions, hunkPeek, showHunkPeek } from "./hunkPeek";
+import { minimalEdit, nextHunk, prevHunk, revertHunk } from "../../lib/hunks";
+import { copyText } from "../../lib/clipboard";
 import { DiffTab, isComparison } from "./DiffTab";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { MediaView } from "./MediaView";
@@ -79,7 +94,11 @@ import { observeVisibleLine } from "./surfaceCore";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { useMarkdownNavigation } from "../../hooks/useMarkdownNavigation";
 import { isTopLayer } from "../../lib/layers";
-import { LruCache } from "../../lib/lru";
+import { DocMemory } from "./docMemory";
+import { applyBookmarks, bookmarkExt } from "./bookmarkGutter";
+import { foldEffectsFor, foldsOf } from "./foldMemory";
+import { parseRulers, rulers } from "./rulers";
+import { snippetCompletions } from "./snippets";
 import { outline as outlineOf, parseDoc, stats } from "../../lib/mddoc";
 import { blockOf, type BlockKind } from "../../lib/mdedit";
 import { openWebAddress } from "../../lib/openLink";
@@ -88,7 +107,12 @@ import { closeDocTab, docTabMenu } from "../../lib/editorActions";
 import { captureTextTarget, textMenuEntries } from "../../lib/textMenu";
 import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
 import { fileName, splitOsPath, toOsPath } from "../../lib/paths";
-import { hasSymbolSupport, symbolsOf } from "../../lib/symbols";
+import {
+  enclosing,
+  hasSymbolSupport,
+  symbolsOf,
+  type CodeSymbol,
+} from "../../lib/symbols";
 import { ipc } from "../../lib/ipc";
 import {
   isDirty,
@@ -97,11 +121,12 @@ import {
   useEditor,
   type OpenDoc,
 } from "../../stores/editorStore";
+import { useChanges } from "../../stores/changesStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useExtensions } from "../../stores/extensionsStore";
 import { useUI } from "../../stores/uiStore";
 import { useT } from "../../hooks/useT";
-import { tn } from "../../lib/i18n";
+import { t as translate, tn } from "../../lib/i18n";
 
 /** The symbols rail with nothing to list — `Outline` translates it. */
 const NO_SYMBOLS = "Sem símbolos ainda — funções e classes do arquivo aparecem aqui."; // i18n-ok
@@ -177,6 +202,10 @@ export function EditorBody({ docId: id }: { docId: string }) {
     };
   }, [chromeKey, id]);
   const showToast = useUI((s) => s.showToast);
+  /** Is this project a git repository? Without one there is no HEAD to compare with. */
+  const isRepo = useChanges((s) =>
+    doc?.projectId ? (s.gitByProject[doc.projectId]?.isRepo ?? false) : false,
+  );
   const t = useT();
 
   const cursorEl = useRef<HTMLButtonElement>(null);
@@ -253,19 +282,38 @@ export function EditorBody({ docId: id }: { docId: string }) {
   //
   // The same rail a markdown file gets, for code: functions, classes, types
   // (`lib/symbols.ts`). Markdown reads its outline from the parsed document;
-  // code reads its own buffer — through a dedicated subscription that only
-  // wakes while the rail is showing, so a closed outline costs nothing.
+  // code reads its own buffer.
+  //
+  // This used to wake only while the rail was open. It no longer can: the
+  // symbol trail in the header is on whenever the file is code, and it is the
+  // trail, not the rail, that answers "which method am I in" for a reader
+  // three hundred lines down. The cost is a regex pass over the buffer, kept
+  // off the typing path by `useDeferredValue`.
   const codeSymbolsOn = !md && !!doc && !doc.binary && hasSymbolSupport(docPath);
   const symbolText = useEditor((s) => {
-    if (!s.outline) return "";
     const d = s.docs.find((x) => x.id === id);
     return d && !d.binary && !isMarkdown(d.path) ? d.text : "";
   });
   const deferredSymbolText = useDeferredValue(symbolText);
-  const symbols = useMemo(
-    () => (codeSymbolsOn && showOutline ? symbolsOf(docPath, deferredSymbolText) : []),
-    [codeSymbolsOn, showOutline, docPath, deferredSymbolText],
+  const regexSymbols = useMemo(
+    () => (codeSymbolsOn ? symbolsOf(docPath, deferredSymbolText) : []),
+    [codeSymbolsOn, docPath, deferredSymbolText],
   );
+  /**
+   * The same rail, from the language server when one is answering for this
+   * file. It knows that `push` belongs to `Fila` rather than to the
+   * indentation it shares with it, which the regexes can only guess at.
+   * `null` = no server, or it has not answered yet, and then the regexes
+   * are the rail, exactly as before.
+   */
+  const serverSymbols = useServerSymbols(doc, deferredSymbolText, codeSymbolsOn);
+  const symbols = serverSymbols ?? regexSymbols;
+  /**
+   * The symbols the caret is standing inside, `class Fila › push`. The path
+   * says which file you have open; this says where in it you are, which is
+   * the question a long file actually raises.
+   */
+  const trail = useMemo(() => enclosing(symbols, caret.line), [symbols, caret.line]);
 
   // Read the mode late so these callbacks stay stable while the surface is
   // mounted. Notes use the same source/preview navigation contract.
@@ -280,6 +328,130 @@ export function EditorBody({ docId: id }: { docId: string }) {
   const runCommand = useCallback((cmd: Parameters<typeof runMd>[1]) => {
     runMd(viewHolder.current, cmd);
   }, []);
+
+  /**
+   * Applies what a fix decided to change.
+   *
+   * The current document goes through CodeMirror as a set of spans, so the
+   * whole thing is one undo step and the caret stays where the reader left
+   * it. Other files the fix touches, a rename crosses files by definition,
+   * are opened and left **dirty**: an edit the user has not seen yet is not
+   * something to write to disk on their behalf.
+   */
+  const applyWorkspaceEdit = useCallback(
+    (workspaceEdit: unknown, currentUri: string, root: string) => {
+      const view = viewHolder.current;
+      const here = editsFor(workspaceEdit, currentUri);
+      if (view && here.length) {
+        const spans = editSpans(view.state.doc.toString(), here);
+        if (!spans) {
+          showToast(t("A correção se sobrepõe a ela mesma; não apliquei nada."), "error");
+          return;
+        }
+        view.dispatch({ changes: spans, userEvent: "input.complete" });
+      }
+
+      const elsewhere = urisIn(workspaceEdit).filter(
+        (uri) => uri.toLowerCase() !== currentUri.toLowerCase(),
+      );
+      if (elsewhere.length === 0) return;
+
+      void (async () => {
+        let touched = 0;
+        for (const uri of elsewhere) {
+          const path = displayPath(root, uri);
+          // Absolute means it landed outside the project; this editor only
+          // reads inside a root, and it is not going to write outside one.
+          if (/^[a-zA-Z]:\//.test(path)) continue;
+          const edits = editsFor(workspaceEdit, uri);
+          if (!edits.length) continue;
+          await useEditor.getState().openFile(path);
+          const opened = useEditor
+            .getState()
+            .docs.find((x) => x.root === root && x.path === path);
+          if (!opened) continue;
+          useEditor.getState().setText(opened.id, applyTextEdits(opened.text, edits));
+          touched++;
+        }
+        if (touched > 0) {
+          showToast(
+            tn(touched, "Mais {n} arquivo mexido, sem salvar", "Mais {n} arquivos mexidos, sem salvar"),
+          );
+        }
+      })();
+    },
+    [showToast, t, viewHolder],
+  );
+
+  /**
+   * Ctrl+., what the language server can do about the line under the caret.
+   *
+   * The diagnostics go with the request because they *are* the request:
+   * `tsserver` finds its fixes by the error code we hand back, and asking
+   * with an empty context gets an empty answer. What comes back is filtered
+   * to the actions this editor can actually perform (`lib/lsp/codeActions.ts`).
+   */
+  const [quickFix, setQuickFix] = useState<{
+    anchor: MenuAnchor;
+    entries: MenuEntry[];
+  } | null>(null);
+
+  const openQuickFix = useCallback(
+    (at: { x: number; y: number }) => {
+      const view = viewHolder.current;
+      const d = useEditor.getState().docs.find((x) => x.id === id);
+      const languageId = d ? languageIdFor(d.path) : null;
+      if (!view || !d || !languageId || !d.root || d.binary) return;
+      if (!useUI.getState().prefs.lspEnabled) return;
+
+      const sel = view.state.selection.main;
+      const from = view.state.doc.lineAt(sel.from);
+      const to = view.state.doc.lineAt(sel.to);
+      const uri = fileUri(d.root, d.path);
+      const range = {
+        start: { line: from.number - 1, character: sel.from - from.from },
+        end: { line: to.number - 1, character: sel.to - to.from },
+      };
+
+      setQuickFix({ anchor: at, entries: [{ id: "wait", label: t("procurando…"), disabled: true }] });
+
+      void useLsp
+        .getState()
+        .clientFor(d.root, languageId)
+        .then(async (client) => {
+          if (!client) return null;
+          client.sync();
+          return client.request<unknown, unknown>("textDocument/codeAction", {
+            textDocument: { uri },
+            range,
+            context: {
+              diagnostics: diagnosticsAt(useLsp.getState().problems, uri, from.number - 1),
+            },
+          });
+        })
+        .then((reply) => {
+          const rows = readActions(reply);
+          if (rows.length === 0) {
+            setQuickFix(null);
+            showToast(t("Nada a corrigir aqui."));
+            return;
+          }
+          setQuickFix({
+            anchor: at,
+            entries: rows.map((row, i) => ({
+              id: `fix-${i}`,
+              label: row.title,
+              onSelect: () => applyWorkspaceEdit(row.edit, uri, d.root),
+            })),
+          });
+        })
+        .catch(() => {
+          setQuickFix(null);
+          showToast(t("O servidor de linguagem não respondeu."), "error");
+        });
+    },
+    [applyWorkspaceEdit, id, showToast, t, viewHolder],
+  );
 
   const toggleTask = useCallback(
     (line: number) => useEditor.getState().toggleTask(id, line),
@@ -364,11 +536,22 @@ export function EditorBody({ docId: id }: { docId: string }) {
   const docMenuEntries = () =>
     fileMenu(
       docTabMenu(doc, useEditor.getState().docs),
-      { wrap, media: viewing },
+      { wrap, media: viewing, dirty: isDirty(doc), git: isRepo, eolCrlf: doc.crlf, encoding: doc.encoding },
       {
         toggleWrap: () => useEditor.getState().setWrap(!wrap),
         openExternal: () => {
           void ipc.openExternal(osPath).catch((e) => showToast(String(e), "error"));
+        },
+        compareHead: () =>
+          useEditor.getState().openDiff(doc.path, {
+            source: "tree",
+            side: "head",
+            origPath: null,
+          }),
+        compareSaved: () => useEditor.getState().openDiff(doc.path, { source: "draft" }),
+        setEol: (crlf) => useEditor.getState().setEol(doc.id, crlf),
+        reopenWith: (encoding) => {
+          void useEditor.getState().reopenWith(doc.id, encoding);
         },
       },
     );
@@ -401,6 +584,20 @@ export function EditorBody({ docId: id }: { docId: string }) {
           </span>
           <ChevronDown size={11} aria-hidden="true" />
         </button>
+
+        {trail.length > 0 && (
+          <nav className="editor-trail" aria-label={t("Onde o cursor está no arquivo")}>
+            {trail.map((symbol) => (
+              <button
+                key={`${symbol.line}:${symbol.text}`}
+                className="editor-trail-step"
+                onClick={() => goToLine(symbol.line)}
+              >
+                {symbol.text}
+              </button>
+            ))}
+          </nav>
+        )}
 
         <div className="editor-tools">
             {(md || codeSymbolsOn) && (
@@ -482,6 +679,13 @@ export function EditorBody({ docId: id }: { docId: string }) {
         {docMenu && (
           <ContextMenu anchor={docMenu} items={docMenuEntries()} onClose={() => setDocMenu(null)} />
         )}
+        {quickFix && (
+          <ContextMenu
+            anchor={quickFix.anchor}
+            items={quickFix.entries}
+            onClose={() => setQuickFix(null)}
+          />
+        )}
 
         <div className="editor-main">
           <div className="editor-stage">
@@ -509,6 +713,7 @@ export function EditorBody({ docId: id }: { docId: string }) {
                     // Code too, not only markdown: the symbols rail follows
                     // the caret the same way the heading outline does.
                     onCaret={onCaret}
+                    onQuickFix={openQuickFix}
                     onScrollLine={md ? onScrollLine : undefined}
                     cursorEl={cursorEl}
                     viewHolder={viewHolder}
@@ -600,7 +805,21 @@ export function EditorBody({ docId: id }: { docId: string }) {
                 >
                   Ln 1, Col 1
                 </button>
-                <span>{doc.crlf ? "CRLF" : "LF"}</span>
+                {/* Clickable, like VS Code's: it is the fastest way to say
+                    "this file should be LF". Nothing is written here, the tab
+                    just goes dirty (`lib/eol.ts`). */}
+                <button
+                  className="editor-lncol"
+                  data-tip={
+                    doc.crlf
+                      ? t("Terminação de linha CRLF. Clique para LF")
+                      : t("Terminação de linha LF. Clique para CRLF")
+                  }
+                  disabled={isReadOnly(doc)}
+                  onClick={() => useEditor.getState().setEol(doc.id, !doc.crlf)}
+                >
+                  {doc.crlf ? "CRLF" : "LF"}
+                </button>
                 {/* Only the "no language" label is a sentence of ours; the rest
                     are names (TypeScript, JSON) and stay as they are. */}
                 <span>{lang === "Texto" ? t("Texto") : lang}</span>
@@ -1032,6 +1251,111 @@ function ConflictDiff({
 // CodeMirror
 // ---------------------------------------------------------------------------
 
+/**
+ * Alt+F5 and its shifted twin: the caret to the next change against HEAD,
+ * with the panel opened on it. Wrapping, so three changes in a file become a
+ * rotation instead of a walk that dead-ends.
+ */
+function goToHunk(view: EditorView, direction: 1 | -1): boolean {
+  const { hunks } = gitStateOf(view);
+  if (hunks.length === 0) return false;
+  const here = view.state.doc.lineAt(view.state.selection.main.head).number;
+  const hunk = direction === 1 ? nextHunk(hunks, here) : prevHunk(hunks, here);
+  if (!hunk) return false;
+  const line = view.state.doc.line(Math.min(Math.max(hunk.newFrom, 1), view.state.doc.lines));
+  view.dispatch({
+    selection: EditorSelection.cursor(line.from),
+    effects: EditorView.scrollIntoView(line.from, { y: "center" }),
+  });
+  peekHunkAt(view, line.number);
+  return true;
+}
+
+/**
+ * The outline, asked of the language server.
+ *
+ * Re-asked when the buffer settles, `text` is already the deferred copy, so
+ * this rides the same "the user stopped typing" signal the regex rail does.
+ * A reply that arrives for a file the editor has since left is dropped: the
+ * request is slow enough for that to happen on every second tab switch.
+ *
+ * Failure is quiet on purpose. A server that does not implement
+ * `documentSymbol`, is still indexing, or has just died answers nothing, and
+ * the honest response to that is the rail the app has always had.
+ */
+function useServerSymbols(
+  doc: OpenDoc | null,
+  text: string,
+  enabled: boolean,
+): CodeSymbol[] | null {
+  const lspEnabled = useUI((s) => s.prefs.lspEnabled);
+  const [symbols, setSymbols] = useState<CodeSymbol[] | null>(null);
+
+  // A new file starts with no answer rather than the last file's.
+  useEffect(() => setSymbols(null), [doc?.id]);
+
+  useEffect(() => {
+    if (!doc) return;
+    const languageId = languageIdFor(doc.path);
+    if (!enabled || !lspEnabled || !doc.root || !languageId || doc.binary) return;
+    let alive = true;
+    void useLsp
+      .getState()
+      .clientFor(doc.root, languageId)
+      .then(async (client) => {
+        if (!alive || !client) return;
+        // The server has to be looking at the text we are asking about.
+        client.sync();
+        const reply = await client.request<{ textDocument: { uri: string } }, unknown>(
+          "textDocument/documentSymbol",
+          { textDocument: { uri: fileUri(doc.root, doc.path) } },
+        );
+        if (!alive) return;
+        const rows = flattenSymbols(reply);
+        setSymbols(rows.length ? rows : null);
+      })
+      .catch(() => {
+        // No `documentSymbol`, still indexing, or gone. The regex rail stands.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [doc?.id, doc?.root, doc?.path, doc?.binary, text, enabled, lspEnabled]);
+
+  return symbols;
+}
+
+/**
+ * Puts back what the last session had folded in this file. The ranges come
+ * from a record on disk and the file may have been rewritten since, so
+ * `foldEffectsFor` drops whatever no longer fits rather than folding a range
+ * that now covers something else.
+ */
+function restoreFolds(view: EditorView, doc: OpenDoc): void {
+  const folds = useEditor.getState().folds[doc.id];
+  if (!folds?.length) return;
+  const effects = foldEffectsFor(folds, view.state.doc.length);
+  if (effects.length) view.dispatch({ effects });
+}
+
+/**
+ * The snippet table for a path, as a completion source. Empty for a language
+ * with no table, and then the extension is nothing at all.
+ */
+function snippetSource(path: string) {
+  const rows = snippetCompletions(path);
+  if (rows.length === 0) return [];
+  return EditorState.languageData.of(() => [
+    {
+      autocomplete: (context: CompletionContext) => {
+        const word = context.matchBefore(/\w+/);
+        if (!word || (word.from === word.to && !context.explicit)) return null;
+        return { from: word.from, options: rows, validFor: /^\w*$/ };
+      },
+    },
+  ]);
+}
+
 /** Extensions that lock editing — empty when the file is writable. */
 function readOnlyExtension(readOnly: boolean) {
   return readOnly
@@ -1047,6 +1371,8 @@ interface SurfaceProps {
   onSave: () => void;
   /** Set for markdown only: the bar and the outline follow the caret. */
   onCaret?: (at: { line: number; block: BlockKind }) => void;
+  /** Ctrl+., the page opens the quick-fix menu at this point on screen. */
+  onQuickFix?: (at: { x: number; y: number }) => void;
   /** First line on screen, as the surface is scrolled — the split view's sync. */
   onScrollLine?: (line: number) => void;
   cursorEl: { current: HTMLElement | null };
@@ -1059,14 +1385,20 @@ function CmSurface({
   live,
   onSave,
   onCaret,
+  onQuickFix,
   onScrollLine,
   cursorEl,
   viewHolder,
 }: SurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  /** State per file: switching tabs preserves history, cursor and scroll. */
-  const statesRef = useRef(new LruCache<string, EditorState>(40));
+  /**
+   * State per file: switching tabs preserves history, cursor, folds **and**
+   * the scroll position. The state carries the first three; the scroll rides
+   * along as CodeMirror's own snapshot, because it lives in the DOM and not
+   * in the state (`docMemory.ts`).
+   */
+  const statesRef = useRef(new DocMemory<EditorState, StateEffect<unknown>>(40));
   const wrapComp = useRef(new Compartment()).current;
   const languageComp = useRef(new Compartment()).current;
   // Read-only has to be reconfigurable, not baked into the `EditorState`: a
@@ -1115,6 +1447,12 @@ function CmSurface({
     () => ({ fontSize, lineHeight, tabSize, hardTabs, lineNumbers }),
     [fontSize, lineHeight, tabSize, hardTabs, lineNumbers],
   );
+  // Column guides. Free text in Preferences, cleaned up here once so the
+  // extension list only ever sees a sane, ordered list (`rulers.ts`).
+  const rulerPref = useUI((s) => s.prefs.codeRulers);
+  const rulerColumns = useMemo(() => parseRulers(rulerPref), [rulerPref]);
+  /** The marks of the document on screen, as the store holds them. */
+  const docMarks = useEditor((s) => s.marks[doc.id]);
   const idRef = useRef(doc.id);
   const languageRequest = useRef(0);
   const lastPublished = useRef<{ id: string; text: string } | null>(null);
@@ -1124,10 +1462,17 @@ function CmSurface({
   saveRef.current = onSave;
   const caretRef = useRef(onCaret);
   caretRef.current = onCaret;
+  const quickFixRef = useRef(onQuickFix);
+  quickFixRef.current = onQuickFix;
+  const showToastRef = useRef(useUI.getState().showToast);
+  showToastRef.current = useUI((s) => s.showToast);
   const scrollRef = useRef(onScrollLine);
   scrollRef.current = onScrollLine;
   /** Last position published upward — the parent only hears about changes. */
   const lastCaret = useRef<{ line: number; block: BlockKind } | null>(null);
+  /** Last line handed to the navigation trail, see the update listener. */
+  const navLine = useRef(-1);
+  const rulersComp = useRef(new Compartment()).current;
   /** Debounce of the git gutter while typing — cache only, no IPC on a key. */
   const gitTimer = useRef(0);
   const gitRef = useRef<(view: EditorView, id: string) => void>(() => {});
@@ -1180,6 +1525,39 @@ function CmSurface({
           // red wedge where lines died. The marks arrive by effect
           // (`applyGitChanges`); with none, the strip is invisible.
           gitGutterExt,
+          // Clicking one of those marks opens what the line was, with a way
+          // to put it back (`hunkPeek.ts`).
+          hunkPeek,
+          hunkActions.of({
+            revert: (hunk) => {
+              const view = viewRef.current;
+              if (!view) return;
+              const { head } = gitStateOf(view);
+              if (head === null) return;
+              const before = view.state.doc.toString();
+              const after = revertHunk(before, head, hunk);
+              // `null` = the hunk no longer fits the text. The marks are a
+              // debounce behind the buffer, so this is a real state and the
+              // honest answer to it is to do nothing.
+              if (after === null) {
+                showToastRef.current(
+                  translate("O trecho mudou desde que este painel abriu; não reverti nada."),
+                  "error",
+                );
+                view.dispatch({ effects: showHunkPeek.of(null) });
+                return;
+              }
+              const edit = minimalEdit(before, after);
+              view.dispatch({
+                ...(edit ? { changes: edit } : {}),
+                effects: showHunkPeek.of(null),
+              });
+            },
+            copy: (lines) => void copyText(lines.join("\n")),
+          }),
+          // Line marks, painted on the line number itself (`bookmarkGutter.ts`).
+          bookmarkExt,
+          rulersComp.of(rulers(rulerColumns)),
           wrapComp.of(wrap ? EditorView.lineWrapping : []),
           languageComp.of([]),
           readOnlyComp.of(readOnlyExtension(isReadOnly(d))),
@@ -1198,6 +1576,10 @@ function CmSurface({
             ? []
             : [
                 EditorState.languageData.of(() => [{ autocomplete: completeAnyWord }]),
+                // The shapes worth not typing, under everything else in the
+                // list: a server knows this project, a snippet only knows the
+                // language (`snippets.ts`).
+                snippetSource(d.path),
                 highlightTrailingWhitespace(),
               ],
           // `Prec.high`: `basicSetup`'s search keymap owns Mod-g (find next),
@@ -1207,6 +1589,79 @@ function CmSurface({
               indentWithTab,
               { key: "Mod-g", run: gotoLine, preventDefault: true },
               { key: "Mod-h", run: openReplacePanel, preventDefault: true },
+              // The way home from F12, Ctrl+P and a path the build printed.
+              // Free on Windows: CodeMirror only binds Alt+arrow on macOS.
+              {
+                key: "Alt-ArrowLeft",
+                preventDefault: true,
+                run: () => {
+                  useEditor.getState().navBack();
+                  return true;
+                },
+              },
+              {
+                key: "Alt-ArrowRight",
+                preventDefault: true,
+                run: () => {
+                  useEditor.getState().navForward();
+                  return true;
+                },
+              },
+              // Line marks. The whole family hangs off F2 on purpose: F2 and
+              // Shift+F2 are already the symbol keys, and a Ctrl+Alt binding
+              // would be AltGr on the ABNT keyboard this app is written for.
+              // Quick fix. The menu belongs to the page, not to the
+              // surface, so this only reports where the caret is.
+              {
+                key: "Mod-.",
+                preventDefault: true,
+                run: (view) => {
+                  const head = view.state.selection.main.head;
+                  const box = view.coordsAtPos(head);
+                  quickFixRef.current?.(
+                    box
+                      ? { x: box.left, y: box.bottom + 4 }
+                      : { x: 0, y: 0 },
+                  );
+                  return true;
+                },
+              },
+              // Walking the changes against HEAD, the keys VS Code uses.
+              {
+                key: "Alt-F5",
+                preventDefault: true,
+                run: (view) => goToHunk(view, 1),
+              },
+              {
+                key: "Shift-Alt-F5",
+                preventDefault: true,
+                run: (view) => goToHunk(view, -1),
+              },
+              {
+                key: "Ctrl-F2",
+                preventDefault: true,
+                run: (view) => {
+                  const line = view.state.doc.lineAt(view.state.selection.main.head);
+                  useEditor.getState().toggleMark(d.id, line.number - 1);
+                  return true;
+                },
+              },
+              {
+                key: "Alt-F2",
+                preventDefault: true,
+                run: () => {
+                  useEditor.getState().jumpMark(1);
+                  return true;
+                },
+              },
+              {
+                key: "Shift-Alt-F2",
+                preventDefault: true,
+                run: () => {
+                  useEditor.getState().jumpMark(-1);
+                  return true;
+                },
+              },
               {
                 key: "Mod-s",
                 preventDefault: true,
@@ -1235,6 +1690,13 @@ function CmSurface({
                   `Ln ${line.number}, Col ${sel.head - line.from + 1}` +
                   (selected > 0 ? ` (${selected} sel.)` : "");
               }
+              // The navigation trail. Only when the *line* moved: a caret
+              // walking along one line is not travel, and a store write per
+              // keystroke would be paid by every subscriber.
+              if (navLine.current !== line.number) {
+                navLine.current = line.number;
+                useEditor.getState().arriveAt({ id: d.id, line: line.number - 1 });
+              }
               // Upward only when it *means* something different: typing along
               // a line changes neither the outline's section nor which bar
               // button is pressed, and re-rendering for it would put a React
@@ -1261,7 +1723,7 @@ function CmSurface({
         ],
       });
     },
-    [cursorEl, extrasComp, flags, languageComp, live, liveComp, lspComp, metrics, metricsComp, readOnlyComp, schemeId, syntaxComp, wrap, wrapComp],
+    [cursorEl, extrasComp, flags, languageComp, live, liveComp, lspComp, metrics, metricsComp, readOnlyComp, rulerColumns, rulersComp, schemeId, syntaxComp, wrap, wrapComp],
   );
 
   // Mounts once; switching files is `setState`, not a remount.
@@ -1271,8 +1733,9 @@ function CmSurface({
     const view = new EditorView({ state: makeState(doc), parent: host });
     viewRef.current = view;
     viewHolder.current = view;
-    statesRef.current.set(doc.id, view.state);
+    statesRef.current.remember(doc.id, view.state, null);
     configureLanguage(doc);
+    restoreFolds(view, doc);
     view.focus();
 
     // Scrolling the source drags the rendered page along. Read from the top
@@ -1285,6 +1748,8 @@ function CmSurface({
       languageRequest.current++;
       if (gitTimer.current) clearTimeout(gitTimer.current);
       stopScroll();
+      // The window is going: hand the folds over before the state does.
+      useEditor.getState().setFolds(idRef.current, foldsOf(view.state));
       view.destroy();
       viewRef.current = null;
       viewHolder.current = null;
@@ -1297,11 +1762,17 @@ function CmSurface({
   useEffect(() => {
     const view = viewRef.current;
     if (!view || idRef.current === doc.id) return;
-    statesRef.current.set(idRef.current, view.state);
+    // The file being left: its state, where it was scrolled to, and what it
+    // had folded, the last one because folds outlive the window.
+    useEditor.getState().setFolds(idRef.current, foldsOf(view.state));
+    statesRef.current.remember(idRef.current, view.state, view.scrollSnapshot());
     idRef.current = doc.id;
-    const stored = statesRef.current.get(doc.id);
-    view.setState(stored ?? makeState(doc));
+    const stored = statesRef.current.recall(doc.id);
+    view.setState(stored?.state ?? makeState(doc));
     configureLanguage(doc);
+    // A state coming back from the memory already carries its folds; a fresh
+    // one has to be told what the last session left folded.
+    if (!stored) restoreFolds(view, doc);
     // A stored state was born with the previous line wrapping (and read-only
     // setting).
     view.dispatch({
@@ -1314,11 +1785,19 @@ function CmSurface({
         metricsComp.reconfigure(codeMetrics(metrics)),
       ],
     });
+    // The scroll goes back last, in a transaction of its own: line wrapping
+    // and the font metrics were just reconfigured above, and a height that
+    // changes after the scroll lands leaves the reader a few lines off.
+    if (stored?.scroll) view.dispatch({ effects: stored.scroll });
     view.focus();
     // A different file means a different caret: publish it so the bar and the
     // outline are about *this* document from the first frame.
     lastCaret.current = null;
+    navLine.current = -1;
     const sel = view.state.selection.main;
+    useEditor
+      .getState()
+      .arriveAt({ id: doc.id, line: view.state.doc.lineAt(sel.head).number - 1 });
     caretRef.current?.({
       line: view.state.doc.lineAt(sel.head).number - 1,
       block: isMarkdown(doc.path)
@@ -1465,16 +1944,27 @@ function CmSurface({
     });
   }, [readOnly, doc.id, readOnlyComp]);
 
+  // The line marks of the document on screen. They live in the store (they
+  // outlive the tab), and the view is only told what to paint.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || idRef.current !== doc.id) return;
+    applyBookmarks(view, docMarks ?? []);
+  }, [docMarks, doc.id]);
+
+  // Column guides follow the preference without rebuilding the state.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: rulersComp.reconfigure(rulers(rulerColumns)) });
+  }, [rulerColumns, rulersComp]);
+
   // Closed tabs need not keep state (nor the text that came with it).
   const openDocs = useEditor((s) => s.docs.map((d) => d.id).join("\n"));
   useEffect(() => {
-    const aliveCount = new Set(openDocs.split("\n"));
-    for (const key of statesRef.current.keys()) {
-      if (!aliveCount.has(key)) {
-        statesRef.current.delete(key);
-        dropHeadText(key);
-      }
-    }
+    const alive = new Set(openDocs.split("\n"));
+    statesRef.current.keep(alive);
+    keepHeadText(alive);
   }, [openDocs]);
 
   return (

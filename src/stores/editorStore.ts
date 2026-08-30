@@ -24,13 +24,47 @@ import {
   type FilesActivity,
 } from "../lib/ipc";
 import { diffDocId, diffSuffix, parseDiffSpec, type DiffSpec } from "../lib/diffTab";
+import { docHost } from "../lib/docHost";
 import { t } from "../lib/i18n";
 import { uiLog } from "../lib/log";
 import { toggleTaskLine } from "../lib/mdedit";
 import { splitPath } from "../lib/paths";
 import { persistPref, readPrefs, type PrefsSnapshot } from "../lib/prefs";
+import {
+  arrive,
+  forgetDoc,
+  NO_NAV,
+  stepBack,
+  stepForward,
+  type NavSpot,
+  type NavState,
+} from "../lib/navHistory";
+import {
+  dropDoc as dropMarks,
+  NO_MARKS,
+  nextAfter,
+  parseBookmarks,
+  prevBefore,
+  serializeBookmarks,
+  toggle as toggleMarkLine,
+  type Bookmarks,
+} from "../lib/bookmarks";
+import {
+  parseFoldRecord,
+  serializeFoldRecord,
+  type FoldRange,
+  type FoldRecord,
+} from "../components/CodeEditor/foldMemory";
+import {
+  forget as forgetClosed,
+  pop as popClosed,
+  push as pushClosed,
+  type ClosedTab,
+} from "../lib/closedTabs";
+import { closesWith, previewToReplace, type CloseScope } from "../lib/tabRules";
 import { rootedPathKey, sameRoot } from "../lib/roots";
 import { useProjects } from "./projectsStore";
+import { useReopen } from "./reopenStore";
 import { useUI } from "./uiStore";
 
 /** A file open in the editor. */
@@ -57,9 +91,26 @@ export interface OpenDoc {
   /** Changes only when fresh contents arrive from disk, not on each key. */
   diskVersion: number;
   modifiedAt: number;
+  /**
+   * Which ending the file is written with. The buffer itself is always LF:
+   * the backend normalises on read and puts this back on write, so this is
+   * metadata, not text.
+   */
   crlf: boolean;
+  /**
+   * What `crlf` was when the file was last read or written. Changing the
+   * ending cannot be seen by comparing the buffer with the disk, so this is
+   * what lets `isDirty` notice it (`lib/eol.ts`).
+   */
+  savedCrlf: boolean;
   /** The file on disk starts with a UTF-8 BOM — the save puts it back. */
   bom: boolean;
+  /**
+   * Which encoding the text was read with, and the one the save writes back.
+   * UTF-8 unless a UTF-16 BOM said otherwise, or unless the reader picked one
+   * from the file menu (`src-tauri/src/encoding.rs`).
+   */
+  encoding: string;
   binary: boolean;
   truncated: boolean;
   /** Bytes on disk are not valid UTF-8 — the buffer is a lossy decode. */
@@ -78,6 +129,19 @@ export interface OpenDoc {
   /** Error from the last write, if any. */
   error: string | null;
   saving: boolean;
+  /**
+   * Kept at the front of the bar, and left alone by "fechar as outras", by
+   * "fechar as da direita" and by the preview tab. Survives a restart: a pin
+   * is a statement about the file, not about the session.
+   */
+  pinned?: boolean;
+  /**
+   * Opened by a single click on the tree, and replaced by the next single
+   * click in the same pane. Typing in it, or opening it any other way, makes
+   * it permanent. Deliberately **not** persisted: a tab that came back from
+   * the last session is one the user kept, not one they glanced at.
+   */
+  preview?: boolean;
   /**
    * Set when the tab is a **comparison**, not a file: the diff of `path`
    * opened beside the CLIs from the Source Control tab. It has no text of its
@@ -121,7 +185,11 @@ function inScope(d: OpenDoc, scope: DocScope): boolean {
   return false;
 }
 
-export const isDirty = (d: OpenDoc) => d.text !== d.saved;
+/**
+ * Is there anything here that the disk does not have? The buffer, or the line
+ * ending the next write would use.
+ */
+export const isDirty = (d: OpenDoc) => d.text !== d.saved || d.crlf !== d.savedCrlf;
 /** Truncated or binary cannot be saved — writing would cut off the rest. */
 export const isReadOnly = (d: OpenDoc) => d.binary || d.truncated || d.lossy || !!d.diff;
 
@@ -130,6 +198,38 @@ export const docId = rootedPathKey;
 /** The id this document would have at `path` — a comparison keeps its own kind of id. */
 const idOf = (d: Pick<OpenDoc, "root" | "diff">, path: string) =>
   d.diff ? diffDocId(d.root, path, d.diff) : docId(d.root, path);
+
+/** An open document as the tab rules see it (`lib/tabRules.ts`). */
+function tabInfos(docs: readonly OpenDoc[]) {
+  return docs.map((d) => ({
+    id: d.id,
+    groupId: d.groupId,
+    slot: d.slot,
+    pinned: d.pinned === true,
+    preview: d.preview === true,
+    dirty: isDirty(d) && !isReadOnly(d),
+  }));
+}
+
+/** The record a closed tab leaves behind, so it can come back where it was. */
+function closedRecord(d: OpenDoc): ClosedTab {
+  return {
+    projectId: d.projectId,
+    groupId: d.groupId,
+    slot: d.slot,
+    root: d.root,
+    path: d.path,
+    ...(d.diff ? { diff: d.diff } : {}),
+  };
+}
+
+/** A closed tab's folds go with it. */
+function dropFolds(folds: FoldRecord, id: string): FoldRecord {
+  if (!(id in folds)) return folds;
+  const left = { ...folds };
+  delete left[id];
+  return left;
+}
 
 /** Parent directory of a relative path (`""` at the root). */
 export function parentDir(path: string): string {
@@ -210,6 +310,8 @@ const KV_OPEN = "editor.open";
 const KV_MD_MODE = "editor.mdMode";
 const KV_OUTLINE = "editor.outline";
 const KV_WRAP = "editor.wrap";
+const KV_MARKS = "editor.marks";
+const KV_FOLDS = "editor.folds";
 
 /** A draft this size is pathological; the kv is not a file system. */
 const DRAFT_CAP = 1_000_000;
@@ -228,6 +330,8 @@ interface StoredDoc {
   modifiedAt: number;
   crlf: boolean;
   bom: boolean;
+  /** The tab was pinned. A preview is not stored: a restored tab was kept. */
+  pinned?: boolean;
   /** Present only when the tab had unsaved text. */
   draft?: string;
   /** Present when the tab is a comparison — it comes back without a read. */
@@ -251,6 +355,7 @@ export function parseStoredDocs(raw: string | undefined): StoredDoc[] {
         modifiedAt: typeof d.modifiedAt === "number" ? d.modifiedAt : 0,
         crlf: d.crlf === true,
         bom: d.bom === true,
+        pinned: d.pinned === true,
         draft: typeof d.draft === "string" ? d.draft : undefined,
         diff: parseDiffSpec(d.diff) ?? undefined,
       }));
@@ -272,6 +377,7 @@ export function serializeDocs(docs: OpenDoc[]): string {
       modifiedAt: d.modifiedAt,
       crlf: d.crlf,
       bom: d.bom,
+      ...(d.pinned ? { pinned: true } : {}),
       ...(d.diff ? { diff: d.diff } : {}),
     };
     if (!isDirty(d) || isReadOnly(d)) return base;
@@ -327,6 +433,28 @@ interface EditorState {
    */
   reveal: { id: string; line: number; tick: number } | null;
   /**
+   * Where the reader has been, and how to get back (`lib/navHistory.ts`).
+   * Every teleport the editor has, Ctrl+P, F12, a search hit, a path the
+   * build printed, used to be one-way.
+   */
+  nav: NavState;
+  /** Tabs that were closed, newest last (`lib/closedTabs.ts`). */
+  closed: ClosedTab[];
+  /**
+   * "Rename this" asked from somewhere that is not the tree. The rename box
+   * is the tree row itself, so this is the only way to reach it from a tab.
+   * Consumed once, like `reveal`.
+   */
+  renameRequest: { path: string; tick: number } | null;
+  /** Line marks per document (`lib/bookmarks.ts`), kept across restarts. */
+  marks: Bookmarks;
+  /**
+   * What is folded, per document. The live folds belong to the CodeMirror
+   * state; this is the copy that survives the window, pushed here by the
+   * surface when a tab is left (`CodeEditor/foldMemory.ts`).
+   */
+  folds: FoldRecord;
+  /**
    * Every file path under the root — what lets Ctrl+P offer a file nobody has
    * browsed to. `null` = not built yet; `indexStale` = the watcher saw files
    * being born or dying since, so the next use rebuilds.
@@ -354,7 +482,11 @@ interface EditorState {
   toggleDir: (path: string) => void;
   refreshTree: () => void;
 
-  openFile: (path: string) => Promise<void>;
+  /**
+   * Opens a file as a tab. `preview` is the single click on the tree: the tab
+   * takes the place of the pane's other preview instead of adding to the bar.
+   */
+  openFile: (path: string, opts?: { preview?: boolean }) => Promise<void>;
   /**
    * Opens the diff of `path` as a tab beside the CLIs — a comparison, not
    * the file: read-only, nothing to read from disk, and a second ask for the
@@ -365,6 +497,20 @@ interface EditorState {
   openFileAt: (path: string, line: number) => Promise<void>;
   /** The surface applied (or gave up on) the pending reveal. */
   clearReveal: () => void;
+  /**
+   * The caret came to rest. Only a real jump joins the trail, walking a
+   * function with the arrow keys is reading, not travelling.
+   */
+  arriveAt: (spot: NavSpot) => void;
+  /** Alt+left / Alt+right. No-ops with nothing on that side of the trail. */
+  navBack: () => void;
+  navForward: () => void;
+  /** Puts a mark on the line, or takes back the one already there. */
+  toggleMark: (id: string, line: number) => void;
+  /** Next (`1`) or previous (`-1`) mark of the file the caret is in; wraps. */
+  jumpMark: (direction: 1 | -1) => void;
+  /** The surface handing over what is folded in a document it is leaving. */
+  setFolds: (id: string, folds: FoldRange[]) => void;
   /** Builds (or rebuilds, when stale) the quick-open index of the root. */
   ensureFileIndex: () => Promise<void>;
   closeEditor: () => void;
@@ -382,6 +528,28 @@ interface EditorState {
     beforeId?: string | null,
   ) => void;
   closeDoc: (id: string) => void;
+  /** Closes the tabs a scope names, pins excepted (`lib/tabRules.ts`). */
+  closeScoped: (id: string, scope: CloseScope) => void;
+  /** Ctrl+Shift+T. No-op with nothing on the stack. */
+  reopenClosed: () => Promise<void>;
+  /** Pins the tab, or takes the pin off. */
+  togglePin: (id: string) => void;
+  /**
+   * Chooses the line ending the next save writes. Nothing is written here:
+   * the tab goes dirty and the user saves, like any other change.
+   */
+  setEol: (id: string, crlf: boolean) => void;
+  /**
+   * Re-reads the file in another encoding, throwing away any draft. There is
+   * no way to keep one: the draft was decoded with the encoding being left
+   * behind, and every character in it would be a guess.
+   */
+  reopenWith: (id: string, encoding: string) => Promise<void>;
+  /** Opens the tree on `path` and puts its row into the rename box. */
+  askRename: (path: string) => void;
+  clearRenameRequest: () => void;
+  /** Makes a preview tab permanent: the file is being worked on now. */
+  keepOpen: (id: string) => void;
   /** Open docs of a group/project that still hold text nobody saved. */
   unsavedOf: (scope: DocScope) => OpenDoc[];
   /** Drops every tab of a group/project that is leaving the workspace. */
@@ -424,19 +592,44 @@ let treeGeneration = 0;
 // sits next to the agent editing it, at the same size, and switching between
 // the two is one click in a bar you were already using.
 //
-// The canvas is the exception with no tab bar to put it in: there the editor
-// still opens as the big overlay (`open`), which is also what `Esc` closes.
+// With no group open there is no bar yet, and the answer is not a modal
+// window over the empty workspace: a group is created for the project and the
+// file lands in it, exactly where every other file lands (`lib/docHost.ts`).
+//
+// The canvas is the one exception with no tab bar to put it in: there the
+// editor still opens as the big overlay (`open`), which is also what `Esc`
+// closes.
 
 interface TabTarget {
   groupId: string | null;
   slot: number;
-  /** No tab bar to land in (canvas mode, or no group at all). */
+  /** No tab bar to land in (the canvas). */
   overlay: boolean;
 }
 
-function tabTarget(): TabTarget {
-  const { activeGroupId, layoutOf } = useProjects.getState();
+/**
+ * @param projectId The tree's project, who owns a group created now. A file
+ * from a root nobody in the workspace claims has no group to be born into.
+ */
+function tabTarget(projectId: string | null): TabTarget {
+  const projects = useProjects.getState();
+  const { activeGroupId, layoutOf } = projects;
+  const owner = projects.projects.some((p) => p.id === projectId) ? projectId : null;
+  const host = docHost({
+    groupId: activeGroupId,
+    surface: activeGroupId ? layoutOf(activeGroupId).surface : null,
+    projectId: owner,
+  });
+
+  if (host === "group") {
+    // `addGroup` also makes it the active one, the workspace stops showing
+    // the welcome screen and draws the pane the tab is going into.
+    return { groupId: projects.addGroup(owner!), slot: 0, overlay: false };
+  }
+  // No bar, and no project to make one for (a root nobody claims): the
+  // overlay is the only surface left that can draw the file.
   if (!activeGroupId) return { groupId: null, slot: 0, overlay: true };
+
   const { focusedTerminalId, focusedSlot } = useUI.getState();
   const focused = focusedTerminalId
     ? useProjects.getState().terminal(focusedTerminalId)
@@ -445,7 +638,7 @@ function tabTarget(): TabTarget {
   return {
     groupId: activeGroupId,
     slot: Math.max(0, slot),
-    overlay: layoutOf(activeGroupId).surface === "canvas",
+    overlay: host === "overlay",
   };
 }
 
@@ -499,6 +692,7 @@ export const useEditor = create<EditorState>((set, get) => {
         diskVersion: current.diskVersion + 1,
         modifiedAt: file.modifiedAt,
         crlf: file.crlf,
+        savedCrlf: file.crlf,
         bom: file.bom,
         binary: file.binary,
         truncated: file.truncated,
@@ -533,6 +727,25 @@ export const useEditor = create<EditorState>((set, get) => {
     refreshTimer = setTimeout(flushDirs, REFRESH_DEBOUNCE_MS);
   };
 
+  /**
+   * Lands on a place from the trail. The new trail goes in *before* the
+   * reveal, so that the caret arriving there reads as the step just taken and
+   * not as a fresh jump, otherwise every "back" would leave a matching
+   * "forward" behind and the trail would never shorten.
+   */
+  const goToSpot = (nav: NavState, spot: NavSpot) => {
+    const doc = get().docs.find((d) => d.id === spot.id);
+    if (!doc) {
+      // The tab went away between the record and the step. Drop the place
+      // instead of reopening the file: the trail is about tabs that exist.
+      set({ nav: forgetDoc(nav, spot.id) });
+      return;
+    }
+    revealTick += 1;
+    set({ nav, reveal: { id: doc.id, line: spot.line + 1, tick: revealTick } });
+    get().setActive(doc.id);
+  };
+
   return {
     projectId: null,
     root: null,
@@ -546,6 +759,11 @@ export const useEditor = create<EditorState>((set, get) => {
     activeId: null,
     open: false,
     reveal: null,
+    nav: NO_NAV,
+    closed: [],
+    renameRequest: null,
+    marks: NO_MARKS,
+    folds: {},
     fileIndex: null,
     indexTruncated: false,
     indexStale: false,
@@ -632,11 +850,11 @@ export const useEditor = create<EditorState>((set, get) => {
 
     // --- documents ----------------------------------------------------------
 
-    openFile: async (path) => {
+    openFile: async (path, opts) => {
       const { root, projectId, docs } = get();
       if (!root) return;
       const id = docId(root, path);
-      const target = tabTarget();
+      const target = tabTarget(projectId);
 
       // The tree reveals the opened path, even when it comes from outside
       // (changes panel, live feed).
@@ -657,8 +875,17 @@ export const useEditor = create<EditorState>((set, get) => {
         // would take the file away from the split the user built.
         showTab(isOpen.groupId, isOpen.slot, id, target);
         set({ activeId: id, open: target.overlay });
+        // Asked for by any means other than a glance, it stops being one.
+        if (!opts?.preview) get().keepOpen(id);
         return;
       }
+
+      // A single click on the tree takes the place of the pane's other
+      // glance, which is what keeps browsing a big tree from costing one tab
+      // per file looked at.
+      const replacing = opts?.preview
+        ? previewToReplace(tabInfos(get().docs), target.groupId, target.slot)
+        : null;
 
       try {
         const file = await ipc.fsReadText(root, path);
@@ -670,12 +897,13 @@ export const useEditor = create<EditorState>((set, get) => {
         }
         set((s) => ({
           docs: [
-            ...s.docs,
+            ...s.docs.filter((d) => d.id !== replacing),
             {
               id,
               projectId,
               groupId: target.groupId,
               slot: target.slot,
+              ...(opts?.preview ? { preview: true } : {}),
               root,
               path,
               text: file.text,
@@ -683,7 +911,9 @@ export const useEditor = create<EditorState>((set, get) => {
               diskVersion: 1,
               modifiedAt: file.modifiedAt,
               crlf: file.crlf,
+              savedCrlf: file.crlf,
               bom: file.bom,
+              encoding: file.encoding,
               binary: file.binary,
               truncated: file.truncated,
               lossy: file.lossy,
@@ -710,7 +940,7 @@ export const useEditor = create<EditorState>((set, get) => {
       const { root, projectId, docs } = get();
       if (!root) return;
       const id = diffDocId(root, path, spec);
-      const target = tabTarget();
+      const target = tabTarget(projectId);
 
       const isOpen = docs.find((d) => d.id === id);
       if (isOpen) {
@@ -734,7 +964,9 @@ export const useEditor = create<EditorState>((set, get) => {
             diskVersion: 1,
             modifiedAt: 0,
             crlf: false,
+            savedCrlf: false,
             bom: false,
+            encoding: "utf-8",
             binary: false,
             truncated: false,
             lossy: false,
@@ -765,6 +997,57 @@ export const useEditor = create<EditorState>((set, get) => {
     },
 
     clearReveal: () => set({ reveal: null }),
+
+    arriveAt: (spot) =>
+      set((s) => {
+        const here = s.nav.here;
+        if (here && here.id === spot.id && here.line === spot.line) return {};
+        return { nav: arrive(s.nav, spot) };
+      }),
+
+    navBack: () => {
+      const step = stepBack(get().nav);
+      if (step) goToSpot(step.nav, step.go);
+    },
+
+    navForward: () => {
+      const step = stepForward(get().nav);
+      if (step) goToSpot(step.nav, step.go);
+    },
+
+    toggleMark: (id, line) => {
+      set((s) => ({ marks: toggleMarkLine(s.marks, id, line) }));
+      get().persist();
+    },
+
+    jumpMark: (direction) => {
+      // The caret's own place, which the trail already tracks, the store has
+      // no other way to know which line the reader is on.
+      const here = get().nav.here;
+      if (!here) return;
+      const { marks } = get();
+      const line =
+        direction === 1
+          ? nextAfter(marks, here.id, here.line)
+          : prevBefore(marks, here.id, here.line);
+      if (line === null) return;
+      revealTick += 1;
+      set({ reveal: { id: here.id, line: line + 1, tick: revealTick } });
+    },
+
+    setFolds: (id, folds) => {
+      const had = get().folds[id] ?? [];
+      // Only when it actually changed: this is called on every tab switch.
+      if (had.length === 0 && folds.length === 0) return;
+      set((s) => {
+        const next = { ...s.folds };
+        if (folds.length) next[id] = folds;
+        else delete next[id];
+        return { folds: next };
+      });
+      get().persist();
+    },
+
 
     ensureFileIndex: async () => {
       const { root, fileIndex, indexStale } = get();
@@ -833,14 +1116,39 @@ export const useEditor = create<EditorState>((set, get) => {
 
     closeDoc: (id) => {
       const isClosed = get().docs.find((d) => d.id === id) ?? null;
+      // Ctrl+W is one key away from Ctrl+E. What it costs to remember is a
+      // path (`lib/reopen.ts`); what it saves is a quick-open and two guesses.
+      // A diff tab is left out: it is a view of a file, and reopening the
+      // file is the useful half.
+      if (isClosed && !isClosed.diff) {
+        useReopen.getState().remember({
+          kind: "doc",
+          key: isClosed.id,
+          root: isClosed.root,
+          path: isClosed.path,
+          groupId: isClosed.groupId,
+          slot: isClosed.slot,
+          closedAt: Date.now(),
+        });
+      }
       set((s) => {
         const docs = s.docs.filter((d) => d.id !== id);
-        if (s.activeId !== id) return { docs };
+        const nav = forgetDoc(s.nav, id);
+        const marks = dropMarks(s.marks, id);
+        const folds = dropFolds(s.folds, id);
+        // What Ctrl+Shift+T brings back. The draft is not in here: it lives
+        // in the kv record and the reopen re-reads the file anyway.
+        const closed = isClosed ? pushClosed(s.closed, closedRecord(isClosed)) : s.closed;
+        if (s.activeId !== id) return { docs, nav, marks, folds, closed };
         // Closed the active tab: go to the neighbor on the right, as in VS Code.
         const idx = s.docs.findIndex((d) => d.id === id);
         const following = docs[Math.min(idx, docs.length - 1)] ?? null;
         return {
           docs,
+          nav,
+          marks,
+          folds,
+          closed,
           activeId: following?.id ?? null,
           open: docs.length > 0 && s.open,
         };
@@ -865,6 +1173,96 @@ export const useEditor = create<EditorState>((set, get) => {
         }
       }
       get().persist();
+    },
+
+    closeScoped: (id, scope) => {
+      for (const victim of closesWith(tabInfos(get().docs), id, scope)) {
+        get().closeDoc(victim);
+      }
+    },
+
+    reopenClosed: async () => {
+      const step = popClosed(get().closed);
+      if (!step) return;
+      set({ closed: step.rest });
+      const { tab } = step;
+      // The root may have moved on (another project, another front). Reopening
+      // a path into a root that does not hold it is a tab showing nothing.
+      if (!sameRoot(get().root, tab.root)) return;
+      if (tab.diff) {
+        get().openDiff(tab.path, tab.diff);
+        return;
+      }
+      await get().openFile(tab.path);
+    },
+
+    togglePin: (id) => {
+      set((s) => ({
+        docs: s.docs.map((d) =>
+          d.id === id
+            ? // Pinning also ends a preview: the tab was just kept on purpose.
+              { ...d, pinned: !d.pinned, preview: d.pinned ? d.preview : false }
+            : d,
+        ),
+      }));
+      get().persist();
+    },
+
+    setEol: (id, crlf) => {
+      const doc = get().docs.find((d) => d.id === id);
+      if (!doc || doc.diff || isReadOnly(doc) || doc.crlf === crlf) return;
+      patchDoc(id, { crlf });
+    },
+
+    reopenWith: async (id, encoding) => {
+      const doc = get().docs.find((d) => d.id === id);
+      if (!doc || doc.diff) return;
+      try {
+        const file = await ipc.fsReadText(doc.root, doc.path, encoding);
+        patchDoc(id, {
+          text: file.text,
+          saved: file.text,
+          diskVersion: doc.diskVersion + 1,
+          modifiedAt: file.modifiedAt,
+          crlf: file.crlf,
+          savedCrlf: file.crlf,
+          bom: file.bom,
+          encoding: file.encoding,
+          binary: file.binary,
+          truncated: file.truncated,
+          lossy: file.lossy,
+          size: file.size,
+          media: file.media,
+          stale: false,
+          missing: false,
+          error: null,
+        });
+      } catch (e) {
+        patchDoc(id, { error: String(e) });
+      }
+    },
+
+    askRename: (path) => {
+      const lineage = ancestors(path);
+      if (lineage.length) {
+        set((s) => {
+          const expanded = { ...s.expanded };
+          for (const dir of lineage) expanded[dir] = true;
+          return { expanded };
+        });
+        for (const dir of lineage) void get().loadDir(dir);
+      }
+      revealTick += 1;
+      set({ renameRequest: { path, tick: revealTick } });
+    },
+
+    clearRenameRequest: () => set({ renameRequest: null }),
+
+    keepOpen: (id) => {
+      if (!get().docs.some((d) => d.id === id && d.preview)) return;
+      set((s) => ({
+        docs: s.docs.map((d) => (d.id === id ? { ...d, preview: false } : d)),
+      }));
     },
 
     unsavedOf: (scope) =>
@@ -892,8 +1290,21 @@ export const useEditor = create<EditorState>((set, get) => {
       if (closing.size === 0) return;
       set((s) => {
         const docs = s.docs.filter((d) => !closing.has(d.id));
+        let nav = s.nav;
+        let marks = s.marks;
+        let folds = s.folds;
+        const closed = forgetClosed(s.closed, (t) => inScope(t as OpenDoc, scope));
+        for (const id of closing) {
+          nav = forgetDoc(nav, id);
+          marks = dropMarks(marks, id);
+          folds = dropFolds(folds, id);
+        }
         return {
           docs,
+          nav,
+          marks,
+          folds,
+          closed,
           activeId:
             s.activeId && closing.has(s.activeId)
               ? (docs[0]?.id ?? null)
@@ -904,7 +1315,12 @@ export const useEditor = create<EditorState>((set, get) => {
       get().persist();
     },
 
-    setText: (id, text) => patchDoc(id, { text, error: null }),
+    setText: (id, text) => {
+      // Typing is the clearest statement there is that this tab is not a
+      // glance any more.
+      get().keepOpen(id);
+      patchDoc(id, { text, error: null });
+    },
 
     save: async (id) => {
       const doc = get().docs.find((d) => d.id === id);
@@ -923,9 +1339,12 @@ export const useEditor = create<EditorState>((set, get) => {
           doc.missing ? null : { modifiedAt: doc.modifiedAt, size: doc.size },
           doc.crlf,
           doc.bom,
+          doc.encoding,
         );
         patchDoc(id, {
           saved: doc.text,
+          // The ending that was actually written; the tab is clean again.
+          savedCrlf: doc.crlf,
           modifiedAt: written.modifiedAt,
           // The size is half of the conflict test now, so it has to move with
           // the file — a stale one would make the next save a false conflict.
@@ -965,7 +1384,9 @@ export const useEditor = create<EditorState>((set, get) => {
           diskVersion: doc.diskVersion + 1,
           modifiedAt: file.modifiedAt,
           crlf: file.crlf,
+          savedCrlf: file.crlf,
           bom: file.bom,
+          encoding: file.encoding,
           binary: file.binary,
           truncated: file.truncated,
           lossy: file.lossy,
@@ -1009,9 +1430,11 @@ export const useEditor = create<EditorState>((set, get) => {
           null,
           doc.crlf,
           doc.bom,
+          doc.encoding,
         );
         patchDoc(id, {
           saved: doc.text,
+          savedCrlf: doc.crlf,
           modifiedAt: written.modifiedAt,
           size: written.size,
           stale: false,
@@ -1239,6 +1662,8 @@ export const useEditor = create<EditorState>((set, get) => {
         write(KV_MD_MODE, mdMode);
         write(KV_OUTLINE, String(outline));
         write(KV_WRAP, String(wrap));
+        write(KV_MARKS, serializeBookmarks(get().marks));
+        write(KV_FOLDS, serializeFoldRecord(get().folds));
       }, PERSIST_DEBOUNCE_MS);
     },
 
@@ -1258,6 +1683,13 @@ export const useEditor = create<EditorState>((set, get) => {
         ...(mode && MD_MODES.includes(mode) ? { mdMode: mode } : {}),
         ...(raw[KV_OUTLINE] ? { outline: raw[KV_OUTLINE] === "true" } : {}),
         ...(raw[KV_WRAP] ? { wrap: raw[KV_WRAP] === "true" } : {}),
+      });
+
+      // Marks and folds come back whether or not the tabs do: reopening the
+      // same file by hand should still find them.
+      set({
+        marks: parseBookmarks(raw[KV_MARKS]),
+        folds: parseFoldRecord(raw[KV_FOLDS]),
       });
 
       const stored = parseStoredDocs(raw[KV_DOCS]);
@@ -1285,7 +1717,9 @@ export const useEditor = create<EditorState>((set, get) => {
             diskVersion: 1,
             modifiedAt: 0,
             crlf: false,
+            savedCrlf: false,
             bom: false,
+            encoding: "utf-8",
             binary: false,
             truncated: false,
             lossy: false,
@@ -1295,6 +1729,7 @@ export const useEditor = create<EditorState>((set, get) => {
             missing: false,
             error: null,
             saving: false,
+            ...(g.pinned ? { pinned: true } : {}),
             diff: g.diff,
           });
           continue;
@@ -1314,7 +1749,9 @@ export const useEditor = create<EditorState>((set, get) => {
             diskVersion: 1,
             modifiedAt: file.modifiedAt,
             crlf: file.crlf,
+            savedCrlf: file.crlf,
             bom: file.bom,
+            encoding: file.encoding,
             binary: file.binary,
             truncated: file.truncated,
             lossy: file.lossy,
@@ -1326,6 +1763,7 @@ export const useEditor = create<EditorState>((set, get) => {
             missing: false,
             error: null,
             saving: false,
+            ...(g.pinned ? { pinned: true } : {}),
           });
         } catch (e) {
           // Gone from disk. A tab with a draft still has to come back — the
@@ -1343,7 +1781,10 @@ export const useEditor = create<EditorState>((set, get) => {
             diskVersion: 1,
             modifiedAt: g.modifiedAt,
             crlf: g.crlf,
+            savedCrlf: g.crlf,
             bom: g.bom,
+            // The file is gone; only the draft is left, and a draft is text.
+            encoding: "utf-8",
             binary: false,
             truncated: false,
             lossy: false,
@@ -1353,6 +1794,7 @@ export const useEditor = create<EditorState>((set, get) => {
             missing: true,
             error: String(e),
             saving: false,
+            ...(g.pinned ? { pinned: true } : {}),
           });
         }
       }

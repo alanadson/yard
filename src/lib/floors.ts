@@ -41,6 +41,14 @@ export interface FloorMeta {
   branch?: string;
   /** Worktree root; absent for `ground`/`plain` (they use the project path). */
   worktreePath?: string;
+  /**
+   * The worktree was already on the disk and this front only adopted it.
+   *
+   * What the Yard did not create, the Yard does not delete: closing such a
+   * front takes the group, the cards and the canvas, and leaves the folder
+   * (and the branch) exactly as they were.
+   */
+  adopted?: boolean;
   hooks?: FloorHooks;
   /** Present on floors created by "Nova tarefa" / `yard floor fanout`. */
   task?: FloorTask;
@@ -73,6 +81,7 @@ export function normalizeFloor(raw: unknown): FloorMeta | undefined {
   if (typeof r.worktreePath === "string" && r.worktreePath.trim()) {
     floor.worktreePath = r.worktreePath;
   }
+  if (r.adopted === true) floor.adopted = true;
   if (typeof r.agentId === "string" && r.agentId.trim()) floor.agentId = r.agentId;
   if (r.task && typeof r.task === "object") {
     const t = r.task as Partial<FloorTask>;
@@ -173,4 +182,34 @@ export function uniqueFloorName(
 
 export function isIsolatedFloor(floor: FloorMeta | undefined): boolean {
   return floor?.kind === "isolated" && !!floor.branch;
+}
+
+/**
+ * Whether a group's name belongs to git rather than to the user.
+ *
+ * Only the ground of a project with a repository: it is the project root, the
+ * root is on a branch, and the branch is the name. Renaming it in the tree
+ * would be a lie in both directions, the label drifting off the branch while
+ * the branch stays put, so the row does not offer it. `git branch -m`, in
+ * Controle, is the one way to change it.
+ */
+export function isBranchNamed(
+  floor: FloorMeta,
+  groundBranch: string | null | undefined,
+): boolean {
+  return floor.kind === "ground" && !!groundBranch?.trim();
+}
+
+/**
+ * What a row prints for a group: the branch for the ground, the stored name
+ * for everyone else (a front is named after its task, with its branch beside
+ * it; a folder-group of before keeps whatever it was called).
+ */
+export function groupLabel(input: {
+  name: string;
+  floor: FloorMeta;
+  groundBranch?: string | null;
+}): string {
+  if (isBranchNamed(input.floor, input.groundBranch)) return input.groundBranch!.trim();
+  return input.name.trim() || t("Sem nome");
 }

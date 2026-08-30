@@ -101,12 +101,16 @@ export const TRIGGER_EVENT_LABELS: Record<TriggerEvent, string> = {
   finished: "terminar",
   blocked: "travar numa pergunta",
   exited: "sair",
+  budget: "estourar o orçamento",
 };
 
 export const TRIGGER_EVENT_OPTIONS: { value: TriggerEvent; label: string }[] = [
   { value: "finished", label: "terminar um turno" },
   { value: "blocked", label: "travar numa pergunta" },
   { value: "exited", label: "sair (processo encerrado)" },
+  // Not an edge of any one CLI: the day's spend crossing the ceiling set in
+  // Configurações → Custos. Only a trigger armed for "qualquer CLI" hears it.
+  { value: "budget", label: "estourar o orçamento do dia" },
 ];
 
 /** One sentence per trigger: "Quando <origem> <evento> → <ação>". */
@@ -157,12 +161,12 @@ export interface TriggerCreateSpec {
 }
 
 export const TRIGGER_CREATE_USAGE =
-  'uso: yard trigger create --when finished|blocked|exited --on "Agente"|any \\\n' + // i18n-ok — CLI output
+  'uso: yard trigger create --when finished|blocked|exited|budget --on "Agente"|any \\\n' + // i18n-ok, CLI output
   '       --ask "Alvo" "prompt" | --notify "texto" | --flow "Fluxo" "tarefa" [--once] [--cooldown 60]\n' + // i18n-ok
   "     ({name} e {ask} no texto viram o nome de quem disparou e a pergunta em que parou;\n" + // i18n-ok
   "      --file/--stdin para um texto longo)\n"; // i18n-ok
 
-const EVENTS: readonly TriggerEvent[] = ["finished", "blocked", "exited"];
+const EVENTS: readonly TriggerEvent[] = ["finished", "blocked", "exited", "budget"];
 
 export function parseTriggerCreate(
   args: string[],
@@ -183,8 +187,13 @@ export function parseTriggerCreate(
   const when = p.string.when?.trim().toLowerCase();
   if (!when || !EVENTS.includes(when as TriggerEvent)) return fail;
   const on = p.string.on?.trim();
-  if (!on) return fail;
-  const source = on.toLowerCase() === "any" || on === "*" ? "*" : on;
+  // `budget` has no source to name: it is the workspace's day, not a CLI's
+  // edge. Demanding `--on any` there would be asking for a word that can only
+  // have one value.
+  const isBudget = when === "budget";
+  if (!on && !isBudget) return fail;
+  const source =
+    isBudget || !on || on.toLowerCase() === "any" || on === "*" ? "*" : on;
   const text = p.fromStdin ? (stdinText ?? "") : (p.positional[0] ?? "");
 
   const kinds = [p.string.ask !== undefined, !!p.bool.notify, p.string.flow !== undefined].filter(
@@ -201,6 +210,9 @@ export function parseTriggerCreate(
     action = { kind: "notify", text };
   } else {
     if (!p.string.flow?.trim() || !text.trim()) return fail;
+    // A flow runs *on the CLI that fired*, and the budget edge fires on
+    // nobody. There is no terminal to start the pipeline in.
+    if (isBudget) return fail;
     action = { kind: "flow", flow: p.string.flow.trim(), text };
   }
 

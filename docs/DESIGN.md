@@ -385,7 +385,7 @@ says it with a frame.
 - **Instrument density**: icon-buttons 25px (20px inside rows), tree rows ≥ 27px, pane header 33px, canvas card header 34px, portal bar 28px, window controls 46px (the Windows metric). On the canvas the slots are round: 30px in the tool palette (the most targeted control on the board), 26px in the card header, in the camera and in the flyout.
 - **Pane grid**: each pane is a window of the shell — solid body, hairline frame, thread of light on top, no radius and no drop shadow (both only worked while it floated over ground). Panes touch: 1px of seam between them, and the focused one carries the signal on its own edge (blue at 62%) plus a header a whisper lighter — the 3px halo it used to wear had nowhere to live once there was no gap to wear it in.
 - **Infinite canvas**: an origin point (`.cv-world`) translated and scaled by `transform` (`screen = (world − viewport.xy) × zoom`); a dot grid (`radial-gradient` white 5%, 1px) as the table — the board used to carry an ambient glow on top of it (`.cv-glow`, a white 3.5% ellipse out of the top) and gave it up with the shell's, for the same reason: it was light painted on the ground; hairline frame, flush with the chassis (it fills the central area edge to edge, so no radius) and an inner thread of light at 6%.
-- **Fixed anchors**: tool palette in a vertical capsule on the left (centred), **camera** in the bottom-right corner (minimap and zoom in a single glass — see Canvas), the Fronts control next to it (offset 204px on the canvas, 230px when the minimap is open, 16px on the grid), canvas status at top-centre, composer in the bottom-right corner of the window (fixed, 22px), toast at bottom-centre (18px above the status bar when it shows — `--statusbar-gap`).
+- **Fixed anchors**: tool palette in a vertical capsule on the left (centred), **camera** in the bottom-right corner (minimap and zoom in a single glass — see Canvas), the Fronts control next to it (offset 204px, 230px when the minimap is open; it exists on the canvas alone, since off the board that corner is the code editor's footer), canvas status at top-centre, composer in the bottom-right corner of the window (fixed, 22px), toast at bottom-centre (18px above the status bar when it shows — `--statusbar-gap`).
 - **Sticky for orientation**: section titles of the git review and diff hunk headers stick to the top while scrolling, with a solid background so the content underneath doesn't bleed through.
 
 There are no breakpoints: it is a desktop window (Tauri, `decorations: false`);
@@ -583,8 +583,13 @@ as one list: the same 9px pill, the same hover veil, the same blue of the
 active group while the panel is on screen. The shortcut is **not** printed in
 the row: a key spelled out beside the name is a second thing to read on every
 glance, for something learnt once, so it stays in the balloon, where every
-other door in the app keeps it. Only **Anotações** (`Ctrl+Shift+N`) wears the
-full row, at the top, above the tree, because the notebook is a destination.
+other door in the app keeps it. Three of them wear the
+full row, at the top, above the tree, because each is a destination:
+**Busca** (`Ctrl+P`), **Canvas** and **Anotações** (`Ctrl+Shift+N`). Canvas is
+the group's other surface, and it used to be a button in the title bar next to
+the pane switch, where it read as a fourth shape of the grid it is not; as a
+row it is a toggle, so the way there is also the way back, and the pane switch
+leaves the bar while the board is up (`lib/layoutControls.ts`).
 **Configurações** is the same door in its smallest form: an icon alone
 (`.hud-settings`, 28px) in the corner of the resource footer, on the line of
 the numbers, costing the bar no extra height, because it is opened once a week

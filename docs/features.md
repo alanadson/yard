@@ -155,9 +155,12 @@ command line for the next ones.
 
 **Canvas.** Two things, and they are separate on purpose.
 
-*A group's other surface*, not a fourth layout mode: its own button in the
-title bar, its own CLIs, and the Auto/Grade/Holofote you pinned for the panes
-waiting untouched underneath. A CLI belongs to one of the two — one opened on
+*A group's other surface*, not a fourth layout mode: its own row in the
+sidebar (under **Busca**, a toggle: pressed, it is the way back to the panes),
+its own CLIs, and the Auto/Grade/Holofote you pinned for the panes waiting
+untouched underneath. With the board up that switch leaves the title bar
+altogether, because it describes a screen nobody can see.
+A CLI belongs to one of the two, one opened on
 the board is a card and never a tab, one opened in a pane is a tab and never a
 card — and taking the screen to either (the tree, the search, `Ctrl+P`) turns
 the group to the right side first.
@@ -383,29 +386,197 @@ reapplicable in another project with fresh ids. The working folder does **not**
 go along: it comes from the target project. Group or project menu →
 "Partituras…" (Scores…).
 
+**A project's children are branches, not folders.** What hangs off a project
+in the tree is the **ground** (the project's own root, on whatever branch is
+checked out there) and its **fronts**, a `git worktree` each. "Novo grupo",
+which made a bare sibling of the ground sharing its files and its branch (the
+same working copy under two names, with nothing on screen saying so), is gone
+from every door: the project row's button, the project menu and the group menu
+all open "Abrir frente" now. The ground row **is** its branch: it prints the
+branch checked out at the project root and cannot be renamed in the tree, since
+the name is git's and `git branch -m` (in Controle) is what moves it. A front
+keeps the name of its task, with its own branch beside it. Both come from one
+`git worktree list` per project (`stores/worktreesStore.ts`), which also names
+the branch of the root; the rule is `groupLabel`/`isBranchNamed` in
+`lib/floors.ts`, shared by the tree, the title bar crumb and the fronts
+popover.
+
+**Where a CLI is born.** "Nova aba" carries a destination picker built by
+`lib/destination.ts`: the ground (with its branch), each front (with its own),
+every worktree of the repository the Yard has not opened yet, and "Nova
+frente…". With nothing chosen the ground wins: a CLI asked for with no branch
+and no worktree runs in the project's root. The folder the process is spawned
+in is the destination's own, which is the promise the dialog used to break: a
+CLI opened inside a front ran in the *project's* root, so the tab said
+"fix-login" and the agent edited the files of `main`. Picking a free worktree
+adopts it as a front on the spot.
+
 **Fronts.** An isolated copy of the work per task: each front is a
 `git worktree` at `<project>\.yard\floors\<slug>` (branch `yard/<slug>` by
-default), with its own group and canvas — the ground stays untouched. A
-"camadas" (layers) button in the bottom-right corner of the workspace: open
-(with the option to clone the ground's layout — terminals spawn stopped, with
-the worktree as cwd), unload (suspends the PTYs, preserving the session),
+default), with its own group and canvas, and the ground stays untouched.
+
+"Abrir frente" is where a project grows one, and it does not write anything
+while it is open. Every keystroke asks the backend what it *would* do —
+`worktree_preflight`, a read-only command that resolves the base to a commit,
+runs the name past `git check-ref-format`, says where a branch is already
+checked out and whether the folder is free — and `lib/provision/plan.ts` turns
+that, plus what the app knows about its own fronts and agents, into the plan
+block at the foot of the dialog: for every row, the commit it grows from, the
+branch, the folder, and every reason it would be refused. Read it and walk
+away and the repository is exactly as it was found.
+
+The shape is one column, and the order is the order a person decides in:
+which project (a picker, so opening a front somewhere else is not "close
+this, find the project, open it again"), where it runs, what the front is
+called or what it is made from, which agent, what to ask of it. Everything the
+app fills in correctly on its own, the branch, the base, the folder, the setup
+commands, sits behind "Avançado", because a value that is derived is not a
+question. `Ctrl+Enter` confirms, and the chord is printed on the button so it
+can be found without being looked up. A batch still gets the three rail
+workbench, and the switch that turns one into the other sits in the footer,
+beside the button it changes.
+
+**Nome ou origem.** The dialog asks one question in the middle, with two ways
+of answering it. **Nome**: type one, and the front grows a branch of its own
+off the ground's branch. **Branch**: point at one, and it is where the front
+*starts from*, which is the answer the old form could not give without typing
+a base by hand. Under the branch sits one checkbox, **"Reutilizar a branch"**,
+and it is the whole model: unchecked, a new branch grows from the one you
+picked; checked, the front is opened on that branch itself, wherever it
+already lives.
+
+Where it lives is the only thing that changes what "reuse" means, and the
+picker says it in the heading above each branch. Free: the front checks it out
+in a worktree of its own. On the ground: git gives no second worktree to the
+branch the project root has open, so the front *is* that copy, nothing is
+created, no branch is swapped, and the warnings say the agent is about to edit
+the files you have open. In a worktree already on the disk: that worktree is
+adopted, nothing is written, and closing the front never deletes it
+(`layout_json.floor.adopted`). In another front: the checkbox is held down and
+says why, because taking it would pull the files out from under whoever is
+working there; growing a new branch from it is still fine, and stays offered.
+
+There is no tab for "worktree" any more, and that is the point. The four
+shapes still exist in the model (`TargetKind`, and the plan is built from
+them), but they are outcomes, not questions: a person picking a place to work
+should not have to know which git noun the app is about to use. The matrix
+under "Criar vários" still names them directly in its own column, because a
+table with a row per agent has no room for a picker with a checkbox under it,
+and it is read by somebody who already knows what the four words mean.
+
+**What a front is born with.** A fresh worktree is a clean checkout, and a
+clean checkout is missing everything the repository ignores (the `.env`, the
+local config), so the CLI opened there starts in a project that cannot run.
+A `.worktreeinclude` at the repository root (the same file other worktree
+tools read) names the paths that have to travel with every new front: literal
+files and folders, anchored at the root, and **only the ones git ignores**:
+carrying an untracked file git would show turns the front dirty the second it
+is born. Globs, negations, `..` and absolute paths are dropped rather than
+guessed at, and a failure to copy is a log line, never a front that fails to
+exist. The branch is created with `--no-track` (a front is a place to work,
+not a mirror of its base), so the front also gets `push.autoSetupRemote=true`
+unless the person already answered that question somewhere: without it the
+first `git push` an agent runs inside a front dies asking for an upstream.
+On Windows the checkout carries `-c core.longpaths=true` at command scope
+(never written to anybody's config): a front lives two folders below a ground
+that already fits, and that is where a deep repository crosses MAX_PATH. And
+`git worktree add` has a deadline of 180 s, stretchable with
+`YARD_WORKTREE_ADD_TIMEOUT_MS` and never shrinkable, because a folder backed
+by a cloud sync can stall a checkout for as long as the service likes, and the
+journal is what makes killing it safe.
+
+"Criar vários" turns the dialog into a matrix: one row per agent, each with
+its own destination, base, branch, folder and request, named from a pattern
+(`exp-{agent}-{index}`) that is made unique as it expands. The collisions git
+cannot see are caught here — it is asked one row at a time and tells all four
+rows asking for one branch that the branch is free.
+
+Confirming hands the plan to `lib/provision/batch.ts`, and the dialog becomes
+the progress screen instead of vanishing: one row at a time (they share a
+repository, and git serialises `worktree add` anyway), each phase named, with
+"cancelar o que falta", "tentar de novo" for the failed rows only, and
+"abrir". Every effect is journalled before it happens, so a failure undoes
+only what *this* operation wrote — never "the folder at that path", which may
+be a week old. A branch it created is deleted through
+`git update-ref -d <ref> <old-oid>`, git's own compare-and-swap: the moment an
+agent has committed, the OID no longer matches, the branch is kept and the row
+ends in `precisa de limpeza` with a sentence, never in silence. An agent that
+fails to start does not take its front down with it — the worktree is built,
+and "tentar de novo" reuses it. What to do with the rows after a failure is a
+choice, not a default buried in a `catch`: carry on, stop the ones that have
+not started, or undo the ones already created.
+
+A "camadas" (layers) button in the bottom-right corner of the canvas, beside
+the camera, and only there — off the board that corner belongs to the code
+editor's footer, and a front is something you move between boards: open (with
+the option to clone the ground's layout, with terminals spawned stopped in the
+worktree's cwd), unload (suspends the PTYs, preserving the session),
 **land** (preview of the merge onto the ground; refuses a dirty tree or a
-predicted conflict; a merge that conflicts anyway is aborted) and close (refused
-with uncommitted work; option to delete the branch). **Nova tarefa** (New task)
-fires the same request on N fronts, one agent each; **Comparar frentes**
-(Compare fronts) shows the diffstat side by side and lands the winner (the
-others from the same task are closed). Optional setup/run/teardown hooks run in
-the worktree with `YARD_FLOOR_*` in the environment. The file pane and
-`git status` follow the active group: on a front, they show the worktree, not
-the ground. The metadata lives in `layout_json.floor`; a project without git
-still gets a "front" (`kind: plain`), just without isolation. From the CLI:
-`yard floor land`, `yard floor compare`, `yard floor fanout`.
+predicted conflict; a merge that conflicts anyway is aborted) and close
+(refused with uncommitted work; option to delete the branch, which is a
+request and not a promise: the delete is `git branch -d`, so a branch holding
+commits the ground does not have is kept and said out loud). **Nova tarefa**
+(New task) fires the same request on N fronts, one agent each; **Comparar
+frentes** (Compare fronts) shows the diffstat side by side and lands the winner
+(the others from the same task are closed). Optional setup/run/teardown hooks
+run in the worktree with `YARD_FLOOR_*` in the environment, and what happens
+when the setup fails is its own choice: hold the agent back, warn and start it
+anyway, or skip the setup entirely. The file pane and `git status` follow the
+active group: on a front, they show the worktree, not the ground. The metadata
+lives in `layout_json.floor`; a project without git still gets a "front"
+(`kind: plain`), just without isolation, the one case that still ends in a
+folder, and the dialog says so before the click. From the CLI:
+`yard floor create --adopt PATH`, `yard floor create --dry-run/--json`,
+`yard floor land`, `yard floor compare`,
+`yard floor fanout`.
+
+**What the server knows about a front.** Nothing here pushes on anybody's
+behalf: a front's branch is born with `--no-track`, landing is a local merge,
+and neither of them reaches the remote. What the fronts do say now is where
+that leaves each branch. The popover reads one `git for-each-ref` per project
+and prints it on the row: `só aqui` for a branch that exists on this disk
+only, `N por enviar` for one holding commits the server has not seen,
+`publicada` when the two agree, `sumiu do servidor` when the upstream was
+deleted somewhere else. The ground answers for its own branch too, which is
+what makes an "aterrissar" nobody has pushed yet visible. Closing a front can
+take the published copy with it (`git push <remote> --delete`), and only ever
+after the local delete really happened: `git branch -d` refusing means the
+branch holds commits the ground does not have, and then the copy on the server
+is the last place that work exists. "Abrir frente" reads the same listing to
+say when the chosen base is behind its upstream, or is a remote-tracking ref
+as new as the last fetch, with a "Buscar do servidor" beside the sentence: the
+dialog is the last moment when fixing that costs nothing, and after the front
+is born it is a rebase. The rules are pure, in `lib/floorSync.ts`.
+
+There is one door and no way round it. `yard floor create`, "Nova aba"
+adopting a worktree and the fan-out all go through `lib/provision/run.ts`, the
+same road the dialog takes, so the preflight, the collisions between rows, the
+base frozen as a commit and the journal belong to every caller instead of to
+one. A plan that is not valid never reaches the effects, whoever asked.
+`--dry-run` stops after the plan and writes nothing; `--json` prints that same
+plan (or result) with stable error codes rather than a Portuguese sentence a
+script has to grep; the exit code separates "all done" (0) from "the plan was
+refused" (2), "partial" (3), "something this run made is still on the disk"
+(4) and "cancelled" (5).
+
+At boot the app checks what it believes about its fronts against
+`git worktree list` and the disk (`lib/provision/reconcile.ts`). A front whose
+folder somebody deleted while the app was closed is marked orphaned; one whose
+folder is there but git no longer lists is `repair_required`
+(`git worktree repair`); a worktree nobody opened is offered for adoption; an
+entry pointing at a folder that is gone is named as prunable. It reads and
+reports, and it never prunes, adopts or removes: by then the journal that
+would say what belonged to whom is gone with the process that wrote it, and
+"the folder looks like ours" is a guess.
 
 **File editor, with a face for markdown.** Clicking a file in the tree opens
 **a tab in the same bar as the CLIs**, the size of the pane: the file sits next
 to the agent that's working on it, one click away, and not in a window over the
-app (CodeMirror 6, language loaded on demand). On the canvas — which has no tab
-bar — the same editor comes up as an overlay, and `Esc` tucks it away. Half of
+app (CodeMirror 6, language loaded on demand). With no group open, a project
+whose panes were all closed, the welcome screen on, the click makes the group
+instead of falling back to a window: there is always a bar for the tab
+(`lib/docHost.ts`). On the canvas, which has no tab bar, the same editor comes
+up as an overlay, and `Esc` tucks it away. Half of
 what gets opened here is a document — a README, a spec, a plan an agent wrote —
 and raw markup is the wrong way to read a document, so `.md` arrives with a
 **formatting bar**, a **table of contents** and four modes: *Editar* (Edit — the
@@ -429,6 +600,76 @@ disk, copy path, show in folder, line wrapping, close — while the row keeps
 only the four modes, the outline and search; *Salvar* appears with the first
 unsaved keystroke and leaves with the write. The formatting bar is a floating
 capsule in the page's top margin, the same instrument the canvas note wears.
+
+**Where you were, and where you are.** Every teleport the editor had (`Ctrl+P`,
+`F12`, a hit in the project search, a `Ctrl+click` on a path the build printed)
+was one-way. **`Alt+←` goes back** and `Alt+→` forward, on the browser's model:
+a trail behind, a trail ahead, and a jump from the middle of the trail
+abandons the part ahead. Only travel joins the trail, never the arrow keys
+walking a function (`src/lib/navHistory.ts`). Switching tabs preserves the
+scroll position as well as the caret and the undo history, the fold state
+outlives the window, and the document header shows the **symbols the caret is
+inside** (`class Fila › push`), each one clickable.
+
+**Line marks.** `Ctrl+F2` marks the line and `Alt+F2` walks the marks of the
+file (`Shift+Alt+F2` backwards, both wrapping). The mark is painted on the
+line number itself, so it costs no width; the set survives a restart
+(`src/lib/bookmarks.ts`). **Column guides** are free text in Configurações
+("80, 120"): faint rules at the columns you name, and nothing at all when the
+field is empty.
+
+**The git calha does something now.** Clicking one of its marks opens what the
+line **was**, right under it, with *Reverter este trecho* and *Copiar o do
+HEAD*; `Alt+F5` walks from one change to the next (`Shift+Alt+F5` back). The
+revert writes the smallest change that undoes the hunk, so it is one undo step
+and the caret stays put, and it refuses outright when the hunk no longer fits
+the buffer. From the file's own menu: **Comparar com o HEAD**, and **Comparar
+com o salvo**, the one comparison git cannot answer, built in the front end
+from the two texts already in the store (`src/lib/unified.ts`).
+
+**The tabs.** `Ctrl+Shift+T` reopens the last file tab you closed, in the pane
+it was in and as the comparison it was showing. A tab can be **pinned** (kept
+at the front of the bar and left alone by every "close the others"), and a
+single click on the tree opens a **preview** tab, drawn in italic, that the
+next single click replaces: browsing a tree of four thousand files no longer
+costs one tab per file glanced at. Typing in it, or a double click on the tab,
+makes it permanent. The tab's menu also closes every saved tab, reveals the
+file in the tree, renames it and deletes it.
+
+**Quick fixes, and the problems of the whole project.** `Ctrl+.` asks the
+language server what it can do about the line under the caret and applies what
+you pick, in this file and in the others the fix touches (which are left
+unsaved, for you to read). Only actions carrying an edit are offered: an entry
+that looks like a fix and does nothing is worse than a shorter menu. The
+**Problemas** tab of the bench lists what every server has found across the
+project, not only in the files that happen to be open, worst file first, with
+a filter for errors alone. The outline rail reads `documentSymbol` from the
+server when one is answering, and falls back to the regex outline when none
+is; `:` in the Busca finds a symbol anywhere in the project
+(`workspace/symbol`), asked only of the servers already running.
+
+**The project search grew up.** Regex, an include list and an exclude list
+(globs: `*.ts`, `src/**`, `**/*.test.ts`), and **Substituir tudo**, which
+rewrites exactly what the result list showed. It refuses to run from a list
+that stopped at a cap: a truncated list is shorter than the truth, and a
+replace from it would rewrite files that were never on screen. Search and
+replace share one compiled matcher, so they cannot disagree about what
+matched; the replace works line by line, keeps each file's own line endings,
+and never rewrites a file that is not valid UTF-8.
+
+**Line endings and encodings.** The footer's `LF`/`CRLF` is a button: pressing
+it chooses what the next save writes, and the tab goes dirty like any other
+change. The file menu reopens the file in **UTF-8, UTF-16 LE, UTF-16 BE or
+Windows-1252**, and the save writes it back in the same one rather than
+quietly turning every file into UTF-8, refusing outright when a character
+would not fit. UTF-16 is recognised from its BOM (and is no longer mistaken
+for a binary because of the zero bytes); Windows-1252 is never guessed, only
+chosen, because it decodes any byte sequence at all.
+
+**Snippets.** A short table per language (JavaScript/TypeScript, Rust, Python,
+Go) under everything else in the completion list: a server's suggestion is
+about this project, a snippet only about the language.
+
 
 **Anotações (Notes) — the markdown notebook (`Ctrl+Shift+N`).** Knowledge that
 belongs to no project — decisions, studies, plans, bug recipes — gets a
@@ -746,6 +987,110 @@ offers Português (Brasil), English and Sistema (English only on an English
 Windows; the terminals and the CLIs are untouched — they speak their own
 language). `node scripts/i18n-scan.mjs` lists the sentences still to wrap.
 
+**Busca na saída dos terminais** (`$` na Busca). `Ctrl+P` sempre achou o
+terminal pelo **nome**; a lupa do xterm procura dentro de **um** terminal
+montado. Nenhuma das duas responde "onde foi que eu vi aquele erro?", que é a
+pergunta que um workspace com seis agentes produz o dia inteiro. O prefixo `$`
+varre o histórico de todos os terminais, vivos e fechados, e escolher uma linha
+leva ao terminal com a barra de busca já aberta nela.
+`src-tauri/src/scrollback_search.rs` lê o anel vivo de quem está de pé e o
+`.bin` de quem não está, tira os escapes com o mesmo `strip_ansi` da exportação
+(um spinner é uma linha, com o último quadro) e janela a linha em 240
+caracteres: um bundle minificado impresso no terminal é uma linha de 2 MB e não
+vai passar por IPC. Tetos por terminal e no total, ordem de prioridade
+(terminal em foco, grupo ativo, o resto) e um piso de duas letras, porque cada
+tecla digitada é uma varredura de disco. Os agentes têm a mesma coisa em
+`yard search "texto" [--all] [--limit 4]`.
+
+**Fila de trabalho por agente.** Tudo o que uma fila precisa já existia sem
+estar ligado: o portão de envio (`lib/sendable.ts`), a detecção de ocupado e
+travado, e a entrega que espera o silêncio. Faltava o elo, porque mandar algo
+para um agente ocupado era esperar ou desistir. Agora o compositor troca
+**Enviar** por **Enfileirar** quando a CLI está trabalhando (ou travada numa
+pergunta: as duas passam), o texto fica guardado e entra sozinho na primeira
+janela de silêncio. Uma por vez, na ordem em que foram pedidas: dois prompts
+colados de uma vez são um prompt partido. O motor é puro (`lib/queue.ts`), o
+estado sobrevive ao reload no `kv` (`queue.items`), e o entregador é um tique de
+2 s (`hooks/useQueueRunner.ts`), porque "pronto" é em parte uma condição de
+*tempo* e o último byte de uma resposta não emite evento nenhum. A contagem
+aparece na aba e no cartão, o menu da CLI limpa, e os agentes usam
+`yard ask "Alvo" --queue "prompt"` e `yard queue [list] | clear`.
+
+**Pull requests, sem sair do Yard** (`src-tauri/src/forge.rs`). Uma frente já
+nascia, rodava e **aterrissava**; o que não existia era a metade de fora, a
+branch virar PR, juntar comentários e voltar como trabalho. A aba Controle
+mostra o PR da branch ao lado do botão de sincronizar, com a cor vindo dos
+checks: uma falha decide contra nove verdes, um review pedindo mudanças decide
+contra um build verde, e um repositório sem CI fica neutro, porque pintar de
+verde o que o GitHub não disse é inventar fato. Abre PR pelo mesmo lugar, e o
+botão direito **traz os comentários de revisão para dentro do diff**, viram as
+mesmas anotações que o revisor local escreve, e daí a barra que já existia
+manda tudo para o agente. Tudo pela CLI `gh`: nenhum token é guardado, pedido
+ou lido pelo Yard. Sem `gh` instalado, a faixa simplesmente não aparece.
+
+**Teto de gasto por dia.** "Custos e uso" é um retrovisor: você descobre na
+quinta o que a terça custou. Configurações → Agentes → Custos aceita um teto em
+dólares, e o Yard fala **uma vez** ao passar de 80% e **uma vez** ao estourar:
+no rodapé, num balão, e numa borda de gatilho nova (`estourar o orçamento do
+dia`), que é a única que não vem de um terminal e por isso só chega a gatilhos
+armados para "qualquer CLI". Nunca na descida: o total zera à meia-noite, e um
+balão dizendo "de volta ao orçamento" às 00:00 é como um recurso ganha um botão
+de desligar. Um dia com modelo fora da tabela de preços é um **piso**, e diz
+isso (`lib/budget.ts`).
+
+**Aviso fora da máquina.** O perfil deste app é sessão longa, de madrugada, com
+agentes que param e esperam, e o balão do Windows só serve para quem está na
+frente da tela. Configurações → Agentes aceita um endereço (ntfy, Discord,
+Slack, o seu) que recebe um `POST` com o mesmo aviso: agente terminou ou
+travou, gatilho, fluxo, `yard notify`, orçamento. É a única coisa no Yard que
+manda o que um terminal escreveu para fora da máquina, então: sem endereço, sem
+requisição nenhuma; só https (ou http em localhost, onde não há fio); e o corpo
+é uma frase, cortada em 400 caracteres, porque o que chega no celular tem de ser
+legível na tela de bloqueio. Regras em `lib/webhook.ts`, cerca repetida em
+`src-tauri/src/webhook.rs` porque o comando é alcançável pelo frontend.
+
+**Reabrir a aba fechada** (`Ctrl+Shift+T`). Ctrl+W fica a uma tecla de Ctrl+E, e
+a aba que ele fecha pode ser um arquivo três pastas abaixo. A pilha guarda as
+últimas 20 aberturas de **arquivo e navegador**, com o painel de onde saíram:
+reabrir num painel qualquer, num layout de quatro, é pôr a aba onde o olho não
+está. CLIs ficam de fora de propósito, porque fechar uma é "Excluir CLI", uma
+ação destrutiva confirmada, e "reabrir" ali significaria ressuscitar um
+processo.
+
+**Passar o bastão.** Entregar trabalho de um agente para outro sempre foi um
+parágrafo digitado à mão, e errado do mesmo jeito toda vez: descreve-se a
+*tarefa* e esquece-se o **estado**. O menu da CLI (e `yard handoff "Alvo"`)
+monta o parágrafo a partir do que o app já tem: o papel do agente, a branch e o
+diffstat, e os últimos seis turnos do transcript, com teto por turno e sem as
+chamadas de ferramenta (o próximo agente vai rodar as dele). Pelo menu ele cai
+no **compositor**, para ser lido e editado antes de ir, porque escolher quem
+assume é a decisão que o gesto inteiro serve.
+
+**Diário do dia.** Uma ação da Busca escreve uma nota nova com os commits do
+dia, quem estava trabalhando e o custo estimado, e deixa um `## Notas` no fim. O
+valor não é o relatório: é que a nota já começa preenchida, então escrever o
+único parágrafo que importa não custa nada.
+
+**A ponte atravessando o SSH.** "Roda em: SSH" foi entregue com um buraco
+escrito na documentação: o `yard` e o ambiente `YARD_*` não cruzavam a conexão,
+o que fazia do agente remoto um terminal, não um participante. Agora a ponte
+também escuta numa **porta TCP de loopback** falando o mesmo protocolo de uma
+linha JSON do named pipe e exigindo um token de sessão; o launch de SSH abre um
+túnel reverso (`ssh -R`) e escreve um shim em `~/.yard/bin` da máquina remota. O
+shim é Python, não shell: o pedido é JSON com texto de prompt arbitrário
+dentro, e escapar isso à mão em `sh` é como se ganha uma ponte que funciona até
+alguém usar aspas. O id do terminal não existe quando a linha de comando é
+montada, então vai como `{{YARD_PTY_ID}}` e o spawn substitui
+(`pty::expand_pty_id`). **Por agente e desligado por padrão**: o túnel deixa
+este workspace alcançável pelo loopback daquela máquina, protegido por um token
+que vive no ambiente do processo remoto. Precisa de `python3` no host.
+
+**Fumaça de boot** (`npm run smoke`). Não clica em nada, mas cobre o caminho que
+nenhum teste de unidade cobre e que quebra calado: o binário de verdade subindo
+com um diretório de dados vazio, criando e migrando o SQLite, botando a ponte de
+pé e saindo sem panic. Um marcador que some é falha; uma linha nova no log não
+é, senão o teste vira o primeiro a ser comentado.
+
 ## Golden rule
 
 The UI is **never** the owner of process state. Mounting an `XTermView` calls
@@ -799,18 +1144,32 @@ to do the same.
   WebView2**: the "Chrome", "Firefox" and "Edge" options in the picker (and the
   CLI's `--ua`) only swap the user-agent string, not the engine — whoever needs
   to reproduce an engine bug still has to open the real browser outside Yard.
-  The agent drives it with `yard portal snapshot/click/fill/…`.
+  The picker says exactly that where the choice is made. The agent drives it
+  with `yard portal snapshot/click/fill/…`.
+- **A second window.** One window, one workspace. Every side-effecting
+  subscription in the app is per-window, the bridge's `bridge://request`, the
+  triggers, the routine scheduler, the work queue, and Tauri broadcasts its
+  events to every window, so a second one would run all of them **twice**: one
+  `yard ask` typed into the target two times over. Detaching a group to a
+  second monitor is worth having, and it starts with a leader-window flag
+  gating those subscriptions, not with a new window.
 - **Inline screenshots in the composer** — a deliberate decision: the CLIs
   expect a file path, and there's no good way to paste an image into a PTY.
-- **F6 — Product.** No signed updater and no code signing yet: `release.yml`
-  builds the NSIS installer into a draft release, but SmartScreen still asks
-  once. The CSP is set (`src-tauri/tauri.conf.json`) and the Tauri capabilities
+- **F6, Product.** The updater artifacts *are* signed (minisign, through
+  `TAURI_SIGNING_PRIVATE_KEY`); what is missing is **Windows code signing**,
+  and only the certificate. `release.yml` already imports a `.pfx` from
+  `WINDOWS_CERT_PFX`/`WINDOWS_CERT_PASSWORD` and hands the thumbprint to the
+  bundler when those secrets exist, and builds unsigned when they do not, so
+  the day a certificate is bought, nothing but the two secrets changes. Until
+  then SmartScreen asks once. The CSP is set (`src-tauri/tauri.conf.json`) and the Tauri capabilities
   are down to window controls, dialogs and notifications.
 
 Validated end to end with the real app: boot → restore workspace from SQLite →
 attach → spawn → live PTY → scrollback on disk → an app crash leaves no orphan.
-UI interaction (clicking, dragging, resizing) hasn't been exercised
-automatically — only the logic behind it.
+UI interaction (clicking, dragging, resizing) still hasn't been exercised
+automatically, only the logic behind it, plus `npm run smoke`, which starts
+the real binary against a temporary data directory and checks the boot
+contract: log, SQLite, bridge up, no panic, clean exit.
 
 ## Cost estimates
 

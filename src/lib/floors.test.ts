@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   findGroupNamed,
   floorHookEnv,
+  groupLabel,
+  isBranchNamed,
   normalizeFloor,
   parseHookLines,
   uniqueFloorName,
@@ -46,6 +48,40 @@ describe("normalizeFloor", () => {
   it("fully empty hooks do not even enter the object", () => {
     const floor = normalizeFloor({ kind: "ground", hooks: { setup: [], run: [], teardown: [] } });
     expect(floor).toEqual({ kind: "ground" });
+  });
+
+  /**
+   * The golden rule of this file, and the one that decides whether a front
+   * deletes a folder it never made: a field `normalizeFloor` does not copy is
+   * gone on the next save. `adopted` says the worktree was on the disk before
+   * the front, so closing it must leave the folder alone. Dropped here, the
+   * flag survives exactly until the first layout write and then the front
+   * starts deleting the user's own worktree.
+   */
+  it("keeps `adopted`, the flag that says the worktree is not ours to delete", () => {
+    const floor = normalizeFloor({
+      kind: "isolated",
+      branch: "hotfix",
+      worktreePath: "D:/tmp/hotfix",
+      adopted: true,
+    });
+    expect(floor).toEqual({
+      kind: "isolated",
+      branch: "hotfix",
+      worktreePath: "D:/tmp/hotfix",
+      adopted: true,
+    });
+  });
+
+  it("does not invent `adopted` out of a crooked value", () => {
+    expect(normalizeFloor({ kind: "isolated", worktreePath: "D:/x", adopted: "sim" })).toEqual({
+      kind: "isolated",
+      worktreePath: "D:/x",
+    });
+    expect(normalizeFloor({ kind: "isolated", worktreePath: "D:/x" })).toEqual({
+      kind: "isolated",
+      worktreePath: "D:/x",
+    });
   });
 });
 
@@ -146,5 +182,73 @@ describe("findGroupNamed", () => {
 
   it("does not match by prefix — only the whole name", () => {
     expect(findGroupNamed(groups, "fix")).toBeNull();
+  });
+});
+
+/**
+ * What a row calls a group.
+ *
+ * A project's children are branches now, so the ground has no name of its own
+ * to invent: it is the project root, and the root is on a branch. The row
+ * prints that branch, and the stored name ("Principal", whatever someone typed
+ * once) stops being shown at all. Renaming it here would be a lie in both
+ * directions: the label would stop matching the branch, and the branch would
+ * not move. The only way to change it is `git branch -m`, in Controle.
+ *
+ * A front keeps its own name, which is the task, with its branch beside it; a
+ * project with no git keeps whatever the group was called, because there is no
+ * branch to take the name from.
+ */
+describe("groupLabel", () => {
+  it("calls the ground by the branch checked out at the project root", () => {
+    expect(groupLabel({ name: "Principal", floor: { kind: "ground" }, groundBranch: "main" })).toBe(
+      "main",
+    );
+  });
+
+  it("keeps a front on its own name, the task it was opened for", () => {
+    expect(
+      groupLabel({
+        name: "fix-login",
+        floor: { kind: "isolated", branch: "yard/fix-login", worktreePath: "C:/w/f" },
+        groundBranch: "main",
+      }),
+    ).toBe("fix-login");
+  });
+
+  it("falls back to the stored name when git named no branch", () => {
+    expect(groupLabel({ name: "Principal", floor: { kind: "ground" }, groundBranch: null })).toBe(
+      "Principal",
+    );
+  });
+
+  it("leaves the folder-groups of before on their own name", () => {
+    expect(groupLabel({ name: "Grupo 2", floor: { kind: "plain" }, groundBranch: "main" })).toBe(
+      "Grupo 2",
+    );
+  });
+
+  it("never answers empty, whatever is in the row", () => {
+    expect(groupLabel({ name: "  ", floor: { kind: "ground" }, groundBranch: null })).not.toBe("");
+  });
+});
+
+describe("isBranchNamed", () => {
+  it("is the ground with a branch, the one row whose name is not the user's to type", () => {
+    expect(isBranchNamed({ kind: "ground" }, "main")).toBe(true);
+  });
+
+  it("is not the ground of a project with no git, which keeps a name of its own", () => {
+    expect(isBranchNamed({ kind: "ground" }, null)).toBe(false);
+  });
+
+  it("is not a front: its name is the task, and the branch shows beside it", () => {
+    expect(
+      isBranchNamed({ kind: "isolated", branch: "yard/fix", worktreePath: "C:/w" }, "main"),
+    ).toBe(false);
+  });
+
+  it("is not a folder-group of before", () => {
+    expect(isBranchNamed({ kind: "plain" }, "main")).toBe(false);
   });
 });

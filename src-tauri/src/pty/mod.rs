@@ -193,6 +193,25 @@ pub struct ExitInfo {
 // spawn
 // ---------------------------------------------------------------------------
 
+/// Replaces `{{YARD_PTY_ID}}` with the terminal's real id.
+///
+/// Only the SSH launch uses it: everything local gets the id through the
+/// environment, which does not cross an ssh connection.
+pub fn expand_pty_id(args: &[String], id: &str) -> Vec<String> {
+    args.iter()
+        .map(|a| {
+            if a.contains(PTY_ID_MARK) {
+                a.replace(PTY_ID_MARK, id)
+            } else {
+                a.clone()
+            }
+        })
+        .collect()
+}
+
+/// The placeholder, spelled the same here and in `src/lib/remoteBridge.ts`.
+pub const PTY_ID_MARK: &str = "{{YARD_PTY_ID}}";
+
 pub fn spawn(
     sink: Arc<dyn PtyEvents>,
     state: &Arc<AppState>,
@@ -208,6 +227,12 @@ pub fn spawn(
     // npm `.cmd`/`.ps1` shims are not executables for CreateProcess —
     // the resolver rewrites that as `cmd.exe /c ...` (§9.3).
     let (program, args) = crate::agents::resolver::resolve_launch(&opts.program, &opts.args);
+    // An SSH launch carries the whole remote command inside one argument, and
+    // that command has to name this terminal (`YARD_PTY_ID`) so the bridge on
+    // the other side knows who is calling. The frontend builds that string
+    // *before* the row exists, so it writes a placeholder and this fills it in
+    //, on every spawn, which is also what makes a restart keep working.
+    let args = expand_pty_id(&args, &opts.id);
 
     let cwd = if std::path::Path::new(&opts.cwd).is_dir() {
         opts.cwd.clone()

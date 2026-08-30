@@ -11,7 +11,7 @@
 
 import { t, tn } from "../../lib/i18n";
 
-export type BenchTab = "files" | "search" | "scm" | "tasks" | "prompts";
+export type BenchTab = "files" | "search" | "scm" | "tasks" | "prompts" | "problems";
 
 export interface BenchHeadingInfo {
   /**
@@ -33,6 +33,8 @@ export interface BenchHeadingInfo {
    * and how many files are modified on it. `null` = no project is open.
    */
   scm: { isRepo: boolean; branch: string; changes: number } | null;
+  /** What the language servers have found, across the whole project. */
+  problems: { errors: number; warnings: number; other: number };
 }
 
 export interface BenchHeading {
@@ -59,6 +61,8 @@ export function benchHeading(tab: BenchTab, info: BenchHeadingInfo): BenchHeadin
       };
     case "search":
       return { title: t("Buscar"), subtitle: info.projectName ?? t(NO_PROJECT) };
+    case "problems":
+      return { title: t("Problemas"), subtitle: problemsText(info) };
     case "scm":
       return { title: t("Controle"), subtitle: scmText(info) };
     case "files":
@@ -72,6 +76,22 @@ export function benchHeading(tab: BenchTab, info: BenchHeadingInfo): BenchHeadin
             : (info.projectName ?? t(NO_PROJECT)),
       };
   }
+}
+
+/**
+ * "2 erros · 1 aviso". By severity, and never spelling out a zero: the line
+ * changes under the reader while a server indexes, and "2 erros" is both
+ * shorter and more informative than "2 erros · 0 avisos · 0 notas".
+ */
+function problemsText(info: BenchHeadingInfo): string {
+  const { errors, warnings, other } = info.problems;
+  const parts: string[] = [];
+  if (errors > 0) parts.push(tn(errors, "{n} erro", "{n} erros"));
+  if (warnings > 0) parts.push(tn(warnings, "{n} aviso", "{n} avisos"));
+  if (other > 0) parts.push(tn(other, "{n} nota", "{n} notas"));
+  if (parts.length > 0) return parts.join(" · ");
+  if (!info.projectName) return t(NO_PROJECT);
+  return t("Nada a corrigir");
 }
 
 /**

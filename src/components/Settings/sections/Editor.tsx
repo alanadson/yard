@@ -24,7 +24,16 @@ import {
 import { useExtensions } from "../../../stores/extensionsStore";
 import { useEditor } from "../../../stores/editorStore";
 import { useUI } from "../../../stores/uiStore";
-import { Card, FeatureRow, GroupTitle, NumberRow, PickerRow, SwitchRow, ToggleRow } from "../rows";
+import {
+  Card,
+  FeatureRow,
+  GroupTitle,
+  NumberRow,
+  PickerRow,
+  SwitchRow,
+  TextRow,
+  ToggleRow,
+} from "../rows";
 import { type Fonts } from "../useFonts";
 import { LspServerRows } from "./LspServers";
 
@@ -109,6 +118,12 @@ export function SecEditor({ fontes: fonts }: { fontes: Fonts }) {
           pref="codeLineNumbers"
           label={t("Números de linha")}
           desc={t("Calha de números no editor de arquivos")}
+        />
+        <TextRow
+          pref="codeRulers"
+          label={t("Guias de coluna")}
+          desc={t("Linhas verticais nas colunas escolhidas, separadas por vírgula. Vazio, nenhuma")}
+          placeholder="80, 120"
         />
         <ToggleRow
           label={t("Quebrar linhas longas")}

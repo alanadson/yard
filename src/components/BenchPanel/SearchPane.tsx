@@ -16,14 +16,20 @@ import {
   CaseSensitive,
   ChevronDown,
   ChevronRight,
+  Filter,
+  Regex,
+  Replace,
   Search,
   WholeWord,
   X,
 } from "lucide-react";
 
 import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
+import { ask } from "@tauri-apps/plugin-dialog";
+
 import { copyText } from "../../lib/clipboard";
 import { ipc } from "../../lib/ipc";
+import { replaceReadiness, type ReplaceRefusal } from "../../lib/replaceScope";
 import { fileName, toOsPath } from "../../lib/paths";
 import { useEditor, parentDir } from "../../stores/editorStore";
 import { MIN_QUERY, outcomeIsCurrent, useSearch } from "../../stores/searchStore";
@@ -45,6 +51,12 @@ export function SearchPane({
   const query = useSearch((s) => s.query);
   const caseSensitive = useSearch((s) => s.caseSensitive);
   const wholeWord = useSearch((s) => s.wholeWord);
+  const regex = useSearch((s) => s.regex);
+  const include = useSearch((s) => s.include);
+  const exclude = useSearch((s) => s.exclude);
+  const replacement = useSearch((s) => s.replacement);
+  const replacing = useSearch((s) => s.replacing);
+  const [filtering, setFiltering] = useState(false);
   const status = useSearch((s) => s.status);
   const error = useSearch((s) => s.error);
   const outcome = useSearch((s) => s.outcome);
@@ -154,6 +166,55 @@ export function SearchPane({
       .catch((e) => showToast(t("Não consegui abrir: {e}", { e: String(e) }), "error"));
   };
 
+  /**
+   * Whether "Substituir tudo" may run at all, and over how much
+   * (`lib/replaceScope.ts`). The button is disabled rather than hidden: the
+   * reason it cannot run is the useful part.
+   */
+  const ready = replaceReadiness({
+    root,
+    query,
+    status,
+    outcome,
+    current: fresh,
+  });
+
+  /**
+   * The one confirmation in this panel. It rewrites files the user is not
+   * looking at, it is not undoable from here, and the count is the only thing
+   * that makes it reviewable before it happens.
+   */
+  const runReplace = async () => {
+    if (!ready.ok) return;
+    const go = await ask(
+      t(
+        "Trocar {hits} ocorrência(s) de “{query}” por “{replacement}” em {files} arquivo(s)?\n\nOs arquivos são gravados no disco. Só o histórico do git desfaz isso.",
+        {
+          hits: ready.hits,
+          files: ready.files,
+          query: query.trim(),
+          replacement,
+        },
+      ),
+      { title: t("Substituir no projeto"), kind: "warning" },
+    );
+    if (!go) return;
+    try {
+      const outcome = await useSearch.getState().replace();
+      if (!outcome) return;
+      showToast(
+        outcome.replacements === 0
+          ? t("Nada mudou.")
+          : t("{n} troca(s) em {files} arquivo(s).", {
+              n: outcome.replacements,
+              files: outcome.filesChanged,
+            }),
+      );
+    } catch (e) {
+      showToast(String(e), "error");
+    }
+  };
+
   return (
     <div className="bench-body bench-body--search" role="tabpanel" aria-label={t("Buscar no projeto")}>
       <div className="bench-bar">
@@ -219,8 +280,83 @@ export function SearchPane({
           >
             <WholeWord size={14} />
           </button>
+          <button
+            className={`icon-btn ${regex ? "is-active" : ""}`}
+            data-tip={t("Expressão regular")}
+            aria-label={t("Ler a busca como expressão regular")}
+            aria-pressed={regex}
+            onClick={() => useSearch.getState().setRegex(!regex)}
+          >
+            <Regex size={14} />
+          </button>
+          <button
+            className={`icon-btn ${filtering || include || exclude ? "is-active" : ""}`}
+            data-tip={t("Incluir e excluir arquivos")}
+            aria-label={t("Filtrar por caminho de arquivo")}
+            aria-pressed={filtering}
+            onClick={() => setFiltering(!filtering)}
+          >
+            <Filter size={14} />
+          </button>
+          <button
+            className={`icon-btn ${replacing ? "is-active" : ""}`}
+            data-tip={t("Substituir")}
+            aria-label={t("Mostrar o campo de substituição")}
+            aria-pressed={replacing}
+            onClick={() => useSearch.getState().setReplacing(!replacing)}
+          >
+            <Replace size={14} />
+          </button>
         </div>
       </div>
+
+      {/* The replace row lives under the query it rewrites, never beside it:
+          the reading is "this becomes that", top to bottom. */}
+      {replacing && (
+        <div className="bench-bar">
+          <div className="bench-search">
+            <Replace size={12} aria-hidden="true" />
+            <input
+              value={replacement}
+              placeholder={t("Substituir por")}
+              aria-label={t("Texto que entra no lugar de cada ocorrência")}
+              disabled={!root}
+              onChange={(e) => useSearch.getState().setReplacement(e.target.value)}
+            />
+          </div>
+          <div className="ftree-tools">
+            <button
+              className="btn btn--sm"
+              disabled={!ready.ok}
+              data-tip={ready.ok ? undefined : refusalText(ready.reason, t)}
+              onClick={() => void runReplace()}
+            >
+              {t("Substituir tudo")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Two globs, shown only when asked for: they are the panel's least used
+          control and its widest, and a project search is mostly project-wide. */}
+      {filtering && (
+        <div className="psearch-filters">
+          <input
+            className="psearch-glob"
+            value={include}
+            placeholder={t("incluir: *.ts, src/**")}
+            aria-label={t("Só nos arquivos que casarem com estes padrões")}
+            onChange={(e) => useSearch.getState().setInclude(e.target.value)}
+          />
+          <input
+            className="psearch-glob"
+            value={exclude}
+            placeholder={t("excluir: *.test.ts")}
+            aria-label={t("Fora os arquivos que casarem com estes padrões")}
+            onChange={(e) => useSearch.getState().setExclude(e.target.value)}
+          />
+        </div>
+      )}
 
       {!root && <p className="bench-note">{t("Abra um projeto para buscar nele.")}</p>}
       {/* Under two characters the search does not run; without this line the
@@ -293,6 +429,24 @@ export function SearchPane({
       )}
     </div>
   );
+}
+
+/** Why the replace cannot run, in one line under the button. */
+function refusalText(reason: ReplaceRefusal, t: (s: string) => string): string {
+  switch (reason) {
+    case "sem-projeto":
+      return t("Abra um projeto primeiro.");
+    case "curto":
+      return t("Busque alguma coisa primeiro.");
+    case "buscando":
+      return t("Esperando a busca terminar.");
+    case "sem-resultado":
+      return t("Não há resultado para substituir.");
+    case "truncado":
+      // The list is shorter than the truth; replacing from it would rewrite
+      // files that never appeared on screen.
+      return t("A lista parou num limite. Refine a busca antes de substituir.");
+  }
 }
 
 /** The matched line with the needle marked — first occurrence is enough. */

@@ -491,3 +491,26 @@ fn ordinary_shell_is_not_mistaken_for_alternate_screen() {
     pty::kill(&f.state, "t-normal").ok();
     pty::scrollback::Scrollback::delete_file("t-normal");
 }
+
+/// Why this rule matters: an SSH launch carries its whole remote command in
+/// one argument, written by the frontend *before* the terminal row exists. If
+/// the placeholder does not get filled in, the remote `yard` announces itself
+/// as a terminal called `{{YARD_PTY_ID}}` and every call it makes is refused
+/// with "não registrado no workspace".
+#[test]
+fn the_pty_id_placeholder_is_filled_in_at_spawn() {
+    let args = vec![
+        "-tt".to_string(),
+        "host".to_string(),
+        "YARD_PTY_ID='{{YARD_PTY_ID}}' exec claude".to_string(),
+    ];
+    let out = super::expand_pty_id(&args, "abc123");
+    assert_eq!(out[0], "-tt");
+    assert_eq!(out[2], "YARD_PTY_ID='abc123' exec claude");
+}
+
+#[test]
+fn an_argument_without_the_placeholder_is_untouched() {
+    let args = vec!["--resume".to_string(), "{{outra coisa}}".to_string()];
+    assert_eq!(super::expand_pty_id(&args, "abc123"), args);
+}

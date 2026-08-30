@@ -281,7 +281,13 @@ export interface RoutineDef {
 }
 
 /** What a trigger listens for — the three edges the runtime mirror draws. */
-export type TriggerEvent = "finished" | "blocked" | "exited";
+/**
+ * `budget` is the odd one out and deliberately so: the other three are edges
+ * of one terminal's runtime, and this one belongs to the workspace (the day's
+ * spend crossing the ceiling, `lib/budget.ts`). It fires with no source, so
+ * only a trigger armed for "qualquer CLI" can hear it.
+ */
+export type TriggerEvent = "finished" | "blocked" | "exited" | "budget";
 
 /**
  * What a trigger does. `ask` types a prompt into another CLI of the group
@@ -880,7 +886,7 @@ function isValidRoutine(r: RoutineDef): boolean {
   );
 }
 
-const TRIGGER_EVENTS: readonly string[] = ["finished", "blocked", "exited"];
+const TRIGGER_EVENTS: readonly string[] = ["finished", "blocked", "exited", "budget"];
 
 function isValidTriggerAction(a: unknown): a is TriggerAction {
   if (!a || typeof a !== "object") return false;

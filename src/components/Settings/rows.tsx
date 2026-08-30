@@ -156,7 +156,13 @@ export function PickerRow({
 /** Numeric preferences: the only ones with a range worth enforcing. */
 type NumPref = Extract<
   keyof Prefs,
-  "fontSize" | "scrollback" | "codeFontSize" | "codeLineHeight" | "codeTabSize" | "autoBackupKeep"
+  | "fontSize"
+  | "scrollback"
+  | "codeFontSize"
+  | "codeLineHeight"
+  | "codeTabSize"
+  | "autoBackupKeep"
+  | "budgetDaily"
 >;
 
 /**
@@ -199,5 +205,42 @@ export function NumberRow({
       clamp={(n) => clampPref(pref, n)}
       onChange={(n) => setPref(pref, n)}
     />
+  );
+}
+
+/** String preferences that are typed rather than picked from a list. */
+type TextPref = {
+  [K in keyof Prefs]: Prefs[K] extends string ? K : never;
+}[keyof Prefs];
+
+/**
+ * A short free-text preference. The value is committed as it is typed: these
+ * are all parsed defensively at the point of use, so a half-written "80, 1"
+ * costs a redraw and never an error.
+ */
+export function TextRow({
+  pref,
+  label,
+  desc,
+  placeholder,
+}: {
+  pref: TextPref;
+  label: string;
+  desc?: string;
+  placeholder?: string;
+}) {
+  const value = useUI((s) => s.prefs[pref]);
+  const setPref = useUI((s) => s.setPref);
+  return (
+    <Row label={label} desc={desc}>
+      <input
+        className="set-text"
+        type="text"
+        value={value}
+        placeholder={placeholder}
+        aria-label={label}
+        onChange={(e) => setPref(pref, e.target.value)}
+      />
+    </Row>
   );
 }

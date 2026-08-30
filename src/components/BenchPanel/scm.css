@@ -51,6 +51,46 @@
   min-width: 0;
 }
 
+/* The pull request chip, in the same pill as the branch and the sync button,
+   they are three answers to one question, "where does this branch stand". The
+   chroma is semantic and comes from the checks: red is a failing build, yellow
+   is something still running or a reviewer asking for changes, and a PR with
+   nothing to report stays in the neutral chrome. */
+.scm-pr {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: rgb(var(--veil) / 4%);
+  color: var(--text);
+  font-size: var(--fs-xs);
+}
+
+.scm-pr:not(:disabled):hover {
+  background: rgb(var(--veil) / 8%);
+}
+
+.scm-pr-state {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.scm-pr.is-green .scm-pr-state {
+  color: var(--green);
+}
+
+.scm-pr.is-yellow .scm-pr-state {
+  color: var(--yellow);
+}
+
+.scm-pr.is-red .scm-pr-state {
+  color: var(--red);
+}
+
 /* The name yields, the rest does not: a branch called `feature/ABC-123-refactor…`
    must not push the remote button out of the panel. */
 .scm-branch-name {

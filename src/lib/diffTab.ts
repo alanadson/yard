@@ -22,10 +22,15 @@ import { rootedPathKey } from "./roots";
  *   `null`; the backend needs it to find the old side.
  * - `commit`: what one commit did to the file. Immutable, so the tab never
  *   needs to reload.
+ * - `draft`: the buffer against what is on disk. The one comparison git
+ *   cannot answer, and the one that says what `Ctrl+S` is about to write.
+ *   Both texts are already in the store, so it has no backend at all
+ *   (`lib/unified.ts`).
  */
 export type DiffSpec =
   | { source: "tree"; side: ScmDiffSide; origPath: string | null }
-  | { source: "commit"; hash: string };
+  | { source: "commit"; hash: string }
+  | { source: "draft" };
 
 const SIDE_WORDS: Record<ScmDiffSide, string> = {
   worktree: "Alterações",
@@ -39,7 +44,9 @@ const SIDE_WORDS: Record<ScmDiffSide, string> = {
  * from that group". A commit is named by its short hash, as everywhere else.
  */
 export function diffSuffix(spec: DiffSpec): string {
-  return spec.source === "commit" ? spec.hash.slice(0, 7) : t(SIDE_WORDS[spec.side]);
+  if (spec.source === "commit") return spec.hash.slice(0, 7);
+  if (spec.source === "draft") return t("Não salvo");
+  return t(SIDE_WORDS[spec.side]);
 }
 
 /**
@@ -55,7 +62,12 @@ const NUL = String.fromCharCode(0);
  * tabs, and so are its two sides.
  */
 export function diffDocId(root: string, path: string, spec: DiffSpec): string {
-  const which = spec.source === "commit" ? `commit:${spec.hash}` : spec.side;
+  const which =
+    spec.source === "commit"
+      ? `commit:${spec.hash}`
+      : spec.source === "draft"
+        ? "draft"
+        : spec.side;
   return `${rootedPathKey(root, path)}${NUL}diff:${which}`;
 }
 
@@ -68,6 +80,7 @@ export function parseDiffSpec(raw: unknown): DiffSpec | null {
   if (d.source === "commit") {
     return typeof d.hash === "string" && d.hash.length > 0 ? { source: "commit", hash: d.hash } : null;
   }
+  if (d.source === "draft") return { source: "draft" };
   if (d.source === "tree") {
     if (!SIDES.includes(d.side as ScmDiffSide)) return null;
     return {

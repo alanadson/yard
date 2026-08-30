@@ -10,7 +10,7 @@ vi.mock("./ipc", () => ({
 }));
 
 import { jumpToAttention } from "./attention";
-import { goToTerminal } from "./navigate";
+import { goToTerminal, toggleCanvas } from "./navigate";
 import { type Surface } from "./surface";
 import { useProjects, type LayoutMode } from "../stores/projectsStore";
 import { useTerminals, type TerminalRuntime } from "../stores/terminalsStore";
@@ -137,5 +137,73 @@ describe("jumpToAttention", () => {
 
     expect(useUI.getState().focusedTerminalId).toBeNull();
     expect(useUI.getState().toasts).toHaveLength(1);
+  });
+});
+
+/**
+ * The regression this locks down: the app was left with every group closed —
+ * the screen the workspace shows as "escolha um grupo para começar" — and the
+ * canvas had no door at all. The sidebar's row was gated on there being a
+ * group, the title bar's button had just left, and the palette's row is gated
+ * the same way. The canvas, with the boards inside it that belong to no
+ * project, was unreachable.
+ */
+describe("toggleCanvas", () => {
+  function emptyWorkspace() {
+    useProjects.setState({
+      rev: 1,
+      loaded: true,
+      projects: [],
+      groups: [],
+      terminals: [],
+      activeProjectId: null,
+      activeGroupId: null,
+      groupBeforeBoard: null,
+    });
+    return useProjects.getState().addProject("P", "C:/Workspace/canvas-door")!;
+  }
+
+  it("with no group open at all, it still puts the canvas on screen", () => {
+    const p = emptyWorkspace();
+    useProjects.setState({ groups: [], activeGroupId: null, activeProjectId: p });
+
+    toggleCanvas();
+
+    const s = useProjects.getState();
+    expect(s.activeGroupId).not.toBeNull();
+    expect(s.isBoard(s.activeGroupId!)).toBe(true);
+    expect(s.layoutOf(s.activeGroupId!).surface).toBe("canvas");
+  });
+
+  it("with no group open it takes the board already there instead of making another", () => {
+    const p = emptyWorkspace();
+    const board = useProjects.getState().addBoard("Quadro");
+    useProjects.setState({ activeGroupId: null, activeProjectId: p });
+
+    toggleCanvas();
+
+    expect(useProjects.getState().activeGroupId).toBe(board);
+    expect(useProjects.getState().boards()).toHaveLength(1);
+  });
+
+  it("pressed again with no panes behind it, it comes back to the empty state", () => {
+    const p = emptyWorkspace();
+    useProjects.setState({ groups: [], activeGroupId: null, activeProjectId: p });
+
+    toggleCanvas();
+    toggleCanvas();
+
+    expect(useProjects.getState().activeGroupId).toBeNull();
+  });
+
+  it("on a group it flips that group's own surface, both ways", () => {
+    const { g } = build("grid");
+
+    toggleCanvas();
+    expect(useProjects.getState().layoutOf(g).surface).toBe("canvas");
+
+    toggleCanvas();
+    expect(useProjects.getState().layoutOf(g).surface).toBe("grid");
+    expect(useProjects.getState().activeGroupId).toBe(g);
   });
 });

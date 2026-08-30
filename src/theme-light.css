@@ -225,15 +225,13 @@
 }
 
 /* Segmented control: recessed track, raised (white) active segment. */
-:root[data-theme="light"] .layout-switch,
-:root[data-theme="light"] .layout-canvas {
+:root[data-theme="light"] .layout-switch {
   background: rgb(0 0 0 / 6%);
   border-color: rgb(0 0 0 / 6%);
   box-shadow: inset 0 1px 2px rgb(0 0 0 / 6%);
 }
 
 :root[data-theme="light"] .layout-switch button.is-active,
-:root[data-theme="light"] .layout-canvas.is-active,
 :root[data-theme="light"] .layout-switch .select-trigger.is-open {
   background: #ffffff;
   border-color: rgb(0 0 0 / 8%);

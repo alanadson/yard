@@ -43,6 +43,15 @@ import { useT } from "../../hooks/useT";
 import { defaultRoleOf, pickableAgents, titleFor } from "../../lib/agentDefaults";
 import { brandById } from "../../lib/brands";
 import { commitCanvasExternal, placeCard } from "../../lib/canvasWrite";
+import {
+  cwdFor,
+  defaultDestination,
+  destinationAt,
+  destinationsOf,
+  groundBranchOf,
+  NEW_FRONT,
+} from "../../lib/destination";
+import { createFloor } from "../../lib/floorCreate";
 import { show } from "../../lib/navigate";
 import type { Surface } from "../../lib/surface";
 import { ipc, type AgentInfo, type ShellOption } from "../../lib/ipc";
@@ -53,6 +62,7 @@ import { useBrowsers } from "../../stores/browsersStore";
 import { useNotes } from "../../stores/notesStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
+import { NO_WORKTREES, useWorktrees } from "../../stores/worktreesStore";
 
 interface Payload {
   groupId?: string;
@@ -160,6 +170,48 @@ export function NewTerminalModal() {
       projects.find((p) => p.id === activeProjectId) ??
       projects[0]);
 
+  /**
+   * Where inside the project the tab runs: the ground (the project's own root,
+   * on whatever branch is checked out there) or one of the fronts, a `git
+   * worktree` each, with a branch of its own. A project stopped growing
+   * folders, so this is the whole of the answer.
+   *
+   * With nothing chosen the ground wins, which is the promise the dialog used
+   * to break: a CLI opened inside a front was spawned in the *project's* root,
+   * so the tab said "fix-login" and the agent edited the files of `main`.
+   */
+  // `s.of(...)`, never `s.byProject[id] ?? []`: a selector that mints a fresh
+  // array on every call hands Zustand a new snapshot each time it checks, and
+  // that is the "Maximum update depth exceeded" loop, not a re-render.
+  const worktrees = useWorktrees((s) =>
+    targetProject ? s.of(targetProject.id) : NO_WORKTREES,
+  );
+  const destinations = useMemo(() => {
+    if (!targetProject) return [];
+    const s = useProjects.getState();
+    return destinationsOf({
+      projectPath: targetProject.path,
+      groups: groups.filter((g) => g.projectId === targetProject.id),
+      floorOf: (id) => s.floorOf(id),
+      worktrees,
+      groundBranch: groundBranchOf(worktrees, targetProject.path),
+    });
+  }, [targetProject, groups, worktrees]);
+  /** `null` = the dialog has not been touched: follow the group in view. */
+  const [destPicked, setDestPicked] = useState<string | null>(null);
+  const destValue =
+    destPicked && destinations.some((d) => d.value === destPicked)
+      ? destPicked
+      : defaultDestination(destinations, onBoard ? null : groupId);
+  const dest = destinationAt(destinations, destValue);
+
+  // `git worktree list` is what names the branches here; it is read once per
+  // project the dialog points at.
+  useEffect(() => {
+    if (!targetProject) return;
+    void useWorktrees.getState().refresh(targetProject.id, targetProject.path);
+  }, [targetProject]);
+
   useEffect(() => {
     void ipc
       .listShells()
@@ -251,8 +303,23 @@ export function NewTerminalModal() {
    * CLI's own settings (name, role, command line, where it runs) and the pane
    * that asked (group, slot, folder).
    */
+  /**
+   * The group the tab lands in. A board is not a project child, so a front
+   * chosen in the picker there only says which folder the card runs in: the
+   * card still belongs to the board.
+   */
+  const destGroupId = onBoard ? null : (dest?.groupId ?? null);
+  const groupFor = () => destGroupId ?? group?.id ?? addGroup(targetProject!.id);
+
   const createIt = async (recipient: Choice) => {
     if (busy || !recipient.available) return;
+    // "Nova frente…" is a door, not a destination: it hands the click to the
+    // dialog that knows about branches and worktrees.
+    if (destValue === NEW_FRONT && targetProject) {
+      closeModal();
+      openModal("new-floor", { projectId: targetProject.id });
+      return;
+    }
     // The notebook needs no project (it is global) — the other tiles do, and
     // for them the way forward is the other dialog, which answers the click
     // instead of scolding it.
@@ -285,7 +352,7 @@ export function NewTerminalModal() {
         );
         return;
       }
-      const target = group?.id ?? addGroup(targetProject.id);
+      const target = groupFor();
       useNotes
         .getState()
         .dockTo(target, (target === payload?.groupId ? payload?.slot : undefined) ?? 0);
@@ -310,7 +377,7 @@ export function NewTerminalModal() {
         );
         return;
       }
-      const target = group?.id ?? addGroup(targetProject!.id);
+      const target = groupFor();
       useBrowsers.getState().open({
         groupId: target,
         // Same rule as the CLI: the requested slot only counts in the pane
@@ -324,7 +391,9 @@ export function NewTerminalModal() {
       return;
     }
 
-    const folder = targetProject!.path.trim();
+    // The chosen destination's own folder: the front's worktree when a front
+    // is chosen, the project's root otherwise.
+    const folder = cwdFor(dest, targetProject!.path).trim();
     if (!folder) {
       showToast(
         t(
@@ -357,7 +426,23 @@ export function NewTerminalModal() {
       const title = titleFor(agentDefaults, agentId, recipient.label);
 
       // Only now, with everything checked, does anything get created.
-      const target = group?.id ?? addGroup(targetProject!.id);
+      //
+      // A worktree that git knows about and no front has opened yet becomes a
+      // front on the spot: the folder is already there, so nothing is created
+      // on the disk: the Yard only adopts it and the group is born pointing
+      // at it. Without this the CLI would run in a worktree with no front,
+      // and `rootOfGroup` would keep answering the project's root for it.
+      const target =
+        dest?.kind === "worktree" && dest.path && !onBoard
+          ? (
+              await createFloor({
+                projectId: targetProject!.id,
+                name: dest.branch ?? dest.label,
+                adopt: { path: dest.path, branch: dest.branch ?? null },
+                activate: false,
+              })
+            ).groupId
+          : groupFor();
       const born = useAgentDefaults.getState().launchOf(agentId, {
         program: recipient.program,
         args: launch.args,
@@ -491,29 +576,48 @@ export function NewTerminalModal() {
       )}
 
       <div className="option-list-head">
-        {/* Where the tab is going to be born, said out loud: the dialog stopped
-            asking, so it owes the answer. */}
-        {onBoard && projects.length > 0 ? (
-          // On a board the answer is not inferable — it is what lets one board
-          // hold cards from three projects at once.
+        {/* Where the tab is going to be born, said out loud. The dialog stopped
+            asking everything else, so it owes this answer, and since a project
+            grows branches and worktrees instead of folders, the answer is no
+            longer inferable from the pane that asked. */}
+        {targetProject ? (
           <span className="new-term-where">
             {t("Abrir em")}
+            {/* On a board the project is not inferable either, and that is what
+                lets one board hold cards from three projects at once. */}
+            {onBoard && projects.length > 0 && (
+              <Select
+                value={targetProject.id}
+                label={t("Projeto da CLI")}
+                tip={t("Em qual projeto esta CLI vai rodar")}
+                options={projects.map((p) => ({ value: p.id, label: p.name }))}
+                onChange={(v) => {
+                  setPicked(v);
+                  setDestPicked(null);
+                }}
+              />
+            )}
             <Select
-              value={targetProject?.id ?? ""}
-              label={t("Pasta da CLI")}
-              tip={t("Em qual projeto esta CLI vai rodar")}
-              options={projects.map((p) => ({ value: p.id, label: p.name }))}
-              onChange={setPicked}
+              value={destValue}
+              label={t("Branch ou worktree")}
+              // Only reachable with every group of the project deleted: the
+              // ground is gone and there is nothing to be born beside yet.
+              placeholder={t("Escolha onde")}
+              tip={
+                onBoard
+                  ? t("Em qual branch ou worktree deste projeto a CLI vai rodar")
+                  : t("Onde a CLI vai rodar: o chão do projeto, na branch dele, ou uma frente")
+              }
+              options={destinations.map((d) => ({
+                value: d.value,
+                label: d.label,
+                group: d.heading,
+              }))}
+              onChange={setDestPicked}
             />
           </span>
         ) : (
-          <span>
-            {loadingAgents
-              ? t("Procurando CLIs…")
-              : targetProject
-                ? t("Abrir em {name}", { name: targetProject.name })
-                : t("Início rápido")}
-          </span>
+          <span>{loadingAgents ? t("Procurando CLIs…") : t("Início rápido")}</span>
         )}
         <button
           className={`icon-btn ${loadingAgents ? "is-busy" : ""}`}

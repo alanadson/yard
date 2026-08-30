@@ -223,3 +223,23 @@ export function hasSymbolSupport(path: string): boolean {
   const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
   return BY_EXT.has(ext);
 }
+
+/**
+ * The chain of symbols the caret is standing inside, outermost first, the
+ * trail the document header shows after the file name.
+ *
+ * This list knows where each symbol *starts* and never where it ends, so the
+ * chain is read the way the eye reads indentation: a symbol at a given depth
+ * closes every symbol at that depth or deeper. That is an approximation, and
+ * it shows in the one place you would expect, a statement written at top
+ * level after a class is still, as far as this is concerned, inside it.
+ */
+export function enclosing(symbols: readonly CodeSymbol[], line: number): CodeSymbol[] {
+  const chain: CodeSymbol[] = [];
+  for (const symbol of symbols) {
+    if (symbol.line > line) break;
+    while (chain.length && chain[chain.length - 1].level >= symbol.level) chain.pop();
+    chain.push(symbol);
+  }
+  return chain;
+}

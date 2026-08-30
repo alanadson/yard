@@ -33,7 +33,9 @@ import {
   scoreAlreadyExists,
 } from "./scores";
 import { findGroupNamed, isIsolatedFloor } from "./floors";
-import { createFloor } from "./floorCreate";
+import { sameRoot } from "./roots";
+import { exitCodeOf, planText, runJson, runSummary } from "./provision/report";
+import { provisionFronts } from "./provision/run";
 import { agentAsFanout, fanOutTask } from "./floorFanout";
 import { defaultRoleOf } from "./agentDefaults";
 import { spawnEnvFor } from "./spawnEnv";
@@ -101,6 +103,18 @@ import {
   type Ctx,
   type NoteItem,
 } from "./bridgeCore";
+import { formatSearch, parseSearch, TOTAL_LIMIT } from "./bridgeSearch";
+import { formatQueue, queuedLine } from "./bridgeQueue";
+import { handoffMessage } from "./handoff";
+import { transcriptBlocks, type Block } from "./transcript";
+import { bestSessionFor } from "./sessionFind";
+import { hasSessions } from "../stores/agentsStore";
+import { useChanges } from "../stores/changesStore";
+import { waitUntilSendable } from "./sendable";
+import { QUEUE_CAP } from "./queue";
+import { useQueue } from "../stores/queueStore";
+import { baseName } from "./terminals";
+import { pushOut } from "./notifyOut";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -226,6 +240,12 @@ export async function handleBridgeRequest(req: BridgeRequest): Promise<BridgeRes
   switch (cmd) {
     case "list":
       return cmdList(ctx);
+    case "search":
+      return cmdSearch(ctx, argv.slice(1));
+    case "queue":
+      return cmdQueue(ctx, argv.slice(1));
+    case "handoff":
+      return cmdHandoff(ctx, argv.slice(1), req);
     case "ask":
       return cmdAsk(ctx, argv.slice(1), req);
     case "check":
@@ -265,18 +285,184 @@ export async function handleBridgeRequest(req: BridgeRequest): Promise<BridgeRes
   }
 }
 
+// --- handoff ----------------------------------------------------------------
+
+/**
+ * Passing the baton to another agent (`lib/handoff.ts` writes the message).
+ *
+ * What makes this worth a command rather than a paragraph typed by hand is
+ * the part a person always leaves out: the **state of the tree**. The prompt
+ * carries the branch and the diffstat along with the last few turns, so the
+ * agent taking over does not spend its first ten minutes discovering what the
+ * previous one already changed.
+ */
+async function cmdHandoff(
+  ctx: Ctx,
+  argv: string[],
+  req: BridgeRequest,
+): Promise<BridgeResponse> {
+  const p = parseFlags(argv, {
+    "--queue": "bool",
+    "--stdin": "stdin",
+    "--file": "stdin",
+  });
+  const target = p.positional[0];
+  const left = p.fromStdin ? (req.stdin ?? "") : (p.positional[1] ?? "");
+  if (!target) {
+    return err(
+      'uso: yard handoff "Alvo" ["o que falta"] [--queue]\n' +
+        "     passa o bastão: papel, estado da árvore e os últimos turnos viram o prompt do alvo\n",
+    );
+  }
+  const to = findAgent(ctx, target);
+  if (!to) return err(`yard: "${target}" não está conectado a você.\n`);
+
+  const me = ctx.caller;
+  const role = ctx.canvas.roles?.[me.id];
+  const group = useProjects.getState().groups.find((g) => g.id === me.groupId);
+  const git = group?.projectId
+    ? useChanges.getState().gitByProject[group.projectId]
+    : undefined;
+
+  // The turns, when this CLI keeps a session file. Best effort on purpose: a
+  // handoff with no transcript is still worth sending, and a `.jsonl` that
+  // moved must not cost the whole command.
+  let blocks: Block[] = [];
+  try {
+    if (me.agentId && hasSessions(me.agentId)) {
+      const sessions = await ipc.listAgentSessions(me.agentId, me.cwd);
+      const best = bestSessionFor(sessions, me.resume);
+      if (best) blocks = transcriptBlocks(await ipc.sessionEvents(best.file));
+    }
+  } catch {
+    blocks = [];
+  }
+
+  const message = handoffMessage({
+    from: ctx.nameOf.get(me.id) ?? me.program,
+    role: role?.name ?? "",
+    branch: git?.branch ?? "",
+    files: git?.files.length ?? 0,
+    additions: git?.additions ?? 0,
+    deletions: git?.deletions ?? 0,
+    blocks,
+    left,
+  });
+  const label = ctx.nameOf.get(to.id) ?? target;
+
+  if (p.bool.queue) {
+    const queued = useQueue
+      .getState()
+      .enqueue(to.id, message, "bridge", ctx.nameOf.get(me.id));
+    return queued.ok
+      ? ok(queuedLine(label, queued.position ?? 1))
+      : err(`yard: a fila de "${label}" está cheia.\n`);
+  }
+
+  // The baton is one message and there is no second copy of it: a CLI that is
+  // busy or at a prompt would swallow it into whatever question is on screen.
+  const can = await waitUntilSendable(to.id);
+  if (!can.ok) {
+    return err(
+      `yard: "${label}" não pode receber agora (${can.reason}). ` +
+        "Use --queue para deixar o bastão esperando.\n",
+    );
+  }
+  await injectPrompt(to.id, message);
+  return ok(`bastão passado para "${label}" (${message.length} caracteres).\n`);
+}
+
+// --- queue ------------------------------------------------------------------
+
+/**
+ * What is waiting to be typed into somebody (`lib/queue.ts` holds it).
+ *
+ * Read-only plus a broom, and that is deliberate: an agent may look at the
+ * queue and clear one, but it may not reorder another agent's work. Putting
+ * something *in* the queue is `--queue` on the command that had something to
+ * say.
+ */
+function cmdQueue(ctx: Ctx, args: string[]): BridgeResponse {
+  const sub = (args[0] ?? "list").toLowerCase();
+  const mine = [ctx.caller, ...connectedAgents(ctx)];
+  const nameOf = (id: string) => ctx.nameOf.get(id) ?? id;
+
+  if (sub === "list") {
+    // Only what is queued for the caller and for what the caller can talk to:
+    // the queue is workspace-wide, and the rest of it is none of its business.
+    const items = useQueue
+      .getState()
+      .items.filter((item) => mine.some((t) => t.id === item.terminalId));
+    return ok(formatQueue(items, nameOf));
+  }
+
+  if (sub === "clear") {
+    const who = args[1];
+    const target = who ? findAgent(ctx, who) : ctx.caller;
+    if (!target) return err(`yard: "${who}" não está conectado a você.\n`);
+    const had = useQueue.getState().count(target.id);
+    useQueue.getState().clear(target.id);
+    return ok(
+      had === 0
+        ? `A fila de "${nameOf(target.id)}" já estava vazia.\n`
+        : `Fila de "${nameOf(target.id)}" limpa (${had} item${had === 1 ? "" : "s"}).\n`,
+    );
+  }
+
+  return err('uso: yard queue [list]\n     yard queue clear ["Agente"]\n');
+}
+
+// --- search -----------------------------------------------------------------
+
+/**
+ * Reading the past: what some terminal printed, twenty minutes ago, in a pane
+ * nobody has open. The shape of the answer and its ceiling live in
+ * `bridgeSearch.ts`, which is where they can be tested.
+ */
+async function cmdSearch(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
+  const { text, all, limit } = parseSearch(args);
+  if (!text) {
+    return err(
+      'uso: yard search "texto" [--all] [--limit 4]\n' +
+        "     procura no histórico dos terminais (o do grupo; --all, o workspace inteiro)\n",
+    );
+  }
+  const s = useProjects.getState();
+  const ids = (all ? s.terminals : ctx.terminals).map((t) => t.id);
+  if (ids.length === 0) return ok("Nenhum terminal para procurar.\n");
+
+  const answer = await ipc.searchScrollback(ids, text, limit, TOTAL_LIMIT);
+  return ok(
+    formatSearch(
+      answer,
+      (id) => {
+        // A hit outside the caller's own group has no name in `nameOf`, and
+        // "term_9fa2" tells the reader nothing about where to look.
+        const known = ctx.nameOf.get(id);
+        if (known) return known;
+        const row = s.terminal(id);
+        if (!row) return id;
+        const group = s.groups.find((g) => g.id === row.groupId);
+        return group ? `${baseName(row)}, ${group.name}` : baseName(row);
+      },
+      text,
+    ),
+  );
+}
+
 // --- list -------------------------------------------------------------------
 
+/**
+ * Who the caller can talk to. This is the first command every agent runs, so
+ * it answers the three questions that follow it: what are the names, what
+ * state is each one in, and what is there to read.
+ */
 function cmdList(ctx: Ctx): BridgeResponse {
   const roles = ctx.canvas.roles ?? {};
   const rt = useTerminals.getState().byId;
-  const me = ctx.nameOf.get(ctx.caller.id)!;
+  const mine = ctx.nameOf.get(ctx.caller.id);
   const myRole = roles[ctx.caller.id];
-
-  // The name only: `list` is a roster, and one agent's full instructions
-  // would push everyone else's line off the reader's screen. `role show`
-  // is where the text lives.
-  let out = `You: "${me}"${myRole ? ` — papel: ${myRole.name}` : ""}\n`;
+  let out = `You: "${mine}"${myRole ? ` — papel: ${myRole.name}` : ""}\n`;
 
   const agents = connectedAgents(ctx);
   out += "Agentes conectados:\n";
@@ -286,15 +472,14 @@ function cmdList(ctx: Ctx): BridgeResponse {
       "   ou use `yard connect` / `yard recruit`)\n";
   }
   for (const t of agents) {
-    const r = rt[t.id];
-    // `running` is true of an agent mid-refactor and of one frozen at a
-    // permission prompt. The second one is the whole reason to read this list.
-    const state = r?.blocked ? "travado" : (r?.state ?? "idle");
+    const runtime = rt[t.id];
+    const state = runtime?.blocked ? "travado" : (runtime?.state ?? "idle");
     const role = roles[t.id];
-    const asking = r?.blocked && r.blockedAsk ? ` — pergunta: ${r.blockedAsk}` : "";
-    out +=
-      `  - "${ctx.nameOf.get(t.id)}" [${state}]${role ? ` papel: ${role.name}` : ""}` +
-      `${asking}\n`;
+    // The question on the screen is the whole point of saying "travado": it
+    // is what the reader can actually answer.
+    const asking =
+      runtime?.blocked && runtime.blockedAsk ? ` — pergunta: ${runtime.blockedAsk}` : "";
+    out += `  - "${ctx.nameOf.get(t.id)}" [${state}]${role ? ` papel: ${role.name}` : ""}${asking}\n`;
   }
 
   const notes = connectedNotes(ctx);
@@ -302,9 +487,9 @@ function cmdList(ctx: Ctx): BridgeResponse {
   if (notes.length === 0) out += "  (nenhuma — crie com `yard note create`)\n";
   for (const n of notes) {
     const lines = n.text ? n.text.split("\n").length : 0;
-    out +=
-      `  - "${ctx.noteNameOf.get(n.id)}" (${lines} linha${lines === 1 ? "" : "s"})` +
-      `${n.locked ? " (locked)" : ""}\n`;
+    out += `  - "${ctx.noteNameOf.get(n.id)}" (${lines} linha${lines === 1 ? "" : "s"})${
+      n.locked ? " (locked)" : ""
+    }\n`;
   }
 
   const portals = connectedPortals(ctx);
@@ -314,79 +499,86 @@ function cmdList(ctx: Ctx): BridgeResponse {
       "  (nenhum — peça ao usuário para criar um portal no canvas (W)\n" +
       "   e ligá-lo em você, ou use `yard portal create`)\n";
   }
-  for (const p of portals) {
-    out += `  - "${ctx.portalNameOf.get(p.id)}"  ${p.url}\n`;
-  }
+  for (const p of portals) out += `  - "${ctx.portalNameOf.get(p.id)}"  ${p.url}\n`;
 
-  const enabledRoutines = (ctx.canvas.routines ?? []).filter((r) => r.enabled);
-  if (enabledRoutines.length) {
-    out += `Rotinas ativas no grupo: ${enabledRoutines.length} (\`yard routine list\`)\n`;
+  const routines = (ctx.canvas.routines ?? []).filter((r) => r.enabled);
+  if (routines.length) {
+    out += `Rotinas ativas no grupo: ${routines.length} (\`yard routine list\`)\n`;
   }
   return ok(out);
 }
 
-// --- ask / check ------------------------------------------------------------
-
-interface AskFlags {
-  raw: boolean;
-  noWait: boolean;
-  /** The prompt comes from the request's `stdin` field (`--file`/`--stdin` on the shim). */
-  fromStdin: boolean;
-  timeoutMs: number;
-}
+// --- ask --------------------------------------------------------------------
 
 const ASK_SPEC = {
   "--raw": "bool",
   "--no-wait": "bool",
+  "--queue": "bool",
   "--stdin": "stdin",
   "--file": "stdin",
   "--timeout": "number",
 } as const;
 
-function takeFlags(args: string[], reqTimeout?: number): { rest: string[]; flags: AskFlags } {
-  const p = parseFlags(args, ASK_SPEC);
-  const timeout = p.number.timeout;
+interface AskFlags {
+  raw: boolean;
+  noWait: boolean;
+  queue: boolean;
+  fromStdin: boolean;
+  timeoutMs: number;
+}
+
+/**
+ * The flags of `ask`, and the one number worth explaining: the wait defaults
+ * to fifteen seconds *less* than the caller's own deadline. Waiting right up
+ * to it means the shim times out first, and the agent gets a transport error
+ * where it was owed an answer.
+ */
+function parseAsk(argv: string[], reqTimeout?: number): { rest: string[]; flags: AskFlags } {
+  const args = parseFlags(argv, ASK_SPEC);
+  const asked = args.number.timeout;
   return {
-    rest: p.positional,
+    rest: args.positional,
     flags: {
-      raw: !!p.bool.raw,
-      noWait: !!p.bool["no-wait"],
-      fromStdin: p.fromStdin,
-      // Leave the bridge's own deadline some slack: replying after the CLI
-      // gave up is the same as not replying.
-      timeoutMs:
-        timeout && timeout > 0
-          ? timeout * 1000
-          : Math.max(30_000, (reqTimeout ?? 600_000) - 15_000),
+      raw: !!args.bool.raw,
+      noWait: !!args.bool["no-wait"],
+      queue: !!args.bool.queue,
+      fromStdin: args.fromStdin,
+      timeoutMs: asked && asked > 0 ? asked * 1_000 : Math.max(30_000, (reqTimeout ?? 600_000) - 15_000),
     },
   };
 }
 
 async function cmdAsk(
   ctx: Ctx,
-  args: string[],
+  argv: string[],
   req: BridgeRequest,
 ): Promise<BridgeResponse> {
-  const { rest, flags } = takeFlags(args, req.timeoutMs);
+  const { rest, flags } = parseAsk(argv, req.timeoutMs);
 
+  // `--batch` is the one place several agents are addressed at once. They run
+  // in parallel because they are different processes; the answer keeps each
+  // one under its own name, so a failure of the third does not read as a
+  // failure of all four.
   if (rest[0] === "--batch") {
-    let map: Record<string, string>;
+    let table: Record<string, unknown>;
     try {
-      map = JSON.parse(rest[1] ?? "");
+      table = JSON.parse(rest[1] ?? "");
     } catch {
       return err('yard: --batch espera um JSON {"Agente": "prompt", ...}\n');
     }
     const results = await Promise.all(
-      Object.entries(map).map(async ([name, prompt]) => {
+      Object.entries(table).map(async ([name, prompt]) => {
         const r = await askOne(ctx, name, String(prompt), flags);
-        return r.code === 0 ? { name, output: r.output } : { name, error: r.output.trim() };
+        return r.code === 0
+          ? { name, output: r.output }
+          : { name, error: r.output.trim() };
       }),
     );
     return ok(JSON.stringify(results, null, 2) + "\n");
   }
 
-  const [name, positional] = rest;
-  const prompt = flags.fromStdin ? (req.stdin ?? "") : positional;
+  const [name, inline] = rest;
+  const prompt = flags.fromStdin ? (req.stdin ?? "") : inline;
   if (!name || prompt == null) {
     return err(
       'uso: yard ask "Agente" "prompt" [--raw] [--no-wait] [--timeout s]\n' +
@@ -400,6 +592,14 @@ async function cmdAsk(
   return askOne(ctx, name, prompt, flags);
 }
 
+/**
+ * One question to one agent, and the wait for the answer.
+ *
+ * "Finished" cannot be asked of a CLI, so it is inferred: bytes appeared and
+ * then stopped appearing. The `grew` latch is what keeps a slow agent from
+ * being reported as silent: without it, three seconds of thinking before the
+ * first byte would count as an answer of nothing.
+ */
 async function askOne(
   ctx: Ctx,
   name: string,
@@ -418,89 +618,93 @@ async function askOne(
     );
   }
 
+  if (flags.queue) {
+    const label = ctx.nameOf.get(target.id) ?? name;
+    const queued = useQueue
+      .getState()
+      .enqueue(target.id, prompt, "bridge", ctx.nameOf.get(ctx.caller.id));
+    return queued.ok
+      ? ok(queuedLine(label, queued.position ?? 1))
+      : err(
+          queued.reason === "cheia"
+            ? `yard: a fila de "${label}" está cheia (${QUEUE_CAP}). ` +
+                "Espere ela andar ou peça ao usuário para limpá-la.\n"
+            : "yard: nada para enfileirar (prompt vazio).\n",
+        );
+  }
+
   const before = await ipc.ptyProbe(target.id);
   if (!before.alive) {
-    return err(
-      `yard: "${name}" não está rodando. ` +
-        "Peça ao usuário para retomá-lo.\n",
-    );
+    return err(`yard: "${name}" não está rodando. Peça ao usuário para retomá-lo.\n`);
   }
   const baseline = before.totalBytes;
   const t0 = Date.now();
 
   await injectPrompt(target.id, prompt, { raw: flags.raw });
-
   if (flags.noWait) return ok(`enviado para "${ctx.nameOf.get(target.id)}".\n`);
 
-  // Wait for "finished": there was new output and then silence (or the
-  // agent detector's idle signal, or the process exited).
-  let lastSeq = baseline;
+  let seen = baseline;
   let grew = false;
   let quiet = 0;
   while (Date.now() - t0 < flags.timeoutMs) {
-    await sleep(2000);
+    await sleep(2_000);
     const probe = await ipc.ptyProbe(target.id);
     if (!probe.alive) break;
-    if (probe.totalBytes > lastSeq) {
-      lastSeq = probe.totalBytes;
+    if (probe.totalBytes > seen) {
+      seen = probe.totalBytes;
       grew = true;
       quiet = 0;
     } else if (grew) {
       quiet++;
     }
     const rt = useTerminals.getState().byId[target.id];
-    // `finished` is a latch (only focus releases it) and the echo of the
-    // injected prompt is activity after `t0` — what tells a stale idle from a
-    // fresh one is the event's own `finishedAt`.
+    // `finishedAt >= t0` is what tells a fresh idle from the one left over
+    // from the previous turn. The flag is a latch, and reading it without
+    // the timestamp would return instantly on stale state.
     if (grew && rt?.finished && rt.finishedAt >= t0) break;
     if (grew && quiet >= 3) break; // ~6 s without a new byte
   }
 
-  const after = await ipc.ptyReadSince(target.id, baseline, 64 * 1024);
-
-  // The process died while we waited. `read_since` cannot honour the cursor
-  // for a PTY that left the registry — it falls back to the tail of the
-  // scrollback on disk and reports `totalBytes: 0`. Treating that as the
-  // delta handed the caller 30 KB of some *earlier* task as if it were the
-  // answer, with exit code 0, and an orchestrating agent moved on believing
-  // it had been replied to.
-  if (!after.alive) {
+  const delta = await ipc.ptyReadSince(target.id, baseline, 64 * 1024);
+  if (!delta.alive) {
     return err(
       `yard: "${ctx.nameOf.get(target.id)}" encerrou enquanto eu esperava a resposta — ` +
         "o processo não está mais rodando. Peça ao usuário para retomá-lo e tente de novo.\n",
     );
   }
+  if (delta.totalBytes > baseline || delta.data.length > 0) grew = true;
 
-  if (after.totalBytes > baseline || after.data.length > 0) grew = true;
-  const clean = stripAnsi(after.data).trim();
-  if (!grew && !clean) {
+  const text = stripAnsi(delta.data).trim();
+  if (!grew && !text) {
     return err(
-      `yard: sem resposta de "${ctx.nameOf.get(target.id)}" em ${Math.round(
-        flags.timeoutMs / 1000,
-      )}s. Use \`yard check "${ctx.nameOf.get(target.id)}"\` para ver o estado.\n`,
+      `yard: sem resposta de "${ctx.nameOf.get(target.id)}" em ` +
+        `${Math.round(flags.timeoutMs / 1_000)}s. Use \`yard check "${ctx.nameOf.get(target.id)}"\` ` +
+        "para ver o estado.\n",
     );
   }
-  return ok(tail(clean, 30_000) + "\n");
+  return ok(tail(text, 30_000) + "\n");
 }
 
+// --- check ------------------------------------------------------------------
+
+/** A photograph of one agent: the last sixty lines and what it is doing. */
 async function cmdCheck(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
   const name = args[0];
   if (!name) return err('uso: yard check "Agente"\n');
   const target = findAgent(ctx, name);
   if (!target) return err(`yard: "${name}" não está conectado a você.\n`);
-  const att = await ipc.ptyReadSince(target.id, 0, 64 * 1024);
-  const clean = stripAnsi(att.data).trim();
-  const lines = clean.split("\n");
-  const view = lines.slice(-60).join("\n");
+
+  const delta = await ipc.ptyReadSince(target.id, 0, 64 * 1024);
+  const lines = stripAnsi(delta.data).trim().split("\n").slice(-60).join("\n");
   const rt = useTerminals.getState().byId[target.id];
-  const state = !att.alive
+  const state = !delta.alive
     ? "parado"
     : rt?.blocked
       ? `travado esperando o usuário — ${rt.blockedAsk ?? "pergunta na tela"}`
       : rt?.finished
         ? "terminou de trabalhar"
         : "rodando";
-  return ok(`[${ctx.nameOf.get(target.id)} — ${state}]\n${tail(view, 8_000)}\n`);
+  return ok(`[${ctx.nameOf.get(target.id)} — ${state}]\n${tail(lines, 8_000)}\n`);
 }
 
 // --- wait -------------------------------------------------------------------
@@ -513,27 +717,13 @@ const WAIT_SPEC = {
   "--fresh": "bool",
 } as const;
 
-/** How long the loop may sleep with nothing happening. A safety net, not the clock. */
+/** Safety net under the store subscription, not the way the wait works. */
 const WAIT_TICK_MS = 1_000;
 
 /**
- * Blocks until connected agents stop — the command that turns polling into
- * waiting.
- *
- * `check` is a photograph, so an orchestrator that wanted to know when three
- * recruits were done had exactly one move: take photograph after photograph.
- * Each one costs a round trip and sixty lines of somebody else's terminal in
- * its context window, and it still learns the news one cycle late.
- *
- * This waits on the runtime mirror instead. The store already receives the
- * idle event that decides `finished`/`blocked`, so the answer arrives when the
- * state actually changes; the one-second tick underneath is a safety net for a
- * transition that somehow arrives without a store write, not the mechanism.
- *
- * `--fresh` exists for the `ask --no-wait` then `wait` pattern: `finished` may
- * still be set from the *previous* turn, and returning instantly on stale
- * state would be the same bug as not waiting at all. With it, a terminal only
- * counts once its byte counter has moved past where it was when `wait` began.
+ * Waiting on somebody else, which is what turns `check` from a photograph into
+ * an orchestration. Without it the only move was to poll `check` in a loop and
+ * guess at the sleep between calls.
  */
 async function cmdWait(
   ctx: Ctx,
@@ -570,58 +760,61 @@ async function cmdWait(
     targets.push(target);
   }
 
-  // Same slack as `ask`: replying after the CLI gave up is not replying.
+  // Same slack as `ask`: finish before the shim's own deadline.
   const timeoutMs =
     p.number.timeout && p.number.timeout > 0
-      ? p.number.timeout * 1000
+      ? p.number.timeout * 1_000
       : Math.max(30_000, (reqTimeout ?? 600_000) - 15_000);
 
-  const baseline = new Map<string, number>();
+  // `--fresh` demands *new* output before counting a target as arrived. The
+  // flag exists because `finished` is true of an agent that has been idle
+  // since yesterday, and a wait that returns instantly on that is not a wait.
+  const marks = new Map<string, number>();
   if (p.bool.fresh) {
     for (const t of targets) {
       try {
-        baseline.set(t.id, (await ipc.ptyProbe(t.id)).totalBytes);
+        marks.set(t.id, (await ipc.ptyProbe(t.id)).totalBytes);
       } catch {
-        baseline.set(t.id, 0);
+        marks.set(t.id, 0);
       }
     }
   }
 
-  const reached = await waitForAgents(
+  const reached = await waitForReach(
     targets.map((t) => t.id),
     until,
     !!p.bool.all,
-    p.bool.fresh ? baseline : null,
+    p.bool.fresh ? marks : null,
     timeoutMs,
   );
 
   const rt = useTerminals.getState().byId;
-  const lines = targets
+  const arrived = targets
     .filter((t) => reached.has(t.id))
-    .map((t) => `- "${ctx.nameOf.get(t.id)}": ${describeStop(rt[t.id])}`);
+    .map((t) => `- "${ctx.nameOf.get(t.id)}": ${waitReason(rt[t.id])}`);
 
-  if (lines.length === 0) {
-    const who = targets.map((t) => `"${ctx.nameOf.get(t.id)}"`).join(", ");
+  if (arrived.length === 0) {
+    const names = targets.map((t) => `"${ctx.nameOf.get(t.id)}"`).join(", ");
     return err(
-      `yard: ${who} não chegou em "${until}" em ${Math.round(timeoutMs / 1000)}s. ` +
+      `yard: ${names} não chegou em "${until}" em ${Math.round(timeoutMs / 1_000)}s. ` +
         "Use `yard check` para ver o estado atual.\n",
     );
   }
 
   const pending = targets.filter((t) => !reached.has(t.id));
-  let out = `${lines.length} de ${targets.length} em "${until}":\n${lines.join("\n")}\n`;
+  let out = `${arrived.length} de ${targets.length} em "${until}":\n${arrived.join("\n")}\n`;
   if (pending.length > 0) {
     out += `Ainda trabalhando: ${pending
       .map((t) => `"${ctx.nameOf.get(t.id)}"`)
       .join(", ")}\n`;
   }
-  // `--all` is a promise about the whole set. The shim prints the body either
-  // way, so failing the exit code costs the caller no information and stops an
-  // orchestrator from moving on with half the team still working.
+  // `--all` is a promise about the whole set, so a partial answer is a
+  // failure. The body is printed either way: failing the exit code must not
+  // cost the caller the information.
   return pending.length > 0 && p.bool.all ? err(out) : ok(out);
 }
 
-function describeStop(rt: TerminalRuntime | undefined): string {
+function waitReason(rt: TerminalRuntime | undefined): string {
   if (!rt) return "estado desconhecido";
   if (rt.state === "exited" || rt.state === "error") return "o processo parou";
   if (rt.blocked) return `travado — ${rt.blockedAsk ?? "pergunta na tela"}`;
@@ -629,68 +822,70 @@ function describeStop(rt: TerminalRuntime | undefined): string {
 }
 
 /**
- * Resolves when `all` (or the first, when not) of the ids reach `until`.
- *
- * The store subscription is what makes this cheap: no IPC per turn of the
- * loop, and the wake-up rides the same event that painted the badge.
+ * The wait itself. It rides the store's own subscription, so the answer
+ * arrives when the state actually changes; the one-second tick underneath is
+ * a safety net for a transition that somehow does not publish.
  */
-async function waitForAgents(
-  ids: string[],
+async function waitForReach(
+  ids: readonly string[],
   until: WaitUntil,
   all: boolean,
-  baseline: Map<string, number> | null,
+  marks: Map<string, number> | null,
   timeoutMs: number,
 ): Promise<Set<string>> {
   const reached = new Set<string>();
   const deadline = Date.now() + timeoutMs;
 
-  const settled = async (id: string): Promise<boolean> => {
+  const arrived = async (id: string): Promise<boolean> => {
     if (!reachedWait(useTerminals.getState().byId[id], until)) return false;
-    if (!baseline) return true;
+    if (!marks) return true;
     try {
-      return (await ipc.ptyProbe(id)).totalBytes > (baseline.get(id) ?? 0);
+      return (await ipc.ptyProbe(id)).totalBytes > (marks.get(id) ?? 0);
     } catch {
-      // The PTY is gone: that is a stop, and pretending otherwise would hold
-      // the caller until the timeout for a process that will never answer.
       return true;
     }
   };
 
   for (;;) {
     for (const id of ids) {
-      if (!reached.has(id) && (await settled(id))) reached.add(id);
+      if (!reached.has(id) && (await arrived(id))) reached.add(id);
     }
-    if (all ? reached.size === ids.length : reached.size > 0) break;
-    if (Date.now() >= deadline) break;
-    await nextRuntimeChange(deadline);
+    if ((all ? reached.size === ids.length : reached.size > 0) || Date.now() >= deadline) break;
+    await nextChange(deadline);
   }
   return reached;
 }
 
-/** Wakes on the next runtime write, or on the tick, or at the deadline. */
-function nextRuntimeChange(deadline: number): Promise<void> {
+/** Resolves on the next store change, or on the tick, whichever comes first. */
+function nextChange(deadline: number): Promise<void> {
   return new Promise((resolve) => {
-    let over = false;
+    let done = false;
     const finish = () => {
-      if (over) return;
-      over = true;
+      if (done) return;
+      done = true;
       unsubscribe();
       clearTimeout(timer);
       resolve();
     };
     const unsubscribe = useTerminals.subscribe(finish);
-    const timer = setTimeout(
-      finish,
-      Math.max(0, Math.min(WAIT_TICK_MS, deadline - Date.now())),
-    );
+    const timer = setTimeout(finish, Math.max(0, Math.min(WAIT_TICK_MS, deadline - Date.now())));
   });
 }
 
-// --- note -------------------------------------------------------------------
+// --- notes ------------------------------------------------------------------
 
+/**
+ * The shared notebook of a group. An agent writes what the next one needs;
+ * the user reads it on the canvas without opening a terminal.
+ *
+ * A note the user locked is the one thing here that refuses: it is the
+ * user's own text, and an agent that "fixed" it would be editing the brief it
+ * was given.
+ */
 function cmdNote(ctx: Ctx, args: string[], req: BridgeRequest): BridgeResponse {
   const sub = args[0]?.toLowerCase();
   const rest = args.slice(1);
+
   switch (sub) {
     case "create": {
       const p = parseFlags(rest, {
@@ -698,108 +893,104 @@ function cmdNote(ctx: Ctx, args: string[], req: BridgeRequest): BridgeResponse {
         "--stdin": "stdin",
         "--file": "stdin",
       });
-      const pinned = p.string.name;
+      const name = p.string.name;
       const text = p.fromStdin ? (req.stdin ?? "") : (p.positional[0] ?? "");
       const id = nanoid(8);
-      const base = callerRect(ctx);
-      const item: NoteItem = {
+      const rect = callerRect(ctx);
+      const note = {
         id,
-        type: "note",
-        x: base.x - 280,
-        y: base.y + connectedNotes(ctx).length * 40,
+        type: "note" as const,
+        x: rect.x - 280,
+        y: rect.y + connectedNotes(ctx).length * 40,
         w: 240,
         h: 180,
         text,
         color: "#f5f5f5",
-        ...(pinned ? { name: pinned } : {}),
+        ...(name ? { name } : {}),
       };
-      commitCanvas(ctx.groupId, (c) =>
-        addItems(c, item, connection(ctx.caller.id, id)),
-      );
-      return ok(`Nota criada e conectada: "${pinned ?? noteName(item)}"\n`);
+      commitCanvas(ctx.groupId, (c) => addItems(c, note, connection(ctx.caller.id, id)));
+      return ok(`Nota criada e conectada: "${name ?? noteName(note)}"\n`);
     }
+
     case "read": {
-      const note = rest[0] ? findNote(ctx, rest[0]) : null;
+      const note: NoteItem | null = rest[0] ? findNote(ctx, rest[0]) : null;
       if (!note) return err(noteMiss(ctx, rest[0]));
-      const itemName = ctx.noteNameOf.get(note.id)!;
+      const name = ctx.noteNameOf.get(note.id);
       const lines = note.text.split("\n");
-      // An empty note is a fact, not an error — say it instead of answering
-      // with a blank line the caller has to interpret.
-      if (!note.text) return ok(`(a nota "${itemName}" está vazia)\n`);
+      if (!note.text) return ok(`(a nota "${name}" está vazia)\n`);
+
       const start = Math.max(1, Number(rest[1]) || 1);
       const count = Math.max(1, Number(rest[2]) || lines.length);
-      // Asking past the end used to return `ok("\n")`, and an agent reading
-      // that concluded the note was empty rather than that it had asked for
-      // lines which do not exist.
+      // Said, not silently empty: an agent that asked for lines which do not
+      // exist concluded the note was empty and carried on.
       if (start > lines.length) {
         return err(
-          `yard: a nota "${itemName}" tem ${lines.length} linha(s); você pediu a partir da ${start}.\n`,
+          `yard: a nota "${name}" tem ${lines.length} linha(s); você pediu a partir da ${start}.\n`,
         );
       }
       const slice = lines.slice(start - 1, start - 1 + count);
       const width = String(start + slice.length - 1).length;
       const body = slice
-        .map((l, i) => `${String(start + i).padStart(width)}  ${l}`)
+        .map((line, i) => `${String(start + i).padStart(width)}  ${line}`)
         .join("\n");
       return ok(`${body}\n`);
     }
+
     case "write":
     case "edit": {
-      const note = rest[0] ? findNote(ctx, rest[0]) : null;
+      const note: NoteItem | null = rest[0] ? findNote(ctx, rest[0]) : null;
       if (!note) return err(noteMiss(ctx, rest[0]));
-      const oldName = ctx.noteNameOf.get(note.id)!;
-      if (note.locked) return err(lockedMsg(oldName));
+      const name = ctx.noteNameOf.get(note.id);
+      if (note.locked) return err(lockedMsg(name));
+
       let nextText: string;
       if (sub === "write") {
-        // Same spec as everywhere else: this used to be an `includes()` check,
-        // which accepted the flag in positions the other commands rejected.
-        const p = parseFlags(rest.slice(1), {
-          "--stdin": "stdin",
-          "--file": "stdin",
-        });
-        const content = p.fromStdin ? req.stdin : p.positional[0];
-        if (content == null) {
+        const p = parseFlags(rest.slice(1), { "--stdin": "stdin", "--file": "stdin" });
+        const body = p.fromStdin ? req.stdin : p.positional[0];
+        if (body == null) {
           return err(
             'uso: yard note write "Nome" "conteúdo"\n' +
               '     yard note write "Nome" --file texto.md   (multi-linha)\n',
           );
         }
-        nextText = content;
+        nextText = body;
       } else {
         const [, oldText, newText] = rest;
         if (oldText == null || newText == null) {
           return err('uso: yard note edit "Nome" "texto antigo" "texto novo"\n');
         }
         if (!note.text.includes(oldText)) {
-          return err(`yard: o texto antigo não aparece na nota "${oldName}".\n`);
+          return err(`yard: o texto antigo não aparece na nota "${name}".\n`);
         }
         nextText = note.text.replace(oldText, newText);
       }
-      commitCanvas(ctx.groupId, (c) =>
-        patchItemOfType(c, note.id, "note", { text: nextText }),
-      );
-      const renamed = !note.name && noteName({ ...note, text: nextText }) !== oldName;
+
+      commitCanvas(ctx.groupId, (c) => patchItemOfType(c, note.id, "note", { text: nextText }));
+      // A note with no `--name` is named after its first line, so writing to
+      // it can rename it. Saying so keeps the next `yard note read` from
+      // missing a note nobody moved.
+      const renamed = !note.name && noteName({ ...note, text: nextText }) !== name;
       return ok(
-        `Nota "${oldName}" atualizada.` +
+        `Nota "${name}" atualizada.` +
           (renamed ? ` Novo nome: "${noteName({ ...note, text: nextText })}".` : "") +
           "\n",
       );
     }
+
     case "delete": {
-      const note = rest[0] ? findNote(ctx, rest[0]) : null;
+      const note: NoteItem | null = rest[0] ? findNote(ctx, rest[0]) : null;
       if (!note) return err(noteMiss(ctx, rest[0]));
-      if (note.locked) return err(lockedMsg(ctx.noteNameOf.get(note.id)!));
+      if (note.locked) return err(lockedMsg(ctx.noteNameOf.get(note.id)));
       commitCanvas(ctx.groupId, (c) => removeItemAndEdges(c, note.id));
       return ok(`Nota "${ctx.noteNameOf.get(note.id)}" removida.\n`);
     }
+
     default:
-      return err(
-        "uso: yard note create|read|write|edit|delete … (veja `yard help`)\n",
-      );
+      return err("uso: yard note create|read|write|edit|delete … (veja `yard help`)\n");
   }
 }
 
-function lockedMsg(name: string): string {
+function lockedMsg(name?: string): string {
   return (
     `yard: a nota "${name}" está travada pelo usuário — só ele edita. ` +
     "Peça a mudança em vez de contorná-la (ou escreva numa nota sua).\n"
@@ -817,35 +1008,51 @@ function noteMiss(ctx: Ctx, name?: string): string {
 
 // --- connect / recruit / dismiss --------------------------------------------
 
+/**
+ * Drawing a wire from the CLI.
+ *
+ * The access rule holds here too, or it is not a rule: one of the two ends
+ * has to be the caller or something already reachable from it. Otherwise an
+ * agent could wire together two strangers and then talk to both.
+ */
 function cmdConnect(ctx: Ctx, args: string[]): BridgeResponse {
   const [a, b] = args;
   if (!a || !b) return err('uso: yard connect "A" "B"\n');
-  // A flow card is a cable end too: that is how a CLI hooks itself onto a
-  // pipeline without the user's mouse.
-  const resolve = (name: string) => {
+
+  const resolve = (name: string): { kind: string; id: string } | null => {
     const found = findAny(ctx, name);
     if (found) return found;
     const flow = findFlow(ctx.canvas, name);
-    return flow ? { kind: "flow" as const, id: flow.id } : null;
+    return flow ? { kind: "flow", id: flow.id } : null;
   };
-  const ea = resolve(a);
-  const eb = resolve(b);
-  if (!ea) return err(`yard: não achei "${a}" neste grupo.\n`);
-  if (!eb) return err(`yard: não achei "${b}" neste grupo.\n`);
-  if (ea.id === eb.id) return err("yard: os dois lados são a mesma coisa.\n");
-  // The gate has to hold here too, or it is not a gate: an agent that could
-  // wire any two things in the group could wire itself to everything and
-  // reach the whole group — exactly what the skill manual says it cannot do.
-  if (!reaches(ctx, ea.id) && !reaches(ctx, eb.id)) {
+  const left = resolve(a);
+  if (!left) return err(`yard: não achei "${a}" neste grupo.\n`);
+  const right = resolve(b);
+  if (!right) return err(`yard: não achei "${b}" neste grupo.\n`);
+  if (left.id === right.id) return err("yard: os dois lados são a mesma coisa.\n");
+
+  if (!reaches(ctx, left.id) && !reaches(ctx, right.id)) {
     return err(
-      `yard: nem "${a}" nem "${b}" estão ao seu alcance — uma das pontas ` +
-        "precisa ser você ou algo já conectado a você. Peça ao usuário para " +
-        "desenhar essa conexão no canvas.\n",
+      `yard: nem "${a}" nem "${b}" estão ao seu alcance — uma das pontas precisa ser você ` +
+        "ou algo já conectado a você. Peça ao usuário para desenhar essa conexão no canvas.\n",
     );
   }
-  if (isConnected(ctx.canvas, ea.id, eb.id)) return ok("já estavam conectados.\n");
-  commitCanvas(ctx.groupId, (c) => addItems(c, connection(ea.id, eb.id)));
+  if (isConnected(ctx.canvas, left.id, right.id)) return ok("já estavam conectados.\n");
+
+  commitCanvas(ctx.groupId, (c) => addItems(c, connection(left.id, right.id)));
   return ok(`Conectado: "${a}" ↔ "${b}".\n`);
+}
+
+/** What a recruit is made of, once the working directory is known. */
+interface RecruitPlan {
+  name: string;
+  program: string;
+  cliArgs: string[];
+  kind: TerminalRow["kind"];
+  rowAgentId: string | null;
+  dir?: string;
+  cardRole?: CardRole;
+  launch: RoleLaunch;
 }
 
 async function cmdRecruit(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
@@ -856,15 +1063,15 @@ async function cmdRecruit(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
     "--dir": "string",
     "--replace": "string",
     "--floor": "string",
-    // Accepted and ignored: the shim adds it to every call.
     "--timeout": "number",
   });
-  const agentId = p.string.agent ?? p.string.preset;
+  const agent = p.string.agent ?? p.string.preset;
   const role = p.string.role;
   const dir = p.string.dir;
   const replace = p.string.replace;
-  const floorName = p.string.floor;
+  const floor = p.string.floor;
   const name = p.positional[0];
+
   if (!name) {
     return err(
       'uso: yard recruit "Nome" [--agent claude|codex|…] [--role "…"] [--dir PATH]\n' +
@@ -872,92 +1079,89 @@ async function cmdRecruit(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
         '     yard recruit "Nome" --replace "Antigo" [--agent …]   (troca o processo do cartão)\n',
     );
   }
-  if (replace && floorName) {
-    return err("yard: --replace e --floor não combinam — o cartão substituído já mora num grupo.\n");
+  if (replace && floor) {
+    return err(
+      "yard: --replace e --floor não combinam — o cartão substituído já mora num grupo.\n",
+    );
   }
 
+  // Without `--agent`, the recruit is a copy of the caller: same binary, same
+  // kind. That is what makes `yard recruit "Segundo"` a one-word command.
   let program = ctx.caller.program;
   const cliArgs: string[] = [];
   let kind = ctx.caller.kind;
   let rowAgentId = ctx.caller.agentId ?? null;
-  if (agentId) {
-    const agents = await ipc.detectAgents(false);
-    const found = agents.find(
-      (x) =>
-        x.id.toLowerCase() === agentId!.toLowerCase() ||
-        x.name.toLowerCase() === agentId!.toLowerCase(),
+
+  if (agent) {
+    const detected = await ipc.detectAgents(false);
+    const found = detected.find(
+      (a) =>
+        a.id.toLowerCase() === agent.toLowerCase() ||
+        a.name.toLowerCase() === agent.toLowerCase(),
     );
     if (!found || !found.installed || !found.bin) {
-      const have = agents.filter((x) => x.installed).map((x) => x.id);
+      const available = detected.filter((a) => a.installed).map((a) => a.id);
       return err(
-        `yard: agente "${agentId}" não está instalado. Disponíveis: ${have.join(", ")}.\n`,
+        `yard: agente "${agent}" não está instalado. Disponíveis: ${available.join(", ")}.\n`,
       );
     }
     program = found.bin;
     kind = "agent";
     rowAgentId = found.id;
   }
-  // Without `--role`, the recruit is born into whatever role that CLI is
-  // configured with in Configurações › Agentes — the same one a click in
-  // "Nova aba" would have given it. An explicit `--role` still wins.
+
+  // A role asked for on the command line wins; otherwise the recruit is born
+  // into whatever role that CLI is configured with in Configurações › Agentes.
   const cardRole = role
     ? await resolveRole(ctx.canvas, role)
-    : (defaultRoleOf(useAgentDefaults.getState().defaults, rowAgentId)?.role ??
-      undefined);
-  // The role reaches the recruit the same way it reaches a CLI the user opens
-  // by hand: through the flag when the CLI has one, typed in when it does not.
+    : (defaultRoleOf(useAgentDefaults.getState().defaults, rowAgentId)?.role ?? undefined);
   const launch = roleLaunch(rowAgentId, cardRole);
   cliArgs.push(...launch.args);
-  // What this CLI is configured with — the fixed line, the cache, the distro —
-  // is added by `bornAs`, once the working directory is known.
 
-  if (replace) return replaceCard(ctx, replace, { name, program, cliArgs, kind, rowAgentId, dir, cardRole, launch });
-
-  if (floorName) {
-    return recruitInFloor(ctx, floorName, { name, program, cliArgs, kind, rowAgentId, dir, cardRole, launch });
-  }
+  const plan: RecruitPlan = {
+    name,
+    program,
+    cliArgs,
+    kind,
+    rowAgentId,
+    ...(dir ? { dir } : {}),
+    ...(cardRole ? { cardRole } : {}),
+    launch,
+  };
+  if (replace) return replaceCard(ctx, replace, plan);
+  if (floor) return recruitOnFloor(ctx, floor, plan);
 
   const cwd = dir ?? ctx.caller.cwd;
   const s = useProjects.getState();
   const born = bornAs(rowAgentId, program, cliArgs, cwd);
-  const newId = s.addTerminal({
+  const id = s.addTerminal({
     groupId: ctx.groupId,
     title: name,
-    kind: kind as "shell" | "agent",
+    kind,
     agentId: rowAgentId,
     program: born.program,
     args: born.args,
     cwd,
-    // Beside whoever asked for it. Born on the other surface it would be
-    // wired to an agent that cannot reach it — `connectedAgents` only ever
-    // looks at the caller's own.
     surface: normalizeSurface(ctx.caller.surface),
   });
 
-  const base = callerRect(ctx);
-  const idx = connectedAgents(ctx).length;
+  const rect = callerRect(ctx);
+  const nth = connectedAgents(ctx).length;
   commitCanvas(ctx.groupId, (c) => ({
-    ...addItems(c, connection(ctx.caller.id, newId)),
+    ...addItems(c, connection(ctx.caller.id, id)),
     nodes: {
       ...c.nodes,
-      [newId]: {
-        x: base.x + base.w + 110,
-        y: base.y + idx * 90,
-        w: NODE_DEFAULT_W,
-        h: NODE_DEFAULT_H,
-      },
+      [id]: { x: rect.x + rect.w + 110, y: rect.y + nth * 90, w: NODE_DEFAULT_W, h: NODE_DEFAULT_H },
     },
-    roles: cardRole ? { ...(c.roles ?? {}), [newId]: cardRole } : c.roles,
+    roles: cardRole ? { ...(c.roles ?? {}), [id]: cardRole } : c.roles,
   }));
 
   try {
-    await spawnCard(newId, { program, args: cliArgs, cwd, kind, title: name });
+    await spawnCard(id, { program, args: cliArgs, cwd, kind, title: name });
   } catch (e) {
-    return err(
-      `yard: terminal "${name}" criado no canvas, mas o processo não subiu: ${e}\n`,
-    );
+    return err(`yard: terminal "${name}" criado no canvas, mas o processo não subiu: ${e}\n`);
   }
-  if (launch.briefing) void deliverBriefing(newId, launch.briefing);
+  if (launch.briefing) void deliverBriefing(id, launch.briefing);
   return ok(
     `Recrutado "${name}"${cardRole ? ` (papel: ${cardRole.name})` : ""} — conectado a você. ` +
       "Dê alguns segundos para o agente subir antes do primeiro `yard ask`.\n",
@@ -965,76 +1169,62 @@ async function cmdRecruit(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
 }
 
 /**
- * `recruit --replace "Antigo"`: swaps the process behind a card that
- * already exists, keeping id, position, connections and role.
- *
- * Reusing the **same terminal id** is the trick: the already-mounted
- * `XTermView` keeps listening on `pty://output/<id>`, so the new terminal
- * appears in the old one's place without the card flashing or the canvas
- * arrows coming undone.
+ * `kill` only signals: the id stays in the Rust registry until the reader
+ * thread sees EOF and cleans up. Spawning before that dies with "id already
+ * in use", so the replacement waits for the id to actually go.
  */
-/** Waits for the id to leave the Rust registry so it can be reused. */
-async function waitPtyGone(id: string, timeoutMs = 5000): Promise<boolean> {
-  const theEnd = Date.now() + timeoutMs;
-  while (Date.now() < theEnd) {
+async function waitPtyGone(id: string, timeoutMs = 5_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     if (!(await ipc.ptyExists(id).catch(() => false))) return true;
     await sleep(80);
   }
   return false;
 }
 
+/**
+ * Swapping the process behind a card, keeping the card: position, wires and
+ * role stay, so the canvas does not change at all.
+ */
 async function replaceCard(
   ctx: Ctx,
-  targetLabel: string,
-  newValue: {
-    name: string;
-    program: string;
-    cliArgs: string[];
-    kind: string;
-    rowAgentId: string | null;
-    dir?: string;
-    cardRole?: CardRole;
-    launch: RoleLaunch;
-  },
+  who: string,
+  plan: RecruitPlan,
 ): Promise<BridgeResponse> {
   const target =
-    findAgent(ctx, targetLabel) ??
+    findAgent(ctx, who) ??
     ctx.terminals.find(
-      (t) => ctx.nameOf.get(t.id)!.toLowerCase() === targetLabel.trim().toLowerCase(),
+      (t) => ctx.nameOf.get(t.id)?.toLowerCase() === who.trim().toLowerCase(),
     ) ??
     null;
   if (!target) {
     return err(
-      `yard: não achei "${targetLabel}" neste grupo para substituir. ` +
+      `yard: não achei "${who}" neste grupo para substituir. ` +
         "Rode `yard list` para ver os nomes.\n",
     );
   }
-  const cwd = newValue.dir ?? target.cwd;
-  const s = useProjects.getState();
 
+  const cwd = plan.dir ?? target.cwd;
+  const s = useProjects.getState();
   await disposePty(target.id);
-  // `kill` only signals: the id stays in the Rust registry until the reader
-  // thread sees EOF and cleans up. Spawning before that dies with "pty ja
-  // esta rodando" — the same reason `pty::restart` waits on the other side.
   if (!(await waitPtyGone(target.id))) {
-    // Be honest about what already happened. This used to say "o cartão está
-    // intacto. Tente de novo." — after `disposePty` had already killed the
-    // process and forgotten its scrollback. The agent that read it retried
-    // believing nothing had changed, while the user had just lost a live
-    // teammate and its history.
+    // Honest about what already happened: the old process and its scrollback
+    // are gone either way, and pretending otherwise sends the caller looking
+    // for a history that no longer exists.
     return err(
-      `yard: matei o processo de "${targetLabel}" mas o id não saiu do registro a tempo, ` +
-        `então não consegui subir "${newValue.name}" no lugar. ` +
-        "O cartão continua no canvas (posição, conexões e papel), parado e ainda " +
-        `apontando para "${targetLabel}" — o processo dele e o histórico já foram embora. ` +
-        "Espere alguns segundos e rode o mesmo `recruit --replace` de novo.\n",
+      `yard: matei o processo de "${who}" mas o id não saiu do registro a tempo, então não ` +
+        `consegui subir "${plan.name}" no lugar. O cartão continua no canvas (posição, ` +
+        `conexões e papel), parado e ainda apontando para "${who}" — o processo dele e o ` +
+        "histórico já foram embora. Espere alguns segundos e rode o mesmo " +
+        "`recruit --replace` de novo.\n",
     );
   }
-  const born = bornAs(newValue.rowAgentId, newValue.program, newValue.cliArgs, cwd);
+
+  const born = bornAs(plan.rowAgentId, plan.program, plan.cliArgs, cwd);
   s.updateTerminal(target.id, {
-    title: newValue.name,
-    kind: newValue.kind as "shell" | "agent",
-    agentId: newValue.rowAgentId,
+    title: plan.name,
+    kind: plan.kind,
+    agentId: plan.rowAgentId,
     program: born.program,
     args: born.args,
     cwd,
@@ -1047,123 +1237,110 @@ async function replaceCard(
       program: born.program,
       args: born.args,
       cwd,
-      kind: newValue.kind,
-      title: newValue.name,
+      kind: plan.kind,
+      title: plan.name,
     });
-    // The view was already mounted when the PTY died; without this the card
-    // would stay marked "encerrado" until the first activity.
     useTerminals.getState().markRunning(target.id, snap.pid);
   } catch (e) {
     return err(
-      `yard: o cartão de "${targetLabel}" já aponta para "${newValue.name}", mas o processo não subiu: ${e}. ` +
+      `yard: o cartão de "${who}" já aponta para "${plan.name}", mas o processo não subiu: ${e}. ` +
         "Peça ao usuário para apertar ▶ no cartão.\n",
     );
   }
 
-  // Without `--role` the canvas does not change at all: node and connections
-  // are the same, and the new title already came through `updateTerminal`.
-  if (newValue.cardRole) {
-    const role = newValue.cardRole;
-    commitCanvas(ctx.groupId, (c) => ({
-      ...c,
-      roles: { ...(c.roles ?? {}), [target.id]: role },
-    }));
+  if (plan.cardRole) {
+    const role = plan.cardRole;
+    commitCanvas(ctx.groupId, (c) => ({ ...c, roles: { ...(c.roles ?? {}), [target.id]: role } }));
   }
-  if (newValue.launch.briefing) void deliverBriefing(target.id, newValue.launch.briefing);
+  if (plan.launch.briefing) void deliverBriefing(target.id, plan.launch.briefing);
   return ok(
-    `Cartão de "${targetLabel}" agora roda "${newValue.name}" — posição, conexões e papel preservados.\n`,
+    `Cartão de "${who}" agora roda "${plan.name}" — posição, conexões e papel preservados.\n`,
   );
 }
 
+/**
+ * Sending an agent away. `closeTerminal` already takes the card, the role,
+ * the routines and the wires with it.
+ */
 async function cmdDismiss(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
   const name = args[0];
   if (!name) return err('uso: yard dismiss "Nome"\n');
   const target = findAgent(ctx, name);
   if (!target) {
-    return err(`yard: "${name}" não está conectado a você (só é possível dispensar conexões diretas).\n`);
+    return err(
+      `yard: "${name}" não está conectado a você (só é possível dispensar conexões diretas).\n`,
+    );
   }
-  // `closeTerminal` already takes the card, the role, the routines and the
-  // wires with it — that cleanup used to live here, which is why closing the
-  // same terminal from the UI left debris behind.
-  const itemName = ctx.nameOf.get(target.id);
+  const label = ctx.nameOf.get(target.id);
   await closeTerminal(target.id);
-  return ok(`"${itemName}" dispensado.\n`);
+  return ok(`"${label}" dispensado.\n`);
 }
 
 // --- floor ------------------------------------------------------------------
 
-/** Group in the caller's project whose name matches (case-insensitive). */
+/** Group in the caller's project whose name matches, however it is written. */
 function findGroupByName(projectId: string, name: string) {
   return findGroupNamed(useProjects.getState().groupsOf(projectId), name);
 }
 
 /**
- * `recruit --floor`: the new card is born on the floor's canvas, with the
- * worktree's cwd, without pulling the caller off the ground. No cable: a
- * connection only lives inside its own group's canvas (cross-floor comes later).
+ * A recruit born on another front's canvas. Connections never cross fronts
+ * (they are different working copies), so no wire is drawn, and the answer
+ * says so rather than leaving the caller to discover it with `yard ask`.
  */
-async function recruitInFloor(
+async function recruitOnFloor(
   ctx: Ctx,
   floorName: string,
-  next: {
-    name: string;
-    program: string;
-    cliArgs: string[];
-    kind: string;
-    rowAgentId: string | null;
-    dir?: string;
-    cardRole?: CardRole;
-    launch: RoleLaunch;
-  },
+  plan: RecruitPlan,
 ): Promise<BridgeResponse> {
   const s = useProjects.getState();
   const project = s.projectOfGroup(ctx.groupId);
   if (!project) return err("yard: o grupo deste terminal não pertence a um projeto.\n");
-  const target = findGroupByName(project.id, floorName);
-  if (!target) {
-    return err(
-      `yard: não achei a frente "${floorName}" neste projeto. Rode \`yard floor list\`.\n`,
-    );
-  }
-  const cwd = next.dir ?? s.rootOfGroup(target.id) ?? ctx.caller.cwd;
 
-  // Another group: what counts there is what that floor is showing, or the
-  // recruit lands behind the surface the user is not on.
-  const surface = s.layoutOf(target.id).surface;
-  const idx = s.terminalsOn(target.id, surface).length;
-  const born = bornAs(next.rowAgentId, next.program, next.cliArgs, cwd);
-  const newId = s.addTerminal({
-    groupId: target.id,
-    title: next.name,
-    kind: next.kind as "shell" | "agent",
-    agentId: next.rowAgentId,
+  const group = findGroupByName(project.id, floorName);
+  if (!group) {
+    return err(`yard: não achei a frente "${floorName}" neste projeto. Rode \`yard floor list\`.\n`);
+  }
+
+  // The front's own root, not the caller's: that is the whole point of
+  // opening a card there.
+  const cwd = plan.dir ?? s.rootOfGroup(group.id) ?? ctx.caller.cwd;
+  const surface = s.layoutOf(group.id).surface;
+  const nth = s.terminalsOn(group.id, surface).length;
+  const born = bornAs(plan.rowAgentId, plan.program, plan.cliArgs, cwd);
+  const id = s.addTerminal({
+    groupId: group.id,
+    title: plan.name,
+    kind: plan.kind,
+    agentId: plan.rowAgentId,
     program: born.program,
     args: born.args,
     cwd,
     surface,
   });
-  commitCanvas(target.id, (c) => ({
+
+  commitCanvas(group.id, (c) => ({
     ...c,
-    nodes: { ...c.nodes, [newId]: autoNodeRect(idx) },
-    roles: next.cardRole ? { ...(c.roles ?? {}), [newId]: next.cardRole } : c.roles,
+    nodes: { ...c.nodes, [id]: autoNodeRect(nth) },
+    roles: plan.cardRole ? { ...(c.roles ?? {}), [id]: plan.cardRole } : c.roles,
   }));
 
   try {
-    await spawnCard(newId, {
-      program: next.program,
-      args: next.cliArgs,
+    await spawnCard(id, {
+      program: plan.program,
+      args: plan.cliArgs,
       cwd,
-      kind: next.kind,
-      title: next.name,
+      kind: plan.kind,
+      title: plan.name,
     });
   } catch (e) {
     return err(
-      `yard: "${next.name}" foi criado na frente "${target.name}", mas o processo não subiu: ${e}\n`,
+      `yard: "${plan.name}" foi criado na frente "${group.name}", mas o processo não subiu: ${e}\n`,
     );
   }
-  if (next.launch.briefing) void deliverBriefing(newId, next.launch.briefing);
+  if (plan.launch.briefing) void deliverBriefing(id, plan.launch.briefing);
   return ok(
-    `Recrutado "${next.name}" na frente "${target.name}" (cwd: ${cwd}). ` +
+    `Recrutado "${plan.name}" na frente "${group.name}" (cwd: ${cwd}). ` +
       "Conexões não cruzam frentes — fale com ele pelo canvas daquela frente.\n",
   );
 }
@@ -1182,7 +1359,7 @@ async function cmdFloor(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
       const aliveCount = s.terminalsOf(g.id).filter((t) => t.alive).length;
       const tag =
         floor?.kind === "isolated"
-          ? ` [branch ${floor.branch ?? "?"}]`
+          ? ` [branch ${floor.branch ?? "?"}${floor.adopted ? ", worktree adotado" : ""}]`
           : floor?.kind === "plain"
             ? " [sem git]"
             : i === 0
@@ -1198,39 +1375,91 @@ async function cmdFloor(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
     const p = parseFlags(args.slice(1), {
       "--branch": "string",
       "--existing-branch": "bool",
+      "--adopt": "string",
       "--no-git": "bool",
       "--copy-ground": "bool",
+      "--base": "string",
+      "--worktree-name": "string",
+      "--dry-run": "bool",
+      "--json": "bool",
     });
     const branch = p.string.branch;
     const existing = !!p.bool["existing-branch"];
+    const adoptPath = p.string.adopt;
     const noGit = !!p.bool["no-git"];
     const copyGround = !!p.bool["copy-ground"];
     const name = p.positional[0];
+    const asJson = !!p.bool.json;
+
     if (!name) {
-      return err(
-        'uso: yard floor create "Nome" [--branch x] [--existing-branch] [--no-git] [--copy-ground]\n',
-      );
+      return {
+        code: 2,
+        output:
+          'uso: yard floor create "Nome" [--branch x] [--existing-branch] [--adopt PATH] ' +
+          "[--no-git] [--copy-ground] [--base REF] [--worktree-name PASTA] [--dry-run] [--json]\n",
+      };
     }
     if (existing && !branch) {
-      return err("yard: --existing-branch exige --branch com o nome da branch.\n");
+      return { code: 2, output: "yard: --existing-branch exige --branch com o nome da branch.\n" };
     }
+
+    // `--adopt` takes a worktree git already knows about: nothing is created
+    // on the disk, so the path has to be one of this repository's own.
+    let adopt: { path: string; branch: string | null } | undefined;
+    if (adoptPath) {
+      const entries = await ipc.worktreeList(project.path).catch(() => []);
+      const found = entries.find((w) => !w.bare && sameRoot(w.path, adoptPath));
+      if (!found) {
+        return err(
+          `yard: "${adoptPath}" não é um worktree deste repositório. Veja o que "git worktree list" lista.\n`,
+        );
+      }
+      adopt = { path: found.path, branch: found.branch };
+    }
+
+    // The same road the dialog takes: preflight, plan, journal. `--dry-run`
+    // stops after the plan, and the plan writes nothing, which is what lets a
+    // person read what will happen before it happens.
     try {
-      const { provision } = await createFloor({
+      const run = await provisionFronts({
         projectId: project.id,
-        name,
-        branch: branch ?? undefined,
-        existingBranch: existing,
-        noGit,
-        copyGround,
         activate: false,
+        copyGround,
+        dryRun: !!p.bool["dry-run"],
+        fronts: [
+          {
+            id: "front",
+            kind: adopt
+              ? "existing_worktree"
+              : existing
+                ? "new_worktree_existing_branch"
+                : "new_worktree_new_branch",
+            name,
+            ...(branch ? { branch } : {}),
+            ...(adopt ? { worktreePath: adopt.path } : {}),
+            ...(noGit ? { noGit: true } : {}),
+            ...(p.string.base ? { baseRef: p.string.base } : {}),
+            ...(p.string["worktree-name"] ? { worktreeName: p.string["worktree-name"] } : {}),
+          },
+        ],
       });
-      return ok(
-        provision.kind === "isolated"
-          ? `Frente "${name}" aberta: branch ${provision.branch}, worktree em ${provision.path}.` +
-              `${copyGround ? " Layout do chão clonado (terminais parados)." : ""}\n`
-          : `Frente "${name}" aberta SEM git (projeto sem repositório ou --no-git): ` +
-              `os terminais dele usam o mesmo diretório do chão.\n`,
-      );
+
+      const code = exitCodeOf(run);
+      if (asJson) return { code, output: JSON.stringify(runJson(run), null, 2) + "\n" };
+      // A refusal prints the plan as well: the reason belongs under the row
+      // that caused it, which is worth more than one line of stderr.
+      if (p.bool["dry-run"] || !run.plan.valid) {
+        return { code, output: planText(run.plan, { project: project.name }) };
+      }
+      const tail =
+        run.plan.items[0]?.action === "adopt_worktree"
+          ? "Encerrar a frente NÃO apaga esse worktree.\n"
+          : run.plan.items[0]?.action === "create_folder"
+            ? "Sem git: os terminais dela usam o mesmo diretório do chão.\n"
+            : copyGround
+              ? "Layout do chão clonado (terminais parados).\n"
+              : "";
+      return { code, output: runSummary(run) + tail };
     } catch (e) {
       return err(`yard: não consegui abrir a frente: ${e}\n`);
     }
@@ -1353,7 +1582,13 @@ async function cmdFloor(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
   }
 
   return err(
-    'uso: yard floor list\n     yard floor create "Nome" [--branch x] [--existing-branch] [--no-git] [--copy-ground]\n     yard floor land "Nome" [--close] [--keep-losers]\n     yard floor compare\n     yard floor fanout "Nome" --prompt "pedido" [--agents claude,codex]\n',
+    "uso: yard floor list\n" +
+      '     yard floor create "Nome" [--branch x] [--existing-branch] [--adopt PATH]\n' +
+      "                       [--no-git] [--copy-ground] [--base REF] [--worktree-name PASTA]\n" +
+      "                       [--dry-run] [--json]\n" +
+      '     yard floor land "Nome" [--close] [--keep-losers]\n' +
+      "     yard floor compare\n" +
+      '     yard floor fanout "Nome" --prompt "pedido" [--agents claude,codex]\n',
   );
 }
 
@@ -1904,10 +2139,11 @@ function cmdNotify(ctx: Ctx, args: string[]): BridgeResponse {
   const msg = args[0];
   if (!msg) return err('uso: yard notify "mensagem"\n');
   try {
-    sendNotification({
-      title: `Yard — ${ctx.nameOf.get(ctx.caller.id)}`,
-      body: msg,
-    });
+    const title = `Yard, ${ctx.nameOf.get(ctx.caller.id)}`;
+    sendNotification({ title, body: msg });
+    // An agent calling `yard notify` is asking for the user's attention, and
+    // the user may not be at the machine (`lib/notifyOut.ts`).
+    pushOut(title, msg, "notify");
   } catch (e) {
     return err(`yard: notificação indisponível: ${e}\n`);
   }
@@ -1937,9 +2173,13 @@ const HELP = `yard — ponte entre agentes, notas e o canvas do Yard
   yard ask "Agente" --stdin                    prompt pela entrada padrão
   yard ask "Agente" --raw "2\\n"                teclas cruas (\\n \\t \\e \\xNN)
   yard ask "Agente" --no-wait "prompt"         envia sem esperar
+  yard ask "Agente" --queue "prompt"           enfileira para quando ele estiver livre
+  yard queue [list] | queue clear ["Agente"]   o que está esperando
+  yard handoff "Alvo" ["o que falta"]          passa o bastão (papel, árvore, últimos turnos)
   yard ask --batch '{"A":"p1","B":"p2"}'       vários em paralelo
   yard ask … --timeout 600                     segundos de espera
   yard check "Agente"                          lê a tela atual do agente
+  yard search "texto" [--all] [--limit 4]      procura no histórico dos terminais
   yard wait "Agente"                           bloqueia até ele parar
   yard wait --any | --all                      espera o primeiro | todos
   yard wait … --until stopped|done|blocked     o que conta como parar
@@ -1962,8 +2202,11 @@ const HELP = `yard — ponte entre agentes, notas e o canvas do Yard
   yard recruit "Nome" --replace "Antigo"       troca o processo do cartão
   yard dismiss "Nome"                          encerra e remove um conectado
   yard floor list                              chão e frentes do projeto
-  yard floor create "Nome" [--branch x] [--existing-branch] [--no-git] [--copy-ground]
+  yard floor create "Nome" [--branch x] [--existing-branch] [--adopt PATH]
+                    [--no-git] [--copy-ground] [--base REF] [--worktree-name PASTA]
                                                frente nova (git worktree isolado)
+  yard floor create … --dry-run                mostra o plano e nao escreve nada
+  yard floor create … --json                   o mesmo plano/resultado em JSON
   yard floor land "Nome" [--close] [--keep-losers]
                                                merge no chão; --close encerra a frente
   yard floor compare                           diffstat de cada frente vs o chão

@@ -96,6 +96,8 @@ pub fn start(app: AppHandle) {
         tracing::warn!(error = %e, "nao consegui instalar a documentacao da ponte");
     }
 
+    start_tcp(app.clone());
+
     let name = pipe_name();
     let full = format!(r"\\.\pipe\{name}");
     tauri::async_runtime::spawn(async move {
@@ -131,7 +133,127 @@ pub fn start(app: AppHandle) {
     });
 }
 
+/// Secret every TCP request must carry, generated once per run.
+///
+/// The named pipe needs none: Windows already scopes it to this user's
+/// session. The TCP listener exists precisely to be reached from *another*
+/// machine (an agent running over SSH, through a reverse tunnel), and on that
+/// machine the loopback is shared with every other process and user. So the
+/// port alone proves nothing, and the token is the fence.
+///
+/// Random and per-run rather than derived from anything: it travels in a
+/// remote process's environment, where it is readable by that user and by
+/// root, and a token that outlived the session would keep working after the
+/// tunnel is gone.
+pub fn tcp_token() -> &'static str {
+    static TOKEN: OnceLock<String> = OnceLock::new();
+    TOKEN.get_or_init(|| {
+        // 32 characters out of the nanoid alphabet the rest of the app uses.
+        const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let mut out = String::with_capacity(32);
+        let mut seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0x9E37_79B9_7F4A_7C15)
+            ^ (std::process::id() as u64) << 32
+            ^ (&out as *const String as u64);
+        for _ in 0..32 {
+            // xorshift64*: no dependency, and this is a session secret behind
+            // a loopback tunnel, not a key.
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            out.push(ALPHABET[(seed % ALPHABET.len() as u64) as usize] as char);
+        }
+        out
+    })
+}
+
+/// The loopback port the TCP twin is listening on, once it is up.
+static TCP_PORT: OnceLock<u16> = OnceLock::new();
+
+pub fn tcp_port() -> Option<u16> {
+    TCP_PORT.get().copied()
+}
+
+/// Does this request carry the session token?
+///
+/// Compared in constant time over the bytes: the answer is a yes/no that an
+/// attacker on the remote host can ask a million times.
+fn token_ok(req: &serde_json::Value, expected: &str) -> bool {
+    let Some(given) = req.get("token").and_then(|v| v.as_str()) else {
+        return false;
+    };
+    if given.len() != expected.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (a, b) in given.bytes().zip(expected.bytes()) {
+        diff |= a ^ b;
+    }
+    diff == 0
+}
+
+/// The loopback twin of the pipe, for agents that are not on this machine.
+///
+/// An agent launched over SSH runs on another computer: there is no named
+/// pipe to reach, and until now that meant the whole `yard` CLI, asking
+/// another agent, reading a note, driving a portal, simply did not exist for
+/// it. A documented hole, and the reason "roda em: SSH" was half a feature.
+///
+/// The bridge therefore also listens on `127.0.0.1:0` (an ephemeral port the
+/// OS picks; nothing is exposed to the network). `ssh -R` carries that port
+/// to the remote host's own loopback, where the remote shim writes to it.
+/// Every request through this door has to carry the session token.
+///
+/// A port that cannot be opened is not an error worth interrupting anyone
+/// about: the local pipe keeps working and the SSH agents simply do not get
+/// the bridge, which is where they were before.
+fn start_tcp(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let listener = match tokio::net::TcpListener::bind(("127.0.0.1", 0)).await {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::warn!(error = %e, "bridge: sem porta local para a ponte remota");
+                return;
+            }
+        };
+        match listener.local_addr() {
+            Ok(addr) => {
+                let _ = TCP_PORT.set(addr.port());
+                tracing::info!(port = addr.port(), "bridge: escutando no loopback");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "bridge: porta local desconhecida");
+                return;
+            }
+        }
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                tokio::time::sleep(std::time::Duration::from_millis(CONNECT_BACKOFF_MS)).await;
+                continue;
+            };
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = serve(stream, app, true).await {
+                    tracing::debug!(error = %e, "bridge: conexao TCP encerrada com erro");
+                }
+            });
+        }
+    });
+}
+
 async fn handle_conn(conn: NamedPipeServer, app: AppHandle) -> std::io::Result<()> {
+    serve(conn, app, false).await
+}
+
+/// One JSON line in, one JSON line out, the same conversation over the pipe
+/// and over the loopback socket. `guarded` is what tells them apart: a TCP
+/// request has to prove it is ours.
+async fn serve<S>(conn: S, app: AppHandle, guarded: bool) -> std::io::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     let mut reader = BufReader::new(conn);
     let mut line = String::new();
     // Bounded read: `read_line` on its own would take whatever the client
@@ -165,6 +287,17 @@ async fn handle_conn(conn: NamedPipeServer, app: AppHandle) -> std::io::Result<(
             return Ok(());
         }
     };
+
+    if guarded && !token_ok(&req, tcp_token()) {
+        let out = serde_json::json!({
+            "code": 2,
+            "output": "yard: token invalido (YARD_TOKEN nao confere)
+",
+        });
+        conn.write_all(format!("{out}
+").as_bytes()).await?;
+        return Ok(());
+    }
 
     let wait_ms = req
         .get("timeoutMs")
@@ -414,8 +547,8 @@ be read and written.
 - `yard recruit "Name" [--agent claude|codex|...] [--role "text or saved role"] [--dir PATH]` — spawn a new agent terminal on the canvas, auto-connected to you; `--role` is handed to the new CLI on start, so it begins already knowing its job
 - `yard recruit "Name" --floor "Floor Name"` — spawn the agent on that floor's canvas instead, with the floor's worktree as cwd (no cable: connections never cross floors)
 - `yard recruit "Name" --replace "Old Name" --agent codex` — swap the process behind an existing card, keeping its position, connections and role
-- `yard floor list` — ground and floors of this project (floor = isolated git worktree with its own canvas)
-- `yard floor create "Name" [--branch x] [--existing-branch] [--no-git] [--copy-ground]` — provision a new floor silently (the user's screen does not switch); `--copy-ground` clones the ground layout with stopped terminals
+- `yard floor list`: ground and floors of this project. The ground is the project root, on whatever branch is checked out there; a floor is an isolated git worktree with a branch and a canvas of its own. A project has no other kind of child: plain folder-groups are gone
+- `yard floor create "Name" [--branch x] [--existing-branch] [--adopt PATH] [--no-git] [--copy-ground] [--base REF] [--worktree-name FOLDER] [--dry-run] [--json]`: provision a new floor silently (the user's screen does not switch); `--copy-ground` clones the ground layout with stopped terminals. `--adopt PATH` opens the floor on a worktree git already knows about instead of creating one: nothing is written to the disk, and closing that floor never deletes it. `--base REF` picks the commit the branch grows from (frozen as an OID before anything is written) and `--worktree-name FOLDER` picks the folder under `.yard/floors/`. `--dry-run` prints the plan and writes nothing; `--json` prints that same plan (or result) with stable error codes. Exit codes: 0 all done, 2 the plan was refused, 3 partial, 4 something this run made is still on disk, 5 cancelled
 - `yard floor land "Name" [--close] [--keep-losers]` — merge the floor's branch onto the ground (refuses dirty trees and predicted conflicts). `--close` removes the floor afterwards; without `--keep-losers` the other floors of the same task go too
 - `yard floor compare` — diffstat of every isolated floor against the ground
 - `yard floor fanout "Name" --prompt "…" [--agents claude,codex] [--copy-ground]` — same prompt, one isolated floor per agent
@@ -605,6 +738,46 @@ the same message — the briefing applies to that request.
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Why the token matters: the pipe is reachable only by this Windows user,
+    /// but the TCP twin exists to be reached **from another machine** through
+    /// an SSH reverse tunnel, which means anything running on that remote
+    /// host can also reach it. The token is the whole of the fence.
+    #[test]
+    fn a_request_without_the_token_is_refused_over_tcp() {
+        let req = serde_json::json!({ "argv": ["list"] });
+        assert!(!token_ok(&req, "segredo"));
+    }
+
+    #[test]
+    fn the_wrong_token_is_refused() {
+        let req = serde_json::json!({ "argv": ["list"], "token": "outro" });
+        assert!(!token_ok(&req, "segredo"));
+    }
+
+    #[test]
+    fn the_right_token_passes() {
+        let req = serde_json::json!({ "argv": ["list"], "token": "segredo" });
+        assert!(token_ok(&req, "segredo"));
+    }
+
+    /// A token of the wrong *length* must not be distinguishable by timing
+    /// from one of the right length with wrong content. Both are simply false.
+    #[test]
+    fn a_shorter_token_does_not_pass_as_a_prefix() {
+        let req = serde_json::json!({ "argv": ["list"], "token": "seg" });
+        assert!(!token_ok(&req, "segredo"));
+    }
+
+    /// The session token goes into a remote process's environment, so it is
+    /// worth being long and random rather than derived from anything.
+    #[test]
+    fn the_session_token_is_long_and_stable_within_the_session() {
+        let a = tcp_token();
+        assert_eq!(a, tcp_token());
+        assert!(a.len() >= 32, "token curto demais: {}", a.len());
+        assert!(a.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
 
     /// The pipe name goes in every PTY's environment. If it changes between
     /// two reads, already-open terminals start talking to a pipe that no longer

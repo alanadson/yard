@@ -51,10 +51,17 @@ export function FilesPane({
     if (focusTick > 0) searchRef.current?.focus();
   }, [focusTick]);
 
+  /**
+   * A single click on the tree is a glance: the tab opens as a preview and the
+   * next single click takes its place. Typing in it, double-clicking its tab
+   * or reaching the file any other way makes it permanent
+   * (`lib/tabRules.ts`). Browsing a big tree used to cost one tab per file
+   * looked at.
+   */
   const open = (path: string) => {
     void useEditor
       .getState()
-      .openFile(path)
+      .openFile(path, { preview: true })
       .catch((e) => showToast(t("Não consegui abrir: {e}", { e: String(e) }), "error"));
   };
 

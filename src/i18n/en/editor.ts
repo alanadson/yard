@@ -24,6 +24,7 @@ export default {
   "Ver o código": "View the code",
   "Salvar (Ctrl+S)": "Save (Ctrl+S)",
   "{path} — ações do arquivo": "{path} — file actions",
+  "Onde o cursor está no arquivo": "Where the caret is in the file",
   // the diff tab — a comparison beside the CLIs (DiffTab.tsx)
   "O que este commit fez neste arquivo": "What this commit did to this file",
   "O que mudou no disco e ainda não foi preparado (índice → disco)":
@@ -220,4 +221,26 @@ export default {
 
   // --- the language server transport ---------------------------------------
   "transporte {id} já foi encerrado": "transport {id} was already closed",
+  "A correção se sobrepõe a ela mesma; não apliquei nada.": "The fix overlaps itself; I applied none of it.",
+  "procurando…": "looking…",
+  "Nada a corrigir aqui.": "Nothing to fix here.",
+  "O servidor de linguagem não respondeu.": "The language server did not answer.",
+  "Mais {n} arquivo mexido, sem salvar": "{n} more file touched, unsaved",
+  "Mais {n} arquivos mexidos, sem salvar": "{n} more files touched, unsaved",
+  "Linha nova: não havia nada aqui no HEAD.": "A new line: there was nothing here at HEAD.",
+  "Reverter este trecho": "Revert this hunk",
+  "Copiar o do HEAD": "Copy the HEAD version",
+  "O trecho mudou desde que este painel abriu; não reverti nada.": "The hunk moved since this panel opened; I reverted nothing.",
+  "Comparar com o HEAD": "Compare with HEAD",
+  "Comparar com o salvo": "Compare with what is saved",
+  "Não salvo": "Unsaved",
+  "O rascunho comparado com o disco: o que o Ctrl+S vai gravar": "The draft against the disk: what Ctrl+S is about to write",
+  "O que está aqui é o que está no disco.": "What is here is what is on disk.",
+  "O rascunho e o disco estão longe demais para comparar.": "The draft and the disk are too far apart to compare.",
+  "O arquivo não está mais aberto.": "The file is not open any more.",
+  "Terminação LF": "LF line endings",
+  "Terminação CRLF": "CRLF line endings",
+  "Terminação de linha CRLF. Clique para LF": "CRLF line endings. Click for LF",
+  "Terminação de linha LF. Clique para CRLF": "LF line endings. Click for CRLF",
+  "Reabrir com a codificação": "Reopen with encoding",
 } satisfies Record<string, string>;

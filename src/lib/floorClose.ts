@@ -5,6 +5,7 @@
  */
 import { ipc, type GroupRow, type ProjectRow } from "./ipc";
 import { floorHookEnv, type FloorMeta } from "./floors";
+import type { RemoteBranch } from "./floorSync";
 import { closeGroup } from "./lifecycle";
 import { uiLog } from "./log";
 import { unsavedWarning } from "../stores/editorStore";
@@ -52,9 +53,15 @@ export function closeFloorWarning(
         )
       : "") +
     t("• Os cartões, o canvas e as rotinas desta frente vão embora.\n") +
-    (isolated
-      ? t("• O worktree em {path} é apagado do disco.\n", { path: floor.worktreePath ?? "" })
-      : "") +
+    // What the Yard did not create, the Yard does not delete: an adopted
+    // worktree existed before this front and stays after it.
+    (isolated && floor.adopted
+      ? t("• O worktree em {path} fica no disco: a frente só o adotou.\n", {
+          path: floor.worktreePath ?? "",
+        })
+      : isolated
+        ? t("• O worktree em {path} é apagado do disco.\n", { path: floor.worktreePath ?? "" })
+        : "") +
     unsavedWarning({ groupId: group.id })
   );
 }
@@ -63,6 +70,11 @@ export async function closeFloor(opts: {
   project: ProjectRow;
   group: GroupRow;
   deleteBranch: boolean;
+  /**
+   * Also delete the branch **on the server**, when the local one really goes.
+   * Absent (the default) the published copy is left exactly where it is.
+   */
+  deleteRemote?: RemoteBranch | null;
   /** After a successful land the work is on the ground — dirty is stale. */
   skipDirtyCheck?: boolean;
 }): Promise<void> {
@@ -131,12 +143,52 @@ export async function closeFloor(opts: {
     }
   }
 
-  if (isolated) {
-    await ipc.worktreeRemove(
+  // An adopted worktree was on the disk before this front and stays after it,
+  // branch included: removing it would delete work the app never provisioned.
+  if (isolated && !floor.adopted) {
+    const removal = await ipc.worktreeRemove(
       opts.project.path,
       floor.worktreePath!,
       opts.deleteBranch ? floor.branch : null,
     );
+    // The backend refuses to delete a branch holding commits the ground does
+    // not have. That refusal is the point, and it has to be *said*: closing
+    // ten fronts believing ten branches went with them is how a repository
+    // fills up with work nobody remembers leaving behind.
+    if (removal?.branchKept) {
+      uiLog.warn(`branch ${floor.branch} mantida: ${removal.branchKept}`); // i18n-ok: log line
+      useUI
+        .getState()
+        .showToast(
+          t(
+            'A branch {branch} tem commits que ainda não estão no chão, então ela foi mantida. Encerrei a frente "{name}" assim mesmo.',
+            { branch: floor.branch ?? "?", name: opts.group.name },
+          ),
+          "info",
+        );
+    }
+
+    // The published branch goes only when the local one really went.
+    // `branchKept` is git refusing `branch -d`, which is git saying this
+    // branch holds commits the ground does not have, and in that case the
+    // copy on the server is the only other place that work exists.
+    if (opts.deleteBranch && opts.deleteRemote && !removal?.branchKept) {
+      const { remote, branch } = opts.deleteRemote;
+      try {
+        await ipc.scmPushDelete(opts.project.path, remote, branch);
+      } catch (e) {
+        uiLog.warn(`git push ${remote} --delete ${branch} falhou: ${e}`); // i18n-ok: log line
+        useUI
+          .getState()
+          .showToast(
+            t(
+              "Não consegui apagar {upstream} no servidor: {detail}. A frente foi encerrada e a branch local, apagada.",
+              { upstream: `${remote}/${branch}`, detail: String(e) },
+            ),
+            "error",
+          );
+      }
+    }
   }
 
   await closeGroup(opts.group.id);

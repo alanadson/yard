@@ -9,11 +9,14 @@ pub mod agents;
 pub mod bridge;
 pub mod browsers;
 pub mod clipboard;
+pub mod encoding;
 pub mod events;
 pub mod explorer;
 pub mod files;
 pub mod fonts;
+pub mod forge;
 pub mod git;
+pub mod globs;
 pub mod media;
 pub mod paths;
 pub mod persistence;
@@ -25,8 +28,10 @@ pub mod scm;
 pub mod scores;
 pub mod state;
 pub mod usage;
+pub mod webhook;
 pub mod wsl;
 pub mod pty_export;
+pub mod scrollback_search;
 pub mod tray;
 pub mod support;
 pub mod updater;
@@ -202,6 +207,56 @@ async fn pty_export(app: AppHandle, id: String, dest: String, plain: bool) -> Re
     })
     .await
     .map_err(|e| format!("exportação interrompida: {e}"))?
+}
+
+/// Searches what the terminals said (`scrollback_search.rs`). Reads the live
+/// ring of whoever is up and the `.bin` of whoever is not, so a closed pane
+/// answers the same as an open one. Up to 8 MB per terminal off the disk, so
+/// it goes to the blocking pool.
+#[tauri::command]
+async fn search_scrollback(
+    app: AppHandle,
+    ids: Vec<String>,
+    query: String,
+    per: usize,
+    total: usize,
+) -> Vec<scrollback_search::TerminalHits> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<Arc<AppState>>();
+        let dir = paths::app_dir();
+        scrollback_search::search_with(&ids, &query, per, total, |id| {
+            let handle = state.ptys.lock().get(id).cloned();
+            match handle {
+                Some(handle) => {
+                    let scrollback = handle.lock().scrollback.clone();
+                    pty_export::live_bytes(&scrollback)
+                }
+                None => scrollback_search::read_bin(&dir, id),
+            }
+        })
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Posts one notification to the address the user configured
+/// (`webhook.rs`). Blocking pool: it is a network round trip.
+#[tauri::command]
+async fn webhook_post(url: String, body: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || webhook::post(&url, &body))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// The loopback door of the bridge and the session token, for the SSH launch
+/// to carry across (`bridge.rs`, `src/lib/remoteBridge.ts`). `port` is null
+/// while the listener has not come up (or could not).
+#[tauri::command]
+fn bridge_remote() -> serde_json::Value {
+    serde_json::json!({
+        "port": bridge::tcp_port(),
+        "token": bridge::tcp_token(),
+    })
 }
 
 #[tauri::command]
@@ -585,9 +640,14 @@ async fn fs_list_dir(root: String, path: String) -> Result<explorer::DirListing,
 }
 
 #[tauri::command]
-async fn fs_read_text(root: String, path: String) -> Result<explorer::TextFile, String> {
+async fn fs_read_text(
+    root: String,
+    path: String,
+    // The encoding the reader picked, or `None` to let the file decide.
+    encoding: Option<String>,
+) -> Result<explorer::TextFile, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        explorer::read_text(std::path::Path::new(&root), &path)
+        explorer::read_text(std::path::Path::new(&root), &path, encoding.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -603,9 +663,19 @@ async fn fs_write_text(
     crlf: bool,
     // The file had a UTF-8 BOM when it was read — write it back.
     bom: bool,
+    // The encoding it was opened with; the write uses the same one.
+    encoding: Option<String>,
 ) -> Result<explorer::WriteResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        explorer::write_text(std::path::Path::new(&root), &path, &text, expected, crlf, bom)
+        explorer::write_text(
+            std::path::Path::new(&root),
+            &path,
+            &text,
+            expected,
+            crlf,
+            bom,
+            encoding.as_deref(),
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -643,8 +713,7 @@ async fn fs_search_text(
     state: State<'_, Arc<AppState>>,
     root: String,
     query: String,
-    case_sensitive: bool,
-    whole_word: bool,
+    options: explorer::SearchOptions,
 ) -> Result<explorer::SearchOutcome, String> {
     let stop = Arc::new(AtomicBool::new(false));
     {
@@ -659,8 +728,7 @@ async fn fs_search_text(
         explorer::search_text_cancellable(
             std::path::Path::new(&root_for_search),
             &query,
-            case_sensitive,
-            whole_word,
+            &options,
             || stop_for_search.load(Ordering::Acquire),
         )
     })
@@ -674,6 +742,31 @@ async fn fs_search_text(
         searches.remove(&root);
     }
     result
+}
+
+/// Replaces across the project what `fs_search_text` would have found.
+///
+/// Blocking and uncancellable on purpose: this one *writes*, and a half-run
+/// replace that stopped somewhere in the middle of the walk is a state nobody
+/// can reason about afterwards. It is bounded instead, by the same skip list
+/// and filters the search uses, and by a ceiling on the files it will rewrite.
+#[tauri::command]
+async fn fs_replace_text(
+    root: String,
+    query: String,
+    replacement: String,
+    options: explorer::SearchOptions,
+) -> Result<explorer::ReplaceOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        explorer::replace_text(
+            std::path::Path::new(&root),
+            &query,
+            &replacement,
+            &options,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -705,19 +798,35 @@ async fn git_head_text(root: String, path: String) -> Result<Option<String>, Str
 #[tauri::command]
 async fn worktree_provision(
     project_path: String,
-    name: String,
-    branch: Option<String>,
-    existing_branch: bool,
-    no_git: bool,
+    input: git::ProvisionInput,
 ) -> Result<git::WorktreeProvision, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        git::worktree_provision(
-            std::path::Path::new(&project_path),
-            &name,
-            branch.as_deref(),
-            existing_branch,
-            no_git,
-        )
+        git::worktree_provision(std::path::Path::new(&project_path), &input)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn worktree_preflight(
+    project_path: String,
+    items: Vec<git::PreflightItem>,
+) -> Result<git::Preflight, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git::worktree_preflight(std::path::Path::new(&project_path), &items)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn branch_delete_if_unchanged(
+    project_path: String,
+    branch: String,
+    expected_oid: String,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git::branch_delete_if_unchanged(std::path::Path::new(&project_path), &branch, &expected_oid)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -744,7 +853,7 @@ async fn worktree_remove(
     project_path: String,
     path: String,
     delete_branch: Option<String>,
-) -> Result<(), String> {
+) -> Result<git::WorktreeRemoval, String> {
     tauri::async_runtime::spawn_blocking(move || {
         git::worktree_remove(
             std::path::Path::new(&project_path),
@@ -920,6 +1029,31 @@ scm_commands! {
         |cwd: &std::path::Path, patch: String, cached: bool, reverse: bool| {
             scm::apply_patch(cwd, &patch, cached, reverse)
         };
+
+    // The forge (`forge.rs`). Same shape as the git half, a subprocess in a
+    // repository folder, so it rides the same macro and the same pool: `gh`
+    // talks to the network, and every one of these can take a second.
+    forge_status() -> forge::ForgeStatus =
+        |cwd: &std::path::Path| Ok(forge::status(cwd));
+    forge_pr(branch: String) -> Option<forge::PullRequest> =
+        |cwd: &std::path::Path, branch: String| forge::pr_for(cwd, &branch);
+    forge_pr_create(
+        branch: String,
+        title: String,
+        body: String,
+        base: Option<String>,
+        draft: bool,
+    ) -> String =
+        |cwd: &std::path::Path,
+         branch: String,
+         title: String,
+         body: String,
+         base: Option<String>,
+         draft: bool| {
+            forge::pr_create(cwd, &branch, &title, &body, base.as_deref(), draft)
+        };
+    forge_pr_comments(number: u64) -> Vec<forge::ReviewNote> =
+        |cwd: &std::path::Path, number: u64| forge::pr_comments(cwd, number);
 }
 
 #[tauri::command]
@@ -1321,6 +1455,7 @@ pub fn run() {
             fs_rename_entry,
             fs_delete_entry,
             fs_search_text,
+            fs_replace_text,
             fs_cancel_search,
             fs_index_files,
             scm_info,
@@ -1361,8 +1496,14 @@ pub fn run() {
             scm_tag_create,
             scm_tag_delete,
             scm_apply_patch,
+            forge_status,
+            forge_pr,
+            forge_pr_create,
+            forge_pr_comments,
             scm_diff,
             worktree_provision,
+            worktree_preflight,
+            branch_delete_if_unchanged,
             worktree_list,
             worktree_dirty,
             worktree_remove,
@@ -1397,6 +1538,9 @@ pub fn run() {
             usage_refresh,
             ui_log,
             pty_export,
+            search_scrollback,
+            bridge_remote,
+            webhook_post,
             tray::tray_set_status,
             tray::window_summon,
             support::support_bundle,

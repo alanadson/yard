@@ -728,12 +728,20 @@ describe("boards", () => {
     expect(useProjects.getState().activeGroupId).toBe(g);
   });
 
-  it("with no project at all there is nowhere to leave to, and nothing moves", () => {
-    const b = useProjects.getState().addBoard("Quadro");
+  /**
+   * This used to assert that nothing moved, on the grounds that the button
+   * calling it was not offered with no group to go back to. The canvas row is
+   * a permanent door in the sidebar now (`lib/layoutControls.ts`), offered in
+   * every state, so a no-op here is a dead click: leaving lands on the panes'
+   * own empty state, "escolha um grupo para começar", which is exactly the
+   * screen a workspace with no group has.
+   */
+  it("with no project at all, leaving a board lands on the panes' empty state", () => {
+    useProjects.getState().addBoard("Quadro");
 
     useProjects.getState().leaveBoard();
 
-    expect(useProjects.getState().activeGroupId).toBe(b);
+    expect(useProjects.getState().activeGroupId).toBeNull();
     expect(useProjects.getState().groupBeforeBoard).toBeNull();
   });
 

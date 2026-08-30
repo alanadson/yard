@@ -27,7 +27,11 @@ export type EntryKind =
   | "url"
   | "file"
   | "prompt"
-  | "task";
+  | "task"
+  /** A line a terminal printed, found by `$` (`lib/outputSearch.ts`). */
+  | "output"
+  /** A declaration anywhere in the project, found by `:` (LSP `workspace/symbol`). */
+  | "symbol";
 
 export interface PaletteEntry {
   id: string;
@@ -69,6 +73,36 @@ export const SCOPES: readonly Scope[] = [
     label: "canvas",
   },
   { prefix: "/", kinds: ["file"], label: "arquivos" },
+  { prefix: "$", kinds: ["output"], label: "saída dos terminais" },
+  // `#` would be the habit from other editors, but the canvas took it years
+  // ago and moving it would break a gesture people already have.
+  { prefix: ":", kinds: ["symbol"], label: "símbolos do projeto" },
+];
+
+/**
+ * The scopes whose rows the ranking is allowed to re-order. `output` and
+ * `symbol` are out:
+ * those rows came back from a search that already matched them, their title
+ * is a raw terminal line, and scoring a 200-character line against the query
+ * buries the long lines under the short ones for no reason. The backend's
+ * order (focused terminal, active group, the rest) is the answer.
+ */
+export const RANKED_SCOPES: readonly EntryKind[] = [
+  "action",
+  "terminal",
+  "group",
+  "project",
+  "note",
+  "memo",
+  "frame",
+  "media",
+  "binder",
+  "tree",
+  "portal",
+  "url",
+  "file",
+  "prompt",
+  "task",
 ];
 
 export interface ParsedQuery {
@@ -103,6 +137,8 @@ export const KIND_LABEL: Record<EntryKind, string> = {
   file: "Arquivos",
   prompt: "Prompts",
   task: "Tarefas",
+  output: "Saída dos terminais",
+  symbol: "Símbolos do projeto",
 };
 
 const KIND_ORDER: readonly EntryKind[] = [
@@ -121,6 +157,8 @@ const KIND_ORDER: readonly EntryKind[] = [
   "project",
   "prompt",
   "task",
+  "output",
+  "symbol",
 ];
 
 export interface PaletteSection {
@@ -174,26 +212,42 @@ export function fieldsOf(entry: PaletteEntry): string[] {
   return fields;
 }
 
-/** Why the result list is empty — the three cases read very differently. */
+/** Why the result list is empty, the cases read very differently. */
 export type EmptyReason =
   /** Nothing typed yet. */
   | "sem-busca"
   /** The project's file index has not been walked, and files were in scope. */
   | "indexando"
+  /** The `$` sweep, or the `:` round of servers, is still running. */
+  | "buscando"
+  /** Under `$` or `:`, one letter is not a query, both cost real work. */
+  | "curto"
   /** Everything that could answer was asked, and nothing matched. */
   | "nada-encontrado";
+
+/** Mirrors `MIN_QUERY` in `lib/outputSearch.ts`. */
+const MIN_OUTPUT_QUERY = 2;
 
 /**
  * `indexed` is `editorStore.fileIndex !== null`. Saying "nada encontrado"
  * while the walk is still running is the search denying a file that is right
- * there — see the note on `emptyReason` in `model.test.ts`.
+ * there, see the note on `emptyReason` in `model.test.ts`. `searching` is the
+ * same idea for the `$` scope, whose rows come from the backend.
  */
 export function emptyReason(input: {
   text: string;
   scope: Scope | null;
   indexed: boolean;
+  searching?: boolean;
 }): EmptyReason {
   if (!input.text.trim()) return "sem-busca";
+  // Both of these are answered by something outside this module, the
+  // backend's sweep, or the language servers, so neither can be explained
+  // by the file index below.
+  if (input.scope?.kinds.includes("output") || input.scope?.kinds.includes("symbol")) {
+    if (input.text.trim().length < MIN_OUTPUT_QUERY) return "curto";
+    return input.searching ? "buscando" : "nada-encontrado";
+  }
   // No prefix searches everything, so files are in the mix as well.
   const wantsFiles = input.scope === null || input.scope.kinds.includes("file");
   if (wantsFiles && !input.indexed) return "indexando";

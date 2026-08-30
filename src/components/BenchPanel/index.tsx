@@ -43,6 +43,7 @@ import "../CodeEditor/editor.css";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   BookMarked,
+  CircleAlert,
   CalendarClock,
   CalendarX,
   Check,
@@ -75,6 +76,9 @@ import { captureTextTarget } from "../../lib/textMenu";
 import { benchHeading, type BenchTab as BenchTabId } from "./heading";
 import { FilesPane } from "./FilesPane";
 import { ScmPane } from "./ScmPane";
+import { ProblemsPane } from "./ProblemsPane";
+import { countBySeverity } from "../../lib/lsp/problems";
+import { useLsp } from "../../stores/lspStore";
 import { SearchPane } from "./SearchPane";
 import { Resizer } from "../Resizer";
 import { injectPrompt } from "../../lib/inject";
@@ -161,6 +165,11 @@ export function BenchPanel() {
     activeProjectId ? st.gitByProject[activeProjectId] : undefined,
   );
   const changedCount = scmSummary?.isRepo ? scmSummary.files.length : 0;
+  // What the language servers have found across the project (`lspStore`).
+  const problems = useLsp((st) => st.problems);
+  const problemCounts = useMemo(() => countBySeverity(problems), [problems]);
+  const problemErrors = problemCounts.errors;
+  const problemCount = problemErrors + problemCounts.warnings + problemCounts.other;
   const heading = benchHeading(tab, {
     pending: tasks.reduce(
       (n, t) => n + (!t.done && taskInScope(t, scope, activeProjectId) ? 1 : 0),
@@ -178,6 +187,7 @@ export function BenchPanel() {
           changes: scmSummary.files.length,
         }
       : null,
+    problems: problemCounts,
   });
 
   return (
@@ -268,6 +278,32 @@ export function BenchPanel() {
           </button>
           <button
             role="tab"
+            aria-selected={tab === "problems"}
+            className={tab === "problems" ? "is-active" : ""}
+            data-tip={
+              problemCount > 0
+                ? t("Problemas, {n} encontrado(s)", { n: problemCount })
+                : t("Problemas")
+            }
+            aria-label={
+              problemCount > 0
+                ? t("Problemas, {n} encontrado(s)", { n: problemCount })
+                : t("Problemas")
+            }
+            onClick={() => pickTab("problems")}
+          >
+            <CircleAlert size={14} aria-hidden="true" />
+            {problemCount > 0 && (
+              <span
+                className={`bench-count ${problemErrors > 0 ? "bench-count--warn" : ""}`}
+                aria-hidden="true"
+              >
+                {problemCount}
+              </span>
+            )}
+          </button>
+          <button
+            role="tab"
             aria-selected={tab === "tasks"}
             className={tab === "tasks" ? "is-active" : ""}
             data-tip={
@@ -307,6 +343,8 @@ export function BenchPanel() {
           <SearchPane focusTick={focusTick} onClose={() => pickTab("files")} />
         ) : tab === "scm" ? (
           <ScmPane focusTick={focusTick} />
+        ) : tab === "problems" ? (
+          <ProblemsPane />
         ) : tab === "tasks" ? (
           <TasksPane focusTick={focusTick} />
         ) : (

@@ -22,9 +22,9 @@ import { nanoid } from "nanoid";
 import { t } from "../lib/i18n";
 import { persistPref, readPrefs, type PrefsSnapshot } from "../lib/prefs";
 
-export type BenchTab = "files" | "search" | "scm" | "tasks" | "prompts";
+export type BenchTab = "files" | "search" | "scm" | "tasks" | "prompts" | "problems";
 
-const TABS: BenchTab[] = ["files", "search", "scm", "tasks", "prompts"];
+const TABS: BenchTab[] = ["files", "search", "scm", "problems", "tasks", "prompts"];
 
 /**
  * Which slice of the list the Tasks tab is showing.

@@ -530,6 +530,11 @@ pub struct WorktreeProvision {
     pub path: String,
     pub branch: Option<String>,
     pub kind: String,
+    /// Where the new worktree's HEAD landed — what the rollback compares
+    /// against before it dares delete the branch it just created.
+    pub head_oid: Option<String>,
+    /// The commit the branch grew from, when this call created the branch.
+    pub base_oid: Option<String>,
 }
 
 #[derive(Clone, Serialize, Debug, PartialEq)]
@@ -653,24 +658,393 @@ fn ensure_yard_ignored(project: &Path) -> std::io::Result<()> {
     std::fs::write(&path, updated)
 }
 
+/// Everything the creation needs, already decided.
+///
+/// The fields nobody filled are derived here; the fields the plan filled are
+/// used **verbatim**. That is the whole contract with the preflight: the
+/// folder and the branch printed on the screen are the folder and the branch
+/// that get created. They used to be derived twice, once in each language,
+/// and a slug already taken made the plan promise one path and the disk get
+/// another.
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvisionInput {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub existing_branch: bool,
+    #[serde(default)]
+    pub no_git: bool,
+    /// The commit the new branch grows from — the one the plan froze.
+    #[serde(default)]
+    pub base: Option<String>,
+    /// The folder under `.yard/floors/`, when the plan already chose it.
+    #[serde(default)]
+    pub worktree_name: Option<String>,
+}
+
+/// How long `git worktree add` gets before the app stops waiting for it.
+///
+/// Generous for an ordinary large checkout, short enough that a folder backed
+/// by a cloud sync (where reading a placeholder file can block for as long
+/// as the service likes) fails instead of hanging the whole creation. What
+/// makes a deadline safe here is the rollback: the journal knows what this
+/// run wrote and undoes exactly that.
+pub(crate) const WORKTREE_ADD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// The ceiling for `YARD_WORKTREE_ADD_TIMEOUT_MS`.
+pub(crate) const WORKTREE_ADD_TIMEOUT_MAX: std::time::Duration =
+    std::time::Duration::from_secs(30 * 60);
+
+/// The deadline, with the escape hatch a genuinely slow repository needs.
+///
+/// The clamp only goes up. `=300` reads as seconds to almost everyone who
+/// types it, and obeying that would turn every create on a big repository
+/// into a failure three hundred milliseconds in.
+pub(crate) fn worktree_add_timeout(raw: Option<&str>) -> std::time::Duration {
+    raw.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(std::time::Duration::from_millis)
+        .unwrap_or(WORKTREE_ADD_TIMEOUT)
+        .clamp(WORKTREE_ADD_TIMEOUT, WORKTREE_ADD_TIMEOUT_MAX)
+}
+
+/// Runs an already configured command and kills it at the deadline.
+///
+/// The command arrives whole because its stdio belongs to the caller; this
+/// owns only the waiting. A poll loop rather than a thread: there is one of
+/// these in flight at a time, and a blocked reader would be one more thing to
+/// join on the failure path.
+pub(crate) fn run_bounded(
+    mut cmd: std::process::Command,
+    limit: std::time::Duration,
+) -> Result<std::process::Output, String> {
+    let mut child = cmd.spawn().map_err(|e| format!("falha ao rodar git: {e}"))?;
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "o git passou de {}s sem responder e foi encerrado",
+                        limit.as_secs()
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(e) => return Err(format!("falha ao esperar o git: {e}")),
+        }
+    }
+    child
+        .wait_with_output()
+        .map_err(|e| format!("falha ao ler a saida do git: {e}"))
+}
+
+/// `run_git`, with a deadline. Same environment, same hidden console window.
+fn run_git_bounded(
+    cwd: &Path,
+    args: &[String],
+    limit: std::time::Duration,
+) -> Result<std::process::Output, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(args)
+        .current_dir(cwd)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    run_bounded(cmd, limit)
+}
+
+/// `run_git`, with something written to the command's stdin.
+///
+/// The caller is expected to keep the input small: everything is written
+/// before anything is read, which is only safe while the write fits in the
+/// pipe's buffer.
+fn run_git_stdin(cwd: &Path, args: &[&str], input: &[u8]) -> Result<std::process::Output, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(args)
+        .current_dir(cwd)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("falha ao rodar git: {e}"))?;
+    if let Some(mut pipe) = child.stdin.take() {
+        use std::io::Write;
+        let _ = pipe.write_all(input);
+        // Dropping the handle closes it: without that git waits for an end
+        // that never comes.
+    }
+    child
+        .wait_with_output()
+        .map_err(|e| format!("falha ao ler a saida do git: {e}"))
+}
+
+/// The whole command line for creating a front's worktree.
+///
+/// `core.longpaths=true` rides at **command** scope, never `--global`, never
+/// written to anybody's config. A front lives at `.yard/floors/<slug>/…`, two
+/// folders below a ground that already fits, and on Windows that is exactly
+/// where a deep repository crosses MAX_PATH and `worktree add` gives up with
+/// "Filename too long".
+///
+/// `--no-track`: a front is a place to work, not a mirror of the base. Left
+/// tracking, the first `git push` of every front would aim at the branch it
+/// grew from. An existing branch takes no base, because naming one would ask
+/// git to move a branch somebody else is using.
+pub(crate) fn worktree_add_args(
+    long_paths: bool,
+    existing_branch: bool,
+    branch: &str,
+    rel: &str,
+    base: &str,
+) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    if long_paths {
+        args.push("-c".into());
+        args.push("core.longpaths=true".into());
+    }
+    args.push("worktree".into());
+    args.push("add".into());
+    if existing_branch {
+        args.push(rel.into());
+        args.push(branch.into());
+    } else {
+        args.push("--no-track".into());
+        args.push("-b".into());
+        args.push(branch.into());
+        args.push(rel.into());
+        args.push(base.into());
+    }
+    args
+}
+
+/// Lets a plain `git push` from a new front create its own remote branch.
+///
+/// The branch was made with `--no-track`, so it has no upstream, and without
+/// this the first push an agent runs inside the front dies with "The current
+/// branch has no upstream branch". `--get` with no scope on purpose: a value
+/// sitting in the global config is the person's answer and is left alone.
+/// `--local` from a linked worktree writes the repository's shared config,
+/// which is the intent: it is the whole repository's default from then on.
+fn ensure_push_auto_setup_remote(worktree: &Path) {
+    let Ok(read) = run_git(worktree, &["config", "--get", "push.autoSetupRemote"]) else {
+        return;
+    };
+    // Exit 1 is the one code that means "unset everywhere". Anything else is
+    // a read that failed, and a value we could not read is not ours to write.
+    if read.status.success() || read.status.code() != Some(1) {
+        return;
+    }
+    if let Ok(out) = run_git(
+        worktree,
+        &["config", "--local", "push.autoSetupRemote", "true"],
+    ) {
+        if !out.status.success() {
+            tracing::warn!(
+                worktree = %worktree.display(),
+                "nao consegui definir push.autoSetupRemote: {}",
+                git_err(&out)
+            );
+        }
+    }
+}
+
+/// Repository-level list of ignored paths every new worktree needs. The name
+/// is the convention other worktree tools already read, so a repository that
+/// keeps one gets this without being told about the Yard.
+const WORKTREE_INCLUDE_FILE: &str = ".worktreeinclude";
+const WORKTREE_INCLUDE_MAX_BYTES: u64 = 256 * 1024;
+const WORKTREE_INCLUDE_MAX_ENTRIES: usize = 1000;
+
+/// `.worktreeinclude` into repo-relative literal paths.
+///
+/// Deliberately small: literal files and folders, anchored at the root.
+/// A glob or a negation would have to be *interpreted*, and a pattern half
+/// understood copies the wrong file; a `..`, a drive letter or a leading `/`
+/// would read outside the repository altogether. Anything of that shape is
+/// dropped rather than guessed at.
+pub(crate) fn parse_worktree_include(content: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for raw in content.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let slashes = line.replace('\\', "/");
+        let entry = slashes
+            .strip_prefix("./")
+            .unwrap_or(&slashes)
+            .trim_end_matches('/')
+            .to_string();
+        if entry.is_empty() || !seen.insert(entry.clone()) {
+            continue;
+        }
+        if entry.starts_with('!') || entry.contains('*') || entry.contains('?') {
+            continue;
+        }
+        if entry.starts_with('/') || entry.contains(':') {
+            continue;
+        }
+        let segments: Vec<&str> = entry.split('/').collect();
+        if segments.iter().any(|s| s.is_empty() || *s == "..") || segments[0] == ".git" {
+            continue;
+        }
+        out.push(entry);
+        if out.len() >= WORKTREE_INCLUDE_MAX_ENTRIES {
+            break;
+        }
+    }
+    out
+}
+
+/// Which of those paths git actually ignores.
+///
+/// Ignored is the whole contract. A tracked file is already in the checkout,
+/// and carrying over an untracked one that git *would* show turns the front
+/// dirty the second it is born: a change nobody made, on a branch nobody has
+/// touched yet.
+fn ignored_paths(project: &Path, paths: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    // Over stdin, in chunks: `-z` is what keeps a path with a space or an
+    // accent whole, and git only accepts it that way. The chunk keeps the
+    // write comfortably inside the pipe's buffer, so nothing deadlocks
+    // waiting for a reader that is still writing.
+    for chunk in paths.chunks(100) {
+        let mut input = Vec::new();
+        for path in chunk {
+            input.extend_from_slice(path.as_bytes());
+            input.push(0);
+        }
+        let Ok(res) = run_git_stdin(project, &["check-ignore", "-z", "--stdin"], &input) else {
+            continue;
+        };
+        // Exit 1 means "none of these is ignored" and is not a failure;
+        // anything above it is, and must not read as an answer.
+        if !res.status.success() && res.status.code() != Some(1) {
+            continue;
+        }
+        out.extend(
+            res.stdout
+                .split(|b| *b == 0)
+                .filter(|s| !s.is_empty())
+                .map(|s| String::from_utf8_lossy(s).into_owned()),
+        );
+    }
+    out
+}
+
+/// The ignored paths a repository asks every new worktree to carry.
+fn worktree_include_paths(project: &Path) -> Vec<String> {
+    let file = project.join(WORKTREE_INCLUDE_FILE);
+    let Ok(meta) = std::fs::metadata(&file) else {
+        return Vec::new();
+    };
+    if !meta.is_file() || meta.len() > WORKTREE_INCLUDE_MAX_BYTES {
+        return Vec::new();
+    }
+    let Ok(content) = std::fs::read_to_string(&file) else {
+        return Vec::new();
+    };
+    // A listed path that is not on the ground has nothing to copy, and a
+    // `node_modules` before the first install is the ordinary case.
+    let existing: Vec<String> = parse_worktree_include(&content)
+        .into_iter()
+        .filter(|rel| project.join(rel).exists())
+        .collect();
+    if existing.is_empty() {
+        return Vec::new();
+    }
+    ignored_paths(project, &existing)
+}
+
+/// Copies those paths into the front that was just created.
+///
+/// Best effort, always. A fresh worktree is a clean checkout: the `.env`, the
+/// local config, everything the project ignores is missing from it, and the
+/// CLI opened there starts in a project that cannot run. But a front that
+/// fails to exist because one file was locked is worse than a front missing
+/// it, so every failure here is a log line and the creation goes on.
+fn copy_included_paths(project: &Path, worktree: &Path) {
+    for rel in worktree_include_paths(project) {
+        let to = worktree.join(&rel);
+        // Whatever is already there was put there by the checkout or by a
+        // hook, and it is not this function's to overwrite.
+        if to.exists() {
+            continue;
+        }
+        let outcome = to
+            .parent()
+            .map(std::fs::create_dir_all)
+            .unwrap_or(Ok(()))
+            .and_then(|()| copy_path(&project.join(&rel), &to));
+        if let Err(e) = outcome {
+            tracing::warn!(path = %rel, "nao consegui levar o arquivo para a frente: {e}");
+        }
+    }
+}
+
+/// Copies a file or a whole folder. A symlink is skipped: it points into the
+/// ground's own folder, and following it would copy something nobody listed.
+fn copy_path(from: &Path, to: &Path) -> std::io::Result<()> {
+    let meta = std::fs::symlink_metadata(from)?;
+    if meta.file_type().is_symlink() {
+        return Ok(());
+    }
+    if meta.is_dir() {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy_path(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        return Ok(());
+    }
+    std::fs::copy(from, to).map(|_| ())
+}
+
 /// Creates (or merely describes, without git) a floor's directory.
 ///
-/// - new branch: `git worktree add -b <branch> .yard/floors/<slug>`
-/// - existing branch: `git worktree add .yard/floors/<slug> <branch>`
+/// - new branch: `git worktree add --no-track -b <branch> <path> <base>`
+/// - existing branch: `git worktree add <path> <branch>`
 /// - no git / `no_git`: nothing runs; returns `kind: "plain"` with the
 ///   project's own cwd so the group is born in the same place as the ground.
+///
+/// The base is passed explicitly, always. Without it `worktree add -b` grows
+/// the branch from whatever HEAD is at that instant: a plan read at 14:00 and
+/// confirmed at 14:03, with a `git pull` in between, created the front
+/// somewhere other than the screen had said, and nothing on screen ever
+/// mentioned it.
 pub fn worktree_provision(
     project_path: &Path,
-    name: &str,
-    branch: Option<&str>,
-    existing_branch: bool,
-    no_git: bool,
+    input: &ProvisionInput,
 ) -> Result<WorktreeProvision, String> {
-    if no_git || !is_repo(project_path) {
+    if input.no_git || !is_repo(project_path) {
         return Ok(WorktreeProvision {
             path: project_path.to_string_lossy().into_owned(),
             branch: None,
             kind: "plain".into(),
+            head_oid: None,
+            base_oid: None,
         });
     }
     if !has_head(project_path) {
@@ -680,41 +1054,62 @@ pub fn worktree_provision(
         );
     }
 
-    // Two different names can collapse into the same slug — "Correção" and
-    // "Correcao" both give `correcao`, and any name made only of punctuation
-    // gives `frente`. The old code stopped there with "ja existe uma frente em
-    // <caminho>", naming a folder the user had never typed and giving no way
-    // forward except renaming by guesswork. A numeric suffix keeps distinct
-    // floors distinct; the display name is unaffected.
-    let base = floor_slug(name);
     let floors = project_path.join(".yard").join("floors");
-    let mut slug = base.clone();
-    let mut n = 2;
-    while floors.join(&slug).exists() {
-        if n > 99 {
-            return Err(format!(
-                "ja existem frentes demais com um nome parecido com \"{name}\" \
-                 (slug {base}) — escolha outro nome"
-            ));
+    let slug = match input
+        .worktree_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        // Chosen by the plan: used as it is, and a folder already there is a
+        // refusal, not a rename. The plan is what walks past what is taken.
+        Some(chosen) => {
+            if floors.join(chosen).exists() {
+                return Err(format!("ja existe uma pasta em .yard/floors/{chosen}"));
+            }
+            chosen.to_string()
         }
-        slug = format!("{base}-{n}");
-        n += 1;
-    }
+        // Nobody chose: derive, and walk past what the disk already holds.
+        // Two different names can collapse into the same slug — "Correção"
+        // and "Correcao" both give `correcao` — and the old code stopped
+        // there, naming a folder the user had never typed.
+        None => {
+            let base = floor_slug(&input.name);
+            let mut slug = base.clone();
+            let mut n = 2;
+            while floors.join(&slug).exists() {
+                if n > 99 {
+                    return Err(format!(
+                        "ja existem frentes demais com um nome parecido com \"{}\" \
+                         (slug {base}) — escolha outro nome",
+                        input.name
+                    ));
+                }
+                slug = format!("{base}-{n}");
+                n += 1;
+            }
+            slug
+        }
+    };
+
     let abs = floors.join(&slug);
     ensure_yard_ignored(project_path)
         .map_err(|e| format!("nao consegui atualizar o .gitignore: {e}"))?;
 
     // Relative path with `/`: git on Windows accepts it and the log stays readable.
     let rel = format!(".yard/floors/{slug}");
-    let branch_name = if existing_branch {
-        match branch {
-            Some(b) if !b.trim().is_empty() => b.trim().to_string(),
+    let branch_name = if input.existing_branch {
+        match input.branch.as_deref().map(str::trim) {
+            Some(b) if !b.is_empty() => b.to_string(),
             _ => return Err("--existing-branch exige o nome da branch".into()),
         }
     } else {
-        branch
-            .filter(|b| !b.trim().is_empty())
-            .map(|b| b.trim().to_string())
+        input
+            .branch
+            .as_deref()
+            .map(str::trim)
+            .filter(|b| !b.is_empty())
+            .map(str::to_string)
             .unwrap_or_else(|| format!("yard/{slug}"))
     };
     // Checked before it reaches the command line: the name is positional, so
@@ -722,20 +1117,89 @@ pub fn worktree_provision(
     // talk about anything but the branch name.
     check_branch_name(&branch_name)?;
 
-    let out = if existing_branch {
-        run_git(project_path, &["worktree", "add", &rel, &branch_name])?
+    // The base is resolved to a commit before this point, so what is recorded
+    // is what was used, even when the caller passed a name.
+    let base = if input.existing_branch {
+        String::new()
     } else {
-        run_git(project_path, &["worktree", "add", "-b", &branch_name, &rel])?
+        let named = input
+            .base
+            .as_deref()
+            .map(str::trim)
+            .filter(|b| !b.is_empty())
+            .unwrap_or("HEAD");
+        check_branch_name(named)?;
+        named.to_string()
     };
+    let out = run_git_bounded(
+        project_path,
+        &worktree_add_args(
+            cfg!(windows),
+            input.existing_branch,
+            &branch_name,
+            &rel,
+            &base,
+        ),
+        worktree_add_timeout(std::env::var("YARD_WORKTREE_ADD_TIMEOUT_MS").ok().as_deref()),
+    )?;
     if !out.status.success() {
         return Err(git_err(&out));
     }
 
+    // Everything below here is about the front being *usable*, not about it
+    // existing: a failure is logged and the front still comes back.
+    if !input.existing_branch {
+        ensure_push_auto_setup_remote(&abs);
+    }
+    copy_included_paths(project_path, &abs);
+
+    // Read back, not assumed: this is the OID the rollback compares against
+    // before it dares delete the branch it just made.
+    let head_oid = resolve_commit(&abs, "HEAD");
     Ok(WorktreeProvision {
         path: abs.to_string_lossy().into_owned(),
         branch: Some(branch_name),
         kind: "isolated".into(),
+        base_oid: if input.existing_branch {
+            None
+        } else {
+            head_oid.clone()
+        },
+        head_oid,
     })
+}
+
+/// Deletes a branch **only** while it still points at `expected_oid`.
+///
+/// This is the whole safety of the rollback. A creation that failed halfway
+/// wants its branch gone; a branch the agent has already committed to holds
+/// work that exists nowhere else, and deleting that is the most expensive bug
+/// this app could ship. `update-ref -d <ref> <old>` is git's own
+/// compare-and-swap: it refuses when the ref moved, and there is no window
+/// between the check and the delete for it to move in.
+///
+/// `Ok(true)` = gone (deleted, or already absent). `Ok(false)` = it moved and
+/// was kept, and the caller owes the user a sentence saying so.
+pub fn branch_delete_if_unchanged(
+    project_path: &Path,
+    branch: &str,
+    expected_oid: &str,
+) -> Result<bool, String> {
+    check_branch_name(branch)?;
+    let refname = format!("refs/heads/{branch}");
+    let out = run_git(project_path, &["update-ref", "-d", &refname, expected_oid])?;
+    if out.status.success() {
+        return Ok(true);
+    }
+    match resolve_commit(project_path, &refname) {
+        // Somebody else already removed it: nothing to preserve.
+        None => Ok(true),
+        // It moved: there is work on it now, and it stays.
+        Some(now) if now != expected_oid => Ok(false),
+        // It is exactly where we left it and git still refused — that is a
+        // real failure (a lock, permissions) and must not read as success.
+        Some(_) => Err(git_err(&out)),
+    }
 }
 
 pub fn worktree_list(project_path: &Path) -> Result<Vec<WorktreeEntry>, String> {
@@ -1124,26 +1588,47 @@ pub fn worktree_land(
 
 /// Removes the worktree (no `--force`: dirty fails, on purpose) and,
 /// optionally, the branch that went with it.
+/// What a removal left standing.
+#[derive(Clone, Serialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeRemoval {
+    /// Why the branch was kept, when it was. `None` means nothing was kept.
+    pub branch_kept: Option<String>,
+}
+
+/// Removes a worktree and, when asked, the branch that lived in it.
+///
+/// The delete is `git branch -d`, never `-D`. `-D` takes whatever is on the
+/// branch, and on a front that was never landed that is the agent's whole
+/// afternoon, held nowhere else. `-d` refuses exactly that case, and the
+/// refusal comes back as `branch_kept` rather than as an error: the worktree
+/// really was removed, and the caller owes the user a sentence, not a failure.
 pub fn worktree_remove(
     project_path: &Path,
     worktree_path: &Path,
     delete_branch: Option<&str>,
-) -> Result<(), String> {
+) -> Result<WorktreeRemoval, String> {
     let target = worktree_path.to_string_lossy();
     let out = run_git(project_path, &["worktree", "remove", &target])?;
     if !out.status.success() {
         return Err(git_err(&out));
     }
-    if let Some(branch) = delete_branch {
-        let out = run_git(project_path, &["branch", "-D", branch])?;
-        if !out.status.success() {
-            return Err(format!(
-                "worktree removido, mas a branch ficou: {}",
-                git_err(&out)
-            ));
-        }
+    let Some(branch) = delete_branch else {
+        return Ok(WorktreeRemoval::default());
+    };
+    check_branch_name(branch)?;
+    let out = run_git(project_path, &["branch", "-d", branch])?;
+    if out.status.success() {
+        return Ok(WorktreeRemoval::default());
     }
-    Ok(())
+    // Gone already, by another window or another hand: nothing was kept and
+    // nothing failed.
+    if !local_branches(project_path).iter().any(|b| b == branch) {
+        return Ok(WorktreeRemoval::default());
+    }
+    Ok(WorktreeRemoval {
+        branch_kept: Some(git_err(&out)),
+    })
 }
 
 /// Runs a floor hook command (setup/run/teardown) via `cmd /C`, with the
@@ -1389,6 +1874,355 @@ pub(crate) fn parse_numstat(bytes: &[u8]) -> HashMap<String, (Option<u32>, Optio
         }
     }
     map
+}
+
+// ---------------------------------------------------------------------------
+// preflight: the plan, before anything is written
+// ---------------------------------------------------------------------------
+
+/// One row of the dialog, as it stands right now.
+///
+/// `kind` is the shape the front will have, and it decides which of the other
+/// fields mean anything:
+///
+/// - `new_branch`: a branch this call would create, in a worktree it creates;
+/// - `existing_branch`: a branch that already exists, in a new worktree;
+/// - `adopt`: a worktree git already lists, which the Yard only takes over;
+/// - `ground`: the project's own root, on whatever branch is checked out.
+///
+/// Anything left empty is *derived*, and a derived value is allowed to be
+/// changed to keep it free. Anything typed by hand comes back verbatim, even
+/// when it is taken: silently renaming what somebody wrote creates a branch
+/// nobody asked for, and they find out three commits later.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreflightItem {
+    pub id: String,
+    pub kind: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub worktree_name: Option<String>,
+    #[serde(default)]
+    pub base_ref: Option<String>,
+    #[serde(default)]
+    pub worktree_path: Option<String>,
+}
+
+/// What this row would do, and everything the dialog needs to refuse it.
+///
+/// Nothing here is a verdict: the row says the branch exists, and *the rules*
+/// (`lib/provision/plan.ts`) decide whether that is fatal, a warning or the
+/// whole point. The split is what lets one backend answer serve the dialog,
+/// the palette and the CLI without any of them re-deriving git's opinion.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreflightItemResult {
+    pub id: String,
+    pub branch: Option<String>,
+    pub branch_exists: bool,
+    /// The worktree already holding that branch — git gives out only one.
+    pub branch_checked_out_at: Option<String>,
+    /// Why git would refuse the name, when it would.
+    pub branch_error: Option<String>,
+    pub path: String,
+    pub path_exists: bool,
+    pub base_ref: Option<String>,
+    /// The base frozen as a commit: what the person approved in the plan.
+    pub base_oid: Option<String>,
+    /// `Some(reason)` when the worktree is locked; the reason may be empty.
+    pub locked: Option<String>,
+    /// Uncommitted work at the destination — only asked of one that exists.
+    pub dirty: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preflight {
+    pub is_repo: bool,
+    pub has_head: bool,
+    pub ground_path: String,
+    pub ground_branch: Option<String>,
+    pub ground_dirty: bool,
+    /// What a new branch grows from when nobody chose: the ground's branch.
+    pub default_base: Option<String>,
+    pub local_branches: Vec<String>,
+    pub worktrees: Vec<WorktreeEntry>,
+    pub items: Vec<PreflightItemResult>,
+}
+
+/// `locked` on the porcelain listing, per worktree path. The reason is
+/// optional and often empty — the lock is what matters.
+fn parse_worktree_locks(text: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let mut current: Option<String> = None;
+    for line in text.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            current = Some(path.to_string());
+        } else if line == "locked" || line.starts_with("locked ") {
+            if let Some(path) = current.clone() {
+                out.insert(path, line.strip_prefix("locked ").unwrap_or("").to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Local branches, in the one format git promises not to translate.
+fn local_branches(cwd: &Path) -> Vec<String> {
+    let Ok(out) = run_git(
+        cwd,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    ) else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// A ref frozen into the commit it points at *now*.
+fn resolve_commit(cwd: &Path, git_ref: &str) -> Option<String> {
+    // `^{commit}` so a tag resolves to what it tags, and `--verify --quiet`
+    // so a name that does not exist is an exit code and not a page of stderr.
+    let spec = format!("{git_ref}^{{commit}}");
+    let out = run_git(cwd, &["rev-parse", "--verify", "--quiet", &spec]).ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let oid = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if oid.is_empty() {
+        None
+    } else {
+        Some(oid)
+    }
+}
+
+/// A base, frozen into the commit it names *now*.
+///
+/// The qualification is not decoration. `rev-parse` resolves a bare name
+/// against `refs/tags/` **before** `refs/heads/`, so a repository carrying a
+/// tag called `main` grew every new front from the tag instead of from the
+/// branch, and nothing on screen said so. What the picker offers is branches
+/// (the local ones, then the ones on a remote), so that is the order asked
+/// for here, and a name matching neither is handed to git as written, which
+/// is how a tag chosen on purpose still works.
+fn resolve_base_commit(cwd: &Path, base: &str) -> Option<String> {
+    if base.starts_with("refs/") {
+        return resolve_commit(cwd, base);
+    }
+    for candidate in [format!("refs/heads/{base}"), format!("refs/remotes/{base}")] {
+        if let Some(oid) = resolve_commit(cwd, &candidate) {
+            return Some(oid);
+        }
+    }
+    resolve_commit(cwd, base)
+}
+
+/// git's own opinion on a branch name, which is the only one that counts.
+///
+/// The local guard runs first and is not redundant: a name starting with `-`
+/// would be read by `check-ref-format` itself as an option, and the answer
+/// would be about the command line instead of about the name.
+fn check_ref_format(cwd: &Path, name: &str) -> Option<String> {
+    if let Err(e) = check_branch_name(name) {
+        return Some(e);
+    }
+    let out = run_git(cwd, &["check-ref-format", "--branch", name]).ok()?;
+    if out.status.success() {
+        None
+    } else {
+        Some(format!(
+            "\"{name}\" nao e um nome de branch que o git aceite"
+        ))
+    }
+}
+
+/// Reads the repository and answers, for every row, what it would do.
+///
+/// Nothing here writes: no folder, no ref, no `.gitignore`. That is the whole
+/// contract — the dialog can call this on every keystroke, and the person can
+/// read the plan and walk away.
+pub fn worktree_preflight(
+    project_path: &Path,
+    items: &[PreflightItem],
+) -> Result<Preflight, String> {
+    let repo = is_repo(project_path);
+    let head = repo && has_head(project_path);
+
+    let (worktrees, locks) = if repo {
+        let out = run_git(project_path, &["worktree", "list", "--porcelain"])?;
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            (parse_worktree_list(&text), parse_worktree_locks(&text))
+        } else {
+            (Vec::new(), HashMap::new())
+        }
+    } else {
+        (Vec::new(), HashMap::new())
+    };
+
+    let same = |a: &str, b: &Path| -> bool {
+        let norm = |s: &str| s.replace('\\', "/").trim_end_matches('/').to_lowercase();
+        norm(a) == norm(&b.to_string_lossy())
+    };
+    let ground_branch = worktrees
+        .iter()
+        .find(|w| same(&w.path, project_path))
+        .and_then(|w| w.branch.clone());
+    let ground_dirty = repo && worktree_dirty(project_path).unwrap_or(false);
+
+    // Where each branch already lives — git hands out one worktree per branch
+    // and the refusal, when it comes, has to name the holder.
+    let mut checked_out: HashMap<String, String> = HashMap::new();
+    for w in &worktrees {
+        if let Some(b) = &w.branch {
+            checked_out.entry(b.clone()).or_insert_with(|| w.path.clone());
+        }
+    }
+    let branches = local_branches(project_path);
+    let known: HashSet<&str> = branches.iter().map(String::as_str).collect();
+
+    let floors = project_path.join(".yard").join("floors");
+    // What earlier rows of *this same call* already spoke for. Without it two
+    // rows taking the default name are both told "livre", and the second
+    // `worktree add` is where the batch finds out.
+    let mut spoken_paths: HashSet<String> = HashSet::new();
+    let mut spoken_branches: HashSet<String> = HashSet::new();
+
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let typed_folder = item
+            .worktree_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let typed_branch = item
+            .branch
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        // The derived slug walks past everything taken — on the disk, in the
+        // refs, and in the rows already resolved above. A typed name does not
+        // walk anywhere: it comes back exactly as written.
+        let base_slug = floor_slug(&item.name);
+        let mut slug = base_slug.clone();
+        if typed_folder.is_none() && typed_branch.is_none() {
+            let mut n = 2;
+            while n < 100
+                && (floors.join(&slug).exists()
+                    || spoken_paths.contains(&slug.to_lowercase())
+                    || known.contains(format!("yard/{slug}").as_str())
+                    || spoken_branches.contains(&format!("yard/{slug}")))
+            {
+                slug = format!("{base_slug}-{n}");
+                n += 1;
+            }
+        }
+
+        let folder = typed_folder.unwrap_or(&slug);
+        let path = match item.kind.as_str() {
+            // Without git nothing is isolated, so every row runs in the
+            // project's own folder — and the plan has to print *that*. A path
+            // under `.yard/floors/` here would promise an isolation the row
+            // will never get, and would send a setup hook to a folder that
+            // does not exist.
+            _ if !repo => project_path.to_string_lossy().into_owned(),
+            "ground" => project_path.to_string_lossy().into_owned(),
+            "adopt" => item.worktree_path.clone().unwrap_or_default(),
+            _ => floors.join(folder).to_string_lossy().into_owned(),
+        };
+
+        let branch = match item.kind.as_str() {
+            // Same reason as the path above: no git, no branch to name.
+            _ if !repo => None,
+            "ground" => ground_branch.clone(),
+            "adopt" => worktrees
+                .iter()
+                .find(|w| same(&w.path, Path::new(&path)))
+                .and_then(|w| w.branch.clone()),
+            "existing_branch" => typed_branch.map(str::to_string),
+            _ => Some(typed_branch.map(str::to_string).unwrap_or(format!("yard/{slug}"))),
+        };
+
+        // Only a branch this call would *create* is checked for shape: an
+        // existing one is already a valid ref by definition, and saying
+        // otherwise about a branch somebody else made is noise.
+        let branch_error = match (item.kind.as_str(), branch.as_deref()) {
+            ("new_branch", Some(b)) => check_ref_format(project_path, b),
+            _ => None,
+        };
+
+        let dirty = match item.kind.as_str() {
+            "ground" => Some(ground_dirty),
+            "adopt" if Path::new(&path).exists() => worktree_dirty(Path::new(&path)).ok(),
+            _ => None,
+        };
+
+        let base_ref = if item.kind == "new_branch" {
+            item.base_ref
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .or_else(|| ground_branch.clone())
+                .or(if head { Some("HEAD".into()) } else { None })
+        } else {
+            None
+        };
+
+        out.push(PreflightItemResult {
+            id: item.id.clone(),
+            branch_exists: branch.as_deref().is_some_and(|b| known.contains(b)),
+            branch_checked_out_at: branch.as_deref().and_then(|b| checked_out.get(b).cloned()),
+            branch_error,
+            path_exists: !path.is_empty() && Path::new(&path).exists(),
+            base_oid: base_ref
+                .as_deref()
+                .and_then(|r| resolve_base_commit(project_path, r)),
+            base_ref,
+            locked: locks
+                .iter()
+                .find(|(p, _)| same(p, Path::new(&path)))
+                .map(|(_, reason)| reason.clone()),
+            dirty,
+            branch,
+            path,
+        });
+
+        if let Some(last) = out.last() {
+            spoken_paths.insert(
+                Path::new(&last.path)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_lowercase())
+                    .unwrap_or_default(),
+            );
+            if let Some(b) = &last.branch {
+                spoken_branches.insert(b.clone());
+            }
+        }
+    }
+
+    Ok(Preflight {
+        is_repo: repo,
+        has_head: head,
+        ground_path: project_path.to_string_lossy().into_owned(),
+        ground_branch: ground_branch.clone(),
+        ground_dirty,
+        default_base: ground_branch.or(if head { Some("HEAD".into()) } else { None }),
+        local_branches: branches,
+        worktrees,
+        items: out,
+    })
 }
 
 #[cfg(test)]
@@ -1769,8 +2603,15 @@ worktree C:/solto\nHEAD 123\ndetached\n";
         }
 
         assert_eq!(floor_slug("Correção"), floor_slug("Correcao"));
-        let a = worktree_provision(&root, "Correção", None, false, false).unwrap();
-        let b = worktree_provision(&root, "Correcao", None, false, false).unwrap();
+        let mk = |name: &str| {
+            worktree_provision(
+                &root,
+                &ProvisionInput { name: name.into(), ..Default::default() },
+            )
+            .unwrap()
+        };
+        let a = mk("Correção");
+        let b = mk("Correcao");
         assert_ne!(a.path, b.path, "two floors cannot land in the same folder");
         assert!(b.path.ends_with("correcao-2"), "{}", b.path);
         assert_ne!(a.branch, b.branch);
@@ -1798,6 +2639,73 @@ worktree C:/solto\nHEAD 123\ndetached\n";
                 ),
             ]
         );
+    }
+
+    /// The regression this locks down: closing a front with "apagar a branch"
+    /// ticked ran `git branch -D`, which deletes whatever is on it. On a front
+    /// that had not been landed that was the agent's whole afternoon, gone
+    /// with no way back. Now the delete is `-d`, git refuses an unmerged
+    /// branch, and the branch is kept and reported.
+    #[test]
+    fn removing_a_front_never_deletes_a_branch_the_ground_does_not_have() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-keep-branch-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "um").unwrap();
+        let _ = run_git(&root, &["add", "-A"]);
+        if !run_git(&root, &["commit", "-m", "inicial"])
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        let made = worktree_provision(
+            &root,
+            &ProvisionInput { name: "login".into(), ..Default::default() },
+        )
+        .unwrap();
+        let floor = std::path::Path::new(&made.path);
+        let branch = made.branch.clone().unwrap();
+
+        // The work the agent did, on the front's own branch and nowhere else.
+        std::fs::write(floor.join("b.txt"), "trabalho").unwrap();
+        let _ = run_git(floor, &["add", "-A"]);
+        let _ = run_git(floor, &["commit", "-m", "trabalho do agente"]);
+
+        let removal = worktree_remove(&root, floor, Some(&branch)).unwrap();
+        assert!(
+            removal.branch_kept.is_some(),
+            "an unmerged branch must be kept, and the caller told why"
+        );
+        assert!(
+            local_branches(&root).contains(&branch),
+            "the commit exists nowhere else: the branch has to still be there"
+        );
+        assert!(!floor.exists(), "the worktree itself is removed either way");
+
+        // And the merged case: nothing is lost, so nothing is kept.
+        let made2 = worktree_provision(
+            &root,
+            &ProvisionInput { name: "vazia".into(), ..Default::default() },
+        )
+        .unwrap();
+        let branch2 = made2.branch.clone().unwrap();
+        let removal2 =
+            worktree_remove(&root, std::path::Path::new(&made2.path), Some(&branch2)).unwrap();
+        assert!(removal2.branch_kept.is_none());
+        assert!(!local_branches(&root).contains(&branch2));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn init_repo(root: &std::path::Path) -> bool {
@@ -1858,7 +2766,11 @@ worktree C:/solto\nHEAD 123\ndetached\n";
             return;
         }
 
-        let floor = worktree_provision(&root, "fix", None, false, false).unwrap();
+        let floor = worktree_provision(
+            &root,
+            &ProvisionInput { name: "fix".into(), ..Default::default() },
+        )
+        .unwrap();
         assert_eq!(floor.kind, "isolated");
         // Provisioning appends `.yard/` to `.gitignore` on the ground —
         // that's a real dirty tree, and landing must refuse it. Commit it
@@ -1912,5 +2824,900 @@ worktree C:/solto\nHEAD 123\ndetached\n";
         assert_eq!(map.get("src/a.ts"), Some(&(Some(10), Some(2))));
         assert_eq!(map.get("img.png"), Some(&(None, None)));
         assert_eq!(map.get("new.ts"), Some(&(Some(3), Some(1))));
+    }
+
+    // -- preflight (a plan, before anything is written) ----------------------
+
+    /// The whole point of the preflight: the dialog can show what it is about
+    /// to do — the base commit, the branch, the folder — and refuse *before*
+    /// touching the disk. Every one of these used to be discovered by running
+    /// `git worktree add` and reading the failure.
+    #[test]
+    fn preflight_resolves_the_base_the_branch_and_the_folder_without_writing() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-preflight-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "oi").unwrap();
+        if !commit_all(&root, "inicial") {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        let plan = worktree_preflight(
+            &root,
+            &[PreflightItem {
+                id: "row-1".into(),
+                kind: "new_branch".into(),
+                name: "Correcao do Login".into(),
+                branch: None,
+                worktree_name: None,
+                base_ref: None,
+                worktree_path: None,
+            }],
+        )
+        .unwrap();
+
+        assert!(plan.is_repo && plan.has_head);
+        assert_eq!(plan.ground_branch.as_deref(), Some("main"));
+        let it = &plan.items[0];
+        assert_eq!(it.branch.as_deref(), Some("yard/correcao-do-login"));
+        assert!(!it.branch_exists);
+        assert_eq!(it.branch_error, None);
+        assert!(it.path.ends_with("correcao-do-login"), "{}", it.path);
+        assert!(!it.path_exists, "the preflight writes nothing");
+        // The base is frozen as an OID here, so that the branch is created
+        // from the commit the person approved and not from whatever `main`
+        // points at by the time they click.
+        assert_eq!(it.base_ref.as_deref(), Some("main"));
+        assert_eq!(it.base_oid.as_ref().map(|o| o.len()), Some(40));
+        assert!(!root.join(".yard").exists(), "nothing was created");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Two rows of the same batch, both taking the default name: the plan
+    /// must already show two different folders. Letting them both read
+    /// "livre" and finding out inside `worktree add` is how a batch of four
+    /// lands as one front and three errors.
+    #[test]
+    fn two_rows_with_the_same_derived_name_get_different_folders_and_branches() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-preflight-dup-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "oi").unwrap();
+        if !commit_all(&root, "inicial") {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        let row = |id: &str| PreflightItem {
+            id: id.into(),
+            kind: "new_branch".into(),
+            name: "login".into(),
+            branch: None,
+            worktree_name: None,
+            base_ref: None,
+            worktree_path: None,
+        };
+        let plan = worktree_preflight(&root, &[row("a"), row("b")]).unwrap();
+        assert_ne!(plan.items[0].path, plan.items[1].path);
+        assert_ne!(plan.items[0].branch, plan.items[1].branch);
+        assert_eq!(plan.items[1].branch.as_deref(), Some("yard/login-2"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A name typed by hand is never quietly changed: two rows asking for the
+    /// same branch come back saying so, and the dialog is what refuses. A
+    /// backend that silently renamed the second one would create a branch
+    /// nobody asked for.
+    #[test]
+    fn a_typed_branch_comes_back_verbatim_even_when_two_rows_share_it() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-preflight-typed-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "oi").unwrap();
+        if !commit_all(&root, "inicial") {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        let row = |id: &str| PreflightItem {
+            id: id.into(),
+            kind: "new_branch".into(),
+            name: "seja o que for".into(),
+            branch: Some("agent/login".into()),
+            worktree_name: Some("login".into()),
+            base_ref: None,
+            worktree_path: None,
+        };
+        let plan = worktree_preflight(&root, &[row("a"), row("b")]).unwrap();
+        assert_eq!(plan.items[0].branch.as_deref(), Some("agent/login"));
+        assert_eq!(plan.items[1].branch.as_deref(), Some("agent/login"));
+        assert_eq!(plan.items[0].path, plan.items[1].path);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `main` is checked out at the project's own root, and git gives one
+    /// worktree per branch. The preflight names the path holding it so the
+    /// dialog can say where, instead of forwarding git's own sentence.
+    #[test]
+    fn an_existing_branch_reports_where_it_is_already_checked_out() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-preflight-taken-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "oi").unwrap();
+        if !commit_all(&root, "inicial") {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        let plan = worktree_preflight(
+            &root,
+            &[
+                PreflightItem {
+                    id: "taken".into(),
+                    kind: "existing_branch".into(),
+                    name: "revisar".into(),
+                    branch: Some("main".into()),
+                    worktree_name: None,
+                    base_ref: None,
+                    worktree_path: None,
+                },
+                PreflightItem {
+                    id: "gone".into(),
+                    kind: "existing_branch".into(),
+                    name: "revisar".into(),
+                    branch: Some("nao-existe".into()),
+                    worktree_name: None,
+                    base_ref: None,
+                    worktree_path: None,
+                },
+            ],
+        )
+        .unwrap();
+
+        assert!(plan.items[0].branch_exists);
+        assert!(plan.items[0].branch_checked_out_at.is_some());
+        assert!(!plan.items[1].branch_exists);
+        assert_eq!(plan.items[1].branch_checked_out_at, None);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The name goes to `git worktree add` as a positional argument, so one
+    /// starting with `-` becomes an option and the error that comes back
+    /// talks about anything but branch names. The refusal belongs in the
+    /// plan, under the field, before the click.
+    #[test]
+    fn a_branch_name_git_would_refuse_comes_back_as_an_error_not_a_crash() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-preflight-bad-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "oi").unwrap();
+        if !commit_all(&root, "inicial") {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        let bad = |b: &str| PreflightItem {
+            id: b.into(),
+            kind: "new_branch".into(),
+            name: "x".into(),
+            branch: Some(b.into()),
+            worktree_name: None,
+            base_ref: None,
+            worktree_path: None,
+        };
+        let plan =
+            worktree_preflight(&root, &[bad("--force"), bad("a..b"), bad("com espaco")]).unwrap();
+        for it in &plan.items {
+            assert!(it.branch_error.is_some(), "{:?}", it.branch);
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A base that resolves to nothing is a refusal with a field to point at,
+    /// not a `worktree add` that fails halfway with the folder already made.
+    #[test]
+    fn a_base_that_resolves_to_nothing_is_reported_before_anything_is_created() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-preflight-base-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "oi").unwrap();
+        if !commit_all(&root, "inicial") {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        let plan = worktree_preflight(
+            &root,
+            &[PreflightItem {
+                id: "x".into(),
+                kind: "new_branch".into(),
+                name: "x".into(),
+                branch: None,
+                worktree_name: None,
+                base_ref: Some("origin/nao-existe".into()),
+                worktree_path: None,
+            }],
+        )
+        .unwrap();
+        assert_eq!(plan.items[0].base_oid, None);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Adopting: the folder is already there and the question is what state
+    /// it is in. A worktree with uncommitted work is not refused — it is
+    /// *announced*, because the agent is about to start on top of it.
+    #[test]
+    fn adopting_reports_the_worktrees_own_branch_and_whether_it_is_dirty() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-preflight-adopt-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "oi").unwrap();
+        if !commit_all(&root, "inicial") {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        let made = worktree_provision(
+            &root,
+            &ProvisionInput { name: "solta".into(), ..Default::default() },
+        )
+        .unwrap();
+        std::fs::write(std::path::Path::new(&made.path).join("sujo.txt"), "x").unwrap();
+
+        let plan = worktree_preflight(
+            &root,
+            &[PreflightItem {
+                id: "x".into(),
+                kind: "adopt".into(),
+                name: "x".into(),
+                branch: None,
+                worktree_name: None,
+                base_ref: None,
+                worktree_path: Some(made.path.clone()),
+            }],
+        )
+        .unwrap();
+        let it = &plan.items[0];
+        assert_eq!(it.branch, made.branch);
+        assert_eq!(it.dirty, Some(true));
+        assert!(it.path_exists);
+
+        let _ = run_git(&root, &["worktree", "remove", "--force", &made.path]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A folder with no git at all, and a repo with no commit yet, are two
+    /// different answers — and neither is an error. The dialog says which
+    /// before the click; it used to find out from `worktree add`.
+    #[test]
+    fn a_folder_without_git_and_a_repo_without_a_commit_answer_plainly() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-preflight-empty-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let row = PreflightItem {
+            id: "x".into(),
+            kind: "new_branch".into(),
+            name: "seja o que for".into(),
+            branch: None,
+            worktree_name: None,
+            base_ref: None,
+            worktree_path: None,
+        };
+        let plain = worktree_preflight(&root, std::slice::from_ref(&row)).unwrap();
+        assert!(!plain.is_repo && !plain.has_head);
+        // Without git nothing is isolated: the front runs in the project's own
+        // folder, and the plan has to print *that*. A path under
+        // `.yard/floors/` here promises an isolation the row will never get,
+        // and a setup hook would be sent to a folder that does not exist.
+        assert_eq!(
+            plain.items[0].path.replace('\\', "/"),
+            root.to_string_lossy().replace('\\', "/")
+        );
+        assert_eq!(plain.items[0].branch, None);
+
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        let fresh = worktree_preflight(&root, &[]).unwrap();
+        assert!(fresh.is_repo, "git init happened");
+        assert!(!fresh.has_head, "but nothing was committed");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A locked worktree is one someone deliberately took off the table
+    /// (`git worktree lock`, usually a removable drive or a long-running
+    /// build). Adopting it, or removing it, has to be refused with the reason
+    /// the person wrote — which travels on the same porcelain listing, on its
+    /// own line, sometimes with a reason and sometimes bare.
+    #[test]
+    fn the_porcelain_listing_carries_the_lock_and_its_reason() {
+        let text = "worktree C:/proj\nHEAD abc\nbranch refs/heads/main\n\
+                    \n\
+                    worktree C:/proj/.yard/floors/a\nHEAD def\nbranch refs/heads/yard/a\nlocked pen drive\n\
+                    \n\
+                    worktree C:/proj/.yard/floors/b\nHEAD 123\nbranch refs/heads/yard/b\nlocked\n";
+        let locks = parse_worktree_locks(text);
+        assert_eq!(locks.get("C:/proj/.yard/floors/a").map(String::as_str), Some("pen drive"));
+        // Locked with no reason is still locked: the entry has to exist, and
+        // an empty reason is what the UI turns into its own sentence.
+        assert_eq!(locks.get("C:/proj/.yard/floors/b").map(String::as_str), Some(""));
+        assert_eq!(locks.get("C:/proj"), None);
+    }
+
+    // -- creating from an approved base, and undoing it safely ---------------
+
+    /// The plan freezes the base as a commit and the creation has to honour
+    /// *that* commit. `worktree add -b <b> <path>` without a base grows the
+    /// branch from whatever HEAD happens to be — so a plan read at 14:00 and
+    /// confirmed at 14:03, with a pull in between, silently created the front
+    /// somewhere else than the screen said.
+    #[test]
+    fn a_new_branch_grows_from_the_commit_the_plan_froze() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-base-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "um").unwrap();
+        if !commit_all(&root, "primeiro") {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        let first = resolve_commit(&root, "HEAD").unwrap();
+        std::fs::write(root.join("a.txt"), "dois").unwrap();
+        assert!(commit_all(&root, "segundo"));
+        let second = resolve_commit(&root, "HEAD").unwrap();
+        assert_ne!(first, second);
+
+        let made = worktree_provision(
+            &root,
+            &ProvisionInput {
+                name: "antiga".into(),
+                base: Some(first.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(made.head_oid.as_deref(), Some(first.as_str()));
+        assert_eq!(made.base_oid.as_deref(), Some(first.as_str()));
+        // And the base branch stayed exactly where it was: creating a front
+        // never moves the branch it grew from.
+        assert_eq!(resolve_commit(&root, "main").as_deref(), Some(second.as_str()));
+
+        let _ = run_git(&root, &["worktree", "remove", "--force", &made.path]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The rollback of a failed creation deletes the branch it made — and
+    /// only while that branch still points where it was left. The moment an
+    /// agent commits, the branch holds work nobody else has, and a rollback
+    /// that deleted it would be the most expensive bug in the app.
+    #[test]
+    fn the_created_branch_is_deleted_only_while_it_still_points_where_we_left_it() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-cas-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "um").unwrap();
+        if !commit_all(&root, "primeiro") {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        let made = worktree_provision(
+            &root,
+            &ProvisionInput {
+                name: "descartavel".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let branch = made.branch.clone().unwrap();
+        let born = made.head_oid.clone().unwrap();
+        let work = std::path::Path::new(&made.path);
+
+        // The agent committed. The branch moved, and the branch is now the
+        // only place that work exists.
+        std::fs::write(work.join("b.txt"), "trabalho").unwrap();
+        assert!(commit_all(work, "o agente trabalhou"));
+
+        let _ = run_git(&root, &["worktree", "remove", "--force", &made.path]);
+        assert_eq!(
+            branch_delete_if_unchanged(&root, &branch, &born),
+            Ok(false),
+            "the branch moved: it is kept, and the caller has to say so"
+        );
+        assert!(
+            local_branches(&root).contains(&branch),
+            "a branch with work on it survives the rollback"
+        );
+
+        // A second front, untouched, is deleted without ceremony.
+        let clean = worktree_provision(
+            &root,
+            &ProvisionInput {
+                name: "intocada".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let clean_branch = clean.branch.clone().unwrap();
+        let clean_oid = clean.head_oid.clone().unwrap();
+        let _ = run_git(&root, &["worktree", "remove", "--force", &clean.path]);
+        assert_eq!(
+            branch_delete_if_unchanged(&root, &clean_branch, &clean_oid),
+            Ok(true)
+        );
+        assert!(!local_branches(&root).contains(&clean_branch));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The plan already chose the folder, and the creation must land in it —
+    /// not in whatever the slug rule would derive again from the name. The
+    /// two used to be computed twice, in two languages, and a name whose slug
+    /// was already taken made the plan say one path and the disk get another.
+    #[test]
+    fn the_folder_the_plan_showed_is_the_folder_that_is_created() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-folder-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "um").unwrap();
+        if !commit_all(&root, "primeiro") {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        let plan = worktree_preflight(
+            &root,
+            &[PreflightItem {
+                id: "x".into(),
+                kind: "new_branch".into(),
+                name: "Revisar o Checkout".into(),
+                branch: None,
+                worktree_name: None,
+                base_ref: None,
+                worktree_path: None,
+            }],
+        )
+        .unwrap();
+        let planned = plan.items[0].clone();
+
+        let made = worktree_provision(
+            &root,
+            &ProvisionInput {
+                name: "Revisar o Checkout".into(),
+                branch: planned.branch.clone(),
+                worktree_name: std::path::Path::new(&planned.path)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().into_owned()),
+                base: planned.base_oid.clone(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            made.path.replace('\\', "/"),
+            planned.path.replace('\\', "/"),
+            "the plan promised a folder"
+        );
+        assert_eq!(made.branch, planned.branch);
+
+        let _ = run_git(&root, &["worktree", "remove", "--force", &made.path]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // -- what a front is born with -------------------------------------------
+
+    fn strings(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    /// The command line is built in one place because two of its pieces are
+    /// invisible from here: the `-c core.longpaths=true` a Windows checkout
+    /// needs to go past MAX_PATH (a front lives two folders deeper than the
+    /// ground, so the ground fitting proves nothing), and the fact that an
+    /// existing branch takes no base, because naming one would ask git to move it.
+    #[test]
+    fn a_windows_checkout_is_given_the_long_path_escape() {
+        assert_eq!(
+            worktree_add_args(true, false, "yard/fix", ".yard/floors/fix", "abc123"),
+            strings(&[
+                "-c",
+                "core.longpaths=true",
+                "worktree",
+                "add",
+                "--no-track",
+                "-b",
+                "yard/fix",
+                ".yard/floors/fix",
+                "abc123",
+            ])
+        );
+        assert_eq!(
+            worktree_add_args(false, false, "yard/fix", ".yard/floors/fix", "abc123"),
+            strings(&[
+                "worktree",
+                "add",
+                "--no-track",
+                "-b",
+                "yard/fix",
+                ".yard/floors/fix",
+                "abc123",
+            ])
+        );
+        assert_eq!(
+            worktree_add_args(true, true, "feature/x", ".yard/floors/x", "abc123"),
+            strings(&[
+                "-c",
+                "core.longpaths=true",
+                "worktree",
+                "add",
+                ".yard/floors/x",
+                "feature/x",
+            ])
+        );
+    }
+
+    fn config_get(cwd: &std::path::Path, key: &str) -> Option<String> {
+        let out = run_git(cwd, &["config", "--get", key]).ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// The regression this locks down: a front's branch is created with
+    /// `--no-track`, so it has no upstream, and the first `git push` an agent
+    /// ran inside the front died with "The current branch has no upstream
+    /// branch". Pushing from the front is not an advanced case: the front is
+    /// where the work happens.
+    #[test]
+    fn the_first_push_from_a_front_needs_no_upstream_spelled_out() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-push-default-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "oi").unwrap();
+        if !commit_all(&root, "inicial") {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        // Whatever this machine already says counts as the person's answer,
+        // so the expectation is read before anything is written.
+        let ambient = config_get(&root, "push.autoSetupRemote");
+
+        let made = worktree_provision(
+            &root,
+            &ProvisionInput { name: "envio".into(), ..Default::default() },
+        )
+        .unwrap();
+        let front = std::path::PathBuf::from(&made.path);
+        let after = config_get(&front, "push.autoSetupRemote");
+        match ambient {
+            None => assert_eq!(
+                after.as_deref(),
+                Some("true"),
+                "a front with no upstream needs `git push` to be able to create one"
+            ),
+            Some(chosen) => assert_eq!(after.as_deref(), Some(chosen.as_str())),
+        }
+
+        let _ = run_git(&root, &["worktree", "remove", "--force", &made.path]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// And the other half: a value the person already chose is theirs. The
+    /// read is `--get` with no scope on purpose: a `false` sitting in the
+    /// global config is an answer, not an absence.
+    #[test]
+    fn a_push_default_the_person_already_chose_is_kept() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-push-chosen-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "oi").unwrap();
+        if !commit_all(&root, "inicial") {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        let _ = run_git(
+            &root,
+            &["config", "--local", "push.autoSetupRemote", "false"],
+        );
+
+        let made = worktree_provision(
+            &root,
+            &ProvisionInput { name: "envio".into(), ..Default::default() },
+        )
+        .unwrap();
+        assert_eq!(
+            config_get(std::path::Path::new(&made.path), "push.autoSetupRemote").as_deref(),
+            Some("false"),
+            "the app does not get to overrule a setting the person wrote"
+        );
+
+        let _ = run_git(&root, &["worktree", "remove", "--force", &made.path]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The list is deliberately small: literal files and folders, anchored at
+    /// the root. A glob or a negation would have to be *interpreted*, and a
+    /// half-understood pattern copies the wrong file; a `..` or an absolute
+    /// path would read outside the repository entirely.
+    #[test]
+    fn the_include_list_takes_only_literal_paths_that_cannot_leave_the_repository() {
+        let entries = parse_worktree_include(
+            "# o que toda frente precisa\n\
+             \n\
+             .env\n\
+             ./config\\local.json\n\
+             assets/\n\
+             assets\n\
+             *.key\n\
+             !.env.prod\n\
+             ../fora\n\
+             /etc/passwd\n\
+             .git/hooks\n",
+        );
+        assert_eq!(entries, strings(&[".env", "config/local.json", "assets"]));
+    }
+
+    /// A new worktree is a clean checkout, so everything the project ignores
+    /// (the `.env`, the local config) is missing from it, and the CLI put
+    /// there starts in a project that cannot run. The repository names those
+    /// paths in `.worktreeinclude`, and only ignored ones travel: copying an
+    /// untracked file that git *would* show turns the front dirty on birth.
+    #[test]
+    fn the_ignored_files_the_repository_lists_travel_to_the_new_front() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-include-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "oi").unwrap();
+        std::fs::write(root.join(".gitignore"), ".env\nlocal/\n").unwrap();
+        std::fs::write(
+            root.join(".worktreeinclude"),
+            ".env\nlocal\nrascunho.txt\n",
+        )
+        .unwrap();
+        if !commit_all(&root, "inicial") {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join(".env"), "TOKEN=1\n").unwrap();
+        std::fs::create_dir_all(root.join("local")).unwrap();
+        std::fs::write(root.join("local").join("config.json"), "{}\n").unwrap();
+        // Untracked and *not* ignored: listed, but it must stay behind.
+        std::fs::write(root.join("rascunho.txt"), "nao vai\n").unwrap();
+
+        let made = worktree_provision(
+            &root,
+            &ProvisionInput { name: "com env".into(), ..Default::default() },
+        )
+        .unwrap();
+        let front = std::path::PathBuf::from(&made.path);
+
+        assert_eq!(
+            std::fs::read_to_string(front.join(".env")).ok().as_deref(),
+            Some("TOKEN=1\n"),
+            "the front was born without the file the project needs to run"
+        );
+        assert!(
+            front.join("local").join("config.json").exists(),
+            "a listed folder travels whole"
+        );
+        assert!(
+            !front.join("rascunho.txt").exists(),
+            "a file git does not ignore would show up as a change nobody made"
+        );
+
+        let _ = run_git(&root, &["worktree", "remove", "--force", &made.path]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The regression: `rev-parse main^{commit}` answers with the **tag**
+    /// named `main` before the branch, which is git's own disambiguation
+    /// order, so a repository carrying a tag with a branch's name grew every
+    /// new front from the wrong commit, and nothing on screen said so.
+    #[test]
+    fn a_base_is_read_as_a_branch_even_when_a_tag_shares_its_name() {
+        let root = std::env::temp_dir().join(format!(
+            "yard-base-tag-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        if !init_repo(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "primeiro").unwrap();
+        if !commit_all(&root, "primeiro") {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        let _ = run_git(&root, &["tag", "main"]);
+        std::fs::write(root.join("a.txt"), "segundo").unwrap();
+        if !commit_all(&root, "segundo") {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        let head = resolve_commit(&root, "refs/heads/main").unwrap();
+
+        let plan = worktree_preflight(
+            &root,
+            &[PreflightItem {
+                id: "row-1".into(),
+                kind: "new_branch".into(),
+                name: "depois da tag".into(),
+                branch: None,
+                worktree_name: None,
+                base_ref: None,
+                worktree_path: None,
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            plan.items[0].base_oid.as_deref(),
+            Some(head.as_str()),
+            "the base is the branch the person is looking at, not a tag that shares its name"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A `git` that never answers used to hang the whole creation: there was
+    /// no deadline anywhere, and a folder backed by a cloud sync can stall a
+    /// checkout for as long as it likes. The bound is the difference between
+    /// a front that fails and an app that waits forever.
+    #[test]
+    fn a_git_that_never_answers_is_killed_at_the_deadline() {
+        // Reads stdin to the end; the pipe is ours and we never close it.
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(["hash-object", "--stdin"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let started = std::time::Instant::now();
+        let out = run_bounded(cmd, std::time::Duration::from_millis(300));
+        assert!(out.is_err(), "a command with no end must not come back Ok");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "the deadline is what makes this a bound and not a wish"
+        );
+    }
+
+    /// The escape hatch, and its floor: a repository that genuinely takes
+    /// longer can be given more room, but nobody gets to make a create fail
+    /// *sooner* by typing seconds where milliseconds go.
+    #[test]
+    fn the_creation_deadline_stretches_but_never_shrinks() {
+        assert_eq!(worktree_add_timeout(None), WORKTREE_ADD_TIMEOUT);
+        assert_eq!(worktree_add_timeout(Some("   ")), WORKTREE_ADD_TIMEOUT);
+        assert_eq!(worktree_add_timeout(Some("depois")), WORKTREE_ADD_TIMEOUT);
+        assert_eq!(worktree_add_timeout(Some("300")), WORKTREE_ADD_TIMEOUT);
+        assert_eq!(
+            worktree_add_timeout(Some("600000")),
+            std::time::Duration::from_millis(600_000)
+        );
+        assert_eq!(
+            worktree_add_timeout(Some("999999999")),
+            WORKTREE_ADD_TIMEOUT_MAX
+        );
     }
 }

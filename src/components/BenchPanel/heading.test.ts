@@ -19,6 +19,7 @@ const base: BenchHeadingInfo = {
   promptCount: 0,
   projectName: null,
   scm: null,
+  problems: { errors: 0, warnings: 0, other: 0 },
 };
 
 describe("benchHeading", () => {
@@ -129,5 +130,49 @@ describe("benchHeading", () => {
     expect(
       benchHeading("prompts", { ...base, promptCount: 12 }).subtitle,
     ).toBe("12 na biblioteca");
+  });
+});
+
+
+/**
+ * The Problems tab's line. It is a count that has to stay readable at a
+ * glance while it changes under the reader as a server finishes indexing, so
+ * the ordering is by severity and a zero is never spelled out: "2 erros" says
+ * more than "2 erros · 0 avisos · 0 notas", and it says it faster.
+ */
+describe("benchHeading, the Problems tab", () => {
+  const withProblems = (errors: number, warnings: number, other = 0) =>
+    benchHeading("problems", {
+      ...base,
+      projectName: "yard",
+      problems: { errors, warnings, other },
+    });
+
+  it("is named for what it lists", () => {
+    expect(withProblems(0, 0).title).toBe("Problemas");
+  });
+
+  it("says so plainly when there is nothing wrong", () => {
+    expect(withProblems(0, 0).subtitle).toBe("Nada a corrigir");
+  });
+
+  it("counts errors before warnings", () => {
+    expect(withProblems(2, 1).subtitle).toBe("2 erros · 1 aviso");
+  });
+
+  it("agrees in number", () => {
+    expect(withProblems(1, 0).subtitle).toBe("1 erro");
+    expect(withProblems(0, 1).subtitle).toBe("1 aviso");
+    expect(withProblems(0, 3).subtitle).toBe("3 avisos");
+  });
+
+  it("leaves out the kinds there are none of", () => {
+    // "2 erros · 0 avisos · 0 notas" is slower to read and says less.
+    expect(withProblems(2, 0).subtitle).toBe("2 erros");
+    expect(withProblems(0, 0, 4).subtitle).toBe("4 notas");
+  });
+
+  it("says which project the count is about when there is nothing to count", () => {
+    expect(benchHeading("problems", base).subtitle).toBe("Nenhum projeto aberto");
   });
 });

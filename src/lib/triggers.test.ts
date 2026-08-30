@@ -14,6 +14,7 @@ import {
   parseTriggerCreate,
   renderText,
   SELF_ASK_MIN_COOLDOWN_SEC,
+  TRIGGER_EVENT_OPTIONS,
   transitions,
   triggerSummary,
 } from "./triggers";
@@ -231,5 +232,57 @@ describe("parseTriggerCreate — the `yard trigger create` line", () => {
     expect(bad(["--when", "finished", "--on", "A", "--ask", "B"]).ok).toBe(false);
     const r = bad(["--when", "finished", "--on", "A"]);
     if (!r.ok) expect(r.usage).toContain("yard trigger create");
+  });
+});
+
+describe("the budget edge", () => {
+  /**
+   * Every other edge comes from one terminal's runtime. The budget comes from
+   * the day's spend, which belongs to the workspace, so it fires with no
+   * source, and only a trigger armed for "qualquer CLI" can be listening.
+   * A trigger pinned to one CLI must not fire on it: "quando o claude
+   * estourar o orçamento" is not a thing that can happen.
+   */
+  const budget = (over: Partial<TriggerDef> = {}): TriggerDef => ({
+    id: "t1",
+    sourceId: "*",
+    event: "budget",
+    action: { kind: "notify", text: "estourou" },
+    enabled: true,
+    createdAt: 0,
+    ...over,
+  });
+
+  it("fires a trigger armed for any CLI", () => {
+    const due = dueTriggers([budget()], { event: "budget", terminalId: "" }, 1000);
+    expect(due).toHaveLength(1);
+  });
+
+  it("does not fire one pinned to a single CLI", () => {
+    const due = dueTriggers(
+      [budget({ sourceId: "abc" })],
+      { event: "budget", terminalId: "" },
+      1000,
+    );
+    expect(due).toHaveLength(0);
+  });
+
+  it("is offered in the picker, so it is reachable without the CLI", () => {
+    expect(TRIGGER_EVENT_OPTIONS.map((o) => o.value)).toContain("budget");
+  });
+
+  it("is accepted by `yard trigger create --when budget`, with no --on to give", () => {
+    const parsed = parseTriggerCreate(["--when", "budget", "--notify", "estourou"], undefined);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.spec.source).toBe("*");
+  });
+
+  /** A flow runs on the CLI that fired, and this edge fires on nobody. */
+  it("refuses a flow action, which would have nowhere to run", () => {
+    const parsed = parseTriggerCreate(
+      ["--when", "budget", "--flow", "Revisão", "tarefa"],
+      undefined,
+    );
+    expect(parsed.ok).toBe(false);
   });
 });

@@ -99,7 +99,10 @@ a new pane → when the reply finishes, a Windows notification fires.
       per project — delivered in the files/changes panel, with a per-file diff
 - [x] One worktree per task — delivered as **fronts** (§8.1): each front is a
       `git worktree` at `<project>\.yard\floors\<slug>` with its own group and
-      canvas
+      canvas, on a new branch, on an existing one, or adopting a worktree that
+      was already on the disk
+- [x] A project grows nothing else: the bare "Novo grupo" is gone, and a CLI
+      asked for with no branch and no worktree runs in the project's root
 - [x] **Land** — merge the front back onto the ground, with a conflict preview
       (`worktree_preview` / `worktree_land`; refuses a dirty tree and aborts a
       merge that conflicts anyway)

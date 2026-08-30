@@ -212,6 +212,13 @@ export default {
   "Escreve o texto na linha da CLI e fecha — o Enter fica com você":
     "Writes the text on the CLI's line and closes — Enter stays with you",
   "Deixar na CLI": "Leave in the CLI",
+  Enfileirar: "Queue it",
+  "A CLI está ocupada: o texto fica na fila e entra sozinho quando ela liberar":
+    "The CLI is busy: the text waits in the queue and goes in on its own when it frees up",
+  "Na fila de {name} ({n}º), entra sozinho quando ele estiver livre.":
+    "Queued for {name} (#{n}), it goes in on its own once they are free.",
+  "A fila de {name} está cheia, espere ela andar.":
+    "{name}'s queue is full, wait for it to move.",
   "Escolha primeiro o destino, lá em cima": "Pick the destination first, up top",
   "Enviando…": "Sending…",
   Enviar: "Send",
@@ -266,6 +273,20 @@ export default {
   "Nada encontrado para “{text}”.": "Nothing found for “{text}”.",
   "Indexando os arquivos do projeto… os que já entraram aparecem aqui.": "Indexing the project's files… the ones already in show up here.",
   "Nada por aqui ainda — adicione um projeto para começar.": "Nothing here yet — add a project to get started.",
+  "Diário de hoje": "Today's journal",
+  "commits, agentes e custo do dia numa nota nova":
+    "the day's commits, agents and cost in a new note",
+  "Procurando “{text}” na saída dos terminais…": "Looking for “{text}” in the terminals' output…",
+  "Escreva ao menos duas letras: esta busca lê o histórico de todos os terminais.":
+    "Type at least two letters: this search reads every terminal's history.",
+  "A busca cobre o histórico guardado de cada terminal (os últimos 4 MB); o que passou disso já foi descartado.":
+    "The search covers the history kept for each terminal (the last 4 MB); anything older was discarded.",
+  "saída dos terminais": "terminals' output",
+  "Saída dos terminais": "Terminals' output",
+  "{name} · linha {line}": "{name} · line {line}",
+  "símbolos do projeto": "project symbols",
+  "Símbolos do projeto": "Project symbols",
+  "{path} · linha {line}": "{path} · line {line}",
   "A busca cobre todos os arquivos do projeto, menos dependências e saída de build (node_modules, target, dist…). Para procurar por conteúdo, use a lupa da aba Arquivos (Ctrl+Shift+F).":
     "The search covers every file of the project except dependencies and build output (node_modules, target, dist…). To search by content, use the magnifier on the Files tab (Ctrl+Shift+F).",
   navega: "navigates",

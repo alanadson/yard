@@ -26,11 +26,27 @@ export interface FileMenuView {
   wrap: boolean;
   /** The surface is the viewer's (image, video, PDF…), not the text's. */
   media: boolean;
+  /** There is unsaved text, so the draft and the disk differ. */
+  dirty: boolean;
+  /** The project is a git repository, so there is a HEAD to compare against. */
+  git: boolean;
+  /** The ending the next save will write. The buffer itself is always LF. */
+  eolCrlf: boolean;
+  /** The encoding the file was read with (`src-tauri/src/encoding.rs`). */
+  encoding: string;
 }
 
 export interface FileMenuActions {
   toggleWrap: () => void;
   openExternal: () => void;
+  /** Opens the diff of this file against the last commit. */
+  compareHead: () => void;
+  /** Opens the diff of the draft against what is on disk. */
+  compareSaved: () => void;
+  /** Chooses the ending the next save writes (`lib/eol.ts`). */
+  setEol: (crlf: boolean) => void;
+  /** Re-reads the file in another encoding, throwing away any draft. */
+  reopenWith: (encoding: string) => void;
 }
 
 /**
@@ -46,8 +62,95 @@ export function fileMenu(
   const own: MenuEntry[] = view.media
     ? [{ id: "externo", label: t("Abrir no aplicativo padrão"), onSelect: act.openExternal }]
     : [{ id: "quebra", label: t("Quebra de linha"), checked: view.wrap, onSelect: act.toggleWrap }];
-  return [...own, { kind: "sep" }, ...tab];
+
+  // Both comparisons already existed, and only from the Source control tab:
+  // to see what you had changed in the file in front of you, you had to go
+  // find it in a list somewhere else. They are questions about the document,
+  // so they belong to the document's own menu.
+  //
+  // Each appears only when it has an answer. A picture has no lines, a
+  // project without git has no HEAD, and a file with no draft would compare
+  // two copies of the same text.
+  const compare: MenuEntry[] = [];
+  if (!view.media) {
+    if (view.git) {
+      compare.push({
+        id: "diff-head",
+        label: t("Comparar com o HEAD"),
+        onSelect: act.compareHead,
+      });
+    }
+    if (view.dirty) {
+      compare.push({
+        id: "diff-saved",
+        label: t("Comparar com o salvo"),
+        onSelect: act.compareSaved,
+      });
+    }
+  }
+
+  // A pair of choices rather than a switch: "CRLF" and "LF" are the words
+  // the reader already has, and a switch would have to be labelled with one
+  // of them anyway.
+  const eol: MenuEntry[] = view.media
+    ? []
+    : [
+        { kind: "sep" },
+        {
+          id: "eol-lf",
+          label: t("Terminação LF"),
+          checked: !view.eolCrlf,
+          onSelect: () => act.setEol(false),
+        },
+        {
+          id: "eol-crlf",
+          label: t("Terminação CRLF"),
+          checked: view.eolCrlf,
+          onSelect: () => act.setEol(true),
+        },
+      ];
+
+  // A submenu rather than four more rows: the least used control on this
+  // menu, with the most options, and whoever needs it knows the word they are
+  // looking for. Nothing here is guessed: UTF-16 announces itself with a BOM
+  // and is picked up on its own, and Windows-1252 decodes *any* byte sequence
+  // at all, so it can only ever be chosen by hand. This is the hand.
+  const encodings: MenuEntry[] = view.media
+    ? []
+    : [
+        {
+          id: "codificacao",
+          label: t("Reabrir com a codificação"),
+          submenu: ENCODINGS.map(([id, label]) => ({
+            id: `enc-${id}`,
+            label,
+            checked: view.encoding === id,
+            onSelect: () => act.reopenWith(id),
+          })),
+        },
+      ];
+
+  return [
+    ...own,
+    ...(compare.length ? [{ kind: "sep" } as MenuEntry, ...compare] : []),
+    ...eol,
+    ...encodings,
+    { kind: "sep" },
+    ...tab,
+  ];
 }
+
+/**
+ * The four the backend can read and write. Their names are not sentences and
+ * not translated: `UTF-8` is `UTF-8` in every language, and a reader looking
+ * for one of these is looking for exactly this string.
+ */
+const ENCODINGS: readonly (readonly [string, string])[] = [
+  ["utf-8", "UTF-8"],
+  ["utf-16le", "UTF-16 LE"],
+  ["utf-16be", "UTF-16 BE"],
+  ["windows-1252", "Windows-1252"],
+];
 
 /** What the formatting capsule shows for a given file and mode. */
 export interface MdBarSlots {

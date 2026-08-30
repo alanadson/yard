@@ -545,6 +545,24 @@ select optgroup {
   color: var(--text-dim);
 }
 
+/* The second half of the same answer: the repository slug beside the project
+   name, the path beside the machine. It yields the room first, so the value
+   never loses characters to a hint. */
+.select-hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+.select-trigger > svg:first-child,
+.select-trigger > .brand-icon:first-child {
+  flex: none;
+  color: var(--text-dim);
+}
+
 .select-caret {
   flex-shrink: 0;
   color: var(--text-dim);
@@ -1576,42 +1594,6 @@ body.tips-off [data-tip]:focus-visible::after {
     inset 0 1px 0 rgb(var(--veil) / 9%);
 }
 
-/* With the canvas up, the pane switch describes what is *behind* it: still
-   live (picking a shape brings the panes back), just no longer the subject. */
-.layout-switch.is-behind {
-  opacity: 0.55;
-}
-
-/* The canvas is the group's other surface, not a fourth segment of the switch
-   above — it sits outside the pill, with a gap that says so. */
-.layout-canvas {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: 8px;
-  padding: 6px 13px;
-  border: 1px solid rgb(var(--veil) / 6%);
-  border-radius: 999px;
-  background: rgb(var(--well) / 28%);
-  box-shadow: inset 0 1px 2px rgb(var(--well) / 20%);
-  color: var(--text-dim);
-  font-size: var(--fs-md);
-  font-weight: 500;
-}
-
-.layout-canvas:hover {
-  color: var(--text);
-}
-
-.layout-canvas.is-active {
-  background: rgb(var(--veil) / 14%);
-  border-color: rgb(var(--veil) / 12%);
-  color: var(--text-bright);
-  box-shadow:
-    0 1px 3px rgb(var(--shade) / 35%),
-    inset 0 1px 0 rgb(var(--veil) / 9%);
-}
-
 /* Inside the segmented control the pop-up button is one more segment: no
    well of its own, only the label and the caret. */
 .layout-switch .select-trigger {
@@ -1789,6 +1771,39 @@ button.sb-chip:active {
 }
 
 .sb-del {
+  color: var(--red);
+}
+
+/* The budget, and only once it is worth saying: yellow at four fifths, red
+   past the line. Same semantic scale as everything else in the footer. */
+.sb-budget.is-warn {
+  color: var(--yellow);
+}
+
+.sb-budget.is-over {
+  color: var(--red);
+}
+
+/* The pull request, when the Controle tab has read one. Chroma from the
+   checks, on the same semantic scale as the diff numbers beside it: a build
+   that is failing is the same kind of news as a line that was removed. */
+.sb-pr {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-pr.is-green {
+  color: var(--green);
+}
+
+.sb-pr.is-yellow {
+  color: var(--yellow);
+}
+
+.sb-pr.is-red {
   color: var(--red);
 }
 
@@ -2242,7 +2257,9 @@ button.sb-chip:active {
 .new-term-where {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
 }
 
 .tree-origin {
@@ -2377,6 +2394,41 @@ button.sb-chip:active {
 
 .tree-empty button:hover {
   color: var(--text-bright);
+}
+
+/* The branch a group row sits on. A project's children are branches and
+   worktrees now, not folders, and without this the tree still reads as the
+   folder list it stopped being. It gives way to the name: the label keeps the
+   `flex: 1` and the branch truncates first. */
+.tree-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.tree-branch svg {
+  flex-shrink: 0;
+}
+
+.tree-row--group.is-active .tree-branch {
+  color: var(--text);
+}
+
+/* Not a branch, and it must not read as one: the row says the folder has no
+   repository at all, which is the whole reason it prints a stored name where
+   its neighbour prints `master`. Fainter and in italics, so the eye sorts it
+   from the chips that really are branch names. */
+.tree-branch--plain {
+  opacity: 0.7;
+  font-style: italic;
 }
 
 .pill {
@@ -3004,6 +3056,21 @@ button.sb-chip:active {
   height: 7px;
 }
 
+/* A glance, not a decision: the tab a single click on the tree opened, and
+   that the next single click replaces. Italic is the convention every editor
+   uses for it, and it is the only signal that costs no room in a bar that is
+   already tight. */
+.pane-tab-slot--doc.is-preview .pane-tab-label {
+  font-style: italic;
+}
+
+/* A pin takes the file glyph's place rather than adding to the row: the bar
+   has no spare pixels, and a pinned tab is recognised by its own mark far
+   faster than by an extra one. */
+.pane-tab-pin {
+  color: var(--accent-text);
+}
+
 /* The frame of the editing surface. The inside (`.cm-editor`) stays in
    `editor.css`, because it only exists with CodeMirror loaded — but the frame
    is the `Suspense` `fallback` itself while it has not arrived. */
@@ -3266,6 +3333,24 @@ body.is-tab-drag * {
 /* Flow seal on the tab: armed (icon only) or running (step/total). It is what
    says, outside the canvas, that this CLI's Enter feeds a pipeline. */
 .pane-tab-flow {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 20px;
+  background: rgb(var(--veil) / 8%);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The work queue on the tab: a number, because three parked prompts and one
+   are different news. Same pill as the flow seal — both say "something is
+   scheduled to happen in this CLI" — in the neutral chrome colour, because
+   waiting is not a state of the process. */
+.pane-tab-queue {
   display: inline-flex;
   align-items: center;
   gap: 3px;

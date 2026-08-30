@@ -615,6 +615,24 @@ describe("focus signal on fields", () => {
     });
     expect([...new Set(offenders)]).toEqual([]);
   });
+
+  /**
+   * The other half of the same trap, and the one that actually showed on
+   * screen: giving up the frame in the base rule is not enough. `.busca-input`
+   * says `border: none; outline: none; box-shadow: none`, but that shadow
+   * (0,1,0) loses to the halo of `input:focus` (0,1,1) — so the Busca opened
+   * with a 3.5px blue capsule drawn around a field that is supposed to *be*
+   * the box, every single time, because the box opens with the field focused.
+   *
+   * The way out is a `:focus` rule carrying the class (0,2,0), which is what
+   * the bench search, the editor's search bar and the transcript already do.
+   */
+  it("the Busca's field is the box — the global halo draws no second one on focus", () => {
+    const zeroed = rulesOf(paletteCss).filter(
+      (r) => /\.busca-input:focus/.test(r.selector) && /box-shadow:\s*none/.test(r.body),
+    );
+    expect(zeroed.length, "the halo of `input:focus` is back on the Busca").toBeGreaterThan(0);
+  });
 });
 
 /**

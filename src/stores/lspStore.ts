@@ -20,15 +20,20 @@ import { LSPClient, languageServerExtensions } from "@codemirror/lsp-client";
 import { t } from "../lib/i18n";
 import { ipc, on, type LspServerInfo } from "../lib/ipc";
 import { uiLog } from "../lib/log";
-import { clientKey, rootUri, serverFor } from "../lib/lsp/servers";
+import { clientKey, requestTimeoutMs, rootUri, serverFor } from "../lib/lsp/servers";
 import { IpcTransport } from "../lib/lsp/transport";
+import {
+  dropRoot,
+  NO_PROBLEMS,
+  receive,
+  type ProblemsState,
+} from "../lib/lsp/problems";
 import { useUI } from "./uiStore";
 
 /** How long a root with no file open keeps its servers alive. */
 export const PRUNE_GRACE_MS = 30_000;
 
-/** Requests past this are dropped by the client — a stuck server must not hang the editor. */
-const REQUEST_TIMEOUT_MS = 5_000;
+
 
 export interface ClientEntry {
   key: string;
@@ -45,6 +50,11 @@ interface LspState {
   loading: boolean;
   error: string | null;
   clients: Record<string, ClientEntry>;
+  /**
+   * Every problem the servers have reported, for the whole project and not
+   * only for the files that happen to be open (`lib/lsp/problems.ts`).
+   */
+  problems: ProblemsState;
   /** Servers that failed to start or died, by client key, with the reason. */
   failed: Record<string, string>;
 
@@ -112,6 +122,7 @@ export const useLsp = create<LspState>((set, get) => {
     error: null,
     clients: {},
     failed: {},
+    problems: NO_PROBLEMS,
 
     load: (refresh = false) => {
       if (inFlightLoad && !refresh) return inFlightLoad;
@@ -167,8 +178,24 @@ export const useLsp = create<LspState>((set, get) => {
         watchExits();
         const transport = new IpcTransport(id);
         const client = new LSPClient({
+          // The project-wide diagnostics feed. Deliberately answers `false`:
+          // `serverDiagnostics()` from `languageServerExtensions` is the next
+          // handler in the chain, and it is what paints the squiggles inside
+          // the open document. Claiming the notification here would trade the
+          // squiggles for the panel.
+          notificationHandlers: {
+            "textDocument/publishDiagnostics": (_client, params) => {
+              const uri = params?.uri;
+              if (typeof uri === "string") {
+                set({ problems: receive(get().problems, root, uri, params?.diagnostics) });
+              }
+              return false;
+            },
+          },
           rootUri: rootUri(root),
-          timeout: REQUEST_TIMEOUT_MS,
+          // Per server: a project indexer gets room for its first answer,
+          // anything that reads one file keeps a short leash (`servers.ts`).
+          timeout: requestTimeoutMs(server.program),
           extensions: languageServerExtensions(),
         });
         client.connect(transport);
@@ -210,7 +237,8 @@ export const useLsp = create<LspState>((set, get) => {
               delete clients[entry.key];
               void ipc.lspStop(entry.id).catch(() => stopping.delete(entry.id));
             }
-            set({ clients });
+            // The servers of this root are gone; so are their findings.
+            set({ clients, problems: dropRoot(get().problems, root) });
           }, PRUNE_GRACE_MS),
         );
       }
@@ -224,7 +252,7 @@ export const useLsp = create<LspState>((set, get) => {
         tearDown(entry);
         void ipc.lspStop(entry.id).catch(() => {});
       }
-      set({ clients: {} });
+      set({ clients: {}, problems: NO_PROBLEMS });
     },
 
     reset: () => {
@@ -238,7 +266,14 @@ export const useLsp = create<LspState>((set, get) => {
         void exitWatch.then((u) => u());
         exitWatch = null;
       }
-      set({ detected: null, loading: false, error: null, clients: {}, failed: {} });
+      set({
+        detected: null,
+        loading: false,
+        error: null,
+        clients: {},
+        failed: {},
+        problems: NO_PROBLEMS,
+      });
     },
   };
 });

@@ -18,6 +18,7 @@ import { normalizePortalUrl } from "../lib/portals";
 import type { PortalStorage } from "../lib/canvas";
 import { useEditor } from "./editorStore";
 import { useProjects } from "./projectsStore";
+import { useReopen } from "./reopenStore";
 import { useUI } from "./uiStore";
 
 export interface PaneBrowser {
@@ -157,6 +158,18 @@ export const useBrowsers = create<BrowsersState>((set, get) => ({
 
   close: (id) => {
     const closed = get().tabs.find((t) => t.id === id) ?? null;
+    // Same undo as a file tab (`lib/reopen.ts`): a browser tab is a tab in
+    // the same bar, and what it costs to remember is an address.
+    if (closed?.url) {
+      useReopen.getState().remember({
+        kind: "browser",
+        key: `browser:${closed.id}`,
+        url: closed.url,
+        groupId: closed.groupId,
+        slot: closed.slot,
+        closedAt: Date.now(),
+      });
+    }
     const tabs = get().tabs.filter((t) => t.id !== id);
     set({ tabs });
     persist(tabs);

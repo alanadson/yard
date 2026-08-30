@@ -23,6 +23,11 @@ function actions(): EditorTabMenuActions {
     reload: vi.fn(),
     copyPath: vi.fn(),
     reveal: vi.fn(),
+    closeScoped: vi.fn(),
+    togglePin: vi.fn(),
+    revealInTree: vi.fn(),
+    rename: vi.fn(),
+    remove: vi.fn(),
   };
 }
 
@@ -41,7 +46,7 @@ describe("editorTabMenu", () => {
     const act = actions();
     findItem(
       editorTabMenu(
-        { id: "b", path: "src/b.ts", root: "C:/proj", dirty: false, readOnly: false, missing: false },
+        { id: "b", path: "src/b.ts", root: "C:/proj", dirty: false, readOnly: false, missing: false, pinned: false },
         three,
         act,
       ),
@@ -50,35 +55,39 @@ describe("editorTabMenu", () => {
     expect(act.close).toHaveBeenCalledWith("b");
   });
 
-  it("'close the others' takes every tab but this one", () => {
+  // The contract changed on purpose: these two used to hand `closeMany` a
+  // list this module computed. They cannot any more, because "the others" now
+  // has an exception the menu cannot see, a pinned tab, and the list has to be
+  // built where the pins are known (`lib/tabRules.ts`, through the store).
+  it("'close the others' asks the store for every tab but this one", () => {
     const act = actions();
     findItem(
       editorTabMenu(
-        { id: "b", path: "src/b.ts", root: "C:/proj", dirty: false, readOnly: false, missing: false },
+        { id: "b", path: "src/b.ts", root: "C:/proj", dirty: false, readOnly: false, missing: false, pinned: false },
         three,
         act,
       ),
       "outras",
     )?.onSelect?.();
-    expect(act.closeMany).toHaveBeenCalledWith(["a", "c"]);
+    expect(act.closeScoped).toHaveBeenCalledWith("b", "others");
   });
 
-  it("'close to the right' takes only what comes after, in bar order", () => {
+  it("'close to the right' asks the store for what comes after this tab", () => {
     const act = actions();
     findItem(
       editorTabMenu(
-        { id: "a", path: "src/a.ts", root: "C:/proj", dirty: false, readOnly: false, missing: false },
+        { id: "a", path: "src/a.ts", root: "C:/proj", dirty: false, readOnly: false, missing: false, pinned: false },
         three,
         act,
       ),
       "direita",
     )?.onSelect?.();
-    expect(act.closeMany).toHaveBeenCalledWith(["b", "c"]);
+    expect(act.closeScoped).toHaveBeenCalledWith("a", "right");
   });
 
   it("with a single tab, 'the others' and 'to the right' are dimmed", () => {
     const menu = editorTabMenu(
-      { id: "a", path: "src/a.ts", root: "C:/proj", dirty: false, readOnly: false, missing: false },
+      { id: "a", path: "src/a.ts", root: "C:/proj", dirty: false, readOnly: false, missing: false, pinned: false },
       [tab("a")],
       actions(),
     );
@@ -88,7 +97,7 @@ describe("editorTabMenu", () => {
 
   it("on the last tab of the bar, 'to the right' is dimmed but 'the others' is not", () => {
     const menu = editorTabMenu(
-      { id: "c", path: "src/c.ts", root: "C:/proj", dirty: false, readOnly: false, missing: false },
+      { id: "c", path: "src/c.ts", root: "C:/proj", dirty: false, readOnly: false, missing: false, pinned: false },
       three,
       actions(),
     );
@@ -98,12 +107,12 @@ describe("editorTabMenu", () => {
 
   it("save only wakes up with a draft to write", () => {
     const stripped = editorTabMenu(
-      { id: "a", path: "a", root: "C:/proj", dirty: false, readOnly: false, missing: false },
+      { id: "a", path: "a", root: "C:/proj", dirty: false, readOnly: false, missing: false, pinned: false },
       three,
       actions(),
     );
     const dirty = editorTabMenu(
-      { id: "a", path: "a", root: "C:/proj", dirty: true, readOnly: false, missing: false },
+      { id: "a", path: "a", root: "C:/proj", dirty: true, readOnly: false, missing: false, pinned: false },
       three,
       actions(),
     );
@@ -113,7 +122,7 @@ describe("editorTabMenu", () => {
 
   it("a read-only file does not promise to save even with a draft", () => {
     const menu = editorTabMenu(
-      { id: "a", path: "a", root: "C:/proj", dirty: true, readOnly: true, missing: false },
+      { id: "a", path: "a", root: "C:/proj", dirty: true, readOnly: true, missing: false, pinned: false },
       three,
       actions(),
     );
@@ -122,7 +131,7 @@ describe("editorTabMenu", () => {
 
   it("a file gone from disk neither reloads nor shows in the folder", () => {
     const menu = editorTabMenu(
-      { id: "a", path: "a", root: "C:/proj", dirty: false, readOnly: false, missing: true },
+      { id: "a", path: "a", root: "C:/proj", dirty: false, readOnly: false, missing: true, pinned: false },
       three,
       actions(),
     );
@@ -133,7 +142,7 @@ describe("editorTabMenu", () => {
   it("copy path sends the relative one; the full one glues the root in front", () => {
     const act = actions();
     const menu = editorTabMenu(
-      { id: "a", path: "src/a.ts", root: "C:/proj", dirty: false, readOnly: false, missing: false },
+      { id: "a", path: "src/a.ts", root: "C:/proj", dirty: false, readOnly: false, missing: false, pinned: false },
       three,
       act,
     );
@@ -160,6 +169,7 @@ describe("editorTabMenu — a comparison tab", () => {
         dirty: false,
         readOnly: true,
         missing: false,
+        pinned: false,
         comparison: true,
       },
       [tab("a"), { id: "d", path: "src/a.ts" }],
@@ -170,5 +180,97 @@ describe("editorTabMenu — a comparison tab", () => {
     expect(findItem(m, "revelar")?.disabled).toBe(false);
     findItem(m, "copiar")?.onSelect?.();
     expect(act.copyPath).toHaveBeenCalledWith("src/a.ts");
+  });
+});
+
+/**
+ * What the tab menu grew, and why each row is where it is.
+ *
+ * Pinning and "close the saved ones" both exist to protect work from a tidy:
+ * the first says "not this one, ever", the second says "everything with
+ * nothing in it". Rename, delete and reveal are the tree's own commands,
+ * reachable from the tab because the tab is where the file is when you decide
+ * you want them.
+ */
+describe("editorTabMenu, the rows that protect work", () => {
+  const bar = [tab("a"), tab("b"), tab("c")];
+  const target = (over: Partial<Parameters<typeof editorTabMenu>[0]> = {}) => ({
+    id: "b",
+    path: "src/b.ts",
+    root: "C:/r",
+    dirty: false,
+    readOnly: false,
+    missing: false,
+    pinned: false,
+    ...over,
+  });
+
+  it("pins the tab, and says so when it is already pinned", () => {
+    const act = actions();
+
+    const off = editorTabMenu(target(), bar, act);
+    expect(findItem(off, "fixar")?.label).toBe("Fixar");
+
+    const on = editorTabMenu(target({ pinned: true }), bar, act);
+    expect(findItem(on, "fixar")?.label).toBe("Desafixar");
+
+    findItem(on, "fixar")?.onSelect?.();
+    expect(act.togglePin).toHaveBeenCalledWith("b");
+  });
+
+  it("offers to close every tab with nothing unsaved in it", () => {
+    const act = actions();
+
+    findItem(editorTabMenu(target(), bar, act), "salvas")?.onSelect?.();
+
+    expect(act.closeScoped).toHaveBeenCalledWith("b", "saved");
+  });
+
+  it("hands the two crowd commands to the store, which knows about pins", () => {
+    // The menu used to compute the list itself, which is how "fechar as
+    // outras" would happily close a pinned tab.
+    const act = actions();
+    const entries = editorTabMenu(target(), bar, act);
+
+    findItem(entries, "outras")?.onSelect?.();
+    findItem(entries, "direita")?.onSelect?.();
+
+    expect(act.closeScoped).toHaveBeenCalledWith("b", "others");
+    expect(act.closeScoped).toHaveBeenCalledWith("b", "right");
+  });
+
+  it("reveals the file in the tree it came from", () => {
+    const act = actions();
+
+    findItem(editorTabMenu(target(), bar, act), "arvore")?.onSelect?.();
+
+    expect(act.revealInTree).toHaveBeenCalledWith("src/b.ts");
+  });
+
+  it("renames and deletes the file from the tab", () => {
+    const act = actions();
+    const entries = editorTabMenu(target(), bar, act);
+
+    findItem(entries, "renomear")?.onSelect?.();
+    findItem(entries, "excluir")?.onSelect?.();
+
+    expect(act.rename).toHaveBeenCalledWith("src/b.ts");
+    expect(act.remove).toHaveBeenCalledWith("src/b.ts");
+  });
+
+  it("offers none of the file commands on a comparison", () => {
+    // A comparison has no file of its own to rename, delete or reveal.
+    const entries = editorTabMenu(target({ comparison: true }), bar, actions());
+
+    expect(findItem(entries, "renomear")).toBeUndefined();
+    expect(findItem(entries, "excluir")).toBeUndefined();
+    expect(findItem(entries, "arvore")).toBeUndefined();
+  });
+
+  it("does not offer to rename or delete a file that is already gone", () => {
+    const entries = editorTabMenu(target({ missing: true }), bar, actions());
+
+    expect(findItem(entries, "renomear")?.disabled).toBe(true);
+    expect(findItem(entries, "excluir")?.disabled).toBe(true);
   });
 });

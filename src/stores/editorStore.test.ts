@@ -21,6 +21,7 @@ import {
   useEditor,
   type OpenDoc,
 } from "./editorStore";
+import { useProjects } from "./projectsStore";
 
 const fsReadText = vi.fn();
 const fsWriteText = vi.fn();
@@ -64,6 +65,8 @@ function doc(path: string, patch: Partial<OpenDoc> = {}): OpenDoc {
     diskVersion: 1,
     modifiedAt: 1000,
     crlf: false,
+    savedCrlf: false,
+    encoding: "utf-8",
     bom: false,
     binary: false,
     truncated: false,
@@ -203,6 +206,9 @@ describe("saving", () => {
       { modifiedAt: 1000, size: 8 },
       false,
       false,
+      // The encoding the file was read with: the save writes it back in the
+      // same one rather than quietly turning every file into UTF-8.
+      "utf-8",
     );
     const current = useEditor.getState().docs[0];
     expect(isDirty(current)).toBe(false);
@@ -232,6 +238,7 @@ describe("saving", () => {
       { modifiedAt: 1000, size: 8 },
       true,
       true,
+      "utf-8",
     );
   });
 
@@ -250,6 +257,7 @@ describe("saving", () => {
       null,
       false,
       true,
+      "utf-8",
     );
   });
 
@@ -474,6 +482,9 @@ describe("tabs", () => {
       { modifiedAt: 1000, size: 8 },
       false,
       false,
+      // The encoding the file was read with: the save writes it back in the
+      // same one rather than quietly turning every file into UTF-8.
+      "utf-8",
     );
   });
 
@@ -769,5 +780,153 @@ describe("a comparison as a tab (the diff beside the CLIs)", () => {
     expect(docs.map((d) => d.path)).toEqual(["b.ts", "b.ts"]);
     expect(new Set(docs.map((d) => d.id)).size).toBe(2);
     expect(docs[1].id).toBe(diffDocId("C:\\proj", "b.ts", changes));
+  });
+});
+
+/**
+ * A document is a tab beside the CLIs. The one case that used to escape the
+ * rule was the workspace with no group open, the file came back as a modal
+ * window over an empty screen, for a project that simply had no pane yet.
+ */
+describe("where the tab is born", () => {
+  const onDisk = {
+    path: "a.ts",
+    text: "conteúdo",
+    binary: false,
+    truncated: false,
+    size: 8,
+    modifiedAt: 1000,
+    crlf: false,
+  };
+
+  beforeEach(() => {
+    fsReadText.mockResolvedValue(onDisk);
+    // `loaded: false` keeps the debounced save from reaching the (mocked) IPC.
+    useProjects.setState({
+      loaded: false,
+      projects: [
+        {
+          id: "p1",
+          name: "Proj",
+          path: "C:\proj",
+          color: null,
+          icon: null,
+          sort: 0,
+          createdAt: 0,
+        },
+      ],
+      groups: [],
+      terminals: [],
+      activeProjectId: "p1",
+      activeGroupId: null,
+    });
+  });
+
+  it("with no group open the project gets one, and the file is a tab in it", async () => {
+    await useEditor.getState().openFile("a.ts");
+
+    const { groups, activeGroupId } = useProjects.getState();
+    expect(groups).toHaveLength(1);
+    expect(groups[0].projectId).toBe("p1");
+    expect(activeGroupId).toBe(groups[0].id);
+
+    const [tab] = useEditor.getState().docs;
+    expect(tab.groupId).toBe(groups[0].id);
+    expect(tab.slot).toBe(0);
+    // The regression this locks down: `open` is the centred window, and it
+    // must stay down, the file has a tab bar of its own now.
+    expect(useEditor.getState().open).toBe(false);
+  });
+
+  it("the second file joins the group the first one opened", async () => {
+    await useEditor.getState().openFile("a.ts");
+    fsReadText.mockResolvedValue({ ...onDisk, path: "b.ts" });
+    await useEditor.getState().openFile("b.ts");
+
+    const { groups } = useProjects.getState();
+    expect(groups).toHaveLength(1);
+    expect(useEditor.getState().docs.map((d) => d.groupId)).toEqual([
+      groups[0].id,
+      groups[0].id,
+    ]);
+  });
+
+  it("the canvas has no tab bar, so there the file is still the overlay", async () => {
+    useProjects.setState({
+      groups: [
+        {
+          id: "g1",
+          projectId: "p1",
+          name: "Principal",
+          layoutJson: JSON.stringify({ surface: "canvas" }),
+          suspended: false,
+          sort: 0,
+        },
+      ],
+      activeGroupId: "g1",
+    });
+
+    await useEditor.getState().openFile("a.ts");
+
+    // No pane was invented for it, and the overlay is up. The tab still
+    // belongs to the group: the day it goes back to the grid, it is there.
+    expect(useProjects.getState().groups).toHaveLength(1);
+    expect(useEditor.getState().open).toBe(true);
+    expect(useEditor.getState().docs[0].groupId).toBe("g1");
+  });
+});
+
+/**
+ * Choosing the line ending.
+ *
+ * The buffer is always LF: the backend normalises on read and writes the
+ * file's own ending back on save, so `crlf` is metadata and not text. That is
+ * why changing it cannot be detected by comparing the buffer with the disk,
+ * and why `isDirty` has to know about it: a file whose ending the user
+ * changed has an unwritten change in it, the tab has to say so, and closing
+ * it has to ask.
+ */
+describe("the line ending as an unsaved change", () => {
+  const file = (over: Partial<OpenDoc> = {}): OpenDoc => ({
+    id: "C:/r\u0000a.ts",
+    projectId: "p",
+    groupId: "g",
+    slot: 0,
+    root: "C:/r",
+    path: "a.ts",
+    text: "um\ndois",
+    saved: "um\ndois",
+    diskVersion: 1,
+    modifiedAt: 1,
+    crlf: false,
+    savedCrlf: false,
+    bom: false,
+    encoding: "utf-8",
+    binary: false,
+    truncated: false,
+    lossy: false,
+    size: 8,
+    media: null,
+    stale: false,
+    missing: false,
+    error: null,
+    saving: false,
+    ...over,
+  });
+
+  it("is clean when the buffer and the ending both match the disk", () => {
+    expect(isDirty(file())).toBe(false);
+  });
+
+  it("is dirty once the ending stops matching what was read", () => {
+    expect(isDirty(file({ crlf: true, savedCrlf: false }))).toBe(true);
+  });
+
+  it("is clean again when the ending is put back", () => {
+    expect(isDirty(file({ crlf: true, savedCrlf: true }))).toBe(false);
+  });
+
+  it("stays dirty for the buffer alone, ending or no ending", () => {
+    expect(isDirty(file({ text: "outro" }))).toBe(true);
   });
 });

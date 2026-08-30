@@ -94,6 +94,9 @@ export default {
   "O Tab escreve um caractere de tabulação de verdade": "Tab writes a real tab character",
   "Números de linha": "Line numbers",
   "Calha de números no editor de arquivos": "Number gutter in the file editor",
+  "Guias de coluna": "Column guides",
+  "Linhas verticais nas colunas escolhidas, separadas por vírgula. Vazio, nenhuma":
+    "Vertical lines at the columns you name, separated by commas. Empty, none",
   "Quebrar linhas longas": "Wrap long lines",
   // Interface — the status bar rows
   "Barra de status": "Status bar",
@@ -184,6 +187,19 @@ export default {
   "só aparece como escolha nas CLIs que documentam um ajuste — hoje o Claude Code (variáveis de ambiente) e o aider (flags). O Codex faz cache sozinho e não expõe duração; nas outras a gente não achou nada documentado, e é isso que a linha delas diz, em vez de um controle que não faria nada.":
     "only appears as a choice in the CLIs that document a setting — today Claude Code (environment variables) and aider (flags). Codex caches on its own and exposes no lifetime; in the others we found nothing documented, and that is what their line says, instead of a control that would do nothing.",
   Notificações: "Notifications",
+  Custos: "Costs",
+  "levar o yard": "carry yard over",
+  "“Levar o yard” abre um túnel reverso e escreve um shim em ~/.yard/bin da máquina remota, para o agente de lá poder usar `yard ask`, notas, portais e avisar que terminou. Precisa de python3 no host. O túnel deixa este workspace alcançável pelo loopback daquela máquina, protegido por um token da sessão que vive no ambiente do processo remoto: ligue só em hosts em que você já confia o código.":
+    "“Carry yard over” opens a reverse tunnel and writes a shim into ~/.yard/bin on the remote machine, so the agent there can use `yard ask`, notes, portals and say it has finished. It needs python3 on the host. The tunnel makes this workspace reachable from that machine's loopback, guarded by a session token that lives in the remote process's environment: turn it on only for hosts you already trust with your code.",
+  "Avisar também fora da máquina": "Also notify off this machine",
+  "Um POST com o mesmo aviso para o endereço que você colar (ntfy, Discord, Slack, o seu). Vai o título e a frase, que pode conter a pergunta em que o agente parou. Vazio desliga.":
+    "A POST with the same notice to the address you paste in (ntfy, Discord, Slack, your own). The title and the sentence go out, and the sentence can carry the question the agent stopped on. Empty turns it off.",
+  "ex.: https://ntfy.sh/meu-topico": "e.g. https://ntfy.sh/my-topic",
+  "O endereço precisa ser https (ou http em localhost): o texto pode conter o que o agente escreveu, e isso não sai em claro.":
+    "The address has to be https (or http on localhost): the text can carry what the agent wrote, and that does not go out in the clear.",
+  "Teto de gasto por dia (US$)": "Daily spend ceiling (US$)",
+  "Zero desliga. Com um teto, o Yard avisa uma vez ao passar de 80% e uma vez ao estourar, no rodapé, num balão e na borda de gatilho “estourar o orçamento do dia”. A conta é a mesma de Custos e uso (Ctrl+Alt+U): uma estimativa lida dos arquivos de sessão das CLIs, e um dia com modelo fora da tabela de preços é um piso, não um total.":
+    "Zero turns it off. With a ceiling, Yard says so once at 80% and once past the line, in the footer, in a balloon, and on the “blows the day's budget” trigger edge. The sum is the one from Custos e uso (Ctrl+Alt+U): an estimate read from the CLIs' own session files, and a day with a model outside the price table is a floor, not a total.",
   "Notificar quando um agente terminar": "Notify when an agent finishes",
   "Notificação nativa do Windows quando a saída fica quieta":
     "A native Windows notification when the output goes quiet",

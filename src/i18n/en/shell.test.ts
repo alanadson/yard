@@ -10,7 +10,7 @@ import shell from "./shell";
 
 const VISIBLE = [
   "Adicionar projeto",
-  "Novo grupo",
+  "Nova frente…",
   "Nova aba",
   "Configurações",
   "Fechar aba",

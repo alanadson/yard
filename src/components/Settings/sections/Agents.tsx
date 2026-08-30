@@ -23,11 +23,13 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Bot } from "lucide-react";
 
-import { Card, GroupTitle, Row, SwitchRow } from "../rows";
+import { Card, GroupTitle, NumberRow, Row, SwitchRow } from "../rows";
 import { BrandIcon } from "../../BrandIcon";
 import { Select } from "../../Select";
 import { RoleField } from "../../modals/RoleField";
 import { useT } from "../../../hooks/useT";
+import { webhookTarget } from "../../../lib/webhook";
+import { useUI } from "../../../stores/uiStore";
 import {
   agentDefaultRows,
   cacheChoicesOf,
@@ -251,10 +253,29 @@ function AgentPanel({
                     if (e.key === "Escape") setRemote(row.config.sshPath);
                   }}
                 />
+                {/* The bridge is a second decision, not part of "where it
+                    runs": it opens a reverse tunnel and writes a shim on the
+                    other machine, and that machine's loopback is shared with
+                    whoever else is on it. */}
+                <label className="set-agent-check">
+                  <input
+                    type="checkbox"
+                    checked={row.config.sshBridge}
+                    onChange={(e) => setConfig(row.id, { sshBridge: e.target.checked })}
+                  />
+                  {t("levar o yard")}
+                </label>
               </>
             )}
           </div>
         </Row>
+        {row.config.where === "ssh" && (
+          <p className="hint">
+            {t(
+              "“Levar o yard” abre um túnel reverso e escreve um shim em ~/.yard/bin da máquina remota, para o agente de lá poder usar `yard ask`, notas, portais e avisar que terminou. Precisa de python3 no host. O túnel deixa este workspace alcançável pelo loopback daquela máquina, protegido por um token da sessão que vive no ambiente do processo remoto: ligue só em hosts em que você já confia o código.",
+            )}
+          </p>
+        )}
 
         <Row
           label={t("Cache da conversa")}
@@ -496,6 +517,22 @@ export function SecAgents() {
         )}
       </p>
 
+      <GroupTitle>{t("Custos")}</GroupTitle>
+      <Card>
+        <NumberRow
+          pref="budgetDaily"
+          label={t("Teto de gasto por dia (US$)")}
+          min={0}
+          max={10000}
+          step={1}
+        />
+      </Card>
+      <p className="hint">
+        {t(
+          "Zero desliga. Com um teto, o Yard avisa uma vez ao passar de 80% e uma vez ao estourar, no rodapé, num balão e na borda de gatilho “estourar o orçamento do dia”. A conta é a mesma de Custos e uso (Ctrl+Alt+U): uma estimativa lida dos arquivos de sessão das CLIs, e um dia com modelo fora da tabela de preços é um piso, não um total.",
+        )}
+      </p>
+
       <GroupTitle>{t("Notificações")}</GroupTitle>
       <Card>
         <SwitchRow
@@ -511,11 +548,74 @@ export function SecAgents() {
           )}
         />
       </Card>
+      <WebhookRow />
+
       <p className="hint">
         {t(
           "Um agente conta como “parou” depois de ~4,5 s de silêncio seguindo atividade. O silêncio diz que parou; a cauda da saída diz por quê — um menu com cursor, um (y/N) ou um Password: na última linha viram “travado” em vez de “terminou”. O balão só sai quando o painel não está à vista: o que você acabou de ver acontecer não vira notificação.",
         )}
       </p>
+    </>
+  );
+}
+
+/**
+ * The address that also receives the notifications (`lib/webhook.ts`).
+ *
+ * The description says out loud what leaves the machine, because this is the
+ * only place in Yard where a terminal's words do. Same shape as the global
+ * hotkey field: what is invalid stays in the box with the error under it,
+ * and the preference keeps whatever was working.
+ */
+function WebhookRow() {
+  const t = useT();
+  const stored = useUI((s) => s.prefs.notifyWebhook);
+  const setPref = useUI((s) => s.setPref);
+  const [text, setText] = useState(stored);
+  const id = useId();
+  useEffect(() => setText(stored), [stored]);
+
+  const trimmed = text.trim();
+  const invalid = trimmed.length > 0 && webhookTarget(trimmed) === null;
+
+  const commit = () => {
+    if (invalid) return;
+    if (trimmed !== stored) setPref("notifyWebhook", trimmed);
+  };
+
+  return (
+    <>
+      <label className="set-row set-agent-args" htmlFor={id}>
+        <span className="set-row-text">
+          <span className="set-row-label">{t("Avisar também fora da máquina")}</span>
+          <small className="set-row-desc">
+            {t(
+              "Um POST com o mesmo aviso para o endereço que você colar (ntfy, Discord, Slack, o seu). Vai o título e a frase, que pode conter a pergunta em que o agente parou. Vazio desliga.",
+            )}
+          </small>
+        </span>
+        <input
+          id={id}
+          value={text}
+          spellCheck={false}
+          placeholder={t("ex.: https://ntfy.sh/meu-topico")}
+          aria-invalid={invalid || undefined}
+          aria-describedby={invalid ? `${id}-err` : undefined}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            if (e.key === "Escape") setText(stored);
+          }}
+        />
+      </label>
+      {invalid && (
+        <p className="hint hint--error" role="alert" id={`${id}-err`}>
+          {t(
+            "O endereço precisa ser https (ou http em localhost): o texto pode conter o que o agente escreveu, e isso não sai em claro.",
+          )}
+        </p>
+      )}
     </>
   );
 }

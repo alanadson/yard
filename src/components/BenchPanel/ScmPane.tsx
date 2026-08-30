@@ -50,7 +50,9 @@ import {
   GitBranch,
   GitCompare,
   GitCommitVertical,
+  GitPullRequest,
   History,
+  MessageSquare,
   Loader2,
   Minus,
   MoreHorizontal,
@@ -71,6 +73,10 @@ import "./scm.css";
 import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
 import { GitStatusBadge, PathLabel } from "../FileMarks";
 import { copyText } from "../../lib/clipboard";
+import { prBadge, prTitleFor, reviewFromNotes } from "../../lib/forge";
+import { openWebAddress } from "../../lib/openLink";
+import { useForge } from "../../stores/forgeStore";
+import { useReview } from "../../stores/reviewStore";
 import { commitAction, messageHint } from "../../lib/commitBox";
 import { diffLineClass } from "../../lib/diff";
 import {
@@ -383,6 +389,64 @@ function ScmToolbar({
 
   const remote = info?.remotes[0]?.name ?? "origin";
 
+  // --- the pull request ------------------------------------------------------
+  // Read only when there is a branch with an upstream: a branch nobody has
+  // pushed has no PR by definition, and asking `gh` about it is a subprocess
+  // spent to be told so.
+  const branch = info?.branch ?? "";
+  const ghStatus = useForge((s) => s.status[ctx.root]);
+  const pr = useForge((s) => s.byRoot[ctx.root]);
+  useEffect(() => {
+    if (!ctx.root) return;
+    useForge.getState().ensureStatus(ctx.root);
+  }, [ctx.root]);
+  useEffect(() => {
+    if (!ctx.root || !branch || !info?.upstream) return;
+    if (ghStatus && !ghStatus.version) return;
+    void useForge.getState().refresh(ctx.root, branch);
+  }, [ctx.root, branch, info?.upstream, ghStatus]);
+
+  const openPr = () => {
+    const title = prTitleFor(branch);
+    setAsk({
+      title: t("Título do pull request"),
+      placeholder: t("O que esta branch entrega"),
+      confirm: t("Abrir PR"),
+      initial: title,
+      onConfirm: (value) => {
+        const chosen = value.trim() || title;
+        void run(t("abrindo o PR"), async () => {
+          const url = await ipc.forgePrCreate(ctx.root, branch, chosen, "", null, false);
+          await useForge.getState().refresh(ctx.root, branch, true);
+          if (url) openWebAddress(url);
+        });
+      },
+    });
+  };
+
+  /**
+   * The round trip the whole feature exists for: the reviewer's comments come
+   * back as the same annotation rows the diff viewer draws, and from there
+   * the existing "enviar para o agente" bar hands them over.
+   */
+  const importComments = () => {
+    const number = pr?.pr?.number;
+    if (!number) return;
+    void run(t("trazendo os comentários"), async () => {
+      const notes = await ipc.forgePrComments(ctx.root, number);
+      const rows = reviewFromNotes(notes, ctx.projectId ?? "", ctx.root, Date.now());
+      const store = useReview.getState();
+      for (const row of rows) store.add(row);
+      useUI
+        .getState()
+        .showToast(
+          rows.length
+            ? t("{n} comentário(s) do PR viraram anotações no diff.", { n: rows.length })
+            : t("Esse PR não tem comentários em linhas de código."),
+        );
+    });
+  };
+
   const synchronize = () => {
     if (sync.kind === "publish") {
       void run(t("publicando"), () =>
@@ -550,6 +614,57 @@ function ScmToolbar({
             <span>{sync.label}</span>
           </button>
         )}
+
+        {/* The pull request of this branch, when there is one. It sits next to
+            the sync button because it is the same axis: what this branch owes
+            the outside world. */}
+        {pr?.pr ? (
+          <button
+            className={`scm-pr is-${prBadge(pr.pr).tone}`}
+            data-tip-wrap=""
+            data-tip={t("PR #{n}: {title}, {state}. Clique para abrir num portal.", {
+              n: pr.pr.number,
+              title: pr.pr.title,
+              state: prBadge(pr.pr).label,
+            })}
+            aria-label={t("Pull request #{n}, {state}", {
+              n: pr.pr.number,
+              state: prBadge(pr.pr).label,
+            })}
+            onClick={() => openWebAddress(pr.pr!.url)}
+            onContextMenu={(e) =>
+              onMenu(e, [
+                {
+                  id: "comments",
+                  label: t("Trazer os comentários para o diff"),
+                  icon: <MessageSquare size={13} />,
+                  onSelect: importComments,
+                },
+                {
+                  id: "refresh-pr",
+                  label: t("Reler o PR"),
+                  icon: <RotateCw size={13} />,
+                  onSelect: () => void useForge.getState().refresh(ctx.root, branch, true),
+                },
+              ])
+            }
+          >
+            <GitPullRequest size={12} aria-hidden="true" />
+            <span>#{pr.pr.number}</span>
+            <span className="scm-pr-state">{prBadge(pr.pr).label}</span>
+          </button>
+        ) : ghStatus?.version && ghStatus.authenticated && info?.upstream && branch ? (
+          <button
+            className="scm-pr"
+            data-tip={t("Abrir um pull request para esta branch (gh)")}
+            aria-label={t("Abrir um pull request para esta branch")}
+            disabled={repo.busy !== null}
+            onClick={openPr}
+          >
+            <GitPullRequest size={12} aria-hidden="true" />
+            <span>{t("Abrir PR")}</span>
+          </button>
+        ) : null}
 
         <div className="scm-bar-tools">
           <button

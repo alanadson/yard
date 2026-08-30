@@ -32,7 +32,6 @@ import {
 import { useNow } from "../../hooks/useNow";
 import { useT } from "../../hooks/useT";
 import { tn } from "../../lib/i18n";
-import { show } from "../../lib/navigate";
 import { projectIcon } from "../../lib/projectStyle";
 import { AsyncDisposer } from "../../lib/disposables";
 import { Select } from "../Select";
@@ -42,17 +41,21 @@ import { useChanges } from "../../stores/changesStore";
 import { useNotes } from "../../stores/notesStore";
 import { ContextMenu, type MenuAnchor } from "../ContextMenu";
 import { titleBarMenu } from "../../lib/titleBarMenu";
+import { groundBranchOf } from "../../lib/destination";
+import { GROUND_FLOOR, groupLabel } from "../../lib/floors";
 import { parseLayout, useProjects, type LayoutMode } from "../../stores/projectsStore";
+import { NO_WORKTREES, useWorktrees } from "../../stores/worktreesStore";
 import { useUI } from "../../stores/uiStore";
-import { layoutControlsState } from "./layoutControls";
+import { layoutControlsState, paneSwitchVisible } from "../../lib/layoutControls";
 
 const appWindow = getCurrentWindow();
 
 /**
  * The shapes of the pane grid. Canvas is deliberately **not** here: it is the
- * group's other surface, with its own CLIs, and it gets its own button — as a
- * fourth segment it shared this field and wiped the Grade/Holofote the user
- * had pinned every time they looked at the board.
+ * group's other surface, with its own CLIs, and it is a door in the sidebar
+ * (`ProjectSidebar/actions.ts`). As a fourth segment it shared this field and
+ * wiped the Grade/Holofote the user had pinned every time they looked at the
+ * board.
  */
 const MODES: { id: LayoutMode; label: string; tip: string }[] = [
   { id: "auto", label: "Auto", tip: "Automático: a grade segue os painéis usados" },
@@ -114,11 +117,9 @@ export function TitleBar() {
   const group = groups.find((g) => g.id === activeGroupId);
   const project = activeGroupId ? projectOfGroup(activeGroupId) : undefined;
   const activeLayout = group ? parseLayout(group.layoutJson) : null;
-  // A board belongs to no project: it is the canvas as its own container. The
-  // switch still describes the screen, while its pane modes belong to the
-  // project group remembered by `layoutControlsState`.
+  // A board belongs to no project: it is the canvas as its own container, and
+  // the breadcrumb names it in the project's place.
   const board = group && group.projectId === null ? group : null;
-  const leaveBoard = useProjects((s) => s.leaveBoard);
   const controls = layoutControlsState({
     activeGroupId,
     activeProjectId,
@@ -128,8 +129,16 @@ export function TitleBar() {
   });
   const controlGroup = groups.find((candidate) => candidate.id === controls?.groupId);
   const layout = controlGroup ? parseLayout(controlGroup.layoutJson) : null;
-  const onBoard = controls?.canvasActive ?? false;
+  // With the canvas in front the pane switch has no screen to describe, and
+  // it leaves the bar (`lib/layoutControls.ts`). The way in and out of the
+  // canvas is the sidebar's row, which is the same toggle.
+  const paneSwitch = paneSwitchVisible(controls);
   const floor = activeLayout?.floor;
+  // The ground is called by the branch checked out at the project root, the
+  // same name the sidebar prints for it.
+  const worktreesOfProject = useWorktrees((s) =>
+    project ? s.of(project.id) : NO_WORKTREES,
+  );
   const ProjectIcon = projectIcon(project?.icon);
 
   useEffect(() => {
@@ -229,7 +238,15 @@ export function TitleBar() {
                 <span className="crumb-sep" aria-hidden="true">
                   ›
                 </span>
-                <span className="crumb-group">{group.name}</span>
+                <span className="crumb-group">
+                  {groupLabel({
+                    name: group.name,
+                    floor: floor ?? GROUND_FLOOR,
+                    groundBranch: project
+                      ? groundBranchOf(worktreesOfProject, project.path)
+                      : null,
+                  })}
+                </span>
                 {floor?.kind === "isolated" && floor.branch && (
                   <span
                     className="crumb-branch"
@@ -247,27 +264,16 @@ export function TitleBar() {
       </div>
 
       <div className="titlebar-center">
-        {controls && layout && (
+        {paneSwitch && controls && layout && (
           <>
-            <div
-              className={`layout-switch ${onBoard ? "is-behind" : ""}`}
-              role="group"
-              aria-label={t("Layout dos painéis")}
-            >
+            <div className="layout-switch" role="group" aria-label={t("Layout dos painéis")}>
               <LayoutGrid size={13} aria-hidden="true" />
               {MODES.map((m) => (
                 <button
                   key={m.id}
-                  className={!onBoard && layout.mode === m.id ? "is-active" : ""}
-                  aria-pressed={!onBoard && layout.mode === m.id}
-                  // Picking a shape while the board is up also brings the panes
-                  // back: otherwise the click changes something the user cannot
-                  // see, which reads as a dead button.
-                  onClick={() => {
-                    updateLayout(controls.groupId, { mode: m.id });
-                    show(controls.groupId, "grid");
-                    if (board) leaveBoard();
-                  }}
+                  className={layout.mode === m.id ? "is-active" : ""}
+                  aria-pressed={layout.mode === m.id}
+                  onClick={() => updateLayout(controls.groupId, { mode: m.id })}
                   data-tip={t(m.tip)}
                 >
                   {t(m.label)}
@@ -288,17 +294,6 @@ export function TitleBar() {
                 />
               )}
             </div>
-            <button
-              className={`layout-canvas ${onBoard ? "is-active" : ""}`}
-              aria-pressed={onBoard}
-              data-tip={t("Canvas infinito: cartões soltos, desenho à mão, notas e conexões — com as CLIs dele")}
-              onClick={() => {
-                show(controls.groupId, onBoard ? "grid" : "canvas");
-                if (board && onBoard) leaveBoard();
-              }}
-            >
-              <Frame size={13} aria-hidden="true" /> Canvas
-            </button>
           </>
         )}
       </div>

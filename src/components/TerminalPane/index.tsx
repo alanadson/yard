@@ -31,11 +31,13 @@ import {
 import {
   Activity,
   AlertTriangle,
+  Pin,
   AppWindow,
   Bot,
   ClipboardPaste,
   Eraser,
   Globe,
+  ListPlus,
   Maximize2,
   NotebookPen,
   Play,
@@ -73,9 +75,11 @@ import { baseName } from "../../lib/terminals";
 import { useAction } from "../../hooks/useAction";
 import { useBrowsers, type PaneBrowser } from "../../stores/browsersStore";
 import { isDirty, isReadOnly, tabLabel, useEditor, type OpenDoc } from "../../stores/editorStore";
+import { orderTabs } from "../../lib/tabRules";
 import { NOTES_TAB_ID, useNotes } from "../../stores/notesStore";
 import { useAgents } from "../../stores/agentsStore";
 import { useFlows } from "../../stores/flowStore";
+import { useQueue } from "../../stores/queueStore";
 import { useLive } from "../../stores/liveStore";
 import { useProjects } from "../../stores/projectsStore";
 import { isLive, useTerminals } from "../../stores/terminalsStore";
@@ -186,6 +190,17 @@ export function TerminalPane({
   }, [flowSig, terminals, groupId]);
   /** Current stage of whatever is running right now, per terminal. */
   const flowMarks = useFlows((s) => s.marks);
+  // How many prompts are parked per terminal of this pane. Subscribed to the
+  // whole list on purpose: the queue is small, and a per-id selector would
+  // need one hook per tab.
+  const queueItems = useQueue((s) => s.items);
+  const queued = useMemo(() => {
+    const byTerminal: Record<string, number> = {};
+    for (const item of queueItems) {
+      byTerminal[item.terminalId] = (byTerminal[item.terminalId] ?? 0) + 1;
+    }
+    return byTerminal;
+  }, [queueItems]);
 
   const handles = useRef<Record<string, XTermHandle | null>>({});
   const tabsRef = useRef<HTMLDivElement>(null);
@@ -268,13 +283,24 @@ export function TerminalPane({
   }, [active, focusedTerminalId]);
 
   // Ctrl+Shift+F arrives as a window event: only the pane that has focus
-  // opens find (with 4 panes, opening all four would be absurd).
+  // opens find (with 4 panes, opening all four would be absurd). A hit picked
+  // in the Busca (`lib/outputOpen.ts`) arrives on the same event, carrying the
+  // line to look for, the box opens already typed in.
   useEffect(() => {
     if (!focused) return;
-    const openIt = () => setSearchOpen(true);
+    const openIt = (e: Event) => {
+      const asked = (e as CustomEvent<{ query?: string } | undefined>).detail?.query;
+      if (asked) {
+        setQuery(asked);
+        // Already open: the effect below will not run again, so the new term
+        // would sit in the field without ever being searched.
+        if (searchOpen && active) handles.current[active.id]?.findIncremental(asked);
+      }
+      setSearchOpen(true);
+    };
     window.addEventListener("yard:find", openIt);
     return () => window.removeEventListener("yard:find", openIt);
-  }, [focused]);
+  }, [focused, searchOpen, active]);
 
   /**
    * While the box is open, the xterm publishes here how many matches there
@@ -659,6 +685,26 @@ export function TerminalPane({
                       </span>
                     </span>
                   ) : null}
+                  {/* What is parked for this CLI (`lib/queue.ts`). A number,
+                      not a dot: "3 esperando" and "1 esperando" are different
+                      news, and the queue is the one badge here whose size
+                      matters. */}
+                  {queued[term.id] ? (
+                    <span
+                      className="pane-tab-queue"
+                      data-tip-wrap=""
+                      data-tip={t(
+                        "{n} na fila, entram sozinhos quando a CLI ficar livre",
+                        { n: queued[term.id] },
+                      )}
+                    >
+                      <ListPlus size={10} aria-hidden="true" />
+                      {queued[term.id]}
+                      <span className="sr-only">
+                        {t(", {n} prompt(s) na fila", { n: queued[term.id] })}
+                      </span>
+                    </span>
+                  ) : null}
                   {/* The badges are empty circles; the sr-only text is what
                       carries the state into the tab's accessible name. */}
                   {r?.blocked ? (
@@ -695,7 +741,17 @@ export function TerminalPane({
           {/* Files, after the CLIs and in the same bar: the tab where the
               agent works and the tab where the file is read sit side by side,
               which is the whole reason the editor stopped being a window. */}
-          {docs.map((d) => {
+          {orderTabs(
+            docs.map((d) => ({
+              id: d.id,
+              groupId: d.groupId,
+              slot: d.slot,
+              pinned: d.pinned === true,
+              preview: d.preview === true,
+              dirty: isDirty(d) && !isReadOnly(d),
+              doc: d,
+            })),
+          ).map(({ doc: d }) => {
             const dirty = isDirty(d) && !isReadOnly(d);
             return (
               <div
@@ -703,7 +759,7 @@ export function TerminalPane({
                 role="presentation"
                 className={`pane-tab-slot pane-tab-slot--doc ${
                   d.id === activeDoc?.id ? "is-active" : ""
-                }`}
+                } ${d.pinned ? "is-pinned" : ""} ${d.preview ? "is-preview" : ""}`}
                 data-tab-kind="doc"
                 data-tab-id={d.id}
                 onPointerDown={(e) => beginTabDrag(e, "doc", d.id)}
@@ -725,6 +781,9 @@ export function TerminalPane({
                   onMouseEnter={(e) => showTip(e, `${d.path}\n${d.root}`)}
                   onMouseLeave={hideTip}
                   onClick={() => useEditor.getState().setActive(d.id)}
+                  // A double click is the gesture everyone already knows for
+                  // "no, keep this one": it ends the preview.
+                  onDoubleClick={() => useEditor.getState().keepOpen(d.id)}
                   onAuxClick={(e) => {
                     if (e.button !== 1) return;
                     e.preventDefault();
@@ -732,7 +791,11 @@ export function TerminalPane({
                   }}
                 >
                   <span className="pane-tab-file" aria-hidden="true">
-                    <FileGlyph name={fileName(d.path)} size={13} />
+                    {d.pinned ? (
+                      <Pin size={11} className="pane-tab-pin" />
+                    ) : (
+                      <FileGlyph name={fileName(d.path)} size={13} />
+                    )}
                   </span>
                   <span className="pane-tab-label">{tabLabel(d, docs)}</span>
                   {(d.stale || d.missing) && (

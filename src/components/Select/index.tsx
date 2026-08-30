@@ -22,6 +22,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronsUpDown } from "lucide-react";
@@ -48,6 +49,15 @@ interface Props {
   disabled?: boolean;
   /** Balloon text, same `data-tip` the rest of the chrome uses. */
   tip?: string;
+  /** Drawn inside the trigger, before the value: a brand mark, a glyph. */
+  icon?: ReactNode;
+  /**
+   * Muted text pinned to the right of the value, before the caret: the path
+   * of a project, the slug of a repository. It is a second line of the same
+   * answer, never a second answer, so it is `title`d and ellipsised rather
+   * than allowed to push the value out of the field.
+   */
+  hint?: string;
 }
 
 /** Breathing room against the window edge, and the gap to the trigger. */
@@ -88,6 +98,8 @@ export function Select({
   placeholder,
   disabled,
   tip,
+  icon,
+  hint,
 }: Props) {
   const trigger = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -277,6 +289,7 @@ export function Select({
           }
         }}
       >
+        {icon}
         <span className="select-value">
           {selected ? (
             selected.label
@@ -284,6 +297,11 @@ export function Select({
             <span className="select-ph">{placeholder ?? "—"}</span>
           )}
         </span>
+        {hint && (
+          <span className="select-hint" title={hint}>
+            {hint}
+          </span>
+        )}
         <ChevronsUpDown size={12} className="select-caret" aria-hidden="true" />
       </button>
 

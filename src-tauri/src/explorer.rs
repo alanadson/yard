@@ -23,7 +23,10 @@ use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use parking_lot::Mutex;
-use serde::Serialize;
+use regex::{Regex, RegexBuilder};
+use serde::{Deserialize, Serialize};
+
+use crate::globs::GlobSet;
 
 /// Read cap for a file in the editor. Past it the file opens truncated and
 /// read-only — saving would cut off the rest.
@@ -80,6 +83,9 @@ pub struct TextFile {
     /// the save *deleted* it, which on Windows changes how PowerShell decodes
     /// the script.
     pub bom: bool,
+    /// Which encoding the text above was decoded with (`crate::encoding`).
+    /// The save writes it back in the same one.
+    pub encoding: String,
     /// MIME type, when the webview knows how to draw the file (`image/png`,
     /// `video/mp4`, `application/pdf`…). It is what makes the editor show the
     /// image instead of announcing there is no text; `None` = no face of its own.
@@ -283,7 +289,13 @@ pub fn list_dir(root: &Path, rel: &str) -> Result<DirListing, String> {
 }
 
 /// A file's contents as text, already normalized to `\n`.
-pub fn read_text(root: &Path, rel: &str) -> Result<TextFile, String> {
+/// Opens a file as text.
+///
+/// `want` is the encoding the user asked for, or `None` to let the file
+/// decide: UTF-8, unless a UTF-16 BOM says otherwise. Windows-1252 is never
+/// guessed, only chosen, because it decodes any byte sequence at all
+/// (`crate::encoding`).
+pub fn read_text(root: &Path, rel: &str, want: Option<&str>) -> Result<TextFile, String> {
     let path = resolve(root, rel)?;
     let meta = std::fs::metadata(&path).map_err(|e| format!("não consegui abrir: {e}"))?;
     if meta.is_dir() {
@@ -307,6 +319,9 @@ pub fn read_text(root: &Path, rel: &str) -> Result<TextFile, String> {
             modified_at: modified_ms(&meta),
             crlf: false,
             bom: false,
+            // A file with no text has no encoding worth naming; UTF-8 is what
+            // every other "nothing to say" in this app answers.
+            encoding: crate::encoding::Encoding::Utf8.name().to_owned(),
             media,
         });
     }
@@ -323,9 +338,23 @@ pub fn read_text(root: &Path, rel: &str) -> Result<TextFile, String> {
         buf.truncate(MAX_TEXT_BYTES);
     }
 
+    // Which encoding this read is in: what the reader asked for, or what the
+    // BOM says, or UTF-8. It has to be decided *before* the NUL heuristic
+    // below, because UTF-16 is the one text encoding that fails it: every
+    // ASCII character in a UTF-16 file carries a zero byte, so a file that is
+    // plainly text used to open as "binary, nothing to show".
+    let encoding = match want {
+        Some(name) => crate::encoding::Encoding::parse(name),
+        None => crate::encoding::detect(&buf),
+    };
+    let wide = matches!(
+        encoding,
+        crate::encoding::Encoding::Utf16Le | crate::encoding::Encoding::Utf16Be
+    );
+
     // A zero byte near the start = binary. It is git's own heuristic, and it
     // rarely misses: real text almost never contains NUL.
-    let binary = buf.iter().take(SNIFF_BYTES).any(|b| *b == 0);
+    let binary = !wide && buf.iter().take(SNIFF_BYTES).any(|b| *b == 0);
     if binary {
         return Ok(TextFile {
             path: rel.replace('\\', "/"),
@@ -337,28 +366,50 @@ pub fn read_text(root: &Path, rel: &str) -> Result<TextFile, String> {
             modified_at: modified_ms(&meta),
             crlf: false,
             bom: false,
+            // A file with no text has no encoding worth naming; UTF-8 is what
+            // every other "nothing to say" in this app answers.
+            encoding: crate::encoding::Encoding::Utf8.name().to_owned(),
             media,
         });
     }
 
-    // Not valid UTF-8 and no zero byte: a legacy file in cp1252/latin-1, which
-    // is text a person can read and the sniff above happily calls editable.
-    // `from_utf8_lossy` turns every undecodable byte into U+FFFD, so saving the
-    // buffer back would replace each accented character with `EF BF BD` —
+    let decoded = crate::encoding::decode(&buf, encoding);
+
+    // Read from the *bytes*, before the decode drops it. The buffer never
+    // carries the BOM (no editor shows it as a character at the start of the
+    // first line) and the save puts it back where it was — so a file that had
+    // one keeps it, and a file that did not does not gain one.
+    let bom = match encoding {
+        crate::encoding::Encoding::Utf8 => buf.starts_with(&[0xEF, 0xBB, 0xBF]),
+        crate::encoding::Encoding::Utf16Le => buf.starts_with(&[0xFF, 0xFE]),
+        crate::encoding::Encoding::Utf16Be => buf.starts_with(&[0xFE, 0xFF]),
+        // 1252 has no byte order and no mark for one.
+        crate::encoding::Encoding::Windows1252 => false,
+    };
+
+    // A file that will not decode is one the editor opens read-only. Writing
+    // a lossy buffer back would replace every undecodable byte with U+FFFD,
     // silently, across the whole file, including the lines nobody touched.
-    // Flagging it here is what makes the editor open it read-only.
     //
     // A truncated read is not evidence: the cut can land in the middle of a
     // perfectly valid multibyte character, and the last one is all it takes.
-    let lossy = match std::str::from_utf8(&buf) {
-        Ok(_) => false,
-        Err(e) => !truncated || e.valid_up_to() + 4 < buf.len(),
+
+    let lossy = match &decoded {
+        Some(_) => false,
+        // A truncated read is not evidence: the cut can land in the middle of
+        // a perfectly valid multibyte character, and the last one is all it
+        // takes.
+        None => match std::str::from_utf8(&buf) {
+            Ok(_) => false,
+            Err(e) => !truncated || e.valid_up_to() + 4 < buf.len(),
+        },
     };
 
-    let raw = String::from_utf8_lossy(&buf).into_owned();
-    // The BOM is dropped on read and restored on write (`bom`, below) — no
-    // editor shows the BOM as a character at the start of the first line.
-    let bom = raw.starts_with('\u{feff}');
+    // The lossy fallback is still UTF-8's: a file that does not decode is one
+    // the editor opens read-only, and the reader is the one who picks another
+    // encoding from the menu.
+    let raw = decoded.unwrap_or_else(|| String::from_utf8_lossy(&buf).into_owned());
+    // The lossy path decodes the BOM into the text; strip it there too.
     let raw = raw
         .strip_prefix('\u{feff}')
         .map(str::to_owned)
@@ -376,6 +427,7 @@ pub fn read_text(root: &Path, rel: &str) -> Result<TextFile, String> {
         modified_at: modified_ms(&meta),
         crlf,
         bom,
+        encoding: encoding.name().to_owned(),
         media,
     })
 }
@@ -500,6 +552,7 @@ pub fn write_text(
     seen: Option<Seen>,
     crlf: bool,
     bom: bool,
+    encoding: Option<&str>,
 ) -> Result<WriteResult, String> {
     let path = resolve(root, rel)?;
     if path.is_dir() {
@@ -533,7 +586,17 @@ pub fn write_text(
     if bom && !payload.starts_with('\u{feff}') {
         payload.insert(0, '\u{feff}');
     }
-    std::fs::write(&path, payload.as_bytes()).map_err(|e| format!("falha ao gravar: {e}"))?;
+    // Back in the encoding it was opened with. `encode_checked` refuses
+    // rather than writing a `?` where a character does not fit: a save that
+    // silently drops what the user typed is the worst failure this path has.
+    let enc = crate::encoding::Encoding::parse(encoding.unwrap_or("utf-8"));
+    let bytes = crate::encoding::encode_checked(&payload, enc).ok_or_else(|| {
+        format!(
+            "o texto tem caracteres que {} não escreve; salve como UTF-8",
+            enc.name()
+        )
+    })?;
+    std::fs::write(&path, &bytes).map_err(|e| format!("falha ao gravar: {e}"))?;
 
     let meta =
         std::fs::metadata(&path).map_err(|e| format!("gravou, mas não consegui reler: {e}"))?;
@@ -685,7 +748,87 @@ const MAX_INDEX_FILES: usize = 30_000;
 /// Deep enough for any real repo; a cycle of junctions is not one.
 const MAX_WALK_DEPTH: usize = 32;
 
-#[derive(Clone, Serialize)]
+/// What the search box was asked for. Two of these have been here since the
+/// beginning (case, whole word); the other three are new and each one is a
+/// filter the walk applies before it reads a byte.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SearchOptions {
+    pub case_sensitive: bool,
+    pub whole_word: bool,
+    /// Read the query as a pattern rather than as text.
+    pub regex: bool,
+    /// Comma separated globs; empty means every file (`crate::globs`).
+    pub include: String,
+    /// Comma separated globs; empty means no file is excluded.
+    pub exclude: String,
+}
+
+/// Which files the walk is allowed to open.
+struct Filters {
+    include: GlobSet,
+    exclude: GlobSet,
+}
+
+impl Filters {
+    fn build(opts: &SearchOptions) -> Self {
+        Self {
+            include: GlobSet::parse(&opts.include),
+            exclude: GlobSet::parse(&opts.exclude),
+        }
+    }
+
+    /// An empty include means "no opinion"; an empty exclude means "nothing".
+    fn takes(&self, rel: &str) -> bool {
+        if !self.include.is_empty() && !self.include.matches(rel) {
+            return false;
+        }
+        if !self.exclude.is_empty() && self.exclude.matches(rel) {
+            return false;
+        }
+        true
+    }
+}
+
+/// The query, compiled.
+///
+/// One engine for both modes, and that is the point: a literal search is the
+/// same regex with the query escaped. Search and replace therefore cannot
+/// disagree about what matched, a replace that touched a line the result
+/// list never showed would be the worst bug this feature could have.
+///
+/// `(?-u:\b)` rather than `\b`: the ASCII word boundary is exactly the rule
+/// this search has always used (`[0-9A-Za-z_]`), and switching to the Unicode
+/// one would quietly change what "palavra inteira" means in a Portuguese
+/// codebase.
+fn compile(query: &str, opts: &SearchOptions) -> Result<Regex, String> {
+    let body = if opts.regex {
+        query.to_owned()
+    } else {
+        regex::escape(query)
+    };
+    let pattern = if opts.whole_word {
+        format!(r"(?-u:\b)(?:{body})(?-u:\b)")
+    } else {
+        body
+    };
+    RegexBuilder::new(&pattern)
+        .case_insensitive(!opts.case_sensitive)
+        // A line is the unit here, as it is in the result list.
+        .multi_line(false)
+        .size_limit(REGEX_SIZE_LIMIT)
+        .build()
+        // The message says "regex" on purpose: a half-typed pattern is normal,
+        // and answering "no results" for one that cannot compile sends the
+        // user off retyping a query that was never going to run.
+        .map_err(|e| format!("regex inválido: {e}"))
+}
+
+/// A pattern past this is pathological; compiling it would cost more than the
+/// search it is for.
+const REGEX_SIZE_LIMIT: usize = 1 << 20;
+
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchHit {
     /// Relative to the root, with `/`.
@@ -696,7 +839,7 @@ pub struct SearchHit {
     pub text: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchOutcome {
     pub hits: Vec<SearchHit>,
@@ -768,35 +911,6 @@ fn walk_files(root: &Path, visit: &mut dyn FnMut(&Path, u64) -> bool) -> bool {
 }
 
 /// Is the byte before/after a match part of a word? (the whole-word test)
-fn wordish(b: Option<u8>) -> bool {
-    matches!(b, Some(c) if c.is_ascii_alphanumeric() || c == b'_')
-}
-
-/// Does `hay` contain `needle` (already case-folded together), respecting the
-/// whole-word option?
-fn line_matches(hay: &str, needle: &str, whole_word: bool) -> bool {
-    let mut from = 0;
-    while let Some(at) = hay[from..].find(needle) {
-        let start = from + at;
-        let end = start + needle.len();
-        if !whole_word
-            || (!wordish(
-                hay.as_bytes()
-                    .get(start.wrapping_sub(1))
-                    .copied()
-                    .filter(|_| start > 0),
-            ) && !wordish(hay.as_bytes().get(end).copied()))
-        {
-            return true;
-        }
-        from = start + 1;
-        if from >= hay.len() {
-            break;
-        }
-    }
-    false
-}
-
 /// The result row shows the line, not the file: cap it at a width a panel can
 /// draw, on a char boundary.
 fn hit_line(line: &str) -> String {
@@ -807,15 +921,15 @@ fn hit_line(line: &str) -> String {
     trimmed.chars().take(MAX_HIT_LINE_CHARS).collect::<String>() + "…"
 }
 
-/// Literal text search across the project (Ctrl+Shift+F). Case-insensitive by
-/// default, optional whole-word — the same defaults VS Code opens with.
+/// Text search across the project (Ctrl+Shift+F). Case-insensitive and
+/// literal by default, the same defaults VS Code opens with, with regex and
+/// the two path filters carried in `opts`.
 pub fn search_text(
     root: &Path,
     query: &str,
-    case_sensitive: bool,
-    whole_word: bool,
+    opts: &SearchOptions,
 ) -> Result<SearchOutcome, String> {
-    search_text_cancellable(root, query, case_sensitive, whole_word, || false)
+    search_text_cancellable(root, query, opts, || false)
 }
 
 /// Search variant used by the IPC command. The callback is cheap and checked
@@ -824,8 +938,7 @@ pub fn search_text(
 pub fn search_text_cancellable(
     root: &Path,
     query: &str,
-    case_sensitive: bool,
-    whole_word: bool,
+    opts: &SearchOptions,
     mut cancelled: impl FnMut() -> bool,
 ) -> Result<SearchOutcome, String> {
     if !root.is_dir() {
@@ -837,11 +950,8 @@ pub fn search_text_cancellable(
     }
     remember_root(root);
 
-    let needle = if case_sensitive {
-        needle_raw.to_owned()
-    } else {
-        needle_raw.to_lowercase()
-    };
+    let pattern = compile(needle_raw, opts)?;
+    let filters = Filters::build(opts);
 
     let mut hits: Vec<SearchHit> = Vec::new();
     let mut files_scanned = 0usize;
@@ -858,6 +968,13 @@ pub fn search_text_cancellable(
             truncated = true;
             return false;
         }
+        // The filters decide before anything is read: a file the user
+        // excluded must not show up in `files_scanned` either, or the number
+        // would describe the disk instead of the search.
+        let rel = relative(root, path);
+        if !filters.takes(&rel) {
+            return true;
+        }
         if size > MAX_SEARCH_FILE_BYTES || known_binary(path) {
             return true;
         }
@@ -870,19 +987,13 @@ pub fn search_text_cancellable(
             return true;
         }
         let text = String::from_utf8_lossy(&bytes);
-        let rel = relative(root, path);
         let mut in_file = 0usize;
         for (i, line) in text.lines().enumerate() {
             if i & 0xff == 0 && cancelled() {
                 stopped = true;
                 return false;
             }
-            let matched = if case_sensitive {
-                line_matches(line, &needle, whole_word)
-            } else {
-                line_matches(&line.to_lowercase(), &needle, whole_word)
-            };
-            if !matched {
+            if !pattern.is_match(line) {
                 continue;
             }
             if in_file == 0 {
@@ -912,6 +1023,158 @@ pub fn search_text_cancellable(
         files_hit,
         truncated: truncated || !finished,
     })
+}
+
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceOutcome {
+    pub files_changed: usize,
+    pub replacements: usize,
+    /// Stopped at a cap, some matching files were left untouched.
+    pub truncated: bool,
+}
+
+/// Files one replace may rewrite. A run past this is not an edit any more, it
+/// is a migration, and it should be a commit someone can read.
+const MAX_REPLACE_FILES: usize = 2_000;
+
+/// Replaces across the project what the search would have found.
+///
+/// The same walk, the same skip list, the same filters and the same compiled
+/// pattern the search uses, so what gets rewritten is exactly what the
+/// result list showed, and nothing else.
+///
+/// Three safeguards worth naming:
+///
+/// - **line by line**, keeping each terminator. The search is line-based, so
+///   a replace that could span lines would edit something nobody saw; and
+///   rewriting a CRLF file as LF would turn one word into a whole-file diff.
+/// - **valid UTF-8 only.** Elsewhere a lossy decode is a fine way to *read* a
+///   file; writing one back would replace every undecodable byte with U+FFFD.
+/// - **only when something changed**, so a file with no match keeps its mtime
+///   and stays out of `git status`.
+pub fn replace_text(
+    root: &Path,
+    query: &str,
+    replacement: &str,
+    opts: &SearchOptions,
+) -> Result<ReplaceOutcome, String> {
+    if !root.is_dir() {
+        return Err("raiz do projeto inválida".into());
+    }
+    let needle = query.trim_end_matches('\n');
+    if needle.is_empty() {
+        // An empty query matches at every position of every file.
+        return Err("nada para substituir".into());
+    }
+    remember_root(root);
+
+    let pattern = compile(needle, opts)?;
+    let filters = Filters::build(opts);
+    let literal = !opts.regex;
+
+    let mut files_changed = 0usize;
+    let mut replacements = 0usize;
+    let mut truncated = false;
+    let mut failures: Vec<String> = Vec::new();
+
+    walk_files(root, &mut |path, size| {
+        if files_changed >= MAX_REPLACE_FILES {
+            truncated = true;
+            return false;
+        }
+        let rel = relative(root, path);
+        if !filters.takes(&rel) {
+            return true;
+        }
+        if size > MAX_SEARCH_FILE_BYTES || known_binary(path) {
+            return true;
+        }
+        let Ok(bytes) = std::fs::read(path) else {
+            return true;
+        };
+        if bytes.iter().take(SNIFF_BYTES).any(|b| *b == 0) {
+            return true;
+        }
+        // Strict, not lossy: a lossy decode written back would swap every
+        // undecodable byte for U+FFFD and call it an edit.
+        let Ok(text) = String::from_utf8(bytes) else {
+            return true;
+        };
+
+        let mut out = String::with_capacity(text.len());
+        let mut here = 0usize;
+        for line in split_keeping_terminators(&text) {
+            let body_len = line.len() - terminator_len(line);
+            let (body, terminator) = line.split_at(body_len);
+            if pattern.is_match(body) {
+                here += pattern.find_iter(body).count();
+                if literal {
+                    // `NoExpand`: in literal mode a `$1` in the replacement is
+                    // the text `$1`, not a capture group nobody asked for.
+                    out.push_str(&pattern.replace_all(body, regex::NoExpand(replacement)));
+                } else {
+                    out.push_str(&pattern.replace_all(body, replacement));
+                }
+            } else {
+                out.push_str(body);
+            }
+            out.push_str(terminator);
+        }
+
+        if here == 0 || out == text {
+            return true;
+        }
+        match std::fs::write(path, out.as_bytes()) {
+            Ok(()) => {
+                files_changed += 1;
+                replacements += here;
+            }
+            Err(e) => failures.push(format!("{rel}: {e}")),
+        }
+        true
+    });
+
+    if files_changed == 0 && !failures.is_empty() {
+        return Err(format!("não consegui escrever: {}", failures.join("; ")));
+    }
+
+    Ok(ReplaceOutcome {
+        files_changed,
+        replacements,
+        truncated,
+    })
+}
+
+/// The document as lines that still carry their own `\n` or `\r\n`. Rejoining
+/// them reproduces the file byte for byte, which is what keeps a replace from
+/// rewriting the line endings of everything it touches.
+fn split_keeping_terminators(text: &str) -> impl Iterator<Item = &str> {
+    let mut rest = text;
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let cut = match rest.find('\n') {
+            Some(at) => at + 1,
+            None => rest.len(),
+        };
+        let (line, tail) = rest.split_at(cut);
+        rest = tail;
+        Some(line)
+    })
+}
+
+/// How many bytes at the end of `line` are its terminator.
+fn terminator_len(line: &str) -> usize {
+    if line.ends_with("\r\n") {
+        2
+    } else if line.ends_with('\n') {
+        1
+    } else {
+        0
+    }
 }
 
 /// Every file path under the root — what makes Ctrl+P able to open a file
@@ -1015,7 +1278,7 @@ mod tests {
         let raw_original = "\u{feff}Write-Host 'olá'\r\n".as_bytes().to_vec();
         std::fs::write(root.join("script.ps1"), &raw_original).unwrap();
 
-        let read = read_text(&root, "script.ps1").unwrap();
+        let read = read_text(&root, "script.ps1", None).unwrap();
         // The buffer never carries the BOM — that part was already right.
         assert_eq!(read.text, "Write-Host 'olá'\n");
         assert!(read.bom, "the read has to report that the file had a BOM");
@@ -1027,6 +1290,7 @@ mod tests {
             Some(seen(&read)),
             read.crlf,
             read.bom,
+            Some(&read.encoding),
         )
         .unwrap();
         assert_eq!(
@@ -1037,15 +1301,127 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+
+    /// A file in an encoding the editor did not use to be able to open.
+    ///
+    /// The regression this locks down is the one the BOM test caught while
+    /// this was being written: the decode strips the mark, so reading "did
+    /// this file have a BOM?" off the *text* answers no for every file, and
+    /// the save then deletes a mark the file came with.
+    #[test]
+    fn a_utf16_file_opens_and_saves_back_byte_for_byte() {
+        let root = temp_root("utf16");
+        let original: Vec<u8> = {
+            let mut bytes = vec![0xFF, 0xFE];
+            for unit in "ação\r\n".encode_utf16() {
+                bytes.extend_from_slice(&unit.to_le_bytes());
+            }
+            bytes
+        };
+        std::fs::write(root.join("a.txt"), &original).unwrap();
+
+        let read = read_text(&root, "a.txt", None).unwrap();
+
+        assert_eq!(read.encoding, "utf-16le", "the BOM names the encoding");
+        assert_eq!(read.text, "ação\n", "the buffer is plain text, LF, no mark");
+        assert!(read.bom);
+        assert!(read.crlf);
+        assert!(!read.lossy, "it decoded, so it is not read-only");
+
+        write_text(
+            &root,
+            "a.txt",
+            &read.text,
+            Some(seen(&read)),
+            read.crlf,
+            read.bom,
+            Some(&read.encoding),
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read(root.join("a.txt")).unwrap(),
+            original,
+            "writing the same text back must not change a single byte"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The one that cannot be guessed, only asked for.
+    #[test]
+    fn a_windows_1252_file_opens_when_the_reader_names_it() {
+        let root = temp_root("cp1252");
+        // "ação" in 1252, and a curly quote from the C1 range Latin-1 lacks.
+        let original = vec![b'a', 0xE7, 0xE3, b'o', 0x93, b'x', 0x94];
+        std::fs::write(root.join("a.txt"), &original).unwrap();
+
+        // Read as UTF-8 it does not decode, which is what opens it read-only.
+        let guessed = read_text(&root, "a.txt", None).unwrap();
+        assert!(guessed.lossy);
+
+        let named = read_text(&root, "a.txt", Some("windows-1252")).unwrap();
+
+        assert!(!named.lossy, "named, it decodes, and the file is editable");
+        assert_eq!(named.text, "ação“x”");
+
+        write_text(
+            &root,
+            "a.txt",
+            &named.text,
+            Some(seen(&named)),
+            named.crlf,
+            named.bom,
+            Some(&named.encoding),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(root.join("a.txt")).unwrap(), original);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Saving must never quietly drop what the user typed.
+    #[test]
+    fn saving_a_character_the_encoding_cannot_hold_is_refused() {
+        let root = temp_root("cp1252-limite");
+        std::fs::write(root.join("a.txt"), vec![b'o', b'i']).unwrap();
+        let read = read_text(&root, "a.txt", Some("windows-1252")).unwrap();
+
+        let err = write_text(
+            &root,
+            "a.txt",
+            "oi 😀",
+            Some(seen(&read)),
+            false,
+            false,
+            Some("windows-1252"),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("windows-1252"), "the message names it: {err}");
+        assert_eq!(
+            std::fs::read(root.join("a.txt")).unwrap(),
+            vec![b'o', b'i'],
+            "and the file on disk is untouched"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
     /// The other half: a file without a BOM must not gain one.
     #[test]
     fn a_file_without_a_bom_does_not_gain_one_on_write() {
         let root = temp_root("sem-bom");
         std::fs::write(root.join("a.txt"), b"puro\n").unwrap();
 
-        let read = read_text(&root, "a.txt").unwrap();
+        let read = read_text(&root, "a.txt", None).unwrap();
         assert!(!read.bom);
-        write_text(&root, "a.txt", "puro\n", Some(seen(&read)), read.crlf, read.bom).unwrap();
+        write_text(
+            &root,
+            "a.txt",
+            "puro\n",
+            Some(seen(&read)),
+            read.crlf,
+            read.bom,
+            Some(&read.encoding),
+        )
+        .unwrap();
 
         assert_eq!(std::fs::read(root.join("a.txt")).unwrap(), b"puro\n");
         let _ = std::fs::remove_dir_all(&root);
@@ -1056,7 +1432,7 @@ mod tests {
         let root = temp_root("crlf");
         std::fs::write(root.join("win.txt"), b"um\r\ndois\r\n").unwrap();
 
-        let read = read_text(&root, "win.txt").unwrap();
+        let read = read_text(&root, "win.txt", None).unwrap();
         assert_eq!(read.text, "um\ndois\n");
         assert!(read.crlf);
 
@@ -1067,6 +1443,7 @@ mod tests {
             Some(seen(&read)),
             read.crlf,
             read.bom,
+            None,
         )
         .unwrap();
         let raw = std::fs::read(root.join("win.txt")).unwrap();
@@ -1086,7 +1463,7 @@ mod tests {
     fn the_write_stops_when_the_disk_changed() {
         let root = temp_root("conflito");
         std::fs::write(root.join("a.txt"), "original").unwrap();
-        let read = read_text(&root, "a.txt").unwrap();
+        let read = read_text(&root, "a.txt", None).unwrap();
 
         // Someone (an agent) rewrites the file with a different timestamp.
         let err = write_text(
@@ -1099,6 +1476,7 @@ mod tests {
             }),
             false,
             false,
+            None,
         )
         .unwrap_err();
         assert!(err.starts_with("CONFLITO"));
@@ -1108,7 +1486,7 @@ mod tests {
         );
 
         // With the right stamp, it writes.
-        write_text(&root, "a.txt", "meu texto", Some(seen(&read)), false, false).unwrap();
+        write_text(&root, "a.txt", "meu texto", Some(seen(&read)), false, false, None).unwrap();
         assert_eq!(
             std::fs::read_to_string(root.join("a.txt")).unwrap(),
             "meu texto"
@@ -1124,11 +1502,13 @@ mod tests {
     fn a_different_size_is_a_conflict_even_within_the_same_second() {
         let root = temp_root("conflito-tamanho");
         std::fs::write(root.join("a.txt"), "original").unwrap();
-        let read = read_text(&root, "a.txt").unwrap();
+        let read = read_text(&root, "a.txt", None).unwrap();
 
         // The agent rewrites the file right now — same second, different size.
         std::fs::write(root.join("a.txt"), "o agente escreveu bem mais que isso").unwrap();
-        let err = write_text(&root, "a.txt", "meu texto", Some(seen(&read)), false, false).unwrap_err();
+        let err =
+            write_text(&root, "a.txt", "meu texto", Some(seen(&read)), false, false, None)
+                .unwrap_err();
         assert!(err.starts_with("CONFLITO"), "error was: {err}");
         assert_eq!(
             std::fs::read_to_string(root.join("a.txt")).unwrap(),
@@ -1136,7 +1516,7 @@ mod tests {
         );
 
         // And `None` still means "write over it, the user decided".
-        let written = write_text(&root, "a.txt", "meu texto", None, false, false).unwrap();
+        let written = write_text(&root, "a.txt", "meu texto", None, false, false, None).unwrap();
         assert_eq!(written.size, "meu texto".len() as u64);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1151,14 +1531,14 @@ mod tests {
         // "coração\nseção\n" in Windows-1252.
         std::fs::write(root.join("legado.txt"), b"cora\xe7\xe3o\nse\xe7\xe3o\n").unwrap();
 
-        let read = read_text(&root, "legado.txt").unwrap();
+        let read = read_text(&root, "legado.txt", None).unwrap();
         assert!(!read.binary, "with no zero byte it is still readable text");
         assert!(read.lossy, "the bytes did not survive decoding");
         assert!(read.text.contains('\u{fffd}'));
 
         // Real UTF-8, accents and all, is not flagged.
         std::fs::write(root.join("moderno.txt"), "coração\n".as_bytes()).unwrap();
-        let ok = read_text(&root, "moderno.txt").unwrap();
+        let ok = read_text(&root, "moderno.txt", None).unwrap();
         assert!(!ok.lossy);
         assert_eq!(ok.text, "coração\n");
 
@@ -1169,7 +1549,7 @@ mod tests {
     fn binary_comes_with_no_text() {
         let root = temp_root("bin");
         std::fs::write(root.join("img.png"), [0x89, 0x50, 0x00, 0x01, 0x02]).unwrap();
-        let read = read_text(&root, "img.png").unwrap();
+        let read = read_text(&root, "img.png", None).unwrap();
         assert!(read.binary);
         assert!(read.text.is_empty());
         assert_eq!(read.media, Some("image/png"));
@@ -1183,21 +1563,21 @@ mod tests {
     fn media_is_recognized_by_extension() {
         let root = temp_root("media");
         std::fs::write(root.join("clipe.mp4"), b"ftypisom sem byte zero").unwrap();
-        let video = read_text(&root, "clipe.mp4").unwrap();
+        let video = read_text(&root, "clipe.mp4", None).unwrap();
         assert!(video.binary);
         assert!(!video.truncated);
         assert_eq!(video.media, Some("video/mp4"));
 
         // SVG is image *and* text: it opens in the editor, with the image face too.
         std::fs::write(root.join("logo.svg"), "<svg/>\n").unwrap();
-        let svg = read_text(&root, "logo.svg").unwrap();
+        let svg = read_text(&root, "logo.svg", None).unwrap();
         assert!(!svg.binary);
         assert_eq!(svg.text, "<svg/>\n");
         assert_eq!(svg.media, Some("image/svg+xml"));
 
         // And an ordinary file has no face at all.
         std::fs::write(root.join("a.rs"), "fn main() {}").unwrap();
-        assert_eq!(read_text(&root, "a.rs").unwrap().media, None);
+        assert_eq!(read_text(&root, "a.rs", None).unwrap().media, None);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1210,7 +1590,7 @@ mod tests {
         std::fs::write(root.join("a.txt"), "oi").unwrap();
 
         assert!(!root_allowed(&other));
-        read_text(&root, "a.txt").unwrap();
+        read_text(&root, "a.txt", None).unwrap();
         assert!(root_allowed(&root));
         assert!(!root_allowed(&other));
 
@@ -1267,6 +1647,268 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// The two flags the search box has always had, as the struct that now
+    /// carries them alongside regex and the path filters.
+    fn plain(case_sensitive: bool, whole_word: bool) -> SearchOptions {
+        SearchOptions {
+            case_sensitive,
+            whole_word,
+            ..SearchOptions::default()
+        }
+    }
+
+    #[test]
+    fn a_regex_search_reads_the_query_as_a_pattern() {
+        let root = temp_root("busca-regex");
+        std::fs::write(root.join("a.ts"), "porta 8080\nporta oitenta\n").unwrap();
+
+        let opts = SearchOptions {
+            regex: true,
+            ..SearchOptions::default()
+        };
+        let out = search_text(&root, r"porta \d+", &opts).unwrap();
+
+        assert_eq!(out.hits.len(), 1);
+        assert_eq!(out.hits[0].line, 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_literal_search_does_not_read_the_query_as_a_pattern() {
+        // The regression this locks: turning the flag on for everyone would
+        // make `a.b` match `axb`, and every path anyone types is full of dots.
+        let root = temp_root("busca-literal");
+        std::fs::write(root.join("a.ts"), "axb\n").unwrap();
+
+        let out = search_text(&root, "a.b", &plain(false, false)).unwrap();
+
+        assert!(out.hits.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_broken_regex_says_so_instead_of_finding_nothing() {
+        // A half-typed pattern is normal. "No results" for it is a lie, and
+        // the user would go on retyping a query that cannot compile.
+        let root = temp_root("busca-regex-ruim");
+        std::fs::write(root.join("a.ts"), "x\n").unwrap();
+
+        let opts = SearchOptions {
+            regex: true,
+            ..SearchOptions::default()
+        };
+        let error = search_text(&root, "porta(", &opts).unwrap_err();
+
+        assert!(
+            error.contains("regex"),
+            "the message names the cause: {error}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_regex_search_honours_case_and_word_boundaries() {
+        let root = temp_root("busca-regex-flags");
+        std::fs::write(root.join("a.ts"), "Porta\nportal\n").unwrap();
+
+        let insensitive = SearchOptions {
+            regex: true,
+            ..SearchOptions::default()
+        };
+        assert_eq!(
+            search_text(&root, "porta", &insensitive).unwrap().hits.len(),
+            2
+        );
+
+        let sensitive = SearchOptions {
+            regex: true,
+            case_sensitive: true,
+            ..SearchOptions::default()
+        };
+        assert_eq!(
+            search_text(&root, "porta", &sensitive).unwrap().hits.len(),
+            1
+        );
+
+        let word = SearchOptions {
+            regex: true,
+            whole_word: true,
+            ..SearchOptions::default()
+        };
+        assert_eq!(
+            search_text(&root, "porta", &word).unwrap().hits.len(),
+            1,
+            "portal is not the whole word"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_include_filter_narrows_the_walk_to_the_files_asked_for() {
+        let root = temp_root("busca-incluir");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src").join("a.ts"), "alvo\n").unwrap();
+        std::fs::write(root.join("src").join("b.rs"), "alvo\n").unwrap();
+
+        let opts = SearchOptions {
+            include: "*.ts".into(),
+            ..SearchOptions::default()
+        };
+        let out = search_text(&root, "alvo", &opts).unwrap();
+
+        assert_eq!(out.hits.len(), 1);
+        assert_eq!(out.hits[0].path, "src/a.ts");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_exclude_filter_drops_files_the_include_would_have_taken() {
+        let root = temp_root("busca-excluir");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src").join("a.ts"), "alvo\n").unwrap();
+        std::fs::write(root.join("src").join("a.test.ts"), "alvo\n").unwrap();
+
+        let opts = SearchOptions {
+            exclude: "*.test.ts".into(),
+            ..SearchOptions::default()
+        };
+        let out = search_text(&root, "alvo", &opts).unwrap();
+
+        assert_eq!(out.hits.len(), 1);
+        assert_eq!(out.hits[0].path, "src/a.ts");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_file_the_filters_reject_is_never_even_read() {
+        // `files_scanned` is what the panel reports. Counting a file the
+        // filter threw away would make the number describe the disk instead
+        // of the search.
+        let root = temp_root("busca-nao-lido");
+        std::fs::write(root.join("a.ts"), "alvo\n").unwrap();
+        std::fs::write(root.join("b.rs"), "alvo\n").unwrap();
+
+        let opts = SearchOptions {
+            include: "*.ts".into(),
+            ..SearchOptions::default()
+        };
+
+        assert_eq!(search_text(&root, "alvo", &opts).unwrap().files_scanned, 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn replacing_writes_every_occurrence_and_says_how_many() {
+        let root = temp_root("substituir");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src").join("a.ts"), "porta e porta\n").unwrap();
+        std::fs::write(root.join("src").join("b.ts"), "nada aqui\n").unwrap();
+
+        let out = replace_text(&root, "porta", "janela", &plain(false, false)).unwrap();
+
+        assert_eq!(out.files_changed, 1);
+        assert_eq!(out.replacements, 2);
+        assert_eq!(
+            std::fs::read_to_string(root.join("src").join("a.ts")).unwrap(),
+            "janela e janela\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("src").join("b.ts")).unwrap(),
+            "nada aqui\n",
+            "a file with no match is not rewritten"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn replacing_keeps_the_line_endings_the_file_had() {
+        // The regression this prevents: rewriting a CRLF file as LF turns a
+        // one-word replacement into a diff of the whole file.
+        let root = temp_root("substituir-crlf");
+        std::fs::write(root.join("a.ts"), "porta\r\nsegunda\r\n").unwrap();
+
+        replace_text(&root, "porta", "janela", &plain(false, false)).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.ts")).unwrap(),
+            "janela\r\nsegunda\r\n"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn replacing_with_a_regex_understands_the_capture_groups() {
+        let root = temp_root("substituir-regex");
+        std::fs::write(root.join("a.ts"), "porta 8080\n").unwrap();
+
+        let opts = SearchOptions {
+            regex: true,
+            ..SearchOptions::default()
+        };
+        replace_text(&root, r"porta (\d+)", "port $1", &opts).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.ts")).unwrap(),
+            "port 8080\n"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn replacing_a_literal_never_reads_the_replacement_as_a_pattern() {
+        // In literal mode a `$1` in the replacement is the text `$1`.
+        let root = temp_root("substituir-literal");
+        std::fs::write(root.join("a.ts"), "porta\n").unwrap();
+
+        replace_text(&root, "porta", "custa $1", &plain(false, false)).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.ts")).unwrap(),
+            "custa $1\n"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn replacing_obeys_the_same_filters_the_search_does() {
+        // Whatever the user saw in the result list is exactly what gets
+        // rewritten. Anything else is a replace that touches files the user
+        // never looked at.
+        let root = temp_root("substituir-filtro");
+        std::fs::create_dir_all(root.join("node_modules")).unwrap();
+        std::fs::write(root.join("a.ts"), "porta\n").unwrap();
+        std::fs::write(root.join("b.rs"), "porta\n").unwrap();
+        std::fs::write(root.join("node_modules").join("c.ts"), "porta\n").unwrap();
+
+        let opts = SearchOptions {
+            include: "*.ts".into(),
+            ..SearchOptions::default()
+        };
+        let out = replace_text(&root, "porta", "janela", &opts).unwrap();
+
+        assert_eq!(out.files_changed, 1);
+        assert_eq!(
+            std::fs::read_to_string(root.join("b.rs")).unwrap(),
+            "porta\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("node_modules").join("c.ts")).unwrap(),
+            "porta\n",
+            "dependencies stay out of a replace as much as out of a search"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn replacing_nothing_with_nothing_is_refused() {
+        // An empty query would match at every position of every file.
+        let root = temp_root("substituir-vazio");
+        std::fs::write(root.join("a.ts"), "porta\n").unwrap();
+
+        assert!(replace_text(&root, "", "x", &plain(false, false)).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn search_finds_text_and_skips_dependencies() {
         let root = temp_root("busca");
@@ -1284,7 +1926,7 @@ mod tests {
         )
         .unwrap();
 
-        let out = search_text(&root, "ALVO", false, false).unwrap();
+        let out = search_text(&root, "ALVO", &plain(false, false)).unwrap();
         assert_eq!(out.hits.len(), 1, "node_modules is left out of the search");
         assert_eq!(out.hits[0].path, "src/a.ts");
         assert_eq!(out.hits[0].line, 1);
@@ -1292,7 +1934,7 @@ mod tests {
         assert!(!out.truncated);
 
         // Case-sensitive: "ALVO" is not in the file.
-        let nothing = search_text(&root, "ALVO", true, false).unwrap();
+        let nothing = search_text(&root, "ALVO", &plain(true, false)).unwrap();
         assert!(nothing.hits.is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1304,7 +1946,7 @@ mod tests {
             std::fs::write(root.join(format!("{i:02}.txt")), "agulha\n").unwrap();
         }
         let mut checks = 0usize;
-        let result = search_text_cancellable(&root, "agulha", false, false, || {
+        let result = search_text_cancellable(&root, "agulha", &plain(false, false), || {
             checks += 1;
             checks > 3
         });
@@ -1319,13 +1961,13 @@ mod tests {
         let root = temp_root("palavra");
         std::fs::write(root.join("a.txt"), "portal porta aporta\n").unwrap();
 
-        let loose = search_text(&root, "porta", false, false).unwrap();
+        let loose = search_text(&root, "porta", &plain(false, false)).unwrap();
         assert_eq!(loose.hits.len(), 1, "the line counts once");
 
-        let whole = search_text(&root, "porta", false, true).unwrap();
+        let whole = search_text(&root, "porta", &plain(false, true)).unwrap();
         assert_eq!(whole.hits.len(), 1, "only the exact word matches");
 
-        let absent = search_text(&root, "portas", false, true).unwrap();
+        let absent = search_text(&root, "portas", &plain(false, true)).unwrap();
         assert!(absent.hits.is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }

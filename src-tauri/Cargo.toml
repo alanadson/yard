@@ -52,6 +52,10 @@ ureq = "2"
 # GSUB table carries ligatures — the preferences panel offers real choices
 # instead of a free-text field.
 ttf-parser = "0.25"
+# Project search (explorer.rs): the regex mode of Ctrl+Shift+F, and the engine
+# behind the literal mode too, one matcher means the search and the replace
+# cannot disagree about what matched.
+regex = "1"
 # Portal screenshots (portal.rs): the files exist to be opened by agents, and
 # PNG is what agent APIs accept — the old BMPs could not be attached at all.
 png = "0.17"

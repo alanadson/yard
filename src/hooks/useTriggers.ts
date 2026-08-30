@@ -24,6 +24,7 @@ import { startFlow } from "../lib/flowRun";
 import { t } from "../lib/i18n";
 import { injectPrompt } from "../lib/inject";
 import { uiLog } from "../lib/log";
+import { pushOut } from "../lib/notifyOut";
 import { waitUntilSendable } from "../lib/sendable";
 import { baseName } from "../lib/terminals";
 import {
@@ -47,6 +48,7 @@ async function notifyUser(body: string): Promise<void> {
     let ok = await isPermissionGranted();
     if (!ok) ok = (await requestPermission()) === "granted";
     if (ok) sendNotification({ title: t("Yard — gatilho"), body });
+    pushOut(t("Yard, gatilho"), body, "trigger");
   } catch (e) {
     // Lacking notification permission is not a trigger failure: the toast landed.
     uiLog.warn(`gatilho: notificação indisponível: ${e}`);
@@ -116,6 +118,44 @@ function fireFor(id: string, fire: TriggerFire): void {
           );
       })
       .finally(() => inFlight.delete(def.id));
+  }
+}
+
+/**
+ * The one edge that does not come from a terminal: the day's spend crossing
+ * the ceiling (`lib/budget.ts`, `hooks/useBudgetWatch.ts`). It fires on every
+ * group of the workspace, because the budget is the workspace's, and only
+ * triggers armed for "qualquer CLI" can match a fire with no source.
+ *
+ * A `flow` action is skipped rather than run: a flow runs *on the CLI that
+ * fired*, and this one fired on nobody. `parseTriggerCreate` refuses that
+ * combination too, so this only catches a board written by an older build.
+ */
+export function fireBudgetEdge(level: "warn" | "over"): void {
+  const s = useProjects.getState();
+  const now = Date.now();
+  const fire: TriggerFire = { event: "budget", terminalId: "", ask: level };
+  for (const group of s.groups) {
+    const defs = s.layoutOf(group.id).canvas?.triggers;
+    if (!defs?.length) continue;
+    const due = dueTriggers(defs, fire, now).filter(
+      (d) => !inFlight.has(d.id) && d.action.kind !== "flow",
+    );
+    if (!due.length) continue;
+
+    const ids = new Set(due.map((d) => d.id));
+    commitCanvasExternal(group.id, (c) => ({
+      ...c,
+      triggers: (c.triggers ?? []).map((t) => (ids.has(t.id) ? afterFire(t, now) : t)),
+    }));
+
+    for (const def of due) {
+      inFlight.add(def.id);
+      uiLog.info(`gatilho ${def.id} disparado pelo orçamento (${level})`);
+      void deliver(group.id, def, fire)
+        .catch((e) => uiLog.error(`gatilho ${def.id} falhou: ${e}`))
+        .finally(() => inFlight.delete(def.id));
+    }
   }
 }
 

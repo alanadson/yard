@@ -11,7 +11,10 @@ import "./palette.css";
  * What it searches is deliberately the whole workspace, not the active group:
  * "onde está o codex que ficou na frente da api" is the question worth
  * answering. Prefixes narrow it when you already know the kind:
- * `>` actions, `@` agents, `#` canvas, `/` files.
+ * `>` actions, `@` agents, `#` canvas, `/` files, `$` what the terminals
+ * printed. The last one is the only source that is not in memory: it sweeps
+ * the scrollbacks on the disk through `search_scrollback`, which is why it
+ * lives behind a prefix and never joins the unprefixed hunt.
  *
  * Nothing here owns state. Every row ends in a call that some store already
  * exposes — the Busca is a **way in**, never a second way to do things.
@@ -33,6 +36,7 @@ import {
   ListTodo,
   NotebookPen,
   Radio,
+  Braces,
   ScrollText,
   Search,
   SquareTerminal,
@@ -57,7 +61,7 @@ import { mediaNodeName } from "../../lib/mediaNode";
 import { treeNodeName } from "../../lib/treeNode";
 import { isTopLayer } from "../../lib/layers";
 import { toggleBroadcast } from "../../lib/broadcastToggle";
-import { goToCanvasItem, goToTerminal, show } from "../../lib/navigate";
+import { goToCanvasItem, goToTerminal, show, toggleCanvas } from "../../lib/navigate";
 import { requestQuit } from "../../lib/quit";
 import { checkForUpdates } from "../../lib/updateFlow";
 import { useBroadcast } from "../../stores/broadcastStore";
@@ -71,6 +75,23 @@ import {
 import { fileName } from "../../lib/paths";
 import { spawnPortalNear } from "../../lib/portalSpawn";
 import { rank } from "../../lib/search";
+import {
+  hitRows,
+  searchOrder,
+  worthSearching,
+  PER_TERMINAL,
+  TOTAL_HITS,
+} from "../../lib/outputSearch";
+import {
+  MAX_WORKSPACE_SYMBOLS,
+  readWorkspaceSymbols,
+  type WorkspaceSymbolRow,
+} from "../../lib/lsp/workspaceSymbols";
+import { sameRoot } from "../../lib/roots";
+import { useLsp } from "../../stores/lspStore";
+import { openOutputHit } from "../../lib/outputOpen";
+import { writeTodaysJournal } from "../../lib/journalFlow";
+import { ipc, type TerminalHits, type TerminalRow } from "../../lib/ipc";
 import { baseName } from "../../lib/terminals";
 import { exportTerminalOutput } from "../../lib/termExportFlow";
 import { useAdvertised } from "../../stores/advertisedStore";
@@ -87,7 +108,6 @@ import { isLive, useTerminals } from "../../stores/terminalsStore";
 import { useAutoBackup } from "../../stores/autoBackupStore";
 import { useCosts } from "../../stores/costsStore";
 import { useUI } from "../../stores/uiStore";
-import type { TerminalRow } from "../../lib/ipc";
 import { toggledTheme } from "../../lib/theme";
 import { resolvedTheme } from "../../stores/themeStore";
 import { useT } from "../../hooks/useT";
@@ -194,8 +214,129 @@ function PaletteInner() {
   );
 
   const { scope, text } = parseQuery(query);
+  const wantsOutput = scope?.kinds.includes("output") ?? false;
+  const wantsSymbols = scope?.kinds.includes("symbol") ?? false;
+
+  // --- what the terminals said ($) -----------------------------------------
+  // Asynchronous, debounced, and only under the prefix: every keystroke here
+  // reads up to 8 MB per terminal off the disk.
+  const [outputHits, setOutputHits] = useState<TerminalHits[]>([]);
+  const [sweeping, setSweeping] = useState(false);
+
+  useEffect(() => {
+    if (!wantsOutput || !worthSearching(text)) {
+      setOutputHits([]);
+      setSweeping(false);
+      return;
+    }
+    setSweeping(true);
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      const ids = searchOrder(terminals, activeGroupId, focusedTerminalId);
+      void ipc
+        .searchScrollback(ids, text.trim(), PER_TERMINAL, TOTAL_HITS)
+        .then((answer) => {
+          if (!alive) return;
+          setOutputHits(answer);
+          setSweeping(false);
+        })
+        .catch(() => {
+          if (!alive) return;
+          setOutputHits([]);
+          setSweeping(false);
+        });
+    }, 180);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+    // `terminals` on purpose and nothing else from the workspace: the sweep is
+    // driven by what was typed, not by a card changing colour mid-search.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsOutput, text]);
+
+  // --- declarations anywhere in the project (:) ----------------------------
+  // Asked of the servers that are **already running** for this root. Typing a
+  // colon must not start a `rust-analyzer`: the point of the prefix is to
+  // reach what is there, not to make the palette expensive.
+  const [symbolRows, setSymbolRows] = useState<WorkspaceSymbolRow[]>([]);
+  const [askingServers, setAskingServers] = useState(false);
+
+  useEffect(() => {
+    const query = text.trim();
+    if (!wantsSymbols || query.length < 2) {
+      setSymbolRows([]);
+      setAskingServers(false);
+      return;
+    }
+    setAskingServers(true);
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      const root = useEditor.getState().root;
+      const clients = Object.values(useLsp.getState().clients).filter(
+        (entry) => root && sameRoot(entry.root, root),
+      );
+      if (!root || clients.length === 0) {
+        setSymbolRows([]);
+        setAskingServers(false);
+        return;
+      }
+      void Promise.all(
+        clients.map((entry) =>
+          entry.client
+            .request<{ query: string }, unknown>("workspace/symbol", { query })
+            .catch(() => null),
+        ),
+      ).then((replies) => {
+        if (!alive) return;
+        // Two servers can both answer for one root (a TS and a CSS server in
+        // the same project); their lists are simply appended.
+        const rows = replies.flatMap((reply) => readWorkspaceSymbols(reply, root));
+        setSymbolRows(rows.slice(0, MAX_WORKSPACE_SYMBOLS));
+        setAskingServers(false);
+      });
+    }, 180);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [wantsSymbols, text]);
+
+  const symbolEntries = useMemo(
+    () =>
+      symbolRows.map<PaletteEntry>((row, i) => ({
+        id: `symbol:${row.path}:${row.line}:${row.name}:${i}`,
+        kind: "symbol",
+        title: row.container ? `${row.container}.${row.name}` : row.name,
+        subtitle: t("{path} · linha {line}", { path: row.path, line: row.line }),
+        icon: <Braces size={14} />,
+        run: () => void useEditor.getState().openFileAt(row.path, row.line),
+      })),
+    [symbolRows, t],
+  );
+
+  const outputEntries = useMemo(() => {
+    const nameOf = (id: string) => {
+      const row = terminals.find((term) => term.id === id);
+      return row ? baseName(row) : undefined;
+    };
+    return hitRows(outputHits, nameOf).map<PaletteEntry>((row) => ({
+      id: `output:${row.id}`,
+      kind: "output",
+      title: row.title,
+      subtitle: t("{name} · linha {line}", { name: row.name, line: row.line }),
+      icon: <ScrollText size={14} />,
+      run: () => openOutputHit(row),
+    }));
+  }, [outputHits, terminals]);
 
   const results = useMemo(() => {
+    // The backend already matched these rows and answered in priority order;
+    // ranking a raw terminal line against the query a second time only buries
+    // the long lines. See RANKED_SCOPES in `model.ts`.
+    if (wantsOutput) return outputEntries;
+    // Same reasoning: the servers matched and ordered these already.
+    if (wantsSymbols) return symbolEntries;
     const pool = scope
       ? entries.filter((e) => scope.kinds.includes(e.kind))
       : entries;
@@ -215,7 +356,7 @@ function PaletteInner() {
       if (out.length >= CAP) break;
     }
     return out;
-  }, [entries, scope, text]);
+  }, [entries, scope, text, wantsOutput, outputEntries, wantsSymbols, symbolEntries]);
 
   // The cursor is an index into a list that changes on every keystroke.
   useEffect(() => {
@@ -284,7 +425,12 @@ function PaletteInner() {
   const sections = useMemo(() => sectionsOf(results), [results]);
   // `fileIndex === null` means the walk has not finished, not that the
   // project has no files.
-  const vazio = emptyReason({ text, scope, indexed: fileIndex !== null });
+  const vazio = emptyReason({
+    text,
+    scope,
+    indexed: fileIndex !== null,
+    searching: sweeping || askingServers,
+  });
   let painted = -1;
 
   return (
@@ -330,8 +476,19 @@ function PaletteInner() {
                 t("Nada por aqui ainda — adicione um projeto para começar.")}
               {vazio === "indexando" &&
                 t("Indexando os arquivos do projeto… os que já entraram aparecem aqui.")}
+              {vazio === "buscando" &&
+                t("Procurando “{text}” na saída dos terminais…", { text })}
+              {vazio === "curto" &&
+                t("Escreva ao menos duas letras: esta busca lê o histórico de todos os terminais.")}
               {vazio === "nada-encontrado" &&
                 t("Nada encontrado para “{text}”.", { text })}
+              {/* The sweep covers what is on disk, which is the last 4 MB of
+                  each terminal, older output was compacted away long ago. */}
+              {vazio === "nada-encontrado" && scope?.prefix === "$" && text && (
+                <span className="busca-empty-hint">
+                  {t("A busca cobre o histórico guardado de cada terminal (os últimos 4 MB); o que passou disso já foi descartado.")}
+                </span>
+              )}
               {/* The file rows come from the project index (every file under
                   the root, minus dependencies and build output) — "Nada
                   encontrado" is still not proof of absence: the file may live
@@ -412,6 +569,8 @@ const ICON: Record<EntryKind, JSX.Element> = {
   file: <FileText size={14} />,
   prompt: <Bookmark size={14} />,
   task: <ListTodo size={14} />,
+  output: <ScrollText size={14} />,
+  symbol: <Braces size={14} />,
 };
 
 // ---------------------------------------------------------------------------
@@ -893,6 +1052,15 @@ function actions(world: World): PaletteEntry[] {
         ui().openModal("compare-floors", { projectId: world.activeProjectId }),
     },
     {
+      id: "action:journal",
+      kind: "action",
+      title: t("Diário de hoje"),
+      subtitle: t("commits, agentes e custo do dia numa nota nova"),
+      keywords: ["journal", "diario", "diário", "resumo", "dia", "today", "log"], // i18n-ok
+      weight: 12,
+      run: () => void writeTodaysJournal(),
+    },
+    {
       id: "action:composer",
       kind: "action",
       title: t("Compositor de prompts"),
@@ -1216,24 +1384,29 @@ function actions(world: World): PaletteEntry[] {
     });
   }
 
+  // The canvas is the group's other surface, not a fourth mode: one row that
+  // flips between the two, and it carries the weight because it is the only
+  // one that changes *what* is on screen rather than its shape. It sits
+  // **outside** the block below on purpose — the shapes of the grid need a
+  // group, the canvas does not: with every tab closed it is still reachable,
+  // through a board (`toggleCanvas`).
+  const onBoard =
+    hasGroup && useProjects.getState().layoutOf(world.activeGroupId!).surface === "canvas";
+  rows.push({
+    id: "action:surface-canvas",
+    kind: "action",
+    title: onBoard ? t("Voltar aos painéis") : t("Ir para o canvas"),
+    subtitle: onBoard
+      ? t("as abas e a grade do grupo")
+      : t("cartões num quadro infinito, com as CLIs de lá"),
+    keywords: ["canvas", "quadro", "paineis", "abas", "superficie", "board", "panes", "tabs", "surface"],
+    weight: 10,
+    run: () => toggleCanvas(),
+  });
+
   if (hasGroup) {
     const groupId = world.activeGroupId!;
     const layout = useProjects.getState().layoutOf(groupId);
-    // The canvas is the group's other surface, not a fourth mode: one row
-    // that flips between the two, and it carries the weight because it is
-    // the only one that changes *what* is on screen rather than its shape.
-    const onBoard = layout.surface === "canvas";
-    rows.push({
-      id: "action:surface-canvas",
-      kind: "action",
-      title: onBoard ? t("Voltar aos painéis") : t("Ir para o canvas"),
-      subtitle: onBoard
-        ? t("as abas e a grade do grupo")
-        : t("cartões num quadro infinito, com as CLIs de lá"),
-      keywords: ["canvas", "quadro", "paineis", "abas", "superficie", "board", "panes", "tabs", "surface"],
-      weight: 10,
-      run: () => show(groupId, onBoard ? "grid" : "canvas"),
-    });
     const modes: { mode: LayoutMode; label: string; hint: string }[] = [
       { mode: "auto", label: t("Modo automático"), hint: t("a grade se ajusta sozinha") },
       { mode: "grid", label: t("Modo grade"), hint: t("número fixo de painéis") },

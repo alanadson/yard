@@ -9,7 +9,7 @@
  */
 import { create } from "zustand";
 
-import { ipc, type SearchOutcome } from "../lib/ipc";
+import { ipc, type ReplaceOutcome, type SearchOptions, type SearchOutcome } from "../lib/ipc";
 import { sameRoot } from "../lib/roots";
 import { useEditor } from "./editorStore";
 
@@ -19,6 +19,16 @@ interface SearchState {
   query: string;
   caseSensitive: boolean;
   wholeWord: boolean;
+  /** Read the query as a pattern rather than as text. */
+  regex: boolean;
+  /** Comma separated globs; empty means every file. */
+  include: string;
+  /** Comma separated globs; empty means nothing is excluded. */
+  exclude: string;
+  /** What the matches become. Its own field, so it survives a tab switch. */
+  replacement: string;
+  /** The panel shows the replace row at all. */
+  replacing: boolean;
   status: SearchStatus;
   error: string | null;
   outcome: SearchOutcome | null;
@@ -30,6 +40,17 @@ interface SearchState {
   setQuery: (query: string) => void;
   setCaseSensitive: (on: boolean) => void;
   setWholeWord: (on: boolean) => void;
+  setRegex: (on: boolean) => void;
+  setInclude: (value: string) => void;
+  setExclude: (value: string) => void;
+  setReplacement: (value: string) => void;
+  setReplacing: (on: boolean) => void;
+  /**
+   * Rewrites every match of the current search. The caller is responsible for
+   * having asked the user first — see `lib/replaceScope.ts` for whether it is
+   * even allowed to run.
+   */
+  replace: () => Promise<ReplaceOutcome | null>;
   toggleFile: (path: string) => void;
   /** Runs the search against the editor's root. No-op on an empty query. */
   run: () => Promise<void>;
@@ -54,6 +75,11 @@ export const useSearch = create<SearchState>((set, get) => ({
   query: "",
   caseSensitive: false,
   wholeWord: false,
+  regex: false,
+  include: "",
+  exclude: "",
+  replacement: "",
+  replacing: false,
   status: "idle",
   error: null,
   outcome: null,
@@ -77,11 +103,26 @@ export const useSearch = create<SearchState>((set, get) => ({
     if (wholeWord !== get().wholeWord) cancelActive();
     set({ wholeWord });
   },
+  setRegex: (regex) => {
+    if (regex !== get().regex) cancelActive();
+    set({ regex });
+  },
+  setInclude: (include) => {
+    if (include !== get().include) cancelActive();
+    set({ include });
+  },
+  setExclude: (exclude) => {
+    if (exclude !== get().exclude) cancelActive();
+    set({ exclude });
+  },
+  // Neither of these two changes what was found, so neither cancels the walk.
+  setReplacement: (replacement) => set({ replacement }),
+  setReplacing: (replacing) => set({ replacing }),
   toggleFile: (path) =>
     set((s) => ({ collapsed: { ...s.collapsed, [path]: !s.collapsed[path] } })),
 
   run: async () => {
-    const { query, caseSensitive, wholeWord } = get();
+    const { query } = get();
     const root = useEditor.getState().root;
     const text = query.trim();
     if (!root || text.length < MIN_QUERY) return;
@@ -90,7 +131,7 @@ export const useSearch = create<SearchState>((set, get) => ({
     activeRoot = root;
     set({ status: "searching", error: null });
     try {
-      const outcome = await ipc.fsSearchText(root, text, caseSensitive, wholeWord);
+      const outcome = await ipc.fsSearchText(root, text, optionsOf(get()));
       // A slower search must not answer a newer question.
       if (mine !== seq) return;
       set({ outcome, root, status: "done", collapsed: {} });
@@ -102,11 +143,34 @@ export const useSearch = create<SearchState>((set, get) => ({
     }
   },
 
+  replace: async () => {
+    const { query, replacement } = get();
+    const root = useEditor.getState().root;
+    const text = query.trim();
+    if (!root || text.length < MIN_QUERY) return null;
+    const outcome = await ipc.fsReplaceText(root, text, replacement, optionsOf(get()));
+    // The disk moved under the list that produced this. Re-running is not
+    // politeness: with the matches gone, the old list is a set of dead links.
+    await get().run();
+    return outcome;
+  },
+
   clear: () => {
     cancelActive();
     set({ query: "", status: "idle", error: null, outcome: null, collapsed: {} });
   },
 }));
+
+/** The five fields the backend takes, out of the state that holds nine. */
+function optionsOf(state: SearchState): SearchOptions {
+  return {
+    caseSensitive: state.caseSensitive,
+    wholeWord: state.wholeWord,
+    regex: state.regex,
+    include: state.include,
+    exclude: state.exclude,
+  };
+}
 
 /** Is the stored result about the root on screen? (a floor switch outdates it) */
 export function outcomeIsCurrent(state: {

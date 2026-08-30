@@ -24,6 +24,7 @@ import {
   notesOverlayVisible,
   useNotes,
 } from "../stores/notesStore";
+import { reopenLastTab } from "../lib/reopenTab";
 import { useProjects } from "../stores/projectsStore";
 import { useUI } from "../stores/uiStore";
 
@@ -131,6 +132,14 @@ export function useKeybindings() {
       if (e.shiftKey && e.code === "KeyB") {
         e.preventDefault();
         useBench.getState().toggle();
+        return;
+      }
+
+      // Ctrl+Shift+T — the tab you did not mean to close, back where it was
+      // (`lib/closedTabs.ts`).
+      if (e.shiftKey && e.code === "KeyT") {
+        e.preventDefault();
+        void useEditor.getState().reopenClosed();
         return;
       }
 
@@ -272,6 +281,15 @@ export function useKeybindings() {
       if (e.altKey && !e.shiftKey && e.code === "KeyU") {
         e.preventDefault();
         void useCosts.getState().open();
+        return;
+      }
+      // Ctrl+Shift+T, reopen the last file or browser tab that was closed
+      // (`lib/reopen.ts`). Not CLIs: closing one is `Excluir CLI`, a confirmed
+      // destructive action, and "reopening" it would mean respawning a
+      // process, a different promise from restoring a tab.
+      if (e.shiftKey && e.code === "KeyT") {
+        e.preventDefault();
+        void reopenLastTab();
         return;
       }
       // Ctrl+Shift+O — the Shoulder: what each agent of the group did while

@@ -20,6 +20,7 @@
  * Both routes start by turning the group to the right surface: the grid and
  * the canvas no longer draw the same terminals, so the screen has to move.
  */
+import { canvasDoor } from "./layoutControls";
 import { useProjects } from "../stores/projectsStore";
 import { useUI } from "../stores/uiStore";
 import type { TerminalRow } from "./ipc";
@@ -80,4 +81,43 @@ export function goToCanvasItem(groupId: string, itemId: string) {
   useProjects.getState().setActiveGroup(groupId);
   show(groupId, "canvas");
   useUI.getState().revealOnCanvas(groupId, itemId);
+}
+
+/**
+ * The canvas door, from wherever it is pressed.
+ *
+ * There are two of them — the sidebar's row and the palette's action — and
+ * before this they each carried their own half-copy of the trip, both gated
+ * on there being an active group. With every tab closed neither was offered
+ * and the canvas, boards and all, had no way in. The decision is
+ * `canvasDoor`'s (pure, tested); what is left here is the effect.
+ */
+export function toggleCanvas() {
+  const projects = useProjects.getState();
+  const active = projects.activeGroupId;
+  const door = canvasDoor({
+    activeGroupId: active,
+    activeProjectId: projects.activeProjectId,
+    groupBeforeBoard: projects.groupBeforeBoard,
+    activeSurface: active ? normalizeSurface(projects.layoutOf(active).surface) : "grid",
+    groups: projects.groups,
+    boards: projects.boards(),
+  });
+
+  if (door.open) {
+    // The group is turned back to its panes *before* it becomes the active
+    // one, so the screen never paints the canvas of a group being left.
+    if (door.group) show(door.group, "grid");
+    // Leaving a board is also leaving the group: the board has no panes of
+    // its own to come back to.
+    if (active && projects.isBoard(active)) projects.leaveBoard();
+    return;
+  }
+
+  // Into the canvas: the active group's other surface or, with no group open,
+  // a board — the canvas belonging to no project, made here when the
+  // workspace has none yet.
+  const target = door.group ?? projects.addBoard("");
+  show(target, "canvas");
+  if (target !== useProjects.getState().activeGroupId) projects.setActiveGroup(target);
 }

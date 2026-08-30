@@ -29,6 +29,19 @@ export interface SidebarActionLabel {
 
 const NOTES_KEY = "Ctrl+Shift+N";
 
+/**
+ * The Busca, first of the doors: one field over everything that reaches
+ * agents, files, notes and actions. It has no open/closed state to report
+ * (it opens over the app and closes on its own), so the balloon carries what
+ * the name leaves out, the reach of the field and the shortcut.
+ */
+export function searchAction(): SidebarActionLabel {
+  return {
+    label: t("Busca"),
+    tip: t("Buscar agentes, arquivos, notas e ações ({key})", { key: "Ctrl+P" }),
+  };
+}
+
 export function notesAction(state: SidebarActionState): SidebarActionLabel {
   const key = NOTES_KEY;
   return {
@@ -36,6 +49,24 @@ export function notesAction(state: SidebarActionState): SidebarActionLabel {
     tip: state.open
       ? t("Esconder as anotações ({key})", { key })
       : t("Mostrar as anotações, o caderno markdown ({key})", { key }),
+  };
+}
+
+/**
+ * The canvas, the group's other surface. It used to be a button in the title
+ * bar, next to the pane switch, where it read as a fourth shape of the grid
+ * it is not: it has its own cards, its own CLIs and its own board. Here it is
+ * one more place to go, in the bar that already lists them, and one row does
+ * both trips: pressed, it is the way back to the panes.
+ */
+export function canvasAction(state: SidebarActionState): SidebarActionLabel {
+  return {
+    label: "Canvas",
+    tip: state.open
+      ? t("Voltar aos painéis: as abas e a grade do grupo")
+      : t(
+          "Ir para o canvas: cartões soltos, desenho à mão, notas e conexões, com as CLIs de lá",
+        ),
   };
 }
 

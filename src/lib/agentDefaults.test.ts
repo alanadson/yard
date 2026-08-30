@@ -634,3 +634,55 @@ describe("the ssh fields in the kv", () => {
     expect(serializeAgentDefaults(all)).toEqual({ claude: { sshHost: "devbox" } });
   });
 });
+
+describe("sshLaunch carrying the bridge", () => {
+  /**
+   * Why this matters: "roda em SSH" shipped with the `yard` CLI not crossing
+   * the connection, so a remote agent could not answer another one, read a
+   * note or say it had finished. The tunnel and the shim are what close it,
+   * and both have to be there, a shim with no tunnel is a CLI that hangs.
+   */
+  const base = {
+    program: "claude.cmd",
+    args: ["--resume", "abc"],
+    cwd: "D:\repo",
+    host: "servidor",
+    remotePath: "/home/alguem/repo",
+  };
+
+  it("without a bridge, launches exactly as it always did", () => {
+    const out = sshLaunch(base);
+    expect(out.program).toBe("ssh.exe");
+    expect(out.args[0]).toBe("-tt");
+    expect(out.args[1]).toBe("servidor");
+    expect(out.args[2]).toContain("exec claude --resume abc");
+    expect(out.args.join(" ")).not.toContain("-R");
+  });
+
+  it("with a bridge, opens the reverse tunnel before naming the host", () => {
+    const out = sshLaunch({
+      ...base,
+      bridge: { port: 51515, token: "t0k3n", ptyId: "{{YARD_PTY_ID}}" },
+    });
+    expect(out.args[1]).toBe("-R");
+    expect(out.args[2]).toContain(":127.0.0.1:51515");
+    expect(out.args[3]).toBe("servidor");
+  });
+
+  it("names the terminal with the placeholder the backend fills in", () => {
+    const out = sshLaunch({
+      ...base,
+      bridge: { port: 51515, token: "t0k3n", ptyId: "{{YARD_PTY_ID}}" },
+    });
+    expect(out.args[4]).toContain("YARD_PTY_ID='{{YARD_PTY_ID}}'");
+  });
+
+  it("still runs the CLI in the remote folder, bridge or no bridge", () => {
+    const withBridge = sshLaunch({
+      ...base,
+      bridge: { port: 51515, token: "t", ptyId: "x" },
+    });
+    expect(withBridge.args[4]).toContain("cd '/home/alguem/repo'");
+    expect(withBridge.args[4]).toContain("exec claude --resume abc");
+  });
+});

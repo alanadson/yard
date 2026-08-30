@@ -43,6 +43,7 @@ import { isLive, useTerminals } from "../stores/terminalsStore";
 import { useProjects } from "../stores/projectsStore";
 import { useUI } from "../stores/uiStore";
 import { t } from "./i18n";
+import { pushOut } from "./notifyOut";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -75,6 +76,7 @@ function notify(body: string) {
   if (!useUI.getState().prefs.notifyOnFinish) return;
   try {
     sendNotification({ title: t("Yard — Fluxo"), body });
+    pushOut(t("Yard, Fluxo"), body, "flow");
   } catch {
     // Lacking notification permission is not a flow error.
   }

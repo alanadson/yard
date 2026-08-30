@@ -24,14 +24,27 @@ import {
 import { EditorView, gutter, GutterMarker } from "@codemirror/view";
 
 import { diffLines, type LineChanges } from "../../lib/lineDiff";
+import { hunkAt, peekLines, type Hunk } from "../../lib/hunks";
 import { ipc } from "../../lib/ipc";
+import { showHunkPeek } from "./hunkPeek";
 
 // ---------------------------------------------------------------------------
 // the extension
 // ---------------------------------------------------------------------------
 
-/** New marks arrived (or `null`: nothing to compare against — clear). */
-export const setGitChanges = StateEffect.define<LineChanges | null>();
+/**
+ * New marks arrived. `changes: null` means there is nothing to compare
+ * against and the strip stays clean.
+ *
+ * The HEAD text rides along because the calha is no longer only a drawing:
+ * clicking a mark shows what the line *was*, and putting it back needs the
+ * same text the marks were computed from, not whatever the cache holds by the
+ * time the click lands.
+ */
+export const setGitChanges = StateEffect.define<{
+  changes: LineChanges | null;
+  head: string | null;
+}>();
 
 class ChangeMarker extends GutterMarker {
   constructor(readonly cls: string) {
@@ -79,18 +92,66 @@ const gitField = StateField.define<RangeSet<GutterMarker>>({
   update(value, tr) {
     if (tr.docChanged) value = value.map(tr.changes);
     for (const e of tr.effects) {
-      if (e.is(setGitChanges)) value = buildSet(e.value, tr.state.doc);
+      if (e.is(setGitChanges)) value = buildSet(e.value.changes, tr.state.doc);
     }
     return value;
   },
 });
 
+/**
+ * The same marks as runs, with the old lines each one stands for, and the
+ * HEAD text to read them out of.
+ *
+ * Deliberately *not* mapped through document changes: line numbers cannot be
+ * mapped honestly, and the marks are recomputed on a debounce anyway. What
+ * protects the reader is that every writer of these ranges checks them
+ * against the text in hand (`revertHunk`, `peekLines`).
+ */
+interface GitState {
+  hunks: Hunk[];
+  head: string | null;
+}
+
+const gitHunks = StateField.define<GitState>({
+  create: () => ({ hunks: [], head: null }),
+  update(value, tr) {
+    for (const e of tr.effects) {
+      if (e.is(setGitChanges)) {
+        return { hunks: e.value.changes?.hunks ?? [], head: e.value.head };
+      }
+    }
+    return value;
+  },
+});
+
+/** What the calha knows right now, for the keys that walk it. */
+export function gitStateOf(view: EditorView): GitState {
+  return view.state.field(gitHunks, false) ?? { hunks: [], head: null };
+}
+
+/** Opens the peek panel on a hunk, if there is one at that line. */
+export function peekHunkAt(view: EditorView, line: number): boolean {
+  const { hunks, head } = gitStateOf(view);
+  const hunk = hunkAt(hunks, line);
+  if (!hunk || head === null) return false;
+  view.dispatch({ effects: showHunkPeek.of({ hunk, lines: peekLines(head, hunk) }) });
+  return true;
+}
+
 /** The whole thing, ready to drop into the editor's extension list. */
 export const gitGutterExt = [
   gitField,
+  gitHunks,
   gutter({
     class: "cm-git-gutter",
     markers: (view) => view.state.field(gitField),
+    domEventHandlers: {
+      // The strip is four pixels wide and was, until now, unclickable
+      // decoration. A press on a mark opens what that line was.
+      mousedown(view, block) {
+        return peekHunkAt(view, view.state.doc.lineAt(block.from).number);
+      },
+    },
   }),
 ];
 
@@ -131,8 +192,19 @@ export function dropHeadText(id: string): void {
   headCache.delete(id);
 }
 
+/**
+ * Everything outside `open` goes. Each entry holds a whole file as git has
+ * it, so this is not bookkeeping: it is the difference between a session that
+ * keeps one copy per open tab and one that keeps every file ever opened.
+ */
+export function keepHeadText(open: ReadonlySet<string>): void {
+  for (const id of [...headCache.keys()]) {
+    if (!open.has(id)) headCache.delete(id);
+  }
+}
+
 /** Diffs the buffer against `head` and pushes the marks into the view. */
 export function applyGitChanges(view: EditorView, head: string | null): void {
   const changes = head == null ? null : diffLines(head, view.state.doc.toString());
-  view.dispatch({ effects: setGitChanges.of(changes) });
+  view.dispatch({ effects: setGitChanges.of({ changes, head }) });
 }

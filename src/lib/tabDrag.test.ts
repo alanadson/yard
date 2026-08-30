@@ -63,6 +63,8 @@ function doc(path: string, slot: number): OpenDoc {
     diskVersion: 1,
     modifiedAt: 0,
     crlf: false,
+    savedCrlf: false,
+    encoding: "utf-8",
     bom: false,
     binary: false,
     truncated: false,

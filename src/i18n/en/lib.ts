@@ -6,6 +6,10 @@
  * read by agents, not by the user. Key = the PT-BR sentence as written.
  */
 export default {
+  // --- lib/destination: where a CLI is born inside a project
+  "Sem nome": "Unnamed",
+  "Chão": "Ground",
+  "Worktrees do disco": "Worktrees on the disk",
   // --- lifecycle: the confirms behind delete / restart / kill / clear -------
   "Excluir “{name}”? O processo será encerrado e o histórico desta CLI, junto com o cartão e as conexões dela no canvas, vai embora.":
     "Delete “{name}”? The process will be terminated and this CLI's history, together with its card and its connections on the canvas, goes away.",
@@ -34,6 +38,22 @@ export default {
   "falha ao suspender": "failed to suspend",
   "falha ao matar": "failed to kill",
   "Salvar saída…": "Save output…",
+  "Passar o bastão…": "Pass the baton…",
+  "Abra um projeto antes de escrever o diário.": "Open a project before writing the journal.",
+  "Diário de {day} criado nas Anotações.": "Journal for {day} created in Anotações.",
+  "Bastão montado a partir de {name}, escolha quem assume e revise antes de enviar.":
+    "Baton assembled from {name}, pick who takes over and read it before sending.",
+  "Nenhuma aba fechada para reabrir.": "No closed tab to reopen.",
+  "O painel dessa aba de navegador não existe mais.":
+    "The pane that browser tab lived in is gone.",
+  "Orçamento do dia estourado: US$ {spent} de US$ {limit}.":
+    "The day's budget is blown: US$ {spent} of US$ {limit}.",
+  "Orçamento do dia em {pct}%: US$ {spent} de US$ {limit}.":
+    "The day's budget is at {pct}%: US$ {spent} of US$ {limit}.",
+  "Yard, orçamento": "Yard, budget",
+  "Limpar a fila ({n})": "Clear the queue ({n})",
+  'A fila não conseguiu escrever em "{target}": {reason}.':
+    'The queue could not write to "{target}": {reason}.',
   "Transcrição da sessão…": "Session transcript…",
 
   // --- the text menu (cut / copy / paste over any field) ----------------------
@@ -210,6 +230,8 @@ export default {
   "Extensões — a loja de recursos do Yard": "Extensions — Yard's feature store",
   "Ir para o próximo agente que está esperando você": "Go to the next agent waiting for you",
   "Fechar a aba em foco (CLI, arquivo, navegador ou notas)": "Close the focused tab (CLI, file, browser or notes)",
+  "Reabrir a última aba de arquivo ou navegador que você fechou":
+    "Reopen the last file or browser tab you closed",
   "A lista completa de atalhos": "The full list of shortcuts",
   "Transmitir o teclado para todas as CLIs do grupo (liga/desliga)": "Broadcast the keyboard to every CLI of the group (toggle)",
   "Trazer ou esconder a janela do Yard — de qualquer lugar do Windows (configurável)": "Bring or hide the Yard window — from anywhere in Windows (configurable)",
@@ -232,6 +254,13 @@ export default {
   "Buscar dentro do arquivo (com regex, se quiser)": "Search inside the file (with regex, if you like)",
   "Buscar e substituir (a mesma barra, já aberta embaixo)": "Find and replace (the same bar, already open below)",
   "Ir para a linha": "Go to line",
+  "Voltar para onde você estava (Alt+→ avança de novo)":
+    "Back to where you were (Alt+→ goes forward again)",
+  "Marcar ou desmarcar a linha": "Mark the line, or take the mark back",
+  "Correções rápidas para o problema sob o cursor (LSP)":
+    "Quick fixes for the problem under the caret (LSP)",
+  "Próxima marca do arquivo (Shift+Alt+F2 a anterior)":
+    "Next mark in the file (Shift+Alt+F2 for the previous one)",
   "Selecionar a próxima ocorrência (multi-cursor)": "Select the next occurrence (multi-cursor)",
   "clique": "click",
   "Cursor extra onde clicar": "Extra cursor where you click",
@@ -329,4 +358,54 @@ export default {
   "Anotações — o caderno markdown fora de qualquer projeto": "Notes — the markdown notebook outside any project",
   "7 dias": "7 days",
   "30 dias": "30 days",
+  "Próxima mudança contra o HEAD (Shift+Alt+F5 a anterior)": "Next change against HEAD (Shift+Alt+F5 for the previous one)",
+  "Reabrir a última aba de arquivo fechada": "Reopen the last file tab you closed",
+  "Fechar as salvas": "Close the saved ones",
+  "Fixar": "Pin",
+  "Desafixar": "Unpin",
+  "Revelar na árvore": "Reveal in the tree",
+  "Renomear…": "Rename…",
+  "Excluir…": "Delete…",
+  "Excluir do disco": "Delete from disk",
+
+  // -- the provisioning catalogue (`lib/provision/errors.ts`) ---------------
+  // Every way opening a front can be refused. The code is the contract; these
+  // are the sentences beside it.
+  "O repositório mudou depois que este plano foi montado. Revalide antes de criar.":
+    "The repository changed after this plan was built. Validate it again before creating.",
+  "Cancelado antes de terminar.": "Cancelled before it finished.",
+  "Não consegui desfazer tudo: {detail}": "I could not undo everything: {detail}",
+  "Esta pasta não é um repositório git: a frente vai dividir o diretório do chão, sem isolamento.":
+    "This folder is not a git repository: the front will share the ground's directory, with no isolation.",
+  "O repositório ainda não tem nenhum commit — faça o primeiro antes de abrir uma frente.":
+    "The repository has no commit yet — make the first one before opening a front.",
+  "A branch {branch} já existe. Escolha outro nome, ou abra a frente sobre ela como branch existente.":
+    "Branch {branch} already exists. Pick another name, or open the front on it as an existing branch.",
+  "A branch {branch} já está aberta em {path}. O git só dá um worktree por branch.":
+    "Branch {branch} is already open at {path}. Git gives out one worktree per branch.",
+  "A branch {branch} não existe mais neste repositório.":
+    "Branch {branch} does not exist in this repository any more.",
+  "Não consegui resolver {base} para um commit.": "I could not resolve {base} to a commit.",
+  "Já existe alguma coisa em {path}.": "There is already something at {path}.",
+  "O git não lista mais um worktree em {path}.":
+    "Git no longer lists a worktree at {path}.",
+  "Esse worktree está travado (`git worktree lock`): {reason}":
+    "That worktree is locked (`git worktree lock`): {reason}",
+  "Esse worktree tem alterações não commitadas. O agente começa em cima delas.":
+    "That worktree has uncommitted changes. The agent starts on top of them.",
+  "Já há agente trabalhando neste destino. Dois processos no mesmo diretório se atropelam: o git não isola um do outro.":
+    "There is already an agent working at this destination. Two processes in one directory trample each other: git isolates neither.",
+  "O chão é a cópia que você tem aberta. O agente vai editar os mesmos arquivos que você.":
+    "The ground is the copy you have open. The agent will edit the same files you are editing.",
+  'Dois agentes desta leva pedem o nome "{name}".':
+    'Two agents in this batch ask for the name "{name}".',
+  "Dois agentes desta leva pedem a branch {branch}.":
+    "Two agents in this batch ask for branch {branch}.",
+  "Dois agentes desta leva pedem a pasta {path}.":
+    "Two agents in this batch ask for folder {path}.",
+  "{agent} não está instalado nesta máquina.": "{agent} is not installed on this machine.",
+  "A frente existe, mas o agente não subiu: {detail}":
+    "The front exists, but the agent did not come up: {detail}",
+  "O setup da frente falhou: {detail}": "The front's setup failed: {detail}",
+  "sem motivo": "no reason given",
 } satisfies Record<string, string>;

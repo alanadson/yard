@@ -27,6 +27,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { ContextMenu, type MenuAnchor } from "../ContextMenu";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { FloorsControl } from "../Floors";
+import { showsFloorsControl } from "../Floors/place";
 import { FlowRunsBar } from "../CanvasView/FlowHud";
 import { TerminalPane } from "../TerminalPane";
 import { useT } from "../../hooks/useT";
@@ -55,8 +56,8 @@ interface Props {
 }
 
 /**
- * The group body + the Floors control in the bottom-right corner —
- * present in every mode, because switching floors does not depend on the canvas.
+ * The group body, plus what floats over it: the running pipeline, and the
+ * Floors control — the latter on the canvas alone (`Floors/place.ts`).
  */
 export function WorkspaceGrid({ groupId }: Props) {
   const onBoard = useProjects((s) => s.layoutOf(groupId).surface === "canvas");
@@ -70,8 +71,8 @@ export function WorkspaceGrid({ groupId }: Props) {
           running pipeline needs to exist somewhere — it was the only way to
           know which stage it is at and to cancel. */}
       {!onBoard && <FlowRunsBar groupId={groupId} />}
-      {!isBoard && (
-        <FloorsControl groupId={groupId} variant={onBoard ? "canvas" : "grid"} />
+      {showsFloorsControl({ canvas: onBoard, board: isBoard }) && (
+        <FloorsControl groupId={groupId} />
       )}
     </>
   );

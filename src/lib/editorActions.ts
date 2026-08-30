@@ -2,6 +2,8 @@ import { ask } from "@tauri-apps/plugin-dialog";
 
 import { copyText } from "./clipboard";
 import { editorTabMenu } from "./editorTabMenu";
+import { closesWith } from "./tabRules";
+import { useBench } from "../stores/benchStore";
 import { ipc } from "./ipc";
 import { fileName } from "./paths";
 import type { MenuEntry } from "../components/ContextMenu";
@@ -46,6 +48,7 @@ export function docTabMenu(doc: OpenDoc, docs: readonly OpenDoc[]): MenuEntry[] 
       dirty: isDirty(doc),
       readOnly: isReadOnly(doc),
       missing: doc.missing,
+      pinned: doc.pinned === true,
       comparison: !!doc.diff,
     },
     docs.map((d) => ({ id: d.id, path: d.path })),
@@ -54,6 +57,49 @@ export function docTabMenu(doc: OpenDoc, docs: readonly OpenDoc[]): MenuEntry[] 
       closeMany: (ids) => {
         void (async () => {
           for (const id of ids) await closeDocTab(id);
+        })();
+      },
+      // The store decides *which* tabs a scope names, because only it knows
+      // about pins; the closing itself still goes one at a time through
+      // `closeDocTab`, so a tab with a draft asks before it vanishes.
+      closeScoped: (id, scope) => {
+        const ids = closesWith(
+          useEditor.getState().docs.map((d) => ({
+            id: d.id,
+            groupId: d.groupId,
+            slot: d.slot,
+            pinned: d.pinned === true,
+            preview: d.preview === true,
+            dirty: isDirty(d) && !isReadOnly(d),
+          })),
+          id,
+          scope,
+        );
+        void (async () => {
+          for (const victim of ids) await closeDocTab(victim);
+        })();
+      },
+      togglePin: (id) => useEditor.getState().togglePin(id),
+      revealInTree: (path) => {
+        // The tree opens the lineage on its own when the file is opened; this
+        // is the same door, for a file that is already open.
+        void useEditor.getState().openFile(path);
+        useBench.getState().revealTab("files");
+      },
+      rename: (path) => useEditor.getState().askRename(path),
+      remove: (path) => {
+        void (async () => {
+          const name = path.split("/").pop() ?? path;
+          const sure = await ask(
+            t("Excluir “{name}”? Não dá para desfazer.", { name }),
+            { title: t("Excluir do disco"), kind: "warning" },
+          );
+          if (!sure) return;
+          try {
+            await useEditor.getState().deleteEntry(path);
+          } catch (e) {
+            toast(t("Não consegui excluir: {e}", { e: String(e) }), "error");
+          }
         })();
       },
       save: (id) => {

@@ -7,7 +7,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { LspServerInfo } from "../ipc";
-import { clientKey, fileUri, languageIdFor, rootUri, serverFor } from "./servers";
+import {
+  clientKey,
+  fileUri,
+  languageIdFor,
+  requestTimeoutMs,
+  rootUri,
+  serverFor,
+} from "./servers";
 
 const server = (program: string, ids: string[], found = true): LspServerInfo => ({
   languageIds: ids,
@@ -99,6 +106,50 @@ describe("clientKey", () => {
   it("differs by server program", () => {
     expect(clientKey("C:/repo", "rust-analyzer")).not.toBe(
       clientKey("C:/repo", "typescript-language-server"),
+    );
+  });
+});
+
+
+/**
+ * How long a request may take before the client gives up.
+ *
+ * The regression that motivated this: one flat five second budget. The
+ * servers that index a whole project before answering anything,
+ * `rust-analyzer` on a cold `target/`, `pyright` on a fresh venv, routinely
+ * blow past that on the *first* question, so the first F12 after opening a
+ * project silently did nothing and the feature read as broken. The servers
+ * that answer from a single file have no such excuse and keep a short leash,
+ * because a short leash is what stops a wedged server from hanging the
+ * editor.
+ */
+describe("requestTimeoutMs", () => {
+  it("gives the project indexers room to answer the first question", () => {
+    expect(requestTimeoutMs("rust-analyzer")).toBeGreaterThanOrEqual(20_000);
+    expect(requestTimeoutMs("pyright-langserver")).toBeGreaterThanOrEqual(20_000);
+    expect(requestTimeoutMs("gopls")).toBeGreaterThanOrEqual(20_000);
+    expect(requestTimeoutMs("typescript-language-server")).toBeGreaterThanOrEqual(20_000);
+  });
+
+  it("keeps a short leash on the servers that only read one file", () => {
+    // A wedged server must not be able to hang the editor, and these have
+    // nothing to index: an answer that is slow here is an answer that is not
+    // coming.
+    expect(requestTimeoutMs("vscode-css-language-server")).toBeLessThanOrEqual(10_000);
+    expect(requestTimeoutMs("vscode-json-language-server")).toBeLessThanOrEqual(10_000);
+  });
+
+  it("treats a server it has never heard of as a fast one", () => {
+    expect(requestTimeoutMs("something-else")).toBe(
+      requestTimeoutMs("vscode-css-language-server"),
+    );
+  });
+
+  it("reads the program name out of a full path", () => {
+    // The catalog hands over whatever `which` found, which on Windows is an
+    // absolute path with an `.cmd` shim on the end.
+    expect(requestTimeoutMs("C:/Users/x/AppData/Roaming/npm/pyright-langserver.cmd")).toBe(
+      requestTimeoutMs("pyright-langserver"),
     );
   });
 });

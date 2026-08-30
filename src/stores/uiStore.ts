@@ -79,6 +79,11 @@ export interface Prefs {
   codeHardTabs: boolean;
   /** The line-number column of the editor. */
   codeLineNumbers: boolean;
+  /**
+   * Column guides, as free text: "80", "80, 120", or empty for none. A number
+   * field would only fit the first of those (`CodeEditor/rulers.ts`).
+   */
+  codeRulers: string;
   renderer: "canvas" | "webgl";
   scrollback: number;
   notifyOnFinish: boolean;
@@ -120,6 +125,17 @@ export interface Prefs {
   autoBackupKeep: number;
   /** Empty = the `backups` folder of the data directory. */
   autoBackupDir: string;
+  /**
+   * Address that also receives every notification (`lib/webhook.ts`). Empty
+   * is off, and off is the default: this is the only thing in Yard that sends
+   * what a terminal printed off the machine.
+   */
+  notifyWebhook: string;
+  /**
+   * Ceiling on the day's estimated spend, in US dollars (`lib/budget.ts`).
+   * Zero is off, which is what most people will leave it at.
+   */
+  budgetDaily: number;
   /** Language servers in the file editor (completion, diagnostics, definitions). */
   lspEnabled: boolean;
   /** Sidebar widths, in px (draggable via the splitter). */
@@ -143,6 +159,9 @@ export const DEFAULT_PREFS: Prefs = {
   codeTabSize: 2,
   codeHardTabs: false,
   codeLineNumbers: true,
+  // Off by default: a guide is a rule the reader chose, not one the editor
+  // imposes on a file it knows nothing about.
+  codeRulers: "",
   // Canvas is the path proven stable on WebView2; WebGL sits behind
   // this preference (§3, target versions).
   renderer: "canvas",
@@ -165,6 +184,9 @@ export const DEFAULT_PREFS: Prefs = {
   autoBackup: "off",
   autoBackupKeep: 7,
   autoBackupDir: "",
+  notifyWebhook: "",
+  // Off: a ceiling nobody asked for is a warning nobody wants.
+  budgetDaily: 0,
   // On by default: inert until a server of the catalog is installed.
   lspEnabled: true,
   sidebarWidth: 262,
@@ -212,6 +234,8 @@ const RANGES: Partial<
   codeLineHeight: { min: 1, max: 2.4, step: 0.05 },
   codeTabSize: { min: 1, max: 8, step: 1 },
   autoBackupKeep: { min: 1, max: 60, step: 1 },
+  // No cents: a budget is a round number, and the day's spend is an estimate.
+  budgetDaily: { min: 0, max: 10000, step: 1 },
 };
 
 /** Clamps a numeric value to its key's range (no range, it passes through). */

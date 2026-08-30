@@ -9,6 +9,25 @@
  * keystroke on a 50k-line file.
  */
 
+/**
+ * One run of change, on both sides of the file.
+ *
+ * `marks` and `deletions` describe the new side alone, which is all a gutter
+ * needs to paint. A hunk also carries the old lines it stands for, which is
+ * what lets the same strip show what a line *was* and put it back
+ * (`lib/hunks.ts`).
+ *
+ * Both ranges are 1-based and inclusive, and either can be empty:
+ * `newTo < newFrom` is a pure deletion (nothing on the new side, and the
+ * lines went before `newFrom`), `oldTo < oldFrom` a pure insertion.
+ */
+export interface Hunk {
+  newFrom: number;
+  newTo: number;
+  oldFrom: number;
+  oldTo: number;
+}
+
 export interface LineChanges {
   /** 1-based line number in the new text → how it stands against the old one. */
   marks: Map<number, "add" | "mod">;
@@ -18,6 +37,8 @@ export interface LineChanges {
    * deletions land here — a delete paired with an insert is a `mod` above.
    */
   deletions: Set<number>;
+  /** The same changes as runs, with the old lines each one replaced. */
+  hunks: Hunk[];
 }
 
 /** Edit budget (the D in O(ND)). Past this the diff gives up — see above. */
@@ -123,7 +144,8 @@ function backtrack(
 export function diffLines(oldText: string, newText: string): LineChanges | null {
   const marks = new Map<number, "add" | "mod">();
   const deletions = new Set<number>();
-  if (oldText === newText) return { marks, deletions };
+  const hunks: Hunk[] = [];
+  if (oldText === newText) return { marks, deletions, hunks };
 
   const a = oldText.split("\n");
   const b = newText.split("\n");
@@ -151,6 +173,7 @@ export function diffLines(oldText: string, newText: string): LineChanges | null 
   let i = 0;
   let j = 0;
   while (i < ca.length || j < cb.length) {
+    const delStart = i;
     let delRun = 0;
     while (i < ca.length && dels.has(i)) {
       i++;
@@ -173,6 +196,15 @@ export function diffLines(oldText: string, newText: string): LineChanges | null 
       marks.set(head + insStart + t + 1, t < paired ? "mod" : "add");
     }
     if (insRun === 0) deletions.add(head + j + 1);
+    // The same run, with the old lines it stands for. An empty side is
+    // written as `to = from - 1`, which is what makes a pure insertion and a
+    // pure deletion two cases of one shape.
+    hunks.push({
+      newFrom: head + insStart + 1,
+      newTo: head + insStart + insRun,
+      oldFrom: head + delStart + 1,
+      oldTo: head + delStart + delRun,
+    });
   }
-  return { marks, deletions };
+  return { marks, deletions, hunks };
 }

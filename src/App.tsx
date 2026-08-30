@@ -1,7 +1,7 @@
 import { lazy, useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { AlertTriangle, Download, FolderOpen, FolderPlus, Loader2, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Download, FolderOpen, FolderPlus, Loader2, Plus, RefreshCw, X } from "lucide-react";
 
 import { ContextMenu, type MenuAnchor } from "./components/ContextMenu";
 import { GlobalMenu } from "./components/ContextMenu/GlobalMenu";
@@ -23,6 +23,10 @@ import { useUpdaterChecks } from "./hooks/useUpdater";
 import { useT } from "./hooks/useT";
 import { tn } from "./lib/i18n";
 import { useTriggers } from "./hooks/useTriggers";
+import { useQueueRunner } from "./hooks/useQueueRunner";
+import { useBudgetWatch } from "./hooks/useBudgetWatch";
+import { useQueue } from "./stores/queueStore";
+import { setLocalBridge } from "./lib/remoteBridge";
 import { useAutoBackupTimer } from "./hooks/useAutoBackupTimer";
 import { useAutoBackup } from "./stores/autoBackupStore";
 import { cancelBackupRestore, restartIntoBackup } from "./lib/backupFlow";
@@ -33,11 +37,13 @@ import { applyFontPrefs } from "./lib/fonts";
 import { applySyntaxVars } from "./lib/schemeChoice";
 import { ipc } from "./lib/ipc";
 import { reconcileAliveFlags } from "./lib/lifecycle";
+import { reconcileFronts } from "./lib/provision/reconcileRun";
 import { uiLog } from "./lib/log";
 import { readInitialPrefs } from "./lib/prefs";
 import { setQuitHandler } from "./lib/quit";
 import { startPtyWatch } from "./lib/ptyWatch";
 import { baseName } from "./lib/terminals";
+import { welcomeCall } from "./lib/welcome";
 import { useAgentDefaults } from "./stores/agentDefaultsStore";
 import { useAgents } from "./stores/agentsStore";
 import { useBench } from "./stores/benchStore";
@@ -216,6 +222,8 @@ export default function App() {
   const dismissToast = useUI((s) => s.dismissToast);
   const openModal = useUI((s) => s.openModal);
   const [welcomeMenu, setWelcomeMenu] = useState<MenuAnchor | null>(null);
+  /** The first screen's one button, which call it makes (`lib/welcome.ts`). */
+  const welcome = welcomeCall(projects.length);
   const composerOpen = useUI((s) => s.composerOpen);
   const paletteOpen = useUI((s) => s.paletteOpen);
 
@@ -230,6 +238,8 @@ export default function App() {
   useUpdaterChecks();
   useAutoBackupTimer();
   useTriggers();
+  useQueueRunner();
+  useBudgetWatch();
   useLspLifecycle();
 
   // Chosen fonts → CSS variables on <html>. One scalar per subscription, like
@@ -354,10 +364,27 @@ export default function App() {
         // The stamp of the last automatic copy: without it every boot would
         // think no backup was ever made and write one a minute later.
         bootPrefs.then((prefs) => useAutoBackup.getState().load(prefs)),
+        // The bridge's loopback door, so an SSH launch can carry the `yard`
+        // CLI across (`lib/remoteBridge.ts`). Read once: the port is fixed for
+        // the run, and the launch that needs it is synchronous.
+        ipc
+          .bridgeRemote()
+          .then(setLocalBridge)
+          .catch((error) => uiLog.warn(`ponte remota indisponível: ${error}`)),
+        // Prompts parked for an agent that was busy when the app went away.
+        // The PTYs survived the reload in Rust; losing the queue would drop
+        // work the user had already stopped holding in their head.
+        bootPrefs.then((prefs) => useQueue.getState().hydrate(prefs)),
       ]);
       // Only now are there rows to check against the backend.
       await reconcileAliveFlags().catch((e) =>
         uiLog.warn(`falha ao reconciliar terminais vivos: ${e}`),
+      );
+      // What happened to the fronts while the app was closed: a folder
+      // deleted from Explorer, a repository moved, a batch that died halfway
+      // through `worktree add`. It reads and reports; it never prunes.
+      void reconcileFronts().catch((e) =>
+        uiLog.warn(`falha ao reconciliar as frentes: ${e}`),
       );
       // With the groups finally known, browser tabs whose group left the
       // workspace while the app was down can be told apart from real ones.
@@ -810,14 +837,23 @@ export default function App() {
                     ? t("O Yard roda as CLIs de agentes dentro dessa pasta e acompanha o que elas mexem no disco.")
                     : t("Cada grupo é um conjunto de CLIs sobre o mesmo projeto. Selecione um na barra lateral.")}
                 </p>
-                {projects.length === 0 && (
-                  <button
-                    className="btn btn--primary"
-                    onClick={() => openModal("new-project")}
-                  >
-                    <FolderPlus size={13} /> {t("Adicionar projeto")}
-                  </button>
-                )}
+                {/* One button per face, and never the same one: the fresh
+                    install is missing a folder, the install with projects is
+                    missing the gesture the tab bar's `+` gives, the same
+                    "Nova aba" dialog, born with no pane to ask for it. */}
+                <button
+                  className="btn btn--primary"
+                  onClick={() =>
+                    openModal(welcome.action === "new-project" ? "new-project" : "new-terminal")
+                  }
+                >
+                  {welcome.action === "new-project" ? (
+                    <FolderPlus size={13} />
+                  ) : (
+                    <Plus size={13} />
+                  )}{" "}
+                  {t(welcome.label)}
+                </button>
                 <div className="welcome-hints">
                   {/* With zero projects Ctrl+T ends in "add a project first" —
                       teaching it here made the very first flow a dead end. */}

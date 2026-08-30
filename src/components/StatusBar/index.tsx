@@ -6,9 +6,11 @@
  * central signal — an agent stopped to ask you something — lived only as a
  * yellow dot in the tree, three scrolls down and gone with `Ctrl+B`; the
  * project's branch existed only inside the Controle tab; a pipeline walking in
- * another group was invisible; and Busca, the composer and the shortcut map
- * were keyboard-only. This bar is the one place the whole workspace is read at
- * a glance, and the mouse's way into the three surfaces that had no button.
+ * another group was invisible; and the composer and the shortcut map were
+ * keyboard-only. This bar is the one place the whole workspace is read at a
+ * glance, and the mouse's way into the surfaces that had no button. (The
+ * Busca left this row: an anonymous magnifier here, it is a named door at the
+ * top of the sidebar now, see `ProjectSidebar/actions.ts`.)
  *
  * Every reading is a pure reduction in `statusBar.ts` / `lib/ramPressure.ts`;
  * this file only paints and routes clicks. Readouts are chips, actions are
@@ -20,7 +22,16 @@
  */
 import { useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Bot, GitBranch, Keyboard, MemoryStick, Search, SquarePen, Workflow } from "lucide-react";
+import {
+  Bot,
+  GitBranch,
+  GitPullRequest,
+  Keyboard,
+  MemoryStick,
+  SquarePen,
+  Wallet,
+  Workflow,
+} from "lucide-react";
 
 import { ContextMenu, type MenuAnchor } from "../ContextMenu";
 import { useT } from "../../hooks/useT";
@@ -30,6 +41,12 @@ import { ramPressure } from "../../lib/ramPressure";
 import { titleBarMenu } from "../../lib/titleBarMenu";
 import { useBench } from "../../stores/benchStore";
 import { useChanges } from "../../stores/changesStore";
+import { useEditor } from "../../stores/editorStore";
+import { useForge } from "../../stores/forgeStore";
+import { prBadge } from "../../lib/forge";
+import { budgetMessage, budgetState } from "../../lib/budget";
+import { localDay, totals } from "../../lib/costs";
+import { useCosts } from "../../stores/costsStore";
 import { useFlows } from "../../stores/flowStore";
 import { useNotes } from "../../stores/notesStore";
 import { useProjects } from "../../stores/projectsStore";
@@ -42,7 +59,6 @@ const appWindow = getCurrentWindow();
 
 export function StatusBar() {
   const [menu, setMenu] = useState<(MenuAnchor & { maximized: boolean }) | null>(null);
-  const openPalette = useUI((s) => s.openPalette);
   const setComposerOpen = useUI((s) => s.setComposerOpen);
   const openModal = useUI((s) => s.openModal);
 
@@ -66,6 +82,7 @@ export function StatusBar() {
         <AgentsChip />
         <GitChipView />
         <FlowChipView />
+        <BudgetChip />
       </div>
 
       <div className="statusbar-right">
@@ -74,15 +91,6 @@ export function StatusBar() {
             the size of a control; here they stand with the other gauges. */}
         <StatusChip />
         <RamChip />
-        <button
-          className="sb-btn"
-          data-tip="Busca — agentes, arquivos, notas e ações (Ctrl+P)"
-          data-tip-side="top"
-          aria-label="Busca"
-          onClick={() => openPalette()}
-        >
-          <Search size={13} aria-hidden="true" />
-        </button>
         <button
           className="sb-btn"
           data-tip="Compositor de prompts (Ctrl+Enter)"
@@ -188,7 +196,59 @@ function GitChipView() {
           <span className="sb-del">−{git.deletions}</span>
         </span>
       )}
+      <PrMark />
     </button>
+  );
+}
+
+/**
+ * The day's spend against the ceiling, when there is one
+ * (`lib/budget.ts`). Only from "warn" up: a footer chip saying "12% do
+ * orçamento" every day of the week is a number nobody reads, and the panel
+ * (Ctrl+Alt+U) is where the whole picture lives.
+ */
+function BudgetChip() {
+  const limit = useUI((s) => s.prefs.budgetDaily);
+  const rows = useCosts((s) => s.rows);
+  const t = useT();
+  const today = localDay(new Date());
+  const state = budgetState(
+    totals(rows.filter((row) => row.day === today)).costUsd ?? 0,
+    limit,
+  );
+  if (state.level !== "warn" && state.level !== "over") return null;
+  return (
+    <button
+      className={`sb-chip sb-budget is-${state.level}`}
+      data-tip={budgetMessage(state)}
+      data-tip-side="top"
+      data-tip-wrap=""
+      aria-label={budgetMessage(state)}
+      onClick={() => void useCosts.getState().open()}
+    >
+      <Wallet size={12} aria-hidden="true" />
+      <span>{t("{pct}% do orçamento", { pct: state.pct })}</span>
+    </button>
+  );
+}
+
+/**
+ * The pull request of whatever branch the footer is showing, when there is
+ * one. It reads the forge store and nothing else: the request itself is made
+ * by the Controle tab, which is the surface that can do something about the
+ * answer. If nobody has opened that tab, this shows nothing, the footer is
+ * not a place to start a network call from.
+ */
+function PrMark() {
+  const root = useEditor((s) => s.root);
+  const entry = useForge((s) => (root ? s.byRoot[root] : undefined));
+  if (!entry?.pr) return null;
+  const badge = prBadge(entry.pr);
+  return (
+    <span className={`sb-pr is-${badge.tone}`}>
+      <GitPullRequest size={11} aria-hidden="true" />
+      #{entry.pr.number} {badge.label}
+    </span>
   );
 }
 

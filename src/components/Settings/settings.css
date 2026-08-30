@@ -250,6 +250,16 @@
   flex-shrink: 0;
 }
 
+/* Short free-text preference (the column guides). Narrow on purpose: it holds
+   a couple of numbers, and a full-width box would promise a sentence. */
+.set-text {
+  width: 120px;
+  flex-shrink: 0;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+}
+
 /* Two buttons on one row (export/import) without overflowing the width. */
 .set-actions {
   display: flex;
@@ -403,6 +413,18 @@
 .set-agent-pair .set-agent-field--path {
   font-family: var(--mono);
   font-size: var(--fs-xs);
+}
+
+/* "levar o yard", beside the host and the remote folder: a third control on
+   the same line, so the whole SSH decision reads as one sentence. */
+.set-agent-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
 }
 
 /* A setting that is on but cannot work is a warning, not a hint. */

@@ -27,6 +27,7 @@ import {
   Eraser,
   FileText,
   Globe,
+  ListPlus,
   Maximize2,
   MessageSquarePlus,
   MoreVertical,
@@ -53,6 +54,7 @@ import { useAction } from "../../hooks/useAction";
 import { useAdvertised } from "../../stores/advertisedStore";
 import { useAgents } from "../../stores/agentsStore";
 import { useFlows, type FlowStageStatus } from "../../stores/flowStore";
+import { useQueue } from "../../stores/queueStore";
 import { openTranscriptFor } from "../../lib/transcriptOpen";
 import { useLive } from "../../stores/liveStore";
 import { useProjects } from "../../stores/projectsStore";
@@ -186,6 +188,7 @@ function TerminalCardImpl({
   // (not threaded through CanvasView): a run advancing should repaint the two
   // cards it touched, not the board.
   const flowMark = useFlows((s) => s.marks[term.id]);
+  const queued = useQueue((s) => s.items.filter((i) => i.terminalId === term.id).length);
   const updateTerminal = useProjects((s) => s.updateTerminal);
   const focusTerminal = useUI((s) => s.focusTerminal);
   const openModal = useUI((s) => s.openModal);
@@ -551,6 +554,22 @@ function TerminalCardImpl({
           >
             <Workflow size={9} />
             {flowMark.step}/{flowMark.total}
+          </span>
+        )}
+        {/* What is parked for this CLI (`lib/queue.ts`), a count, because
+            the size of the queue is the information. */}
+        {queued > 0 && (
+          <span
+            className="pane-tab-queue"
+            data-tip-wrap=""
+            data-tip={t("{n} na fila, entram sozinhos quando a CLI ficar livre", {
+              n: queued,
+            })}
+            role="img"
+            aria-label={t("{n} prompt(s) na fila", { n: queued })}
+          >
+            <ListPlus size={9} />
+            {queued}
           </span>
         )}
         {rt?.blocked ? (

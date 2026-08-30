@@ -1,26 +1,19 @@
 /* --- floors --- */
 
-/* On the canvas it sits left of the zoom control; in other modes, in the
-   corner itself. Anchored to `.workspace` (position: relative). */
+/* The canvas is the only surface it appears on (`Floors/place.ts`): it sits
+   left of the zoom control. Anchored to `.workspace` (position: relative). */
 .floors-ctl {
   position: absolute;
+  right: 204px;
   bottom: 16px;
   z-index: 40;
-}
-
-.floors-ctl--canvas {
-  right: 204px;
 }
 
 /* The camera cluster grows to the width of the map when the map is showing,
    and the button has to step aside for it. Measured, not guessed: 12px of
    inset + 202px of cluster + a thumb of air. */
-.workspace:has(.cv-minimap) .floors-ctl--canvas {
+.workspace:has(.cv-minimap) .floors-ctl {
   right: 230px;
-}
-
-.floors-ctl--grid {
-  right: 16px;
 }
 
 .floors-btn {
@@ -414,4 +407,1399 @@
   flex-shrink: 0;
   margin-top: 3px;
   color: var(--yellow);
+}
+
+/* ---------------------------------------------------------------------------
+   "Abrir frente": the plan, the matrix and the progress
+   ---------------------------------------------------------------------------
+   Three blocks that share one grammar: a number, a name, a state. The plan
+   block is the one that earns its place — it is the whole reason nothing is
+   written while the dialog is open, so it is drawn as a *reading* surface
+   (quiet ground, generous line height) and not as another row of controls. */
+
+.front-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.front-toolbar .tabs {
+  flex: 1;
+  min-width: 0;
+}
+
+.front-multi {
+  flex: none;
+  margin: 0;
+  white-space: nowrap;
+}
+
+/* -- the matrix --------------------------------------------------------- */
+
+.front-matrix {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.front-matrix-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.front-pattern {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A row is a card, not a table row: at this width a seven-column table wraps
+   into something nobody can read, and the fields differ per destination
+   anyway — an existing branch needs a picker where a new one needs a base. */
+.front-row {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 8px 9px;
+  background: var(--bg-hover);
+}
+
+.front-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.front-row-n {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.front-row-name {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.front-row-kind,
+.front-row-agent {
+  flex: 0 1 150px;
+  min-width: 0;
+}
+
+.front-row-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.front-row-body > * {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+/* -- the plan ----------------------------------------------------------- */
+
+.front-plan {
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 9px 11px;
+}
+
+.front-plan h3 {
+  margin: 0 0 6px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: lowercase;
+}
+
+.front-plan[aria-busy="true"] {
+  opacity: 0.55;
+}
+
+.front-plan-item + .front-plan-item {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.front-plan-item header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.front-plan-n {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.front-plan-action {
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+/* Label on the left, value on the right, both on one line: the three facts
+   (base, branch, folder) are read as a column of values, not as prose. */
+.front-plan-item dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 1px 10px;
+  margin: 5px 0 0 24px;
+  font-size: var(--fs-sm);
+}
+
+.front-plan-item dt {
+  color: var(--text-dim);
+}
+
+.front-plan-item dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--text-bright);
+}
+
+.front-plan-item dd code {
+  color: var(--accent-text);
+}
+
+/* The path is the longest line in the dialog and the least worth wrapping:
+   the RTL box moves the ellipsis to the front, so the folder that matters
+   (the last one) survives the cut. */
+.front-plan-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+/* Same trap as `.editor-crumb-ltr`: without an isolated LTR run the path's
+   trailing separator is a neutral at the end of an RTL line and jumps to
+   the head, so `C:/proj/.yard` reads as `/C:/proj/.yard`. */
+.front-plan-ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+/* -- refusals and warnings ---------------------------------------------- */
+
+.front-issues {
+  list-style: none;
+  margin: 6px 0 0 24px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: var(--fs-sm);
+}
+
+.front-row .front-issues {
+  margin-left: 0;
+}
+
+.front-issues li {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.front-issues li svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.front-issues .is-error {
+  color: var(--red);
+}
+
+.front-issues .is-warn {
+  color: var(--yellow);
+}
+
+/* The two warnings worth a checkbox sit apart from the plan, because ticking
+   them is an action and the plan is a reading. */
+.front-ack {
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--yellow);
+}
+
+/* -- the progress ------------------------------------------------------- */
+
+.front-progress {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.front-progress li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+}
+
+.front-progress li + li {
+  border-top: 1px solid var(--border-soft);
+}
+
+.front-progress-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+}
+
+.front-progress .is-ready .front-progress-mark {
+  color: var(--green);
+}
+
+.front-progress .is-failed .front-progress-mark,
+.front-progress .is-cleanup_required .front-progress-mark {
+  color: var(--red);
+}
+
+.front-progress .is-rolled_back .front-progress-mark {
+  color: var(--yellow);
+}
+
+.front-progress-name {
+  flex: 0 1 auto;
+  color: var(--text-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.front-progress-phase {
+  flex: none;
+  color: var(--text-dim);
+}
+
+/* The reason takes whatever is left and gets the ellipsis: it is the longest
+   thing on the row and the only one that can afford to be cut. */
+.front-progress-why {
+  flex: 1 1 0;
+  min-width: 0;
+  color: var(--red);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.front-progress li .btn {
+  margin-left: auto;
+}
+
+/* ---------------------------------------------------------------------------
+   Provisioning workbench
+   ---------------------------------------------------------------------------
+   Project/host context, editable intent and the immutable plan remain visible
+   together. The three regions are open rails in one sheet, not nested cards. */
+
+.modal:has(.front-provisioner) {
+  width: min(1180px, 96vw);
+  height: min(820px, 92vh);
+  max-height: 92vh;
+}
+
+.modal:has(.front-provisioner) .modal-body {
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.front-multi {
+  display: flex;
+  align-items: center;
+}
+
+.front-online {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 5px rgb(64 209 110 / 38%);
+}
+
+.front-multi {
+  flex: none;
+  flex-direction: row;
+  gap: 7px;
+  margin: 0;
+  color: var(--text);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.front-provisioner {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 184px minmax(0, 1fr) 318px;
+}
+
+/* -- context rail ------------------------------------------------------ */
+
+.front-context {
+  min-width: 0;
+  padding: 19px 14px 16px 18px;
+  border-right: 1px solid var(--border);
+  background: rgb(var(--well) / 12%);
+  overflow: hidden;
+}
+
+.front-context h2,
+.front-config-head h2,
+.front-review-head h2,
+.front-run-head h2,
+.front-run-loading h2 {
+  margin: 0;
+  color: var(--text-bright);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.front-context > ol {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+}
+
+.front-context > ol > li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 9px;
+  min-height: 78px;
+}
+
+.front-context > ol > li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 25px;
+  bottom: 3px;
+  left: 11px;
+  width: 1px;
+  background: var(--border-strong);
+}
+
+.front-context-icon {
+  position: relative;
+  z-index: 1;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  color: var(--text-dim);
+  background: var(--bg-panel);
+}
+
+.front-context li.is-complete .front-context-icon {
+  border-color: rgb(10 132 255 / 55%);
+  color: var(--accent-text);
+}
+
+.front-context li.is-error .front-context-icon {
+  border-color: rgb(255 105 97 / 55%);
+  color: var(--red);
+}
+
+.front-context li > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.front-context li > div > span {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.front-context li strong {
+  margin-top: 2px;
+  color: var(--text-bright);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.front-context li small {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.front-context-safety {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.front-context-safety svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--accent-text);
+}
+
+/* -- editable center --------------------------------------------------- */
+
+.front-config {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.front-config-head {
+  flex: none;
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.front-config-head p,
+.front-review-head p,
+.front-run-head p,
+.front-run-loading p {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.front-config-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 22px 22px;
+}
+
+.front-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px 12px;
+}
+
+.floors-hooks {
+  margin-top: 16px;
+  border-top: none;
+}
+
+.floors-hooks summary {
+  padding: 2px 0 11px;
+  color: var(--text-dim);
+}
+
+.floors-hooks[open] summary {
+  margin-bottom: 11px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* -- plan rail --------------------------------------------------------- */
+
+.front-review {
+  min-width: 0;
+  min-height: 0;
+  padding: 18px 18px 20px;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  background: rgb(var(--well) / 13%);
+}
+
+.front-plan {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.front-review-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.front-plan-status,
+.front-row-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  color: var(--text-dim);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.front-plan-status.is-valid,
+.front-row-state.is-valid {
+  color: var(--green);
+}
+
+.front-plan-status.is-invalid,
+.front-row-state.is-error {
+  color: var(--red);
+}
+
+.front-row-state.is-warn {
+  color: var(--yellow);
+}
+
+.front-plan-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 15px;
+  padding: 12px 0;
+  border-block: 1px solid var(--border);
+}
+
+.front-plan-summary > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.front-plan-summary svg {
+  color: var(--text-dim);
+}
+
+.front-plan-items {
+  margin-top: 2px;
+}
+
+.front-plan-item {
+  padding: 13px 0;
+}
+
+.front-plan-item + .front-plan-item {
+  margin: 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.front-plan-item header {
+  align-items: flex-start;
+}
+
+.front-plan-item header > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.front-plan-n {
+  flex: none;
+}
+
+.front-plan-action {
+  margin-top: 1px;
+  font-size: 10px;
+}
+
+.front-plan-flow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin: 9px 0 0 24px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.front-plan-flow span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.front-plan-flow svg {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.front-plan-item dl {
+  margin-top: 8px;
+  font-size: 10px;
+}
+
+.front-acks {
+  margin-top: 4px;
+  padding-top: 13px;
+  border-top: 1px solid var(--border);
+}
+
+.front-ack {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 7px;
+  align-items: start;
+  margin: 0;
+  padding: 9px;
+  border: 1px solid rgb(240 195 60 / 26%);
+  border-radius: var(--r-md);
+  background: var(--yellow-bg);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.front-ack input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+
+.front-ack svg {
+  margin-top: 2px;
+  color: var(--yellow);
+}
+
+/* -- multi-agent list -------------------------------------------------- */
+
+.front-matrix {
+  gap: 0;
+  padding-top: 12px;
+}
+
+.front-matrix-head {
+  align-items: end;
+  padding-bottom: 11px;
+}
+
+.front-row {
+  padding: 10px 0 11px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+}
+
+.front-row-head {
+  display: grid;
+  grid-template-columns: 20px minmax(105px, 1fr) minmax(120px, 0.9fr) minmax(105px, 0.8fr) auto 26px 26px;
+  gap: 6px;
+}
+
+.front-row-kind,
+.front-row-agent {
+  min-width: 0;
+}
+
+.front-row-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 7px 58px 0 26px;
+}
+
+.front-row .front-issues {
+  margin: 7px 58px 0 26px;
+}
+
+/* -- progress ---------------------------------------------------------- */
+
+.front-provisioner--progress {
+  display: block;
+  overflow-y: auto;
+}
+
+.front-run {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 28px 32px 34px;
+}
+
+.front-run-loading {
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.front-run-loading > svg {
+  color: var(--accent-text);
+}
+
+.front-run-head,
+.front-run-head > div {
+  display: flex;
+  align-items: center;
+}
+
+.front-run-head {
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.front-run-head > div {
+  min-width: 0;
+  gap: 10px;
+}
+
+.front-run-icon {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-md);
+  background: var(--accent-dim);
+  color: var(--accent-text);
+}
+
+.front-run-head > strong {
+  flex: none;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.front-run-meter {
+  appearance: none;
+  width: 100%;
+  height: 5px;
+  display: block;
+  margin: 17px 0;
+  border: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgb(var(--veil) / 8%);
+}
+
+.front-run-meter::-webkit-progress-bar {
+  background: rgb(var(--veil) / 8%);
+}
+
+.front-run-meter::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.front-phase-track {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0;
+  margin: 0 0 24px;
+  padding: 0;
+}
+
+.front-phase-track li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-dim);
+  font-size: 10px;
+  text-align: center;
+}
+
+.front-phase-track li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: calc(50% + 13px);
+  right: calc(-50% + 13px);
+  height: 1px;
+  background: var(--border-strong);
+}
+
+.front-phase-track li > span {
+  position: relative;
+  z-index: 1;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--bg-panel);
+  font-size: 10px;
+}
+
+.front-phase-track li.is-active,
+.front-phase-track li.is-done {
+  color: var(--text);
+}
+
+.front-phase-track li.is-active > span {
+  border-color: var(--accent);
+  color: var(--accent-text);
+  box-shadow: 0 0 0 3px rgb(10 132 255 / 15%);
+}
+
+.front-phase-track li.is-done > span {
+  border-color: rgb(64 209 110 / 50%);
+  color: var(--green);
+}
+
+.front-progress {
+  gap: 0;
+  border-block: 1px solid var(--border);
+}
+
+.front-progress li {
+  min-height: 54px;
+  padding: 9px 4px;
+  border-radius: 0;
+}
+
+.front-progress li + li {
+  border-top-color: var(--border-soft);
+}
+
+.front-progress-main {
+  flex: 0 1 220px;
+  min-width: 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.front-progress-main strong {
+  color: var(--text-bright);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.front-progress-main small {
+  color: var(--text-dim);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.front-pending-dot {
+  width: 7px;
+  height: 7px;
+  display: block;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+
+@media (max-width: 1040px) {
+  .front-provisioner {
+    grid-template-columns: 156px minmax(0, 1fr) 278px;
+  }
+
+  .front-context {
+    padding-left: 14px;
+  }
+
+  .front-row-head {
+    grid-template-columns: 20px minmax(100px, 1fr) minmax(110px, 0.9fr) minmax(100px, 0.8fr) 26px 26px;
+  }
+
+  .front-row-state {
+    grid-column: 2 / 5;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   The sheet: one front, one column
+   ---------------------------------------------------------------------------
+   A label and one control per row, in the order a person decides in, on a
+   dialog narrow enough to read in one glance. The three-rail workbench above
+   is still what a *batch* needs; a single front never did. */
+
+.modal:has(.front-sheet) {
+  width: min(560px, 94vw);
+}
+
+.modal:has(.front-sheet) .modal-body {
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* A run reports in one column too: the rails have nothing to hold once the
+   plan has been spent. Placed after the workbench rule on purpose, since the
+   two selectors weigh the same and the last one wins. */
+.modal:has(.front-provisioner--progress) {
+  width: min(760px, 94vw);
+  height: auto;
+}
+
+.front-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  min-height: 0;
+  max-height: 100%;
+  padding: 16px 18px 18px;
+  overflow-y: auto;
+}
+
+.front-sheet-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.front-sheet-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+/* "[opcional]" is a caption on a caption: it has to be readable and it must
+   not compete with the label it qualifies. */
+.front-sheet-label em {
+  font-style: normal;
+  opacity: 0.62;
+}
+
+.front-sheet-field > input,
+.front-sheet-field > textarea {
+  width: 100%;
+}
+
+.front-sheet-field > .hint {
+  margin: 1px 0 0;
+}
+
+/* A row that shows an answer instead of asking for one: the same well as a
+   field, so the column reads as one stack, and no caret, because there is
+   nothing behind it to open. */
+.front-static {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: rgb(var(--well) / 16%);
+  color: var(--text-bright);
+}
+
+.front-static > svg {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.front-static-hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  /* A path is read left to right whatever the sentence around it does. */
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.front-static--note {
+  align-items: flex-start;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+/* A closed door, not a field: quieter ground and no frame to type into. */
+.front-static--empty {
+  border-style: dashed;
+  background: none;
+  color: var(--text-dim);
+}
+
+.front-static--note > svg {
+  margin-top: 2px;
+}
+
+/* -- the tab strip ------------------------------------------------------- */
+
+.front-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 3px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.front-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.front-tabs > button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  margin-bottom: -1px;
+  padding: 6px 9px 7px;
+  border: 0;
+  border-bottom: 1.5px solid transparent;
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.front-tabs > button > svg {
+  flex: none;
+}
+
+.front-tabs > button:hover:not(:disabled) {
+  color: var(--text-bright);
+}
+
+.front-tabs > button.is-active {
+  color: var(--text-bright);
+  border-bottom-color: var(--accent);
+}
+
+.front-tabs > button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The radius lives on the tab, not on the focus rule: an outline traces the
+   shape the element already has, and a `:focus-visible` that redraws it wins
+   over the base and narrows the tab the moment it takes focus. */
+.front-tabs > button:focus-visible {
+  outline: 2px solid rgb(10 132 255 / 60%);
+  outline-offset: -3px;
+}
+
+/* The checkbox that changes what the branch above means. A line of copy per
+   state, because "reuse" does four different things depending on where the
+   branch already is, and reading it after the click is too late. */
+.front-reuse {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 3px;
+  cursor: pointer;
+}
+
+.front-reuse > input {
+  flex: none;
+  margin-top: 2px;
+}
+
+.front-reuse > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.front-reuse strong {
+  color: var(--text-bright);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+.front-reuse small {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+.front-reuse:has(> input:disabled) {
+  cursor: default;
+}
+
+.front-reuse:has(> input:disabled) strong {
+  color: var(--text-dim);
+}
+
+/* -- what is folded away ------------------------------------------------- */
+
+.front-advanced {
+  margin: 1px 0 0;
+}
+
+/* The derived identity, above the commands and separated from them: one is
+   about this front, the other about every front this dialog opens. */
+.front-advanced-identity {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 12px;
+  margin: 9px 0 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.front-advanced-identity > label {
+  margin-top: 0;
+}
+
+.front-advanced-checks {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 2px;
+}
+
+/* -- the plan, condensed ------------------------------------------------- */
+
+.front-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 2px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: rgb(var(--well) / 12%);
+}
+
+.front-strip[aria-busy="true"] {
+  opacity: 0.72;
+}
+
+.front-strip > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.front-strip .front-plan-flow {
+  margin: 0;
+}
+
+.front-strip .front-issues {
+  margin: 0;
+}
+
+.front-strip-safety {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.front-strip-safety svg {
+  flex: none;
+  color: var(--accent-text);
+}
+
+/* -- the foot ------------------------------------------------------------ */
+
+.front-foot {
+  align-items: center;
+}
+
+/* The chord on the button that answers to it. Quiet enough to read as a
+   footnote on the label, never as a second word in it. */
+.front-chord {
+  margin-left: 8px;
+  padding: 1px 5px;
+  border-radius: var(--r-sm);
+  background: rgb(var(--veil) / 16%);
+  color: inherit;
+  font-family: inherit;
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+@media (max-width: 560px) {
+  .front-advanced-identity {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 780px) {
+  .modal:has(.front-provisioner) {
+    width: 96vw;
+    height: 94vh;
+    max-height: 94vh;
+  }
+
+  .front-provisioner {
+    display: block;
+    overflow-y: auto;
+  }
+
+  .front-context {
+    display: none;
+  }
+
+  .front-config {
+    overflow: visible;
+  }
+
+  .front-config-scroll {
+    overflow: visible;
+  }
+
+  .front-review {
+    overflow: visible;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .front-advanced-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .front-matrix-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .front-row-head {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .front-row-name,
+  .front-row-kind,
+  .front-row-agent {
+    flex: 1 1 150px;
+  }
+
+  .front-row-state {
+    margin-left: 26px;
+  }
+
+  .front-row-body {
+    grid-template-columns: 1fr;
+    margin-right: 0;
+  }
+
+  .front-run {
+    padding: 22px 18px 28px;
+  }
+
+  .front-phase-track {
+    grid-template-columns: repeat(3, 1fr);
+    row-gap: 12px;
+  }
+
+  .front-phase-track li::after {
+    display: none;
+  }
+
+  .front-progress li {
+    flex-wrap: wrap;
+  }
+
+  .front-progress-main {
+    flex: 1 1 calc(100% - 30px);
+  }
+
+  .front-progress-phase,
+  .front-progress-why {
+    margin-left: 21px;
+  }
+}
+
+/* What the server knows about the row's branch. At this size the word is what
+   carries the meaning; the colour only sorts good news from bad, and "só
+   aqui" gets a dashed edge instead of a colour, because a front that was never
+   pushed is the normal state of a front, not a warning. */
+.floors-badge--local {
+  border-style: dashed;
+}
+
+.floors-badge--ahead {
+  color: var(--yellow);
+}
+
+.floors-badge--published {
+  color: var(--green);
+}
+
+.floors-badge--gone {
+  color: var(--red);
+}
+
+/* The server checkbox hangs off the local one: it can only happen together
+   with it, and the indent is what says so before the disabled state does. */
+.floors-after-nested {
+  padding-left: 22px;
+}
+
+/* How old the base of a new front is, with the one button that fixes it. It
+   sits above the confirmations because it is the only warning here that can
+   still be acted on for free: after the front is born, fixing it is a rebase. */
+.front-basenote {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.front-basenote p {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 7px;
+  align-items: start;
+  margin: 0;
 }

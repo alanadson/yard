@@ -69,6 +69,18 @@
   padding: 0;
 }
 
+/* The field is the box. The rule above already gives up border, outline and
+   shadow, but `box-shadow: none` there (0,1,0) loses to the halo of
+   `input:focus` (0,1,1) in `styles.css`, so a 3.5px blue capsule was drawn
+   around the field on the one state the Busca is always in: the box opens
+   with the field focused. Carrying the class into the focus rule (0,2,0) is
+   what beats it. `src/styles.test.ts` locks it. */
+.busca-input:focus,
+.busca-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 .busca-input::placeholder {
   color: var(--text-dim);
 }

@@ -545,6 +545,29 @@ export interface SearchOutcome {
   truncated: boolean;
 }
 
+/**
+ * How the project search reads the query and which files it opens. The same
+ * options govern the replace: what gets rewritten has to be exactly what the
+ * result list showed.
+ */
+export interface SearchOptions {
+  caseSensitive: boolean;
+  wholeWord: boolean;
+  /** Read the query as a pattern rather than as text. */
+  regex: boolean;
+  /** Comma separated globs; empty means every file. */
+  include: string;
+  /** Comma separated globs; empty means nothing is excluded. */
+  exclude: string;
+}
+
+export interface ReplaceOutcome {
+  filesChanged: number;
+  replacements: number;
+  /** Stopped at a cap, some matching files were left untouched. */
+  truncated: boolean;
+}
+
 /** Every file under the root (skip list applied) — the quick-open index. */
 export interface FileIndex {
   paths: string[];
@@ -575,6 +598,12 @@ export interface TextFile {
    */
   bom: boolean;
   /**
+   * Which encoding the text was decoded with. UTF-8 unless a UTF-16 BOM said
+   * otherwise, or unless the reader named one; the save writes it back in the
+   * same one (`src-tauri/src/encoding.rs`).
+   */
+  encoding: string;
+  /**
    * MIME type when the webview can draw the file (`image/png`, `video/mp4`,
    * `application/pdf`…) — what makes the editor show the picture instead of
    * announcing there is no text. `null` = nothing to look at.
@@ -598,12 +627,67 @@ export interface WorktreeProvision {
   branch: string | null;
   /** `isolated` = git worktree; `plain` = no git, same cwd as the ground. */
   kind: "isolated" | "plain";
+  /** Where the new worktree's HEAD landed — the rollback's compare-and-swap. */
+  headOid: string | null;
+  /** The commit the branch grew from, when this call created the branch. */
+  baseOid: string | null;
+}
+
+/** One row of the dialog, as the preflight is asked about it. */
+export interface PreflightItem {
+  id: string;
+  /** `new_branch` | `existing_branch` | `adopt` | `ground`. */
+  kind: string;
+  name: string;
+  branch?: string | null;
+  worktreeName?: string | null;
+  baseRef?: string | null;
+  worktreePath?: string | null;
+}
+
+/**
+ * What git would do with that row — facts, not verdicts. The rules that turn
+ * these into refusals live in `lib/provision/plan.ts`, because they need what
+ * the app knows too (which front owns what, which agent is alive where).
+ */
+export interface PreflightItemResult {
+  id: string;
+  branch: string | null;
+  branchExists: boolean;
+  /** The worktree already holding that branch — git gives out only one. */
+  branchCheckedOutAt: string | null;
+  branchError: string | null;
+  path: string;
+  pathExists: boolean;
+  baseRef: string | null;
+  /** The base frozen as a commit: what the person approved in the plan. */
+  baseOid: string | null;
+  /** `""` is a lock with no reason written; `null` is no lock. */
+  locked: string | null;
+  dirty: boolean | null;
+}
+
+export interface Preflight {
+  isRepo: boolean;
+  hasHead: boolean;
+  groundPath: string;
+  groundBranch: string | null;
+  groundDirty: boolean;
+  defaultBase: string | null;
+  localBranches: string[];
+  worktrees: WorktreeEntry[];
+  items: PreflightItemResult[];
 }
 
 export interface WorktreeEntry {
   path: string;
   branch: string | null;
   bare: boolean;
+}
+
+export interface WorktreeRemoval {
+  /** Why the branch was kept, when it was. `null` means nothing was kept. */
+  branchKept: string | null;
 }
 
 export interface HookResult {
@@ -924,6 +1008,59 @@ export interface LspExitPayload {
 // commands
 // ---------------------------------------------------------------------------
 
+/** One line a terminal printed, as `scrollback_search.rs` returns it. */
+export interface ScrollbackHit {
+  /** 1-based line inside the terminal's `.bin`. */
+  line: number;
+  /** Character offset of the match inside `text`. */
+  col: number;
+  text: string;
+  /** `text` is a window cut out of a longer line. */
+  clipped: boolean;
+}
+
+export interface TerminalHits {
+  terminalId: string;
+  hits: ScrollbackHit[];
+  /** 1 when the terminal had more matches than the cap allowed through. */
+  more: number;
+}
+
+// --- the forge (gh), `src-tauri/src/forge.rs` -----------------------------
+
+export interface Checks {
+  passed: number;
+  failed: number;
+  pending: number;
+}
+
+export interface PullRequest {
+  number: number;
+  title: string;
+  url: string;
+  /** `OPEN`, `MERGED`, `CLOSED`, as GitHub spells it. */
+  state: string;
+  draft: boolean;
+  /** `APPROVED`, `CHANGES_REQUESTED`, `REVIEW_REQUIRED`, or empty. */
+  reviewDecision: string;
+  checks: Checks;
+}
+
+export interface ForgeStatus {
+  /** Empty when `gh` is not installed on this machine. */
+  version: string;
+  authenticated: boolean;
+}
+
+export interface ReviewNote {
+  path: string;
+  /** 0 when GitHub gave no line (an outdated comment). */
+  line: number;
+  body: string;
+  author: string;
+  url: string;
+}
+
 export const ipc = {
   // PTY
   spawnPty: (opts: SpawnOptions) => invoke<PtySnapshot>("spawn_pty", { opts }),
@@ -1038,8 +1175,9 @@ export const ipc = {
   // every `path` is relative to it; the backend refuses anything outside.
   fsListDir: (root: string, path: string) =>
     invoke<DirListing>("fs_list_dir", { root, path }),
-  fsReadText: (root: string, path: string) =>
-    invoke<TextFile>("fs_read_text", { root, path }),
+  /** `encoding` = the one the reader picked; omitted, the file decides. */
+  fsReadText: (root: string, path: string, encoding?: string | null) =>
+    invoke<TextFile>("fs_read_text", { root, path, encoding: encoding ?? null }),
   /**
    * Writes the file and returns its new stamp. Errors with `CONFLITO:` when
    * the disk moved: `expected` is what the editor last saw there, and it
@@ -1055,6 +1193,8 @@ export const ipc = {
     expected: FileStamp | null,
     crlf: boolean,
     bom: boolean,
+    /** The encoding the file was opened with; the write uses the same one. */
+    encoding?: string | null,
   ) =>
     invoke<FileStamp>("fs_write_text", {
       root,
@@ -1063,6 +1203,7 @@ export const ipc = {
       expected,
       crlf,
       bom,
+      encoding: encoding ?? null,
     }),
   fsCreateEntry: (root: string, path: string, dir: boolean) =>
     invoke<void>("fs_create_entry", { root, path, dir }),
@@ -1070,18 +1211,25 @@ export const ipc = {
     invoke<void>("fs_rename_entry", { root, path, newPath }),
   fsDeleteEntry: (root: string, path: string) =>
     invoke<void>("fs_delete_entry", { root, path }),
-  /** Literal text search across the whole project (Ctrl+Shift+F). */
-  fsSearchText: (
+  /** Text search across the whole project (Ctrl+Shift+F). */
+  fsSearchText: (root: string, query: string, options: SearchOptions) =>
+    invoke<SearchOutcome>("fs_search_text", { root, query, options }),
+  /**
+   * Rewrites every match of the same search. Not cancellable: this one
+   * writes, and a replace stopped halfway through the walk is a state nobody
+   * can reason about afterwards.
+   */
+  fsReplaceText: (
     root: string,
     query: string,
-    caseSensitive: boolean,
-    wholeWord: boolean,
+    replacement: string,
+    options: SearchOptions,
   ) =>
-    invoke<SearchOutcome>("fs_search_text", {
+    invoke<ReplaceOutcome>("fs_replace_text", {
       root,
       query,
-      caseSensitive,
-      wholeWord,
+      replacement,
+      options,
     }),
   fsCancelSearch: (root: string) => invoke<void>("fs_cancel_search", { root }),
   /** All file paths under the root — what Ctrl+P offers before any browsing. */
@@ -1227,23 +1375,45 @@ export const ipc = {
     branch?: string | null;
     existingBranch: boolean;
     noGit: boolean;
+    /** The commit the plan froze — without it the branch grows from HEAD. */
+    base?: string | null;
+    /** The folder the plan chose, so the disk gets what the screen promised. */
+    worktreeName?: string | null;
   }) =>
     invoke<WorktreeProvision>("worktree_provision", {
       projectPath: opts.projectPath,
-      name: opts.name,
-      branch: opts.branch ?? null,
-      existingBranch: opts.existingBranch,
-      noGit: opts.noGit,
+      input: {
+        name: opts.name,
+        branch: opts.branch ?? null,
+        existingBranch: opts.existingBranch,
+        noGit: opts.noGit,
+        base: opts.base ?? null,
+        worktreeName: opts.worktreeName ?? null,
+      },
     }),
+  /** Reads the repository and answers what each row would do. Writes nothing. */
+  worktreePreflight: (projectPath: string, items: PreflightItem[]) =>
+    invoke<Preflight>("worktree_preflight", { projectPath, items }),
+  /**
+   * Deletes a branch only while it still points at `expectedOid`. `false`
+   * means it moved — there is work on it, and it was kept.
+   */
+  branchDeleteIfUnchanged: (projectPath: string, branch: string, expectedOid: string) =>
+    invoke<boolean>("branch_delete_if_unchanged", { projectPath, branch, expectedOid }),
   worktreeList: (projectPath: string) =>
     invoke<WorktreeEntry[]>("worktree_list", { projectPath }),
   worktreeDirty: (path: string) => invoke<boolean>("worktree_dirty", { path }),
+  /**
+   * Removes the worktree and, when a branch is named, deletes it with
+   * `git branch -d`. A branch holding commits the ground does not have is
+   * kept, and comes back in `branchKept` for the caller to say out loud.
+   */
   worktreeRemove: (
     projectPath: string,
     path: string,
     deleteBranch?: string | null,
   ) =>
-    invoke<void>("worktree_remove", {
+    invoke<WorktreeRemoval>("worktree_remove", {
       projectPath,
       path,
       deleteBranch: deleteBranch ?? null,
@@ -1323,6 +1493,29 @@ export const ipc = {
   /** Saves a terminal's scrollback to `dest`; `plain` strips the escapes. Bytes written. */
   ptyExport: (id: string, dest: string, plain: boolean) =>
     invoke<number>("pty_export", { id, dest, plain }),
+  // full-text search over what the terminals said (scrollback_search.rs)
+  searchScrollback: (ids: string[], query: string, per: number, total: number) =>
+    invoke<TerminalHits[]>("search_scrollback", { ids, query, per, total }),
+  // the forge (forge.rs), every call shells out to `gh`
+  /** Loopback port + session token of the bridge, for the SSH launch. */
+  bridgeRemote: () =>
+    invoke<{ port: number | null; token: string }>("bridge_remote"),
+  // one POST to the address in Configurações (webhook.rs)
+  webhookPost: (url: string, body: string) =>
+    invoke<void>("webhook_post", { url, body }),
+  forgeStatus: (cwd: string) => invoke<ForgeStatus>("forge_status", { cwd }),
+  forgePr: (cwd: string, branch: string) =>
+    invoke<PullRequest | null>("forge_pr", { cwd, branch }),
+  forgePrCreate: (
+    cwd: string,
+    branch: string,
+    title: string,
+    body: string,
+    base: string | null,
+    draft: boolean,
+  ) => invoke<string>("forge_pr_create", { cwd, branch, title, body, base, draft }),
+  forgePrComments: (cwd: string, number: number) =>
+    invoke<ReviewNote[]>("forge_pr_comments", { cwd, number }),
   // tray icon + summon hotkey (tray.rs)
   traySetStatus: (blocked: number, running: number) =>
     invoke<void>("tray_set_status", { blocked, running }),

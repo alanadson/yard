@@ -7,7 +7,9 @@ import { describe, expect, it } from "vitest";
 import {
   emptyReason,
   fieldsOf,
+  KIND_LABEL,
   parseQuery,
+  RANKED_SCOPES,
   SCOPES,
   restingOrder,
   sectionsOf,
@@ -145,6 +147,71 @@ describe("fieldsOf", () => {
  * search saying "no" about the only navigation this app has, on the one
  * occasion it does not know yet.
  */
+describe("the output scope", () => {
+  /**
+   * The `$` prefix is the only source that costs disk: it reads every
+   * terminal's `.bin`. It must therefore be reachable *only* by its prefix,
+   * an unprefixed "erro" has to stay the in-memory hunt it always was.
+   */
+  it("has a prefix of its own and covers only the output rows", () => {
+    const output = SCOPES.find((s) => s.prefix === "$")!;
+    expect(output).toBeDefined();
+    expect(output.kinds).toEqual(["output"]);
+  });
+
+  it("reads the prefix off and hands back what to look for", () => {
+    const parsed = parseQuery("$erro de build");
+    expect(parsed.scope?.kinds).toEqual(["output"]);
+    expect(parsed.text).toBe("erro de build");
+  });
+
+  /**
+   * The regression this guards: a hit row's title is the terminal line
+   * itself, and ranking it against the query a second time dropped long
+   * lines below short ones. The backend already decided these rows match.
+   */
+  it("is a scope the ranking must not re-order", () => {
+    expect(RANKED_SCOPES).not.toContain("output");
+  });
+});
+
+describe("emptyReason under the output scope", () => {
+  const out = SCOPES.find((s) => s.prefix === "$")!;
+
+  /**
+   * The `$` scope is the only asynchronous one: the rows arrive from the
+   * backend after the keystroke. Saying "nada encontrado" while the sweep is
+   * still running is the search denying a line that is about to appear,
+   * the same defect the "indexando" answer exists to avoid for files.
+   */
+  it("says it is still looking while the sweep runs", () => {
+    expect(
+      emptyReason({ text: "erro", scope: out, indexed: true, searching: true }),
+    ).toBe("buscando");
+  });
+
+  it("asks for one more letter instead of sweeping every .bin", () => {
+    expect(emptyReason({ text: "e", scope: out, indexed: true })).toBe("curto");
+  });
+
+  it("answers nothing-found once the sweep is over", () => {
+    expect(
+      emptyReason({ text: "erro", scope: out, indexed: true, searching: false }),
+    ).toBe("nada-encontrado");
+  });
+
+  it("still says sem-busca on a bare prefix", () => {
+    expect(emptyReason({ text: "", scope: out, indexed: true })).toBe("sem-busca");
+  });
+
+  /** A short query is only short for the scope that pays for the sweep. */
+  it("does not shorten anyone else's query", () => {
+    expect(emptyReason({ text: "e", scope: null, indexed: true })).toBe(
+      "nada-encontrado",
+    );
+  });
+});
+
 describe("emptyReason", () => {
   const files = SCOPES.find((s) => s.prefix === "/")!;
   const actions = SCOPES.find((s) => s.prefix === ">")!;
@@ -173,5 +240,66 @@ describe("emptyReason", () => {
     expect(emptyReason({ text: "App", scope: null, indexed: true })).toBe(
       "nada-encontrado",
     );
+  });
+});
+
+
+/**
+ * The symbol scope (`:`).
+ *
+ * `Ctrl+P` finds a file by name, which stops helping the moment the thing you
+ * want is a function and you do not remember which file holds it. `:` asks
+ * the language server instead, and like `$` it is answered by something that
+ * has already done the matching, so the rows must not be re-ranked here.
+ */
+describe("the symbol scope", () => {
+  it("has a prefix of its own that does not collide with the canvas", () => {
+    // `#` was taken by the canvas long before symbols existed.
+    const canvas = SCOPES.find((s) => s.prefix === "#");
+    const symbols = SCOPES.find((s) => s.kinds.includes("symbol"));
+
+    expect(symbols).toBeDefined();
+    expect(symbols!.prefix).not.toBe(canvas!.prefix);
+    expect(symbols!.prefix).toHaveLength(1);
+  });
+
+  it("takes the prefix off the query", () => {
+    const parsed = parseQuery(":parseStored");
+
+    expect(parsed.scope?.kinds).toEqual(["symbol"]);
+    expect(parsed.text).toBe("parseStored");
+  });
+
+  it("is not re-ranked, the server already matched and ordered the rows", () => {
+    expect(RANKED_SCOPES).not.toContain("symbol");
+  });
+
+  it("has a section heading, like every other kind", () => {
+    // A kind with no label renders a section with an empty title.
+    expect(KIND_LABEL.symbol).toBeTruthy();
+  });
+});
+
+describe("emptyReason under the symbol scope", () => {
+  const base = { indexed: true, scope: SCOPES.find((s) => s.kinds.includes("symbol"))! };
+
+  it("asks for more than one letter", () => {
+    // A one-letter `workspace/symbol` asks every running server for every
+    // declaration it has.
+    expect(emptyReason({ ...base, text: "p" })).toBe("curto");
+  });
+
+  it("says it is still asking while the servers answer", () => {
+    expect(emptyReason({ ...base, text: "parse", searching: true })).toBe("buscando");
+  });
+
+  it("says nothing was found once they have", () => {
+    expect(emptyReason({ ...base, text: "parse", searching: false })).toBe("nada-encontrado");
+  });
+
+  it("does not blame the file index for a symbol search", () => {
+    // The regression this prevents: "indexando" is about the *file* walk, and
+    // showing it here sends the reader to wait for the wrong thing.
+    expect(emptyReason({ ...base, text: "parse", indexed: false })).toBe("nada-encontrado");
   });
 });

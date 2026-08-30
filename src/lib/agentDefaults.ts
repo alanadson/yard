@@ -25,6 +25,13 @@
 // i18n-scan: tables — the cache choices and notes are translated where Settings renders them.
 import { skipFlagOf, tokenizeArgs, withFlag, type SkipFlag } from "./termArgs";
 import { programName } from "./terminals";
+import {
+  localBridge,
+  PTY_ID_MARK,
+  remoteCommand,
+  reverseTunnelArg,
+  type RemoteBridge,
+} from "./remoteBridge";
 import type { AgentInfo } from "./ipc";
 import type { RolePick } from "./roles";
 
@@ -57,6 +64,12 @@ export interface AgentConfig {
   sshHost: string;
   /** Folder on the remote machine; `""` means the login shell's home. */
   sshPath: string;
+  /**
+   * Carry the `yard` bridge to the remote host (`lib/remoteBridge.ts`): a
+   * reverse tunnel plus a shim written into `~/.yard/bin` over there. Off by
+   * default, it makes this workspace reachable from that machine's loopback.
+   */
+  sshBridge: boolean;
   cache: AgentCache;
   /** Kept out of the pickers ("Nova aba", a fan-out) — not uninstalled. */
   hidden: boolean;
@@ -81,6 +94,7 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   distro: "",
   sshHost: "",
   sshPath: "",
+  sshBridge: false,
   cache: "",
   hidden: false,
   name: "",
@@ -98,6 +112,7 @@ export function isDefaultConfig(config: AgentConfig): boolean {
     config.distro === DEFAULT_AGENT_CONFIG.distro &&
     config.sshHost === DEFAULT_AGENT_CONFIG.sshHost &&
     config.sshPath === DEFAULT_AGENT_CONFIG.sshPath &&
+    config.sshBridge === DEFAULT_AGENT_CONFIG.sshBridge &&
     config.cache === DEFAULT_AGENT_CONFIG.cache &&
     config.hidden === DEFAULT_AGENT_CONFIG.hidden &&
     config.name === DEFAULT_AGENT_CONFIG.name &&
@@ -157,6 +172,7 @@ function parseConfig(value: unknown): AgentConfig {
     distro: typeof row.distro === "string" ? row.distro.trim() : "",
     sshHost: typeof row.sshHost === "string" ? row.sshHost.trim() : "",
     sshPath: typeof row.sshPath === "string" ? row.sshPath.trim() : "",
+    sshBridge: row.sshBridge === true,
     cache: CACHES.includes(cache as string) ? (cache as AgentCache) : "",
     hidden: row.hidden === true,
   };
@@ -203,6 +219,7 @@ export function serializeAgentDefaults(
     if (config.distro) rest.distro = config.distro;
     if (config.sshHost) rest.sshHost = config.sshHost;
     if (config.sshPath) rest.sshPath = config.sshPath;
+    if (config.sshBridge) rest.sshBridge = true;
     if (config.cache) rest.cache = config.cache;
     if (config.hidden) rest.hidden = true;
     if (config.name) rest.name = config.name;
@@ -225,6 +242,7 @@ export function withAgentConfig(
   if (typeof patch.distro === "string") config.distro = patch.distro.trim();
   if (typeof patch.sshHost === "string") config.sshHost = patch.sshHost.trim();
   if (typeof patch.sshPath === "string") config.sshPath = patch.sshPath.trim();
+  if (typeof patch.sshBridge === "boolean") config.sshBridge = patch.sshBridge;
   if (typeof patch.name === "string") config.name = patch.name.trim();
   if (isDefaultConfig(config)) delete next[id];
   else next[id] = config;
@@ -399,14 +417,27 @@ export function sshLaunch(input: {
   cwd: string;
   host: string;
   remotePath: string;
+  /**
+   * Carry the `yard` bridge over (`lib/remoteBridge.ts`). Null is the old
+   * behaviour, and still the default: it opens a reverse tunnel and writes a
+   * shim on the other machine, which is a thing to opt into per host.
+   */
+  bridge?: RemoteBridge | null;
 }): Launch {
   const command = programName(input.program).replace(/\.(cmd|bat|exe|ps1)$/i, "");
   const run = [command, ...input.args.map(shWord)].join(" ");
-  const path = input.remotePath.trim();
-  const remote = path ? `cd ${shQuote(path)} && exec ${run}` : `exec ${run}`;
+  const bridge = input.bridge ?? null;
+  const remote = remoteCommand({
+    run,
+    dir: input.remotePath,
+    bridge,
+  });
+  const tunnel = reverseTunnelArg(bridge);
   return {
     program: "ssh.exe",
-    args: ["-tt", input.host.trim(), remote],
+    args: tunnel
+      ? ["-tt", "-R", tunnel, input.host.trim(), remote]
+      : ["-tt", input.host.trim(), remote],
   };
 }
 
@@ -444,12 +475,17 @@ export function launchFor(
     });
   }
   if (config.where === "ssh") {
+    // The bridge only travels when this agent was told to take it *and* the
+    // local listener came up. Both halves have to be there: a tunnel with no
+    // listener behind it is a `yard` that hangs and then lies.
+    const door = config.sshBridge ? localBridge() : null;
     return sshLaunch({
       program: launch.program,
       args,
       cwd: launch.cwd,
       host: config.sshHost,
       remotePath: config.sshPath,
+      bridge: door ? { ...door, ptyId: PTY_ID_MARK } : null,
     });
   }
   return { program: launch.program, args };

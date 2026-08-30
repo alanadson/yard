@@ -42,7 +42,7 @@ import "./composer.css";
  * the agent can simply open the file. Either way the image arrives.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BookmarkPlus, CornerDownLeft, Send, TerminalSquare, X } from "lucide-react";
+import { BookmarkPlus, CornerDownLeft, ListPlus, Send, TerminalSquare, X } from "lucide-react";
 
 import { Select } from "../Select";
 import { composerContext } from "../../lib/bridge";
@@ -60,6 +60,8 @@ import { baseName } from "../../lib/terminals";
 import { useBench } from "../../stores/benchStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useTerminals } from "../../stores/terminalsStore";
+import { useQueue } from "../../stores/queueStore";
+import { composerAction } from "./action";
 import { COMPOSER_SCRATCH, useUI } from "../../stores/uiStore";
 import { useT } from "../../hooks/useT";
 
@@ -101,6 +103,26 @@ export function Composer() {
   );
   const runtimeState = useTerminals((s) =>
     target ? s.byId[target.id]?.state : undefined,
+  );
+
+  /**
+   * What the main button will do, send now, or park it in the target's queue
+   * (`Composer/action.ts`). Part of "ready" is a stretch of *silence*, and the
+   * last byte of an agent's answer produces no further event, so a store
+   * subscription alone would leave the button saying "Enfileirar" for a CLI
+   * that has been free for a minute. Hence the tick, cheap because the
+   * composer is a transient overlay.
+   */
+  const [readyTick, setReadyTick] = useState(0);
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setInterval(() => setReadyTick((n) => n + 1), 1_000);
+    return () => window.clearInterval(timer);
+  }, [open]);
+  const willQueue = useMemo(
+    () => (target ? composerAction(sendability(target.id)) === "queue" : false),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [target?.id, runtimeState, readyTick, open],
   );
 
   // Anything can be picked, running or not: choosing where the prompt goes and
@@ -278,8 +300,34 @@ export function Composer() {
     // over mid-task arrives broken. The draft stays in the box, so refusing
     // costs the user nothing.
     const ready = sendability(target.id);
-    if (!ready.ok) {
+    // Busy or blocked is temporary by definition, and the queue exists for
+    // exactly that: the prompt is parked and typed in the moment the CLI is
+    // free. Dead or gone still refuses out loud (`Composer/action.ts`).
+    const what = composerAction(ready);
+    if (what === "refuse") {
       showToast(ready.message ?? t("{name} não pode receber agora.", { name: baseName(target) }), "error");
+      return;
+    }
+    if (what === "queue") {
+      const parked = useQueue.getState().enqueue(target.id, theText, "user");
+      if (!parked.ok) {
+        showToast(
+          t("A fila de {name} está cheia, espere ela andar.", { name: baseName(target) }),
+          "error",
+        );
+        return;
+      }
+      showToast(
+        t("Na fila de {name} ({n}º), entra sozinho quando ele estiver livre.", {
+          name: baseName(target),
+          n: parked.position ?? 1,
+        }),
+      );
+      // Same ending as a real send: the sentence is finished, and the sheet
+      // covers the very agent the work was just handed to.
+      setDraft(slot, "");
+      setMenu(null);
+      setOpen(false);
       return;
     }
     setSending(true);
@@ -545,12 +593,25 @@ export function Composer() {
         <button
           className="btn btn--primary"
           data-tip-side="top"
-          data-tip={target ? undefined : t("Escolha primeiro o destino, lá em cima")}
+          data-tip-wrap={willQueue ? "" : undefined}
+          data-tip={
+            target
+              ? willQueue
+                ? t("A CLI está ocupada: o texto fica na fila e entra sozinho quando ela liberar")
+                : undefined
+              : t("Escolha primeiro o destino, lá em cima")
+          }
           disabled={!draft.trim() || sending}
           onClick={() => void send()}
         >
-          {sending ? <CornerDownLeft size={13} /> : <Send size={13} />}{" "}
-          {sending ? t("Enviando…") : t("Enviar")}
+          {sending ? (
+            <CornerDownLeft size={13} />
+          ) : willQueue ? (
+            <ListPlus size={13} />
+          ) : (
+            <Send size={13} />
+          )}{" "}
+          {sending ? t("Enviando…") : willQueue ? t("Enfileirar") : t("Enviar")}
         </button>
       </div>
     </div>

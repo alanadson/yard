@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { cardOrigin, sectionsFor, treeRows } from "./rows";
+import { cardOrigin, groupBranch, groundWithoutGit, sectionsFor, treeRows } from "./rows";
 
 const board = (id: string) => ({ id, projectId: null as null, name: id });
 const project = (id: string) => ({ id, name: id, path: `C:/Workspace/${id}` });
@@ -124,5 +124,79 @@ describe("cardOrigin", () => {
       { id: "p3", name: "plugin", path: "C:/Workspace/Code/yard/plugins/x" },
     ];
     expect(cardOrigin(nested, "C:/Workspace/Code/yard/plugins/x/src")).toBe("plugin");
+  });
+});
+
+/**
+ * A project's children stopped being folders. What hangs off a project now is
+ * the ground (its own root, on whatever branch is checked out there) and the
+ * fronts, a `git worktree` each. The row has to say which, or the tree reads
+ * as the folder list it no longer is.
+ *
+ * The groups made before the change have no worktree: they run in the root,
+ * exactly like the ground, and the row says so instead of leaving them blank.
+ */
+describe("groupBranch", () => {
+  const front = { kind: "isolated" as const, branch: "yard/fix-login", worktreePath: "C:/w/f" };
+
+  it("a front carries its own branch", () => {
+    expect(groupBranch(front, "main")).toBe("yard/fix-login");
+  });
+
+  /**
+   * The contract that changed: the ground used to carry a chip with the root's
+   * branch beside a stored name ("Principal"). The branch **is** its name now
+   * (`groupLabel`), and a chip repeating it would print `main` twice on one
+   * row.
+   */
+  it("the ground carries no chip: its branch is already its name", () => {
+    expect(groupBranch({ kind: "ground" }, "main")).toBeNull();
+  });
+
+  it("a folder-group of before carries the root's branch, since it runs there under its own name", () => {
+    expect(groupBranch({ kind: "plain" }, "main")).toBe("main");
+  });
+
+  it("says nothing when git said nothing, as in a project with no repository", () => {
+    expect(groupBranch({ kind: "ground" }, null)).toBeNull();
+    expect(groupBranch({ kind: "plain" }, null)).toBeNull();
+  });
+
+  it("says nothing for a front whose branch never reached the layout", () => {
+    expect(groupBranch({ kind: "isolated", worktreePath: "C:/w/f" }, "main")).toBeNull();
+  });
+});
+
+/**
+ * Why one project's ground says `master` and the next one says "Principal".
+ *
+ * The first is a repository and the row prints the branch checked out there.
+ * The second has no `.git` at all, so there is no branch to print and the row
+ * falls back to a stored name that looks exactly like a branch could. Two
+ * rows, side by side, differing for a reason nothing on screen states.
+ *
+ * The row has to say it. The one thing it must not do is say it too early:
+ * before `git worktree list` comes back there is no branch *yet*, and
+ * announcing "sem git" over a repository that simply has not answered is a
+ * worse lie than the silence it replaces.
+ */
+describe("the ground of a project with no repository", () => {
+  it("is marked, so the row beside it printing a branch stops being a mystery", () => {
+    expect(groundWithoutGit({ kind: "ground" }, null, true)).toBe(true);
+  });
+
+  it("is not marked while the listing has not come back: unknown is not no", () => {
+    expect(groundWithoutGit({ kind: "ground" }, null, false)).toBe(false);
+  });
+
+  it("is not marked when there is a branch to print", () => {
+    expect(groundWithoutGit({ kind: "ground" }, "master", true)).toBe(false);
+    // Whitespace is not a branch name, and it used to pass for one.
+    expect(groundWithoutGit({ kind: "ground" }, "   ", true)).toBe(true);
+  });
+
+  it("is never said of a front, which exists only because there is a repository", () => {
+    expect(groundWithoutGit({ kind: "isolated", worktreePath: "C:/w/f" }, null, true)).toBe(false);
+    expect(groundWithoutGit({ kind: "plain" }, null, true)).toBe(false);
   });
 });

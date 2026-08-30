@@ -30,8 +30,11 @@ import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
 import { copyText } from "../../lib/clipboard";
 import { floorRowMenu } from "../../lib/floorMenu";
 import { liveIdsOf } from "../../lib/floorClose";
-import { floorHookEnv, isIsolatedFloor, type FloorMeta } from "../../lib/floors";
-import { ipc, type GroupRow, type ProjectRow } from "../../lib/ipc";
+import { groundBranchOf } from "../../lib/destination";
+import { GROUND_FLOOR, floorHookEnv, groupLabel, isIsolatedFloor, type FloorMeta } from "../../lib/floors";
+import { publishBadge, publishStateOf } from "../../lib/floorSync";
+import { useWorktrees } from "../../stores/worktreesStore";
+import { ipc, type GroupRow, type ProjectRow, type ScmBranch } from "../../lib/ipc";
 import { parseLayout, useProjects } from "../../stores/projectsStore";
 import { isLive, useTerminals } from "../../stores/terminalsStore";
 import { useUI } from "../../stores/uiStore";
@@ -57,18 +60,13 @@ function hookEnvFor(
 // ---------------------------------------------------------------------------
 
 /**
- * The button lives in every layout mode, so it must be cheap when closed:
- * it subscribes to a project row and a *number*, never to the group or
- * terminal arrays. Those change identity on every layout write — including a
- * canvas commit, which happens per keystroke inside a note.
+ * The button lives beside the canvas camera, and nowhere else
+ * (`place.ts` holds that rule, and the grid asks it). It must be cheap when
+ * closed: it subscribes to a project row and a *number*, never to the group
+ * or terminal arrays. Those change identity on every layout write — including
+ * a canvas commit, which happens per keystroke inside a note.
  */
-export function FloorsControl({
-  groupId,
-  variant,
-}: {
-  groupId: string;
-  variant: "canvas" | "grid";
-}) {
+export function FloorsControl({ groupId }: { groupId: string }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -108,7 +106,7 @@ export function FloorsControl({
   if (!project) return null;
 
   return (
-    <div className={`floors-ctl floors-ctl--${variant}`} ref={rootRef}>
+    <div className="floors-ctl" ref={rootRef}>
       {open && <FloorsPopover project={project} onClose={() => setOpen(false)} />}
       <button
         ref={buttonRef}
@@ -138,9 +136,39 @@ function FloorsPopover({
   const terminals = useProjects((s) => s.terminals);
   const runtimes = useTerminals((s) => s.byId);
   const activeGroupId = useProjects((s) => s.activeGroupId);
+  const groundBranch = useWorktrees((s) => groundBranchOf(s.of(project.id), project.path));
   const setActiveGroup = useProjects((s) => s.setActiveGroup);
   const openModal = useUI((s) => s.openModal);
   const showToast = useUI((s) => s.showToast);
+
+  /**
+   * What the server knows about this project's branches.
+   *
+   * A front is born with `--no-track` and nothing here ever pushes, so
+   * "a frente existe" and "o trabalho da frente existe em algum lugar além
+   * deste disco" are different facts, and only the Controle tab knew the
+   * second one, for whichever repository the bench happened to be pointed at.
+   * Two cheap reads on open (`for-each-ref` + `status`) put it on the rows.
+   */
+  const [sync, setSync] = useState<{ branches: ScmBranch[]; hasRemote: boolean } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const [info, branches] = await Promise.all([
+          ipc.scmInfo(project.path),
+          ipc.scmBranches(project.path),
+        ]);
+        if (alive) setSync({ branches, hasRemote: info.remotes.length > 0 });
+      } catch {
+        // A folder with no repository has nothing to say here, and this
+        // popover is not the screen that would tell anybody about it.
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [project.path]);
 
   const ofProject = groups
     .filter((g) => g.projectId === project.id)
@@ -216,9 +244,24 @@ function FloorsPopover({
         {ofProject.map((g, i) => {
               const floor = parseLayout(g.layoutJson).floor;
               const isGround = i === 0 && !floor;
+              // Same name the sidebar and the title bar print: the ground is
+              // the branch checked out at the project root.
+              const label = groupLabel({
+                name: g.name,
+                floor: floor ?? GROUND_FLOOR,
+                groundBranch,
+              });
               const aliveCount = terminals.filter(
                 (t) => t.groupId === g.id && isLive(runtimes[t.id]),
               ).length;
+              // The ground answers for its own branch too: landing a front
+              // merges locally, so the row that owes the server commits after
+              // an "aterrissar" is this one.
+              const rowBranch = floor?.kind === "isolated" ? floor.branch : isGround ? groundBranch : null;
+              const publish = publishBadge(
+                publishStateOf(sync?.branches, rowBranch, sync?.hasRemote ?? false),
+                rowBranch ?? "",
+              );
               return (
                 <li key={g.id}>
                   <div
@@ -274,8 +317,8 @@ function FloorsPopover({
                         onClose();
                       }}
                     >
-                      <span className="floors-name" data-tip={g.name}>
-                        {g.name}
+                      <span className="floors-name" data-tip={label}>
+                        {label}
                       </span>
                       {isGround && <span className="floors-badge">{t("chão")}</span>}
                       {floor?.kind === "isolated" && floor.branch && (
@@ -286,6 +329,15 @@ function FloorsPopover({
                       )}
                       {floor?.kind === "plain" && (
                         <span className="floors-badge">{t("sem git")}</span>
+                      )}
+                      {publish && (
+                        <span
+                          className={`floors-badge floors-badge--${publish.tone}`}
+                          data-tip-wrap=""
+                          data-tip={publish.tip}
+                        >
+                          {publish.label}
+                        </span>
                       )}
                       {aliveCount > 0 && (
                         <span

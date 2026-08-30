@@ -10,6 +10,7 @@
  */
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -25,6 +26,8 @@ import {
   FolderOpen,
   FolderPlus,
   Frame,
+  FolderGit2,
+  GitBranch,
   History,
   Layers,
   MoreVertical,
@@ -34,6 +37,7 @@ import {
   Settings,
   Pencil,
   Plus,
+  Search,
   Terminal as TerminalIcon,
   Music,
   Trash2,
@@ -45,18 +49,29 @@ import { InlineRename } from "../ContextMenu/InlineRename";
 import { Resizer } from "../Resizer";
 import { ipc, type TerminalRow } from "../../lib/ipc";
 import { closeGroup, closeProject } from "../../lib/lifecycle";
-import { goToTerminal } from "../../lib/navigate";
+import { goToTerminal, toggleCanvas } from "../../lib/navigate";
 import { projectIcon } from "../../lib/projectStyle";
 import { ramPressure } from "../../lib/ramPressure";
-import { notesAction, settingsAction } from "./actions";
-import { cardOrigin, sectionsFor, treeRows, type TreeKind } from "./rows";
+import { canvasAction, notesAction, searchAction, settingsAction } from "./actions";
+import { canvasDoor } from "../../lib/layoutControls";
+import {
+  cardOrigin,
+  groupBranch,
+  groundWithoutGit,
+  sectionsFor,
+  treeRows,
+  type TreeKind,
+} from "./rows";
+import { groundBranchOf } from "../../lib/destination";
+import { GROUND_FLOOR, groupLabel, isBranchNamed } from "../../lib/floors";
 import { terminalActionEntries } from "../../lib/terminalMenu";
 import { baseName } from "../../lib/terminals";
 import { useAction } from "../../hooks/useAction";
 import { unsavedWarning } from "../../stores/editorStore";
 import { useT } from "../../hooks/useT";
 import { t } from "../../lib/i18n";
-import { useProjects } from "../../stores/projectsStore";
+import { parseLayout, useProjects } from "../../stores/projectsStore";
+import { useWorktrees } from "../../stores/worktreesStore";
 import { useNotes } from "../../stores/notesStore";
 import { isLive, useTerminals } from "../../stores/terminalsStore";
 import {
@@ -104,20 +119,54 @@ export function ProjectSidebar() {
   );
   const terminals = useProjects((s) => s.terminals);
   const activeGroupId = useProjects((s) => s.activeGroupId);
+  const activeProjectId = useProjects((s) => s.activeProjectId);
   const setActiveGroup = useProjects((s) => s.setActiveGroup);
-  const addGroup = useProjects((s) => s.addGroup);
   const renameProject = useProjects((s) => s.renameProject);
   const renameGroup = useProjects((s) => s.renameGroup);
   const updateTerminal = useProjects((s) => s.updateTerminal);
   const moveGroup = useProjects((s) => s.moveGroup);
   const moveTerminalBy = useProjects((s) => s.moveTerminalBy);
   const openModal = useUI((s) => s.openModal);
+  /**
+   * `git worktree list`, per project: it is what tells each row which branch
+   * it is on, now that a project's children are branches and worktrees. One
+   * listing answers the tree and both dialogs; see `stores/worktreesStore`.
+   */
+  const worktreesByProject = useWorktrees((s) => s.byProject);
+  /**
+   * Refreshed when the projects change and when a group is born or closed,
+   * which is exactly when a front (and therefore a worktree) appears or goes
+   * away. `groups.length` is the cheap signal for both.
+   */
+  const projectKey = projects.map((p) => `${p.id}>${p.path}`).join("|");
+  const groupCount = groups.length;
+  useEffect(() => {
+    const worktrees = useWorktrees.getState();
+    const live = new Set(useProjects.getState().projects.map((p) => p.id));
+    for (const id of Object.keys(worktrees.byProject)) {
+      if (!live.has(id)) worktrees.forget(id);
+    }
+    for (const p of useProjects.getState().projects) {
+      void worktrees.refresh(p.id, p.path);
+    }
+  }, [projectKey, groupCount]);
   // The notebook is a place, not a panel of this bar: the row summons it
   // wherever the user left it (overlay, tab or centre) and lights up while
   // it is on screen.
   const notesOpen = useNotes((s) => s.open);
   const toggleNotes = useNotes((s) => s.toggleView);
   const notes = notesAction({ open: notesOpen });
+  // The Busca opens over everything, so the row has nothing to light up,
+  // it is a door, and it stands above the notebook because it is the way
+  // into the things this bar cannot list.
+  const openPalette = useUI((s) => s.openPalette);
+  const search = searchAction();
+  // The canvas is the third door, between the two: the group's other surface,
+  // not a shape of the pane grid it sat beside in the title bar. The row is
+  // the toggle (pressed, it is the way back to the panes) and it reads the
+  // group `layoutControls` points at, which on a board is the group the user
+  // came from, the one that owns the panes to go back to.
+  const groupBeforeBoard = useProjects((s) => s.groupBeforeBoard);
   const showToast = useUI((s) => s.showToast);
   const t = useT();
   const focusedTerminalId = useUI((s) => s.focusedTerminalId);
@@ -172,6 +221,21 @@ export function ProjectSidebar() {
     return index;
   }, [terminals]);
   const act = useAction();
+
+  // The canvas door, and it is always painted: it is the only way in since
+  // the title bar's button left, and a door that only appears once you are
+  // inside is not a door. `canvasDoor` answers for every state — on a board
+  // it points back at the group the user came from, with nothing open it
+  // points at a board, and `null` means the board has yet to be made.
+  const door = canvasDoor({
+    activeGroupId,
+    activeProjectId,
+    groupBeforeBoard,
+    activeSurface: onCanvas ? "canvas" : "grid",
+    groups,
+    boards,
+  });
+  const canvas = canvasAction({ open: door.open });
 
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renaming, setRenaming] = useState<RenameState | null>(null);
@@ -333,8 +397,34 @@ export function ProjectSidebar() {
 
   const closeMenu = useCallback(() => setMenu(null), []);
 
+  /**
+   * The branch checked out at a project's own root, which is what names its
+   * ground row. `null` for a project with no git, whose ground keeps the name
+   * it was given.
+   */
+  const groundBranchOfProject = (projectId: string | null): string | null => {
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return null;
+    return groundBranchOf(worktreesByProject[project.id] ?? [], project.path);
+  };
+
   const beginRename = (kind: TreeKind, id: string) => {
     setMenu(null);
+    // The ground's name is the branch checked out at the project root: there
+    // is nothing to type here, whichever door asked (F2, the menu, a double
+    // click). `git branch -m`, in Controle, is what changes it.
+    if (kind === "group") {
+      const g = groups.find((x) => x.id === id);
+      if (
+        g &&
+        isBranchNamed(
+          parseLayout(g.layoutJson).floor ?? GROUND_FLOOR,
+          groundBranchOfProject(g.projectId),
+        )
+      ) {
+        return;
+      }
+    }
     setRenaming({ kind, id });
   };
 
@@ -532,10 +622,10 @@ export function ProjectSidebar() {
           onSelect: () => openModal("project-style", { projectId: project.id }),
         },
         {
-          id: "new-group",
-          label: t("Novo grupo"),
-          icon: <Plus size={13} />,
-          onSelect: () => addGroup(project.id),
+          id: "new-front",
+          label: t("Nova frente…"),
+          icon: <GitBranch size={13} />,
+          onSelect: () => openModal("new-floor", { projectId: project.id }),
         },
         { kind: "sep" },
         {
@@ -578,13 +668,25 @@ export function ProjectSidebar() {
         .sort((a, b) => a.sort - b.sort);
       const idx = siblings.findIndex((g) => g.id === group.id);
       const aliveCount = liveIds(group.id).length;
+      // The ground's name is the branch checked out at the project root, so
+      // there is nothing to type here: `git branch -m`, in Controle, is what
+      // changes it. Renaming it in the tree would drift the label off the
+      // branch while the branch stayed put.
+      const branchNamed = isBranchNamed(
+        parseLayout(group.layoutJson).floor ?? GROUND_FLOOR,
+        groundBranchOfProject(group.projectId),
+      );
       return [
-        {
-          id: "rename",
-          label: t("Renomear"),
-          icon: <Pencil size={13} />,
-          onSelect: () => beginRename("group", group.id),
-        },
+        ...(branchNamed
+          ? []
+          : [
+              {
+                id: "rename",
+                label: t("Renomear"),
+                icon: <Pencil size={13} />,
+                onSelect: () => beginRename("group", group.id),
+              } as MenuEntry,
+            ]),
         {
           id: "new-cli",
           label: t("Nova aba…"),
@@ -593,10 +695,11 @@ export function ProjectSidebar() {
           onSelect: () => newCli(group.id),
         },
         {
-          id: "new-group",
-          label: t("Novo grupo"),
-          icon: <Plus size={13} />,
-          onSelect: () => group.projectId && addGroup(group.projectId),
+          id: "new-front",
+          label: t("Nova frente…"),
+          icon: <GitBranch size={13} />,
+          onSelect: () =>
+            group.projectId && openModal("new-floor", { projectId: group.projectId }),
         },
         {
           id: "scores",
@@ -789,6 +892,27 @@ export function ProjectSidebar() {
       <div className="sidebar-actions">
         <button
           className="sidebar-action"
+          data-tip={search.tip}
+          data-tip-at="left"
+          onClick={() => openPalette()}
+        >
+          <Search size={16} className="sidebar-action-icon" aria-hidden="true" />
+          <span className="sidebar-action-label">{search.label}</span>
+        </button>
+        <button
+          className="sidebar-action"
+          data-tip={canvas.tip}
+          data-tip-at="left"
+          aria-pressed={door.open}
+          // The trip itself lives in `lib/navigate.ts`: the palette has the
+          // same door, and one of the two used to be a half-copy of the other.
+          onClick={toggleCanvas}
+        >
+          <Frame size={16} className="sidebar-action-icon" aria-hidden="true" />
+          <span className="sidebar-action-label">{canvas.label}</span>
+        </button>
+        <button
+          className="sidebar-action"
           data-tip={notes.tip}
           data-tip-at="left"
           aria-pressed={notesOpen}
@@ -976,6 +1100,17 @@ export function ProjectSidebar() {
 
         {projects.map((project) => {
           const projectGroups = groupsByProject.get(project.id) ?? [];
+          // The branch checked out at the project's own root: what the ground
+          // row prints, and what the folder-groups of before print too, since
+          // that is where they run.
+          const groundBranch = groundBranchOf(
+            worktreesByProject[project.id] ?? [],
+            project.path,
+          );
+          // Whether git has answered for this project at all. An empty list is
+          // an answer ("not a repository"); a missing key is silence, and the
+          // row must not speak over it.
+          const worktreesListed = project.id in worktreesByProject;
           const isCollapsed = collapsed[project.id];
           const projectMenuOpen =
             menu?.kind === "project" && menu.id === project.id;
@@ -1044,11 +1179,12 @@ export function ProjectSidebar() {
                 )}
                 <button
                   className="icon-btn"
-                  data-tip-at="right" data-tip={t("Novo grupo")}
-                  aria-label={t("Novo grupo em {name}", { name: project.name })}
-                  onClick={() => addGroup(project.id)}
+                  data-tip-at="right"
+                  data-tip={t("Abrir frente: escolha a branch, o worktree e o agente — e leia o plano antes de criar")}
+                  aria-label={t("Nova frente em {name}", { name: project.name })}
+                  onClick={() => openModal("new-floor", { projectId: project.id })}
                 >
-                  <Plus size={13} />
+                  <GitBranch size={13} />
                 </button>
                 <button
                   className="icon-btn"
@@ -1069,6 +1205,15 @@ export function ProjectSidebar() {
                   const groupMenuOpen =
                     menu?.kind === "group" && menu.id === group.id;
                   const groupCollapsed = collapsed[group.id];
+                  const floor = parseLayout(group.layoutJson).floor ?? GROUND_FLOOR;
+                  const branch = groupBranch(floor, groundBranch);
+                  // Why the row next door prints a branch and this one does
+                  // not: this folder has no repository.
+                  const plainProject = groundWithoutGit(floor, groundBranch, worktreesListed);
+                  // The ground is called by its branch, and that name is not
+                  // the user's to type here.
+                  const label = groupLabel({ name: group.name, floor, groundBranch });
+                  const branchNamed = isBranchNamed(floor, groundBranch);
                   return (
                     <div key={group.id} className="tree-group" role="none">
                       <div
@@ -1077,7 +1222,7 @@ export function ProjectSidebar() {
                         } ${groupMenuOpen ? "is-menu-open" : ""}`}
                         role="treeitem"
                         aria-level={2}
-                        aria-label={group.name}
+                        aria-label={label}
                         aria-selected={group.id === activeGroupId}
                         aria-current={group.id === activeGroupId ? "true" : undefined}
                         aria-expanded={
@@ -1108,8 +1253,8 @@ export function ProjectSidebar() {
                             aria-expanded={!groupCollapsed}
                             aria-label={
                               groupCollapsed
-                                ? t("Expandir {name}", { name: group.name })
-                                : t("Recolher {name}", { name: group.name })
+                                ? t("Expandir {name}", { name: label })
+                                : t("Recolher {name}", { name: label })
                             }
                             onClick={(e) => {
                               e.stopPropagation();
@@ -1127,19 +1272,58 @@ export function ProjectSidebar() {
                         )}
                         {renaming?.kind === "group" && renaming.id === group.id ? (
                           <InlineRename
-                            value={group.name}
+                            value={label}
                             onCommit={commitRename}
                             onCancel={() => setRenaming(null)}
                           />
                         ) : (
                           <span
                             className="tree-label"
+                            data-tip-wrap=""
+                            data-tip={
+                              branchNamed
+                                ? t(
+                                    "Chão do projeto, na branch {branch}. Para mudar o nome, renomeie a branch em Controle.",
+                                    { branch: label },
+                                  )
+                                : undefined
+                            }
                             onDoubleClick={(e) => {
                               e.stopPropagation();
+                              if (branchNamed) return;
                               beginRename("group", group.id);
                             }}
                           >
-                            {group.name}
+                            {label}
+                          </span>
+                        )}
+                        {branch && (
+                          <span
+                            className="tree-branch"
+                            data-tip-wrap=""
+                            data-tip={
+                              floor.kind === "isolated"
+                                ? t("Frente na branch {branch}, worktree em {path}", {
+                                    branch,
+                                    path: floor.worktreePath ?? "?",
+                                  })
+                                : t("Chão do projeto, na branch {branch}", { branch })
+                            }
+                          >
+                            <GitBranch size={10} aria-hidden="true" />
+                            {branch}
+                          </span>
+                        )}
+                        {plainProject && (
+                          <span
+                            className="tree-branch tree-branch--plain"
+                            data-tip-wrap=""
+                            data-tip={t(
+                              "Esta pasta não é um repositório git, então não há branch para mostrar. Em Controle você pode iniciar um (o Yard cria na branch main).",
+                            )}
+                          >
+                            <FolderGit2 size={10} aria-hidden="true" />
+                            {t("sem git")}
                           </span>
                         )}
                         {running > 0 && (
@@ -1153,7 +1337,7 @@ export function ProjectSidebar() {
                         <button
                           className="icon-btn"
                           data-tip-at="right" data-tip={t("Nova aba neste grupo")}
-                          aria-label={t("Nova aba em {name}", { name: group.name })}
+                          aria-label={t("Nova aba em {name}", { name: label })}
                           onClick={(e) => {
                             e.stopPropagation();
                             newCli(group.id);
@@ -1164,7 +1348,7 @@ export function ProjectSidebar() {
                         <button
                           className="icon-btn"
                           data-tip-at="right" data-tip={t("Mais ações")}
-                          aria-label={t("Mais ações de {name}", { name: group.name })}
+                          aria-label={t("Mais ações de {name}", { name: label })}
                           onClick={(e) => {
                             setActiveGroup(group.id);
                             openMenu(e, "group", group.id, true);

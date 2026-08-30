@@ -11,6 +11,7 @@
  * on purpose, so two cards called "Claude Code" are told apart only by where
  * they are running.
  */
+import { isBranchNamed, type FloorMeta } from "../../lib/floors";
 import { rootKey } from "../../lib/roots";
 import type { Surface } from "../../lib/surface";
 
@@ -34,7 +35,7 @@ export interface Sections {
  * On the canvas the only thing that can be on it is a board, so the projects
  * tree is not a useful shortcut there — it is a list of things that cannot be
  * shown, taking the height from the one list that can. On the panes the
- * inverse holds: the title bar's Canvas button is the door into boards, so
+ * inverse holds: the Canvas row above the tree is the door into boards, so
  * only the project tree stays in the sidebar.
  */
 export function sectionsFor(surface: Surface): Sections {
@@ -96,4 +97,47 @@ export function cardOrigin(
     if (!best || depth > best.depth) best = { name: p.name, depth };
   }
   return best?.name ?? null;
+}
+
+/**
+ * The branch a group row prints beside its name.
+ *
+ * A project's children are branches and worktrees now, not folders: the ground
+ * is the project's own root on whatever branch is checked out there, and each
+ * front is a `git worktree` with a branch of its own. Without this the tree
+ * still reads as the folder list it stopped being.
+ *
+ * The groups made before the change (`plain`) have no worktree: they run in
+ * the root, so they carry the root's branch like the ground does.
+ */
+/**
+ * The ground of a project that has no repository at all.
+ *
+ * Two projects side by side, one printing `master` and the other "Principal",
+ * differ for a reason the tree never states: the second folder has no `.git`,
+ * so there is no branch to print and the row falls back to a stored name that
+ * reads exactly like a branch could. The row has to say which of the two it
+ * is looking at.
+ *
+ * `listed` is what keeps it honest. Before `git worktree list` comes back
+ * there is no branch *yet*, and announcing "sem git" over a repository that
+ * has simply not answered is a worse lie than the silence it replaces.
+ */
+export function groundWithoutGit(
+  floor: FloorMeta,
+  groundBranch: string | null | undefined,
+  listed: boolean,
+): boolean {
+  return floor.kind === "ground" && listed && !groundBranch?.trim();
+}
+
+export function groupBranch(
+  floor: FloorMeta,
+  groundBranch: string | null | undefined,
+): string | null {
+  if (floor.kind === "isolated") return floor.branch ?? null;
+  // The ground's branch is already its name (`groupLabel`); a chip repeating
+  // it would print `main` twice on one row.
+  if (isBranchNamed(floor, groundBranch)) return null;
+  return groundBranch ?? null;
 }

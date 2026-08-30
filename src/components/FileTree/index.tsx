@@ -231,6 +231,14 @@ export function FileTree({
 
   const [menu, setMenu] = useState<{ entry: DirEntryInfo | null; anchor: MenuAnchor } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  // "Renomear…" asked from a file tab: the box lives on the tree row, so the
+  // request has to travel through the store to get here.
+  const renameRequest = useEditor((s) => s.renameRequest);
+  useEffect(() => {
+    if (!renameRequest) return;
+    setRenaming(renameRequest.path);
+    useEditor.getState().clearRenameRequest();
+  }, [renameRequest]);
   /** The row that carries the tree's single Tab stop (roving tabindex). */
   const [focusPath, setFocusPath] = useState<string | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());

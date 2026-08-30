@@ -91,3 +91,42 @@ export function fileUri(root: string, path: string): string {
 export function clientKey(root: string, program: string): string {
   return `${normalizePath(root).toLowerCase()}::${program}`;
 }
+
+// ---------------------------------------------------------------------------
+// how long to wait
+// ---------------------------------------------------------------------------
+
+/**
+ * Servers that read the whole project before answering anything. On a cold
+ * `target/`, a fresh venv or a module cache that has to be built, the *first*
+ * request can take half a minute, and until it lands, `F12` does nothing at
+ * all. A short budget here does not protect the editor, it just makes the
+ * feature look broken exactly when it is doing the most work.
+ */
+const INDEXERS = new Set([
+  "rust-analyzer",
+  "pyright-langserver",
+  "gopls",
+  "typescript-language-server",
+]);
+
+/** Generous, for a server that is still reading the project. */
+export const INDEXER_TIMEOUT_MS = 30_000;
+
+/**
+ * Short, for a server that answers from the open file alone. Nothing here
+ * has anything to index, so slow means wedged, and a wedged server must not
+ * be able to hang the editor.
+ */
+export const FILE_TIMEOUT_MS = 8_000;
+
+/** The bare program name: the catalog hands over whatever `which` found. */
+function programName(program: string): string {
+  const base = program.replace(/\\/g, "/").split("/").pop() ?? program;
+  return base.replace(/\.(cmd|exe|bat|ps1)$/i, "");
+}
+
+/** How long a request to `program` may take before the client gives up. */
+export function requestTimeoutMs(program: string): number {
+  return INDEXERS.has(programName(program)) ? INDEXER_TIMEOUT_MS : FILE_TIMEOUT_MS;
+}

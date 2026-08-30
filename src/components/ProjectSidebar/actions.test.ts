@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { notesAction, settingsAction } from "./actions";
+import { canvasAction, notesAction, searchAction, settingsAction } from "./actions";
 
 describe("the sidebar's notes row", () => {
   it("keeps the same name open or closed, only the balloon flips", () => {
@@ -52,5 +52,55 @@ describe("the sidebar's settings door", () => {
     const row = settingsAction();
     expect(row.tip).not.toBe(row.label);
     expect(row.tip).toContain("(Ctrl+Shift+P)");
+  });
+});
+
+/**
+ * The Busca is the third door that belongs to no project, and it moved into
+ * the same stack, above the notebook: it was a 13px magnifier in the corner
+ * of the status bar, an anonymous glyph for the one way into everything the
+ * app holds. As a named row it says what it is without a hover, and the
+ * balloon keeps carrying what the name cannot: what the field finds, and the
+ * shortcut.
+ */
+describe("the sidebar's search row", () => {
+  it("prints the name and leaves what it finds, plus the shortcut, to the balloon", () => {
+    expect(searchAction().label).toBe("Busca");
+    expect(searchAction().tip).toBe("Buscar agentes, arquivos, notas e ações (Ctrl+P)");
+  });
+
+  it("the balloon adds something the row does not already say", () => {
+    const row = searchAction();
+    expect(row.tip).not.toBe(row.label);
+    expect(row.tip).toContain("(Ctrl+P)");
+  });
+});
+
+/**
+ * The canvas used to be a button in the title bar, beside the pane switch,
+ * where it read as a fourth shape of the grid it is not: it is the group's
+ * other surface, with its own cards and its own CLIs. It belongs with the
+ * other doors of the sidebar, which is already the list of places to go, and
+ * it is a toggle, so the row that takes the user there is also the way back.
+ */
+describe("the sidebar's canvas row", () => {
+  it("keeps the same name on both surfaces, only the balloon flips", () => {
+    expect(canvasAction({ open: false }).label).toBe("Canvas");
+    expect(canvasAction({ open: true }).label).toBe("Canvas");
+    expect(canvasAction({ open: false }).tip).not.toBe(canvasAction({ open: true }).tip);
+  });
+
+  it("offers the board from the panes and the panes from the board", () => {
+    expect(canvasAction({ open: false }).tip).toBe(
+      "Ir para o canvas: cartões soltos, desenho à mão, notas e conexões, com as CLIs de lá",
+    );
+    expect(canvasAction({ open: true }).tip).toBe(
+      "Voltar aos painéis: as abas e a grade do grupo",
+    );
+  });
+
+  it("the balloon says something the name does not already say", () => {
+    const row = canvasAction({ open: false });
+    expect(row.tip).not.toBe(row.label);
   });
 });

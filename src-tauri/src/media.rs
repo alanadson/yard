@@ -317,7 +317,7 @@ mod tests {
         assert_eq!(err.0, StatusCode::FORBIDDEN);
 
         // Opening the file through the normal path is what registers the root.
-        crate::explorer::read_text(&root, "clipe.mp4").unwrap();
+        crate::explorer::read_text(&root, "clipe.mp4", None).unwrap();
 
         let whole = file_response(&req_for(&root, "clipe.mp4", None)).unwrap();
         assert_eq!(whole.status(), StatusCode::OK);

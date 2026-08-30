@@ -14,7 +14,7 @@
  * The document itself (`OpenDoc.diff`) is the store's; this file only draws
  * it. It keeps no state the tab bar or the next boot would need.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, SquarePen, WrapText } from "lucide-react";
 import type { LanguageSupport } from "@codemirror/language";
 
@@ -30,6 +30,8 @@ import { annotateIntraline, parseUnifiedDiff, type ParsedDiff } from "../../lib/
 import { diffSuffix, type DiffSpec } from "../../lib/diffTab";
 import { ipc, type FileDiff } from "../../lib/ipc";
 import { splitOsPath, toOsPath } from "../../lib/paths";
+import { sameRoot } from "../../lib/roots";
+import { unifiedDiff } from "../../lib/unified";
 import { WHOLE_FILE_CONTEXT, useChanges } from "../../stores/changesStore";
 import { useEditor, type OpenDoc } from "../../stores/editorStore";
 import { useScm } from "../../stores/scmStore";
@@ -43,6 +45,9 @@ export const isComparison = (d: OpenDoc): d is ComparisonDoc => !!d.diff;
 /** What each comparison is, in one sentence — the chip's tooltip. */
 function explain(spec: DiffSpec): string {
   if (spec.source === "commit") return t("O que este commit fez neste arquivo");
+  if (spec.source === "draft") {
+    return t("O rascunho comparado com o disco: o que o Ctrl+S vai gravar");
+  }
   switch (spec.side) {
     case "worktree":
       return t("O que mudou no disco e ainda não foi preparado (índice → disco)");
@@ -56,6 +61,7 @@ function explain(spec: DiffSpec): string {
 /** What the tab says when the comparison comes back empty. */
 function nothingHere(spec: DiffSpec): string {
   if (spec.source === "commit") return t("Este commit não mudou o texto deste arquivo.");
+  if (spec.source === "draft") return t("O que está aqui é o que está no disco.");
   return spec.side === "index"
     ? t("Nada preparado neste arquivo agora — a aba acompanha o repositório e mostra o diff quando algo for preparado.")
     : t("Nada mexido neste arquivo agora — a aba acompanha o repositório e mostra o diff quando o arquivo mudar.");
@@ -90,6 +96,18 @@ export function DiffTab({ doc }: { doc: ComparisonDoc }) {
   const version = useScm((s) => (live ? s.repoOf(doc.root).version : 0));
   const git = useChanges((s) => (live && doc.projectId ? s.gitByProject[doc.projectId] : undefined));
   const showToast = useUI((s) => s.showToast);
+  /**
+   * A draft comparison follows the buffer the way a live one follows the
+   * repository: it is about text that is being typed right now. Deferred, so
+   * the diff is rebuilt when the typing pauses and not on every key.
+   */
+  const draftText = useEditor((s) =>
+    spec.source === "draft"
+      ? (s.docs.find((d) => sameRoot(d.root, doc.root) && d.path === doc.path && !d.diff)
+          ?.text ?? "")
+      : "",
+  );
+  const draft = useDeferredValue(draftText);
 
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +121,35 @@ export function DiffTab({ doc }: { doc: ComparisonDoc }) {
     const mine = ++seq.current;
     setLoading(true);
     setError(null);
+    // The draft comparison has no backend: both texts are already open in
+    // this window, and asking git about a file it has not seen written yet
+    // would answer about the disk, which is the side being compared *to*.
+    if (spec.source === "draft") {
+      const source = useEditor
+        .getState()
+        .docs.find((d) => sameRoot(d.root, doc.root) && d.path === doc.path && !d.diff);
+      const text = source ? unifiedDiff(source.saved, source.text, doc.path) : null;
+      setDiff(
+        source
+          ? {
+              path: doc.path,
+              isBinary: false,
+              truncated: false,
+              external: false,
+              text: text ?? "",
+            }
+          : null,
+      );
+      setError(
+        source
+          ? text === null
+            ? t("O rascunho e o disco estão longe demais para comparar.")
+            : null
+          : t("O arquivo não está mais aberto."),
+      );
+      setLoading(false);
+      return;
+    }
     const ask =
       spec.source === "commit"
         ? ipc.scmCommitFileDiff(doc.root, spec.hash, doc.path)
@@ -121,7 +168,7 @@ export function DiffTab({ doc }: { doc: ComparisonDoc }) {
       });
     // `git` is the subscription, not a value read here: a new summary means a
     // new comparison, and that is the whole reason the tab stays alive.
-  }, [doc.root, doc.path, spec, whole, version, git]);
+  }, [doc.root, doc.path, spec, whole, version, git, draft]);
 
   const profile = useMemo(() => diffProfileOf(diff), [diff]);
   const parsed = useMemo(() => {
@@ -166,8 +213,15 @@ export function DiffTab({ doc }: { doc: ComparisonDoc }) {
   const menuEntries = () =>
     fileMenu(
       docTabMenu(doc, useEditor.getState().docs),
-      { wrap, media: false },
-      { toggleWrap: () => setWrap(!wrap), openExternal: () => {} },
+      { wrap, media: false, dirty: false, git: false, eolCrlf: false, encoding: "utf-8" },
+      {
+        toggleWrap: () => setWrap(!wrap),
+        openExternal: () => {},
+        compareHead: () => {},
+        compareSaved: () => {},
+        setEol: () => {},
+        reopenWith: () => {},
+      },
     );
 
   let body: React.ReactNode;

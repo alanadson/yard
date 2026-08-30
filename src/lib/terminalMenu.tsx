@@ -16,6 +16,8 @@ import {
   Ban,
   FileText,
   Download,
+  Forward,
+  ListX,
   PauseCircle,
   Pencil,
   RotateCw,
@@ -33,12 +35,19 @@ import {
 import type { Action } from "../hooks/useAction";
 import type { MenuEntry } from "../components/ContextMenu";
 import { openTranscriptFor } from "./transcriptOpen";
+import { openHandoffFor } from "./handoffFlow";
+import { useQueue } from "../stores/queueStore";
 import { hasSessions } from "../stores/agentsStore";
 import { useProjects } from "../stores/projectsStore";
 
 function canReadSession(id: string): boolean {
   const term = useProjects.getState().terminal(id);
   return term?.kind === "agent" && hasSessions(term.agentId);
+}
+
+/** A shell has no role and no session: there is nothing to hand over. */
+function isAgent(id: string): boolean {
+  return useProjects.getState().terminal(id)?.kind === "agent";
 }
 
 export interface TerminalActionsOptions {
@@ -68,6 +77,7 @@ export function terminalActionEntries({
   onDeleted,
 }: TerminalActionsOptions): MenuEntry[] {
   const entries: MenuEntry[] = [];
+  const queued = useQueue.getState().count(id);
   if (onRename) {
     entries.push({
       id: "rename",
@@ -124,6 +134,19 @@ export function terminalActionEntries({
           if (ok) void run(() => ipc.killPty(id), t("falha ao matar"));
         }),
     },
+    // Only shows when there is something waiting: an entry reading "Fila (0)"
+    // on every terminal is noise on a feature most menus have nothing to say
+    // about.
+    ...(queued > 0
+      ? ([
+          {
+            id: "queue-clear",
+            label: t("Limpar a fila ({n})", { n: queued }),
+            icon: <ListX size={13} />,
+            onSelect: () => useQueue.getState().clear(id),
+          },
+        ] as MenuEntry[])
+      : []),
     // Never disabled by `running`: the scrollback of a CLI that just died is
     // exactly the one people want to save.
     {
@@ -132,6 +155,18 @@ export function terminalActionEntries({
       icon: <Download size={13} />,
       onSelect: () => void exportTerminalOutput(id),
     },
+    // Only for agents: a shell has no role, no session and nothing to hand
+    // over, the entry would open a composer with a paragraph about nothing.
+    ...(isAgent(id)
+      ? ([
+          {
+            id: "handoff",
+            label: t("Passar o bastão…"),
+            icon: <Forward size={13} />,
+            onSelect: () => void openHandoffFor(id),
+          },
+        ] as MenuEntry[])
+      : []),
     // Only a CLI that writes its session to disk has a transcript to read;
     // for the others the entry would be a toast saying so.
     ...(canReadSession(id)

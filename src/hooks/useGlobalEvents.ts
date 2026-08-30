@@ -21,6 +21,7 @@ import { shouldNotify } from "../lib/notifyAgent";
 import { useChanges } from "../stores/changesStore";
 import { useEditor } from "../stores/editorStore";
 import { notesCenterVisible, notesOverlayVisible } from "../stores/notesStore";
+import { pushOut } from "../lib/notifyOut";
 import { useProjects } from "../stores/projectsStore";
 import { readTail, useTerminals } from "../stores/terminalsStore";
 import { useUI } from "../stores/uiStore";
@@ -152,6 +153,11 @@ export function useGlobalEvents() {
             if (ok) {
               sendNotification({ title: "Yard", body });
             }
+            // And off the machine, when an address is configured: a balloon
+            // only works for someone who is in front of the screen, and an
+            // agent frozen on a question at 3am is exactly the case where
+            // nobody is (`lib/notifyOut.ts`).
+            pushOut("Yard", body, asking ? "blocked" : "finished");
           } catch (e) {
             console.warn("[yard] notificacao indisponivel", e);
           }

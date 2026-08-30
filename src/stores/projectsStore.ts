@@ -584,9 +584,16 @@ export const useProjects = create<ProjectsState>((set, get) => ({
       s.groupBeforeBoard && s.groups.find((g) => g.id === s.groupBeforeBoard);
     const fallback = s.activeProjectId ? s.groupsOf(s.activeProjectId)[0] : undefined;
     const target = remembered || fallback;
-    // Nothing to leave to: the workspace has no project yet. Doing nothing is
-    // right — the button that calls this is not offered in that state either.
-    if (target) get().setActiveGroup(target.id);
+    if (target) {
+      get().setActiveGroup(target.id);
+      return;
+    }
+    // Nothing to leave to: the workspace has no group outside this board. The
+    // panes still have a screen of their own for that — "escolha um grupo para
+    // começar" — and that is where leaving lands. Doing nothing was right only
+    // while the button was hidden in this state; the canvas row is a permanent
+    // door now (`lib/layoutControls.ts`) and must not be a dead click.
+    set({ activeGroupId: null, groupBeforeBoard: null });
   },
 
   setActiveGroup: (id) => {

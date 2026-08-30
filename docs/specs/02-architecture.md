@@ -41,7 +41,7 @@
 | `agents/resolver.rs`                 | Discover the CLIs installed on Windows: `where`, npm `.cmd` shims, registry                      |
 | `agents/sessions.rs`                 | Read the agents' local sessions (`~/.claude/projects/*.jsonl`, `~/.codex/sessions`…) for "resume" |
 | `agents/tail.rs`                     | Tail of the agent's active session → `session://feed` event (feeds the "Ao Vivo" (Live) overlay) |
-| `git.rs`                             | *Reading* the repository: `git status --porcelain=v2` (with both sides — index and disk — per file), per-file diff, the fronts' worktrees |
+| `git.rs`                             | *Reading* the repository: `git status --porcelain=v2` (with both sides — index and disk — per file), per-file diff, the fronts' worktrees, and `worktree_preflight` — the read-only answer to "what would happen if I created this?" that the front dialog is built on. Creating goes through `worktree_provision`, which takes the base and the folder the plan froze, bounds `worktree add` with a deadline (`YARD_WORKTREE_ADD_TIMEOUT_MS`, floor 180 s), carries `-c core.longpaths=true` on Windows, sets `push.autoSetupRemote` when nobody else has, and copies the ignored paths listed in `.worktreeinclude` into the new worktree; undoing goes through `branch_delete_if_unchanged` (`git update-ref -d <ref> <old-oid>`), which refuses a branch that moved |
 | `scm.rs`                             | *Writing* to the repository (the "Controle" (Source Control) tab): stage/unstage/discard, commit, branch, merge/rebase/revert/reset, stash, tags, fetch/pull/push, `git apply` of a single hunk, per-side diff. Every path goes through `rel_paths` and every name through `check_branch_name` |
 | `persistence/db.rs`                  | SQLite (bundled rusqlite), migrations, monotonic write guard                                      |
 | `persistence/workspace.rs`           | Snapshot/restore of projects, groups, layouts and terminals                                      |
@@ -61,12 +61,19 @@ src/
 │   ├── terminalsStore.ts    # id → status/title/activity (mirror of the backend)
 │   ├── changesStore.ts      # git status/diffs for the changes panel
 │   ├── scmStore.ts          # "Controle" tab: header, branches, stash, history and the writes
+│   ├── worktreesStore.ts    # `git worktree list` per project: the branch of each row, the fronts to adopt
 │   ├── liveStore.ts         # reduction of the session feed ("Ao Vivo" overlay)
 │   └── uiStore.ts           # theme, modals, focused pane, zoom
+├── lib/provision/     # opening a front, from the plan to the rollback
+│   ├── plan.ts              # git's answers + what the app knows → the plan the dialog shows
+│   ├── batch.ts             # runs it one row at a time; journal, compensation, policies
+│   ├── journal.ts           # what this operation wrote — the only thing a rollback may read
+│   ├── errors.ts            # the stable catalogue of refusals (code, severity, sentence)
+│   └── effects.ts           # the boundary: ipc + stores, one call per method, no opinions
 ├── components/
 │   ├── TitleBar/            # custom bar (decorations: false), min/max/close buttons
 │   ├── StatusBar/           # footer: agents waiting, branch, flows, RAM; Busca/composer/shortcuts buttons
-│   ├── ProjectSidebar/      # tree: projects → groups → terminals
+│   ├── ProjectSidebar/      # tree: projects → ground/fronts (branches) → terminals
 │   ├── WorkspaceGrid/       # react-resizable-panels: automatic/grid/spotlight layouts
 │   ├── CanvasView/          # the group's other surface: infinite canvas (cards, notes, drawing)
 │   ├── TerminalPane/        # frame: title, sub-tabs, actions (restart/suspend/kill)
@@ -211,7 +218,15 @@ CREATE TABLE IF NOT EXISTS agent_sessions (   -- index of what the agents save l
 
 The canvas, the fronts, the routines and the roles live inside the group's
 `layout_json` (`layoutJson.canvas`, `layout_json.floor`) — that is what let the
-whole canvas fit with almost no schema. The one column it did end up costing is
+whole canvas fit with almost no schema. It is also what carries the model of a
+project's children: a group with no `floor` (or `kind: "ground"`) is the
+project's own root, and one with `kind: "isolated"` is a `git worktree` with a
+branch of its own. Bare folder-groups are no longer created anywhere; the ones
+already in the file (`kind: "plain"`) keep working and are shown as running in
+the root. `floor.adopted` marks a worktree that was on the disk before the
+front and must survive it. The golden rule of `normalizeFloor` applies: a
+field it does not copy is gone on the next save, and this one decides whether
+closing a front deletes a folder the app never made. The one column it did end up costing is
 `terminals.surface` (schema v6): the canvas and the pane grid used to draw the
 **same** terminals, and separating them needs each row to say which of the two
 it belongs to. `layoutJson` carries the other half of the split —

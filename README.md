@@ -31,15 +31,29 @@ UI or switching layouts never disturbs an agent in the middle of a task.
 
 - **Real terminals, many at once.** ConPTY + Job Objects: kill takes the whole
   process tree, an app crash leaves no orphan, scrollback survives restarts.
-- **Projects → groups → panes.** Automatic, fixed grid, spotlight, and an
-  **infinite canvas** where terminals are cards you can wire together, annotate
-  with sticky notes, drawings and arrows.
+- **Projects → branches → panes.** A project's children are the **ground** (its
+  own root, on whatever branch is checked out there) and its **fronts** (a `git
+  worktree` each): no loose folders, so no two of them share one working copy.
+  Automatic, fixed grid, spotlight, and an **infinite canvas** where terminals
+  are cards you can wire together, annotate with sticky notes, drawings and
+  arrows.
 - **The `yard` CLI — an agent↔app bridge.** Every terminal Yard opens has
   `yard` on its PATH: agents ask each other questions, wait on one another,
-  share notes as memory, recruit teammates, schedule routines — and the wires
-  drawn on the canvas decide who may talk to whom.
-- **Fronts.** One `git worktree` per task, with its own group and canvas; fan
-  a request out to N fronts, compare the results, land the winner.
+  search what any terminal printed, hand each other the baton, share notes as
+  memory, recruit teammates, schedule routines, and the wires drawn on the
+  canvas decide who may talk to whom. It crosses an SSH connection too, when
+  you turn that on per agent.
+- **Nothing said is lost.** One search box finds a line any terminal printed,
+  the ones still open and the ones closed hours ago, and takes you to it.
+- **Fronts, and the pull request at the end of them.** One `git worktree` per
+  task, with its own group and canvas, on a new branch, on an existing one, or
+  adopting a worktree that was already on the disk (which closing the front
+  never deletes); fan a request out to N fronts, compare
+  the results, land the winner, or open the PR from the same panel, watch its
+  checks, and pull the reviewers' comments back in as annotations on the diff
+  that an agent can act on. Nothing here pushes on your behalf, and every row
+  says where that leaves its branch: only here, N to send, published, or gone
+  from the server.
 - **A bench beside the terminals.** Files, tasks, prompts and full source
   control (stage by hunk or by line, branches, stash, history) one shortcut
   away. A file or markdown document opens as a tab next to the agent editing it.
@@ -54,8 +68,14 @@ UI or switching layouts never disturbs an agent in the middle of a task.
   transcript; *Custos e uso* buckets tokens and estimated cost by day, project,
   agent and model.
 - **Automation.** Routines fire by the clock; *gatilhos* fire on events — when
-  a CLI finishes, stops at a question or exits, send a prompt to another one,
-  notify, or start a flow (`yard trigger` from the CLI too).
+  a CLI finishes, stops at a question, exits, or the day's spend goes past the
+  ceiling you set, send a prompt to another one, notify, or start a flow
+  (`yard trigger` from the CLI too). A prompt for a CLI that is busy waits in
+  that CLI's queue and goes in the moment it is free.
+- **It can reach you when you are not there.** Every notification can also
+  `POST` to an address you paste in (ntfy, Discord, Slack, your own), which is
+  what makes an agent frozen on a question at 3am something you find out
+  about.
 - **Terminal ergonomics.** Ctrl+click opens the file (at the line) or the URL
   an agent printed; one keystroke broadcasts to every CLI of the group; a
   terminal's output saves to a file with or without the ANSI colors.

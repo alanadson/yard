@@ -65,3 +65,32 @@ describe("parseDiffSpec", () => {
     expect(parseDiffSpec({ source: "commit", hash: 42 })).toBeNull();
   });
 });
+
+/**
+ * The one comparison git cannot answer: the draft against what is on disk.
+ *
+ * It is a `DiffSpec` like the others so it gets everything the others already
+ * have, a tab of its own, a name, an id that cannot collide, and a record
+ * that survives a reload. What it does not have is a backend: the two texts
+ * are both in the store, and the diff is built in the front end
+ * (`lib/unified.ts`).
+ */
+describe("the draft comparison", () => {
+  it("is named for what it shows", () => {
+    expect(diffSuffix({ source: "draft" })).toBe("Não salvo");
+  });
+
+  it("gets a tab of its own, apart from the file and from every git side", () => {
+    const file = "C:/r" + String.fromCharCode(0) + "a.ts";
+    const draft = diffDocId("C:/r", "a.ts", { source: "draft" });
+
+    expect(draft).not.toBe(file);
+    expect(draft).not.toBe(
+      diffDocId("C:/r", "a.ts", { source: "tree", side: "head", origPath: null }),
+    );
+  });
+
+  it("comes back from the record it wrote", () => {
+    expect(parseDiffSpec({ source: "draft" })).toEqual({ source: "draft" });
+  });
+});
