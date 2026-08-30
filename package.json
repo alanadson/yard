@@ -20,6 +20,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "smoke": "node scripts/smoke.mjs",
     "tauri": "tauri",
     "app": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/yard.ps1",
     "app:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/yard.ps1 -Release",
