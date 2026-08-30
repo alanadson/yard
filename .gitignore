@@ -20,6 +20,18 @@ lerna-debug.log*
 
 .yard/
 
+# A YARD_DATA_DIR pointed at the repository: SQLite state, scrollback and the
+# bridge shims. Never source, always someone's real session.
+.tmp/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# The release workflow writes the code-signing PFX here before importing it.
+certificate/
+
 .archive
 .impeccable
 .claude/settings.local.json
