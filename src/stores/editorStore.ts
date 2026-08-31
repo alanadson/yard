@@ -61,7 +61,7 @@ import {
   push as pushClosed,
   type ClosedTab,
 } from "../lib/closedTabs";
-import { closesWith, previewToReplace, type CloseScope } from "../lib/tabRules";
+import { closesWith, type CloseScope } from "../lib/tabRules";
 import { rootedPathKey, sameRoot } from "../lib/roots";
 import { useProjects } from "./projectsStore";
 import { useReopen } from "./reopenStore";
@@ -130,18 +130,11 @@ export interface OpenDoc {
   error: string | null;
   saving: boolean;
   /**
-   * Kept at the front of the bar, and left alone by "fechar as outras", by
-   * "fechar as da direita" and by the preview tab. Survives a restart: a pin
-   * is a statement about the file, not about the session.
+   * Kept at the front of the bar, and left alone by "fechar as outras" and
+   * by "fechar as da direita". Survives a restart: a pin is a statement about
+   * the file, not about the session.
    */
   pinned?: boolean;
-  /**
-   * Opened by a single click on the tree, and replaced by the next single
-   * click in the same pane. Typing in it, or opening it any other way, makes
-   * it permanent. Deliberately **not** persisted: a tab that came back from
-   * the last session is one the user kept, not one they glanced at.
-   */
-  preview?: boolean;
   /**
    * Set when the tab is a **comparison**, not a file: the diff of `path`
    * opened beside the CLIs from the Source Control tab. It has no text of its
@@ -206,7 +199,6 @@ function tabInfos(docs: readonly OpenDoc[]) {
     groupId: d.groupId,
     slot: d.slot,
     pinned: d.pinned === true,
-    preview: d.preview === true,
     dirty: isDirty(d) && !isReadOnly(d),
   }));
 }
@@ -330,7 +322,7 @@ interface StoredDoc {
   modifiedAt: number;
   crlf: boolean;
   bom: boolean;
-  /** The tab was pinned. A preview is not stored: a restored tab was kept. */
+  /** The tab was pinned. */
   pinned?: boolean;
   /** Present only when the tab had unsaved text. */
   draft?: string;
@@ -483,10 +475,11 @@ interface EditorState {
   refreshTree: () => void;
 
   /**
-   * Opens a file as a tab. `preview` is the single click on the tree: the tab
-   * takes the place of the pane's other preview instead of adding to the bar.
+   * Opens a file as a tab of its own. Every door into a file leads here (the
+   * tree, quick open, a link in the rendered markdown, the changes panel) and
+   * none of them takes the place of a tab that is already on the bar.
    */
-  openFile: (path: string, opts?: { preview?: boolean }) => Promise<void>;
+  openFile: (path: string) => Promise<void>;
   /**
    * Opens the diff of `path` as a tab beside the CLIs — a comparison, not
    * the file: read-only, nothing to read from disk, and a second ask for the
@@ -548,8 +541,6 @@ interface EditorState {
   /** Opens the tree on `path` and puts its row into the rename box. */
   askRename: (path: string) => void;
   clearRenameRequest: () => void;
-  /** Makes a preview tab permanent: the file is being worked on now. */
-  keepOpen: (id: string) => void;
   /** Open docs of a group/project that still hold text nobody saved. */
   unsavedOf: (scope: DocScope) => OpenDoc[];
   /** Drops every tab of a group/project that is leaving the workspace. */
@@ -850,7 +841,7 @@ export const useEditor = create<EditorState>((set, get) => {
 
     // --- documents ----------------------------------------------------------
 
-    openFile: async (path, opts) => {
+    openFile: async (path) => {
       const { root, projectId, docs } = get();
       if (!root) return;
       const id = docId(root, path);
@@ -875,17 +866,8 @@ export const useEditor = create<EditorState>((set, get) => {
         // would take the file away from the split the user built.
         showTab(isOpen.groupId, isOpen.slot, id, target);
         set({ activeId: id, open: target.overlay });
-        // Asked for by any means other than a glance, it stops being one.
-        if (!opts?.preview) get().keepOpen(id);
         return;
       }
-
-      // A single click on the tree takes the place of the pane's other
-      // glance, which is what keeps browsing a big tree from costing one tab
-      // per file looked at.
-      const replacing = opts?.preview
-        ? previewToReplace(tabInfos(get().docs), target.groupId, target.slot)
-        : null;
 
       try {
         const file = await ipc.fsReadText(root, path);
@@ -897,13 +879,12 @@ export const useEditor = create<EditorState>((set, get) => {
         }
         set((s) => ({
           docs: [
-            ...s.docs.filter((d) => d.id !== replacing),
+            ...s.docs,
             {
               id,
               projectId,
               groupId: target.groupId,
               slot: target.slot,
-              ...(opts?.preview ? { preview: true } : {}),
               root,
               path,
               text: file.text,
@@ -1198,12 +1179,7 @@ export const useEditor = create<EditorState>((set, get) => {
 
     togglePin: (id) => {
       set((s) => ({
-        docs: s.docs.map((d) =>
-          d.id === id
-            ? // Pinning also ends a preview: the tab was just kept on purpose.
-              { ...d, pinned: !d.pinned, preview: d.pinned ? d.preview : false }
-            : d,
-        ),
+        docs: s.docs.map((d) => (d.id === id ? { ...d, pinned: !d.pinned } : d)),
       }));
       get().persist();
     },
@@ -1258,13 +1234,6 @@ export const useEditor = create<EditorState>((set, get) => {
 
     clearRenameRequest: () => set({ renameRequest: null }),
 
-    keepOpen: (id) => {
-      if (!get().docs.some((d) => d.id === id && d.preview)) return;
-      set((s) => ({
-        docs: s.docs.map((d) => (d.id === id ? { ...d, preview: false } : d)),
-      }));
-    },
-
     unsavedOf: (scope) =>
       get().docs.filter((d) => inScope(d, scope) && isDirty(d) && !isReadOnly(d)),
 
@@ -1316,9 +1285,6 @@ export const useEditor = create<EditorState>((set, get) => {
     },
 
     setText: (id, text) => {
-      // Typing is the clearest statement there is that this tab is not a
-      // glance any more.
-      get().keepOpen(id);
       patchDoc(id, { text, error: null });
     },
 

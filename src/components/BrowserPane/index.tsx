@@ -210,7 +210,7 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
           aria-label={t("Voltar")}
           onClick={() => void ipc.portalBack(tab.id).catch(() => {})}
         >
-          <ArrowLeft size={12} />
+          <ArrowLeft size={18} />
         </button>
         {/* Back without forward is amputated navigation — and the command
             already existed in the backend, with no screen calling it. */}
@@ -220,7 +220,7 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
           aria-label={t("Avançar")}
           onClick={() => void ipc.portalForward(tab.id).catch(() => {})}
         >
-          <ArrowRight size={12} />
+          <ArrowRight size={18} />
         </button>
         <button
           className="icon-btn"
@@ -228,7 +228,7 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
           aria-label={t("Recarregar")}
           onClick={() => void ipc.portalReload(tab.id).catch(() => {})}
         >
-          <RefreshCw size={12} />
+          <RefreshCw size={18} />
         </button>
         {local && (
           <button
@@ -243,7 +243,7 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
             aria-pressed={liveOn}
             onClick={() => patch(tab.id, { live: !liveOn })}
           >
-            <RadioTower size={12} />
+            <RadioTower size={18} />
           </button>
         )}
         <button
@@ -258,7 +258,7 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
           aria-pressed={grabbing}
           onClick={toggleGrab}
         >
-          <MousePointerClick size={12} />
+          <MousePointerClick size={18} />
         </button>
         <form
           className="cv-portal-url"

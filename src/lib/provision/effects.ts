@@ -17,13 +17,12 @@
  *   commit an agent made a second ago.
  */
 import { ipc } from "../ipc";
-import { placeCard } from "../canvasWrite";
 import { floorHookEnv, type FloorHooks, type FloorMeta, type FloorTask } from "../floors";
 import { runFloorHooks } from "../floorHooks";
 import { closeTerminal, startTerminalProcess } from "../lifecycle";
 import { deliverBriefing } from "../roleBrief";
 import { roleLaunch } from "../roles";
-import { applyScore, serializeGroup } from "../scores";
+import { cloneGroundInto } from "../groundClone";
 import { defaultRoleOf, titleFor } from "../agentDefaults";
 import { useAgentDefaults } from "../../stores/agentDefaultsStore";
 import { useProjects } from "../../stores/projectsStore";
@@ -109,9 +108,11 @@ export function yardEffects(input: EffectsInput): ProvisionEffects {
       });
       if (input.copyGround) {
         const ground = groundOf();
-        if (ground && ground.id !== groupId) {
-          applyScore(serializeGroup(ground.id, item.displayName), groupId, { cwd: at.path });
-        }
+        // The ground's *panes*, not its board. Cloning used to go through a
+        // score, and a score landing on an empty group turns it to the
+        // canvas — so opening a front dropped the user on a board, with the
+        // ground's tabs nowhere in it. The canvas is entered on purpose.
+        if (ground && ground.id !== groupId) cloneGroundInto(ground.id, groupId, at.path);
       }
       return groupId;
     },
@@ -146,7 +147,6 @@ export function yardEffects(input: EffectsInput): ProvisionEffects {
         args: launch.args,
         cwd: at.path,
       });
-      const surface = store().layoutOf(groupId).surface === "canvas" ? "canvas" : "grid";
       const terminalId = store().addTerminal({
         groupId,
         title: titleFor(defaults.defaults, item.agentId, label),
@@ -155,9 +155,12 @@ export function yardEffects(input: EffectsInput): ProvisionEffects {
         program: born.program,
         args: born.args,
         cwd: at.path,
-        surface,
+        // A pane, always. It used to follow whatever the destination was
+        // showing, which meant provisioning onto a ground with the board up
+        // dealt the agent a card — the canvas being written to by something
+        // that has nothing to do with it.
+        surface: "grid",
       });
-      if (surface === "canvas") placeCard(groupId, terminalId);
       await startTerminalProcess(terminalId, {
         program: born.program,
         args: born.args,

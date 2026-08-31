@@ -167,7 +167,7 @@ export default {
   "ex.: npm run dev": "e.g. npm run dev",
   "Teardown (ao encerrar)": "Teardown (on close)",
   "ex.: npm run clean": "e.g. npm run clean",
-  "Frentes: cópias isoladas do repositório, cada uma com o próprio canvas": "Fronts: isolated copies of the repository, each with its own canvas",
+  "Frentes: cópias isoladas do repositório, cada uma com a própria branch e os próprios painéis": "Fronts: isolated copies of the repository, each with its own branch and its own panes",
   "Nenhum terminal vivo nesta frente.": "No live terminal on this front.",
   "Frente descarregada com {n} falha(s).": "Front unloaded with {n} failure(s).",
   "Frente \"{name}\" descarregada — sessões preservadas.": "Front \"{name}\" unloaded — sessions preserved.",

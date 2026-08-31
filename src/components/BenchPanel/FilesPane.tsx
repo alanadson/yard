@@ -52,16 +52,16 @@ export function FilesPane({
   }, [focusTick]);
 
   /**
-   * A single click on the tree is a glance: the tab opens as a preview and the
-   * next single click takes its place. Typing in it, double-clicking its tab
-   * or reaching the file any other way makes it permanent
-   * (`lib/tabRules.ts`). Browsing a big tree used to cost one tab per file
-   * looked at.
+   * A single click on the tree opens the file as a tab of its own, beside the
+   * ones already on the bar. It used to open as a "preview" that the next
+   * click threw away, and browsing two files in a row left only the second
+   * one: closing a tab is the user's gesture, never a side effect of opening
+   * another file.
    */
   const open = (path: string) => {
     void useEditor
       .getState()
-      .openFile(path, { preview: true })
+      .openFile(path)
       .catch((e) => showToast(t("Não consegui abrir: {e}", { e: String(e) }), "error"));
   };
 

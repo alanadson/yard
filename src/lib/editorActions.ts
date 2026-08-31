@@ -2,6 +2,8 @@ import { ask } from "@tauri-apps/plugin-dialog";
 
 import { copyText } from "./clipboard";
 import { editorTabMenu } from "./editorTabMenu";
+import { paneTabs } from "./paneTabs";
+import { moveTabBy } from "./tabDrag";
 import { closesWith } from "./tabRules";
 import { useBench } from "../stores/benchStore";
 import { ipc } from "./ipc";
@@ -69,7 +71,6 @@ export function docTabMenu(doc: OpenDoc, docs: readonly OpenDoc[]): MenuEntry[] 
             groupId: d.groupId,
             slot: d.slot,
             pinned: d.pinned === true,
-            preview: d.preview === true,
             dirty: isDirty(d) && !isReadOnly(d),
           })),
           id,
@@ -80,6 +81,11 @@ export function docTabMenu(doc: OpenDoc, docs: readonly OpenDoc[]): MenuEntry[] 
         })();
       },
       togglePin: (id) => useEditor.getState().togglePin(id),
+      // One step along the pane's whole bar, which may put the file past a
+      // CLI or a page — the kinds share one bar (`lib/paneBar.ts`).
+      moveBy: (id, dir) => {
+        if (doc.groupId) moveTabBy("doc", id, doc.groupId, doc.slot, dir);
+      },
       revealInTree: (path) => {
         // The tree opens the lineage on its own when the file is opened; this
         // is the same door, for a file that is already open.
@@ -123,5 +129,6 @@ export function docTabMenu(doc: OpenDoc, docs: readonly OpenDoc[]): MenuEntry[] 
         void ipc.revealPath(osPath).catch((e) => toast(String(e), "error"));
       },
     },
+    doc.groupId ? paneTabs(doc.groupId, doc.slot) : null,
   );
 }

@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 /// Schema version. Every new migration increments this and gets a block in
 /// `migrate`. Never rewrite a migration that has already shipped.
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 pub fn open() -> anyhow::Result<Connection> {
     crate::paths::ensure_dirs()?;
@@ -41,6 +41,7 @@ fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
 
 fn migrate(conn: &Connection) -> anyhow::Result<()> {
     quarantine_prototype(conn)?;
+    ensure_added_columns(conn)?;
 
     let current = user_version(conn)?;
     if current >= SCHEMA_VERSION {
@@ -90,7 +91,8 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
               resume_json TEXT,
               sort        INTEGER NOT NULL DEFAULT 0,
               alive       INTEGER NOT NULL DEFAULT 0,
-              created_at  INTEGER NOT NULL DEFAULT 0
+              created_at  INTEGER NOT NULL DEFAULT 0,
+              pinned      INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -214,6 +216,15 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         rebuild_groups_without_project_constraint(conn)?;
         conn.pragma_update(None, "user_version", 7)?;
         tracing::info!("migracao aplicada: schema v7");
+    }
+
+    if current < 8 {
+        // The pin the tab bar already gave files, now for the CLIs: a tab kept
+        // at the front of its bar that "fechar as outras" does not take. The
+        // column itself is put in place by `ensure_added_columns`, which runs
+        // whatever the stamp says; this step only moves the stamp.
+        conn.pragma_update(None, "user_version", 8)?;
+        tracing::info!("migracao aplicada: schema v8");
     }
 
     Ok(())
@@ -441,6 +452,39 @@ fn has_table(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
     .map(|found| found.is_some())
 }
 
+/// Columns that are only ever *added*, checked on every boot instead of being
+/// hung off the version ladder.
+///
+/// `user_version` is one integer, and this repository is worked on by several
+/// agents at once: two branches both called their next step "8", one adding
+/// `terminals.chat` and the other `terminals.pinned`. Whichever built first
+/// stamped the database 8, and `if current < 8` was false from then on. The
+/// other column was never added and the next boot could not read the
+/// workspace at all.
+///
+/// The ladder stays for what genuinely needs an order (rebuilding a table,
+/// moving data between them). A column that is simply missing needs no order:
+/// it is declared here, and put back whenever it is not there. A database the
+/// ladder has not created yet has nothing to repair: its `CREATE TABLE`
+/// already names every column.
+fn ensure_added_columns(conn: &Connection) -> rusqlite::Result<()> {
+    const ADDED: &[(&str, &str, &str)] = &[(
+        "terminals",
+        "pinned",
+        "ALTER TABLE terminals ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+    )];
+    for (table, column, ddl) in ADDED {
+        if !has_table(conn, table)? {
+            continue;
+        }
+        if !has_column(conn, table, column)? {
+            conn.execute(ddl, [])?;
+            tracing::info!("coluna reposta: {table}.{column}");
+        }
+    }
+    Ok(())
+}
+
 fn has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
     // `PRAGMA` does not accept a bound parameter; `table` here is always a
     // literal from our own code, never user input.
@@ -545,6 +589,82 @@ mod tests {
             })
             .unwrap();
         assert_eq!(surface, None);
+    }
+
+    /// A pinned tab sits at the front of its bar and survives "fechar as
+    /// outras". Files had the pin in the front end's own store; CLIs are rows
+    /// here, so the flag has to be a column, and an old row has to read as
+    /// **not** pinned rather than as missing.
+    #[test]
+    fn v8_adds_the_pinned_column_and_old_terminals_read_as_loose() {
+        let c = conn();
+        c.execute_batch(
+            r#"
+            CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, path TEXT, color TEXT, icon TEXT, sort INTEGER, created_at INTEGER);
+            CREATE TABLE groups (id TEXT PRIMARY KEY, project_id TEXT, name TEXT, layout_json TEXT, suspended INTEGER, sort INTEGER);
+            CREATE TABLE terminals (id TEXT PRIMARY KEY, group_id TEXT, slot INTEGER, surface TEXT, title TEXT, kind TEXT, agent_id TEXT, program TEXT, args_json TEXT, cwd TEXT, resume_json TEXT, sort INTEGER, alive INTEGER, created_at INTEGER);
+            INSERT INTO projects VALUES ('p1', 'yard', 'C:\Workspace\Code\yard', NULL, NULL, 0, 0);
+            INSERT INTO groups VALUES ('g1', 'p1', 'Principal', '{}', 0, 0);
+            INSERT INTO terminals VALUES ('t1', 'g1', 0, 'grid', NULL, 'agent', 'claude', 'claude.exe', '[]', 'C:\Workspace\Code\yard', NULL, 0, 0, 0);
+            PRAGMA user_version = 7;
+            "#,
+        )
+        .unwrap();
+
+        migrate(&c).unwrap();
+
+        assert!(has_column(&c, "terminals", "pinned").unwrap());
+        let pinned: i64 = c
+            .query_row("SELECT pinned FROM terminals WHERE id = 't1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(pinned, 0);
+    }
+
+    /// The bug this locks down, seen on a real machine.
+    ///
+    /// `user_version` is a single integer, and two branches of this repository
+    /// both called their next step "8": one added `terminals.chat`, the other
+    /// `terminals.pinned`. The `chat` build ran first, stamped the database 8,
+    /// and from then on `if current < 8` was false forever. The `pinned`
+    /// column was never added, and the very next boot died on
+    /// `no such column: pinned` with the whole workspace unreadable.
+    ///
+    /// So adding a column may not depend on the stamp being behind. The
+    /// version ladder stays for structural work (rebuilding a table, moving
+    /// data); a column that is merely *missing* is put back on every boot.
+    #[test]
+    fn a_column_missing_from_a_database_already_stamped_current_is_still_added() {
+        let c = conn();
+        c.execute_batch(
+            r#"
+            CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, path TEXT, color TEXT, icon TEXT, sort INTEGER, created_at INTEGER);
+            CREATE TABLE groups (id TEXT PRIMARY KEY, project_id TEXT, name TEXT, layout_json TEXT, suspended INTEGER, sort INTEGER);
+            CREATE TABLE terminals (id TEXT PRIMARY KEY, group_id TEXT, slot INTEGER, surface TEXT, title TEXT, kind TEXT, agent_id TEXT, program TEXT, args_json TEXT, cwd TEXT, resume_json TEXT, sort INTEGER, alive INTEGER, created_at INTEGER, chat INTEGER NOT NULL DEFAULT 0);
+            INSERT INTO projects VALUES ('p1', 'yard', 'C:\Workspace\Code\yard', NULL, NULL, 0, 0);
+            INSERT INTO groups VALUES ('g1', 'p1', 'Principal', '{}', 0, 0);
+            INSERT INTO terminals VALUES ('t1', 'g1', 0, 'grid', NULL, 'agent', 'claude', 'claude.exe', '[]', 'C:\Workspace\Code\yard', NULL, 0, 0, 0, 0);
+            "#,
+        )
+        .unwrap();
+        // Stamped as up to date by the other branch, and the ladder will not
+        // look at it again.
+        c.pragma_update(None, "user_version", SCHEMA_VERSION).unwrap();
+
+        migrate(&c).unwrap();
+
+        assert!(has_column(&c, "terminals", "pinned").unwrap());
+        let pinned: i64 = c
+            .query_row("SELECT pinned FROM terminals WHERE id = 't1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(pinned, 0);
+        // The column the other branch added is left exactly where it was.
+        assert!(has_column(&c, "terminals", "chat").unwrap());
     }
 
     /// A canvas board ("quadro") is a group that belongs to **no** project:

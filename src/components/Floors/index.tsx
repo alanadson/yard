@@ -2,7 +2,9 @@
  * Floors: overview and creation.
  *
  * A floor is a sibling group of the ground with its own git worktree
- * (`.yard/floors/<slug>`), its own canvas and an isolated cwd. The button
+ * (`.yard/floors/<slug>`) and an isolated cwd. It opens on its panes, like
+ * any other group — the canvas is its other surface, entered on purpose and
+ * never by creating a front (`lib/groundClone.ts`). The button
  * sits in the bottom-right corner of the workspace (next to the zoom control
  * in canvas mode); the overview lists ground + floors with a branch badge and
  * allows landing (merge onto the ground), comparing floors, fan-out of one
@@ -111,7 +113,7 @@ export function FloorsControl({ groupId }: { groupId: string }) {
       <button
         ref={buttonRef}
         className={`floors-btn ${open ? "is-active" : ""}`}
-        data-tip-side="top" data-tip-wrap="" data-tip={t("Frentes: cópias isoladas do repositório, cada uma com o próprio canvas")}
+        data-tip-side="top" data-tip-wrap="" data-tip={t("Frentes: cópias isoladas do repositório, cada uma com a própria branch e os próprios painéis")}
         aria-label={t("Frentes")}
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}

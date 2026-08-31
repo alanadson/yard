@@ -2,7 +2,12 @@
  * The kv gives back text written by an older build, by hand, or by nobody —
  * the parse has to make a browser tab out of it or drop it, never crash.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../lib/ipc", () => ({
+  ipc: { writePref: vi.fn(async () => undefined), readPrefs: vi.fn(async () => ({})) },
+  on: vi.fn(async () => () => {}),
+}));
 
 import { parsePaneBrowsers } from "./browsersStore";
 
@@ -17,7 +22,15 @@ const row = (patch: Record<string, unknown> = {}) => ({
 describe("parsePaneBrowsers", () => {
   it("reads a full tab back", () => {
     const raw = JSON.stringify([
-      row({ slot: 2, title: "Yard", name: "Preview", storage: "workspace", muted: true, live: false }),
+      row({
+        slot: 2,
+        title: "Yard",
+        name: "Preview",
+        storage: "workspace",
+        muted: true,
+        live: false,
+        pinned: true,
+      }),
     ]);
     expect(parsePaneBrowsers(raw)).toEqual([
       {
@@ -31,8 +44,22 @@ describe("parsePaneBrowsers", () => {
         storage: "workspace",
         muted: true,
         live: false,
+        pinned: true,
       },
     ]);
+  });
+
+  /**
+   * A pinned page holds the front of its bar and survives "fechar as outras",
+   * so it is worth nothing if the kv forgets it between sessions. `undefined`
+   * for a loose tab, like `muted`: the kv stays free of `false` for every tab
+   * nobody ever pinned.
+   */
+  it("remembers a pinned page, and leaves a loose one unmarked", () => {
+    const raw = JSON.stringify([row({ id: "fixa", pinned: true }), row({ id: "solta" })]);
+    const tabs = parsePaneBrowsers(raw);
+    expect(tabs.find((t) => t.id === "fixa")?.pinned).toBe(true);
+    expect(tabs.find((t) => t.id === "solta")?.pinned).toBeUndefined();
   });
 
   it("survives junk, and an empty kv", () => {
@@ -65,3 +92,4 @@ describe("parsePaneBrowsers", () => {
     expect(tab.title).toBeUndefined();
   });
 });
+

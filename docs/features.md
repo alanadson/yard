@@ -413,7 +413,12 @@ adopts it as a front on the spot.
 
 **Fronts.** An isolated copy of the work per task: each front is a
 `git worktree` at `<project>\.yard\floors\<slug>` (branch `yard/<slug>` by
-default), with its own group and canvas, and the ground stays untouched.
+default), with its own group, and the ground stays untouched. It opens on
+its panes: "Clonar o layout do chão" copies the ground's *grid* — which
+CLIs, in which pane, in the bar's order, under the same Grade/Holofote —
+stopped and rooted at the front's worktree (`lib/groundClone.ts`). The
+canvas is the group's other surface, and opening a front never takes
+anybody there.
 
 "Abrir frente" is where a project grows one, and it does not write anything
 while it is open. Every keystroke asks the backend what it *would* do —
@@ -1090,6 +1095,23 @@ nenhum teste de unidade cobre e que quebra calado: o binário de verdade subindo
 com um diretório de dados vazio, criando e migrando o SQLite, botando a ponte de
 pé e saindo sem panic. Um marcador que some é falha; uma linha nova no log não
 é, senão o teste vira o primeiro a ser comentado.
+
+**One bar, one order** (2026-08-31). The pane's bar used to be painted in
+sections — the CLIs, then the files, then the pages, then the notebook — and a
+drag could only land inside its own section: a CLI could not be put between
+`docker-compose.yml` and `AGENTS.md`, however far the tab was carried. The
+sections are gone. Any tab drops anywhere in any bar, and the order the user
+arranges is saved with the group's layout (`GroupLayout.tabOrder`, one list of
+ids per pane) because no tab store can hold an order that interleaves the other
+two. `lib/paneBar.ts` is the single authority: the bar, the keyboard
+(Ctrl+Tab, Ctrl+1..9) and "Mover para a esquerda/direita" all read it, so a tab
+opened after the arranging goes to the end of the bar and a pin still holds the
+front — of the whole bar now, there being no section left to be at the front
+of. The drag itself was rebuilt around it: the tab leaves the bar when it is
+picked up, the tabs after the drop point slide aside to open a hole exactly as
+wide as what is coming (no more caret line, the hole *is* the answer), the
+strip scrolls itself when the tab is held at its edge, and the ghost settles
+into the hole on release instead of blinking out.
 
 ## Golden rule
 

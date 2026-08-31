@@ -516,6 +516,12 @@ describe("tabs", () => {
  * F5, an HMR round and a webview reload never reach `onCloseRequested` — the
  * only thing between a refresh and lost typing is this record.
  */
+/**
+ * "Mover para a esquerda/direita" on a file tab. The bar is the array order,
+ * so a step is a splice, and the pin is what makes it more than that: a
+ * pinned file holds the front of the bar, and a step that dropped it behind a
+ * loose one would be undone by the next render.
+ */
 describe("surviving a reload", () => {
   it("stores the draft of what is dirty and only the tab of what is clean", () => {
     const stored = parseStoredDocs(
@@ -849,6 +855,20 @@ describe("where the tab is born", () => {
       groups[0].id,
       groups[0].id,
     ]);
+  });
+
+  it("a file opened after another gets its own tab, it never takes its place", async () => {
+    // The regression: the tree's single click opened the tab as a "preview"
+    // and the next single click threw it away, so browsing two files in a row
+    // left only the second one on the bar. Opening a file adds a tab, full
+    // stop: closing one is the user's own gesture.
+    await useEditor.getState().openFile("a.ts");
+    fsReadText.mockResolvedValue({ ...onDisk, path: "b.ts" });
+    await useEditor.getState().openFile("b.ts");
+
+    const { docs, activeId } = useEditor.getState();
+    expect(docs.map((d) => d.path)).toEqual(["a.ts", "b.ts"]);
+    expect(docs.find((d) => d.id === activeId)?.path).toBe("b.ts");
   });
 
   it("the canvas has no tab bar, so there the file is still the overlay", async () => {

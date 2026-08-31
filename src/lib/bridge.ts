@@ -1305,8 +1305,13 @@ async function recruitOnFloor(
   // The front's own root, not the caller's: that is the whole point of
   // opening a card there.
   const cwd = plan.dir ?? s.rootOfGroup(group.id) ?? ctx.caller.cwd;
-  const surface = s.layoutOf(group.id).surface;
-  const nth = s.terminalsOn(group.id, surface).length;
+  // A recruit is a card, and the lines below draw one: its rectangle goes on
+  // that front's canvas no matter what the front is showing right now. Taking
+  // the surface from the group instead was the same thing only while a new
+  // front happened to open on the canvas — it does not any more — and the two
+  // halves then disagreed: a tab in a pane, with a rectangle for it on a board
+  // where no card was ever drawn.
+  const nth = s.terminalsOn(group.id, "canvas").length;
   const born = bornAs(plan.rowAgentId, plan.program, plan.cliArgs, cwd);
   const id = s.addTerminal({
     groupId: group.id,
@@ -1316,7 +1321,7 @@ async function recruitOnFloor(
     program: born.program,
     args: born.args,
     cwd,
-    surface,
+    surface: "canvas",
   });
 
   commitCanvas(group.id, (c) => ({

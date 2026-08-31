@@ -11,6 +11,8 @@
  * decoded opens read-only on purpose — writing over it would cut off the rest).
  */
 import { toOsPath } from "./paths";
+import { tabOrderMenu } from "./tabOrderMenu";
+import type { TabRef } from "./paneBar";
 import type { MenuEntry } from "../components/ContextMenu";
 import { t } from "./i18n";
 
@@ -24,6 +26,11 @@ export interface EditorTabMenuActions {
    */
   closeScoped: (id: string, scope: "others" | "right" | "saved") => void;
   togglePin: (id: string) => void;
+  /**
+   * One step along the bar. Absent in the overlay editor's header, which
+   * shows a document at a time and has no bar to walk.
+   */
+  moveBy?: (id: string, dir: -1 | 1) => void;
   save: (id: string) => void;
   reload: (id: string) => void;
   copyPath: (text: string) => void;
@@ -60,6 +67,12 @@ export function editorTabMenu(
   target: EditorTabMenuTarget,
   tabs: readonly EditorTabRef[],
   act: EditorTabMenuActions,
+  /**
+   * The pane's whole bar, in the order it is painted — every kind of tab,
+   * which is what "one place to the left" is measured against. Absent where
+   * there is no bar (the overlay header), and then only the pin shows up.
+   */
+  bar: readonly TabRef[] | null = null,
 ): MenuEntry[] {
   const position = tabs.findIndex((d) => d.id === target.id);
   const others = tabs.filter((d) => d.id !== target.id).map((d) => d.id);
@@ -109,11 +122,10 @@ export function editorTabMenu(
       onSelect: () => act.closeScoped(target.id, "saved"),
     },
     { kind: "sep" },
-    {
-      id: "fixar",
-      label: target.pinned ? t("Desafixar") : t("Fixar"),
-      onSelect: () => act.togglePin(target.id),
-    },
+    // Pin and "move one place" come from the builder every kind of tab shares
+    // (`lib/tabOrderMenu.ts`): a file, a CLI and a page sit in the same bar
+    // and must not disagree about what can be done to their place in it.
+    ...tabOrderMenu({ id: target.id, pinned: target.pinned }, bar, act),
     { kind: "sep" },
     {
       id: "salvar",

@@ -53,6 +53,7 @@ import transcriptCss from "./components/modals/transcript.css?raw";
 
 import designMd from "../docs/DESIGN.md?raw";
 import appSrc from "./App.tsx?raw";
+import browserSrc from "./components/BrowserPane/index.tsx?raw";
 import floorsSrc from "./components/Floors/index.tsx?raw";
 import gridSrc from "./components/WorkspaceGrid/index.tsx?raw";
 import paneSrc from "./components/TerminalPane/index.tsx?raw";
@@ -155,6 +156,39 @@ function definedIn(css: string, className: string): boolean {
   return new RegExp(String.raw`(?<![\w-])\.${className}(?![\w-])`).test(css);
 }
 
+/**
+ * Which value of `prop` an element carrying `classes` ends up with, read the
+ * way the engine reads it: the highest specificity wins and, on a tie, the
+ * declaration that comes **last** in the sheet.
+ *
+ * It only understands the shape the two portal toolbars are written in, a
+ * chain of classes on one element (`.a`, `.a.b`); anything with a combinator,
+ * an attribute or a pseudo is skipped, which is exactly right here because
+ * those already outrank a bare class.
+ */
+export function cascadeValue(
+  css: string,
+  classes: readonly string[],
+  prop: string,
+): string | null {
+  const flat = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  let best: { weight: number; at: number; value: string } | null = null;
+  for (const rule of flat.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selector = rule[1].trim();
+    if (!/^(\.[\w-]+)+$/.test(selector)) continue;
+    const wanted = selector.slice(1).split(".");
+    if (!wanted.every((c) => classes.includes(c))) continue;
+    const decl = new RegExp(String.raw`(?:^|;)\s*${prop}\s*:\s*([^;]+)`).exec(rule[2]);
+    if (!decl) continue;
+    const weight = wanted.length;
+    const at = rule.index ?? 0;
+    if (!best || weight > best.weight || (weight === best.weight && at > best.at)) {
+      best = { weight, at, value: decl[1].trim() };
+    }
+  }
+  return best?.value ?? null;
+}
+
 describe("CSS the boot guarantees", () => {
   it("ignores the piece glued to an interpolation, but keeps the rest of the line", () => {
     const font = 'a <b className={`dot dot--${kind} ${on ? "is-on" : ""}`} />';
@@ -176,6 +210,10 @@ describe("CSS the boot guarantees", () => {
     ["App", appSrc],
     ["WorkspaceGrid", gridSrc],
     ["TerminalPane", paneSrc],
+    // `TerminalPane` imports `BrowserBody` without `lazy`, so a browser tab
+    // draws its own toolbar on boot, so the classes of that toolbar cannot wait
+    // for the editor chunk that `BenchPanel` happens to drag in first.
+    ["BrowserPane", browserSrc],
     ["ProjectSidebar", sidebarSrc],
     ["Floors", floorsSrc],
   ] as const;
@@ -194,6 +232,56 @@ describe("CSS the boot guarantees", () => {
     // entry bundle and this file's `CSS_DO_BOOT` list starts to lie.
     expect(gridSrc).toMatch(/^import \{ FloorsControl \} from "\.\.\/Floors";$/m);
     expect(gridSrc).toMatch(/^import \{ FlowRunsBar \} from "\.\.\/CanvasView\/FlowHud";$/m);
+  });
+});
+
+/**
+ * The browser tab in a pane wears two classes at once: `cv-portal-bar`, the
+ * canvas card's toolbar, and `pane-browser-bar`, the pane's own metrics. Both
+ * are a single class, so nothing but **document order** separates them.
+ *
+ * The regression: the pane's metrics moved out of `editor.css` (a later
+ * sheet, which won for free) into `styles.css` *above* the portal block. From
+ * that moment `.cv-portal-bar { height: 28px }` won the bar while
+ * `.pane-browser-bar .cv-portal-url input`, a descendant selector and
+ * therefore untouched, kept its 40px capsule: a 40px field drawn inside a
+ * 28px bar, spilling over the page underneath. On screen it read as a
+ * toolbar with no top edge.
+ */
+describe("the browser toolbar in a pane", () => {
+  const BOTH = ["cv-portal-bar", "pane-browser-bar"];
+
+  it("reads the cascade by specificity, then by who comes last", () => {
+    const css = ".a { height: 1px } .b { height: 2px } .a.b { height: 3px }";
+    expect(cascadeValue(css, ["a", "b"], "height")).toBe("3px");
+    expect(cascadeValue(".a { height: 1px } .b { height: 2px }", ["a", "b"], "height")).toBe("2px");
+    expect(cascadeValue(".b { height: 2px } .a { height: 1px }", ["a", "b"], "height")).toBe("1px");
+    expect(cascadeValue(".c { height: 9px }", ["a", "b"], "height")).toBeNull();
+  });
+
+  it("keeps the pane's height, not the card's 28px strip", () => {
+    expect(cascadeValue(bootCss, BOTH, "height")).toBe("60px");
+  });
+
+  it("keeps the pane's padding and gap too, so the buttons are not pressed to the edge", () => {
+    expect(cascadeValue(bootCss, BOTH, "gap")).toBe("5px");
+    expect(cascadeValue(bootCss, BOTH, "padding")).toBe("0 10px");
+  });
+
+  it("still leaves the card's toolbar alone", () => {
+    expect(cascadeValue(bootCss, ["cv-portal-bar"], "height")).toBe("28px");
+  });
+
+  /**
+   * The address field is wrapped in a `<form>` so Enter navigates. A `<form>`
+   * carries a bottom margin of 1em from the browser's own stylesheet, and this
+   * project's reset only zeroes `html`, `body` and `#root`: the bar centres
+   * the *margin* box, so the capsule was pushed 7px above the middle and sat
+   * with 3px of air over it and 17px under it. At 28px, on the card, that read
+   * as nothing; at 60px it is a field visibly stuck to the top edge.
+   */
+  it("drops the margin the browser gives every form, or the capsule floats above the middle", () => {
+    expect(cascadeValue(bootCss, ["cv-portal-url"], "margin")).toBe("0");
   });
 });
 

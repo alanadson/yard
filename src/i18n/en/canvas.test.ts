@@ -22,7 +22,7 @@ const MUST_HAVE = [
   "Formatação da nota",
   "Fechar portal",
   // fronts
-  "Frentes: cópias isoladas do repositório, cada uma com o próprio canvas",
+  "Frentes: cópias isoladas do repositório, cada uma com a própria branch e os próprios painéis",
   "Aterrissar esta frente no chão",
   "Abrir frente",
   "Nova tarefa",

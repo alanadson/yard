@@ -193,3 +193,32 @@ describe("an agent that lives in WSL", () => {
     );
   });
 });
+
+/**
+ * The regression: a fan-out floor took whatever surface the group was
+ * showing, and the ground clone used to turn a fresh floor to the canvas —
+ * so five agents launched into five boards, each with one card on it. The
+ * canvas is not where a fan-out lands.
+ */
+describe("where the agents land", () => {
+  it("puts every agent in a pane and writes nothing to any canvas", async () => {
+    const projectId = project();
+    createFloor.mockImplementation(async () => {
+      const groupId = useProjects.getState().addGroup(projectId, "frente", { activate: false });
+      useProjects.getState().updateLayout(groupId, { surface: "canvas" });
+      return { groupId, provision: { kind: "isolated", path: "C:/proj/.yard/floors/f" } };
+    });
+
+    const out = await fanOutTask({
+      projectId,
+      name: "tarefa",
+      prompt: "faça",
+      agents: AGENTS,
+    });
+
+    expect(out.failures).toEqual([]);
+    const surfaces = out.floors.map((f) => useProjects.getState().terminal(f.terminalId)?.surface);
+    expect(surfaces).toEqual(["grid", "grid"]);
+    expect(placeCard).not.toHaveBeenCalled();
+  });
+});

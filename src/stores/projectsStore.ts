@@ -30,6 +30,8 @@ import { Lru } from "../lib/lru";
 import { uiLog } from "../lib/log";
 import { readInitialPrefs } from "../lib/prefs";
 import { sameRoot } from "../lib/roots";
+import { normalizeTabOrder, type TabOrder } from "../lib/paneBar";
+import { moveOnePlace, orderTabs } from "../lib/tabRules";
 import { useUI } from "./uiStore";
 
 /**
@@ -54,6 +56,12 @@ export interface GroupLayout {
   panelCount: number;
   /** Active sub-tab of each slot. */
   activeBySlot: Record<number, string>;
+  /**
+   * The tab bars the user arranged by hand, one list of ids per pane
+   * (`lib/paneBar.ts`). Absent until someone drags a tab: the order of a bar
+   * nobody touched is the default one, which needs nothing written down.
+   */
+  tabOrder?: TabOrder;
   /** Canvas-mode state (positions, drawings, notes). Only present if used. */
   canvas?: CanvasData;
   /** Floor metadata (isolated worktree). Absent = regular group / ground. */
@@ -91,6 +99,8 @@ export function parseLayout(json: string): GroupLayout {
       panelCount: Math.min(6, Math.max(1, parsed.panelCount ?? 2)),
       activeBySlot: parsed.activeBySlot ?? {},
     };
+    const tabOrder = normalizeTabOrder(parsed.tabOrder);
+    if (tabOrder) layout.tabOrder = tabOrder;
     // Absent `canvas` stays absent: groups that never entered canvas
     // mode do not pay for the field in the persisted JSON.
     const canvas = normalizeCanvas(parsed.canvas);
@@ -184,6 +194,12 @@ interface ProjectsState {
   /** Apply a transform to the group's canvas state and schedule a save. */
   updateCanvas: (groupId: string, fn: (c: CanvasData) => CanvasData) => void;
   setActiveTab: (groupId: string, slot: number, terminalId: string) => void;
+  /**
+   * The bar of one pane as the user arranged it: every id it holds, in the
+   * order it paints them (`lib/paneBar.ts`). The three tab stores each know
+   * one kind, so none of them can hold a bar that interleaves the three.
+   */
+  setTabOrder: (groupId: string, slot: number, ids: readonly string[]) => void;
 
   addTerminal: (input: {
     groupId: string;
@@ -210,6 +226,8 @@ interface ProjectsState {
    * up/down", which is the same order the tab bar shows.
    */
   moveTerminalBy: (id: string, delta: -1 | 1) => void;
+  /** Fixes the CLI at the front of its bar, or lets it loose again. */
+  toggleTerminalPin: (id: string) => void;
   removeTerminal: (id: string) => void;
 
   groupsOf: (projectId: string) => GroupRow[];
@@ -224,6 +242,12 @@ interface ProjectsState {
    * scoring it or counting what is alive has to see both.
    */
   terminalsOn: (groupId: string, surface: Surface) => TerminalRow[];
+  /**
+   * One pane's CLIs, in the order its bar paints them: the pinned ones first.
+   * The bar, the keyboard and `moveTerminalBy` all read this, so none of them
+   * can disagree about where a tab is.
+   */
+  tabsOfPane: (groupId: string, slot: number) => TerminalRow[];
   layoutOf: (groupId: string) => GroupLayout;
   /** The group's floor metadata; a group without `floor` is treated as ground. */
   floorOf: (groupId: string) => FloorMeta;
@@ -653,6 +677,13 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     });
   },
 
+  setTabOrder: (groupId, slot, ids) => {
+    const layout = get().layoutOf(groupId);
+    get().updateLayout(groupId, {
+      tabOrder: normalizeTabOrder({ ...layout.tabOrder, [slot]: [...ids] }),
+    });
+  },
+
   // --- terminals ---
   addTerminal: (input) => {
     const id = nanoid(12);
@@ -743,15 +774,26 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     const siblings = get()
       .terminalsOn(term.groupId, normalizeSurface(term.surface))
       .filter((t) => t.slot === term.slot);
-    const i = siblings.findIndex((t) => t.id === id);
+    const bar = orderTabs(siblings);
+    // The rule says whether the step is allowed at all: it is the same one the
+    // menu greys out with, and the one that keeps a pinned tab from falling
+    // behind a loose one.
+    if (!moveOnePlace(bar, id, delta)) return;
+    const i = bar.findIndex((t) => t.id === id);
     const j = i + delta;
-    if (i < 0 || j < 0 || j >= siblings.length) return;
-    const a = siblings[i];
-    const b = siblings[j];
+    const a = bar[i];
+    const b = bar[j];
     set((s) => ({
       terminals: s.terminals.map((t) =>
         t.id === a.id ? { ...t, sort: b.sort } : t.id === b.id ? { ...t, sort: a.sort } : t,
       ),
+    }));
+    get().scheduleSave();
+  },
+
+  toggleTerminalPin: (id) => {
+    set((s) => ({
+      terminals: s.terminals.map((t) => (t.id === id ? { ...t, pinned: !t.pinned } : t)),
     }));
     get().scheduleSave();
   },
@@ -792,6 +834,8 @@ export const useProjects = create<ProjectsState>((set, get) => ({
       .terminals.filter((t) => t.groupId === groupId)
       .sort((a, b) => a.sort - b.sort),
   terminalsOn: (groupId, surface) => onSurface(get().terminalsOf(groupId), surface),
+  tabsOfPane: (groupId, slot) =>
+    orderTabs(get().terminalsOn(groupId, "grid").filter((t) => t.slot === slot)),
   layoutOf: (groupId) => {
     const g = get().groups.find((x) => x.id === groupId);
     return g ? parseLayout(g.layoutJson) : { ...DEFAULT_LAYOUT };

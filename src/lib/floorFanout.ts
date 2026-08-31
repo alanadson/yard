@@ -11,7 +11,6 @@ import { nanoid } from "nanoid";
 import { createFloor } from "./floorCreate";
 import { uniqueFloorName, type FloorTask } from "./floors";
 import { closeGroup, startTerminalProcess } from "./lifecycle";
-import { placeCard } from "./canvasWrite";
 import { deliverBriefing } from "./roleBrief";
 import type { AgentInfo } from "./ipc";
 import { useAgentDefaults } from "../stores/agentDefaultsStore";
@@ -125,9 +124,6 @@ export async function fanOutTask(input: FanoutInput): Promise<FanoutResult> {
       cwd,
     });
 
-    // On whatever the new floor is showing — a fresh floor shows its panes,
-    // so the agent is a tab there. Only a card needs a place on the board.
-    const surface = s.layoutOf(created.groupId).surface;
     const terminalId = s.addTerminal({
       groupId: created.groupId,
       title: agent.name,
@@ -136,9 +132,12 @@ export async function fanOutTask(input: FanoutInput): Promise<FanoutResult> {
       program: launch.program,
       args: launch.args,
       cwd,
-      surface,
+      // A pane, always. It used to follow whatever the floor was showing, and
+      // the ground clone used to leave a fresh floor showing the canvas — so
+      // a fan-out of five dealt five boards with one card each. The canvas is
+      // somewhere you go, never somewhere a task drops you.
+      surface: "grid",
     });
-    if (surface === "canvas") placeCard(created.groupId, terminalId);
     try {
       await startTerminalProcess(terminalId, {
         program: launch.program,

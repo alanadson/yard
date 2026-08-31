@@ -92,6 +92,11 @@ pub struct Terminal {
     pub alive: bool,
     #[serde(default)]
     pub created_at: i64,
+    /// Kept at the front of its bar, and out of every crowd close. The pane's
+    /// files carry the same flag in the front end's own store; a CLI is a row
+    /// here, so it is a column (schema v8).
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 fn shell_kind() -> String {
@@ -183,8 +188,8 @@ pub fn save(conn: &mut Connection, snap: &WorkspaceSnapshot) -> anyhow::Result<S
     {
         let mut stmt = tx.prepare(
             "INSERT INTO terminals(id, group_id, slot, surface, title, kind, agent_id, program,
-                                   args_json, cwd, resume_json, sort, alive, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                                   args_json, cwd, resume_json, sort, alive, created_at, pinned)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         )?;
         for t in &snap.terminals {
             let args = serde_json::to_string(&t.args).unwrap_or_else(|_| "[]".into());
@@ -206,7 +211,8 @@ pub fn save(conn: &mut Connection, snap: &WorkspaceSnapshot) -> anyhow::Result<S
                 resume,
                 t.sort,
                 t.alive as i64,
-                t.created_at
+                t.created_at,
+                t.pinned as i64
             ])?;
         }
     }
@@ -272,7 +278,7 @@ pub fn load(conn: &Connection) -> anyhow::Result<WorkspaceSnapshot> {
     {
         let mut stmt = conn.prepare(
             "SELECT id, group_id, slot, surface, title, kind, agent_id, program, args_json, cwd,
-                    resume_json, sort, alive, created_at
+                    resume_json, sort, alive, created_at, pinned
              FROM terminals ORDER BY sort",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -293,6 +299,7 @@ pub fn load(conn: &Connection) -> anyhow::Result<WorkspaceSnapshot> {
                 sort: r.get(11)?,
                 alive: r.get::<_, i64>(12)? != 0,
                 created_at: r.get(13)?,
+                pinned: r.get::<_, i64>(14)? != 0,
             })
         })?;
         for t in rows {
@@ -313,7 +320,7 @@ mod tests {
             "CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
              CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, path TEXT, color TEXT, icon TEXT, sort INTEGER, created_at INTEGER);
              CREATE TABLE groups (id TEXT PRIMARY KEY, project_id TEXT, name TEXT, layout_json TEXT, suspended INTEGER, sort INTEGER);
-             CREATE TABLE terminals (id TEXT PRIMARY KEY, group_id TEXT, slot INTEGER, surface TEXT, title TEXT, kind TEXT, agent_id TEXT, program TEXT, args_json TEXT, cwd TEXT, resume_json TEXT, sort INTEGER, alive INTEGER, created_at INTEGER);",
+             CREATE TABLE terminals (id TEXT PRIMARY KEY, group_id TEXT, slot INTEGER, surface TEXT, title TEXT, kind TEXT, agent_id TEXT, program TEXT, args_json TEXT, cwd TEXT, resume_json TEXT, sort INTEGER, alive INTEGER, created_at INTEGER, pinned INTEGER NOT NULL DEFAULT 0);",
         )
         .unwrap();
         conn
@@ -352,7 +359,41 @@ mod tests {
             sort: 0,
             alive: false,
             created_at: 0,
+            pinned: false,
         }
+    }
+
+    /// The pin is the one thing about a CLI tab that only matters *between*
+    /// sessions: a tab you kept at the front of the bar and out of "fechar as
+    /// outras" is worth nothing if the next boot forgets it.
+    #[test]
+    fn a_pinned_terminal_comes_back_pinned() {
+        let mut conn = mem_db();
+        let mut snapshot = snap(0, "p");
+        snapshot.groups = vec![Group {
+            id: "g1".into(),
+            project_id: Some("p1".into()),
+            name: "g".into(),
+            layout_json: "{}".into(),
+            suspended: false,
+            sort: 0,
+        }];
+        let mut fixed = a_terminal("fixa", "grid");
+        fixed.pinned = true;
+        snapshot.terminals = vec![fixed, a_terminal("solta", "grid")];
+
+        save(&mut conn, &snapshot).unwrap();
+        let back = load(&conn).unwrap();
+
+        let pinned_of = |id: &str| {
+            back.terminals
+                .iter()
+                .find(|t| t.id == id)
+                .map(|t| t.pinned)
+                .unwrap()
+        };
+        assert!(pinned_of("fixa"));
+        assert!(!pinned_of("solta"));
     }
 
     /// The regression this locks down: the canvas and the pane grid stopped

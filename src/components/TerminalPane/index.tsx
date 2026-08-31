@@ -65,7 +65,7 @@ import { paneMenu } from "../../lib/paneMenu";
 import { useT } from "../../hooks/useT";
 import { captureTextTarget, textMenuEntries } from "../../lib/textMenu";
 import { terminalActionEntries } from "../../lib/terminalMenu";
-import { beginTabDrag } from "../../lib/tabDrag";
+import { beginTabDrag, moveTabBy } from "../../lib/tabDrag";
 import { flowsOf } from "../../lib/flow";
 import { isConnected } from "../../lib/canvasOps";
 import { ipc, type TerminalRow } from "../../lib/ipc";
@@ -75,7 +75,8 @@ import { baseName } from "../../lib/terminals";
 import { useAction } from "../../hooks/useAction";
 import { useBrowsers, type PaneBrowser } from "../../stores/browsersStore";
 import { isDirty, isReadOnly, tabLabel, useEditor, type OpenDoc } from "../../stores/editorStore";
-import { orderTabs } from "../../lib/tabRules";
+import { barOrder } from "../../lib/paneBar";
+import { tabOrderMenu } from "../../lib/tabOrderMenu";
 import { NOTES_TAB_ID, useNotes } from "../../stores/notesStore";
 import { useAgents } from "../../stores/agentsStore";
 import { useFlows } from "../../stores/flowStore";
@@ -201,6 +202,27 @@ export function TerminalPane({
     }
     return byTerminal;
   }, [queueItems]);
+
+  /**
+   * The bar, in the order it is painted: the four kinds interleaved as the
+   * user arranged them (`lib/paneBar.ts`). The keyboard walks the same list
+   * through `lib/paneTabs.ts` — a bar the eye reads one way and Ctrl+Tab
+   * another is the bug this single order exists to prevent.
+   */
+  const tabOrder = useProjects((s) => s.layoutOf(groupId).tabOrder?.[slot]);
+  const bar = useMemo(
+    () =>
+      barOrder({
+        groupId,
+        slot,
+        terminals,
+        docs,
+        browsers,
+        notesId: notes ? NOTES_TAB_ID : null,
+        order: tabOrder,
+      }),
+    [groupId, slot, terminals, docs, browsers, notes, tabOrder],
+  );
 
   const handles = useRef<Record<string, XTermHandle | null>>({});
   const tabsRef = useRef<HTMLDivElement>(null);
@@ -497,6 +519,11 @@ export function TerminalPane({
           onSelect: () => setRenamingId(id),
         },
         { kind: "sep" },
+        ...tabOrderMenu({ id, pinned: browser.pinned === true }, bar, {
+          togglePin: (target) => useBrowsers.getState().togglePin(target),
+          moveBy: (target, dir) => moveTabBy("browser", target, groupId, slot, dir),
+        }),
+        { kind: "sep" },
         ...browserMenuItems(browser, showToast),
         { kind: "sep" },
         {
@@ -526,6 +553,14 @@ export function TerminalPane({
         icon: <Bot size={13} />,
         onSelect: () => openModal("role", { terminalId: id }),
       },
+      { kind: "sep" },
+      // The bar it walks is this pane's whole bar, not the CLIs alone: the
+      // neighbour on either side may well be a file (`lib/paneBar.ts`).
+      ...tabOrderMenu({ id, pinned: target.pinned === true }, bar, {
+        togglePin: (t2) => useProjects.getState().toggleTerminalPin(t2),
+        moveBy: (t2, dir) => moveTabBy("terminal", t2, groupId, slot, dir),
+      }),
+      { kind: "sep" },
       {
         id: "paste",
         label: t("Colar no terminal"),
@@ -574,383 +609,390 @@ export function TerminalPane({
           onKeyDown={onTabsKeyDown}
           onMouseLeave={hideTip}
         >
-          {terminals.map((term) => {
-            const r = runtimes[term.id];
-            const label = baseName(term);
-            const select = () => {
-              setActiveTab(groupId, slot, term.id);
-              focusTerminal(term.id, slot);
-              handles.current[term.id]?.focus();
-            };
-            const openMenu = (e: React.MouseEvent) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setActiveTab(groupId, slot, term.id);
-              focusTerminal(term.id, slot);
-              setTabMenu({ id: term.id, anchor: { x: e.clientX, y: e.clientY } });
-            };
-            return (
-              // The slot is a presentational wrapper: `role="tab"` stays on
-              // the tab itself, and the close button is a sibling instead of
-              // an interactive span nested inside it (which the keyboard
-              // could not reach and the browser routed to the outer control).
-              <div
-                key={term.id}
-                role="presentation"
-                className={`pane-tab-slot ${term.id === active?.id ? "is-active" : ""}`}
-                data-tab-kind="terminal"
-                data-tab-id={term.id}
-                onPointerDown={(e) => {
-                  if (renamingId !== term.id) beginTabDrag(e, "terminal", term.id);
-                }}
-                onContextMenu={openMenu}
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  id={`tab-${term.id}`}
-                  aria-selected={term.id === active?.id}
-                  aria-controls={`panel-${term.id}`}
-                  tabIndex={term.id === active?.id ? 0 : -1}
-                  className="pane-tab"
-                  onClick={select}
-                  // Middle button closes the tab — same as every browser and
-                  // every tabbed terminal.
-                  onAuxClick={(e) => {
-                    if (e.button !== 1) return;
-                    e.preventDefault();
-                    void confirmCloseTerminal(term.id);
+          {/* One bar, four kinds of tab, one order — the one the user
+              arranged (`lib/paneBar.ts`). They used to be painted as three
+              sections in a row, which is what made a CLI unable to sit
+              between two files: the section was a wall. */}
+          {bar.map((ref) => {
+            const term =
+              ref.kind === "terminal" ? terminals.find((x) => x.id === ref.id) : null;
+            if (term) {
+              const r = runtimes[term.id];
+              const label = baseName(term);
+              const select = () => {
+                setActiveTab(groupId, slot, term.id);
+                focusTerminal(term.id, slot);
+                handles.current[term.id]?.focus();
+              };
+              const openMenu = (e: React.MouseEvent) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setActiveTab(groupId, slot, term.id);
+                focusTerminal(term.id, slot);
+                setTabMenu({ id: term.id, anchor: { x: e.clientX, y: e.clientY } });
+              };
+              return (
+                // The slot is a presentational wrapper: `role="tab"` stays on
+                // the tab itself, and the close button is a sibling instead of
+                // an interactive span nested inside it (which the keyboard
+                // could not reach and the browser routed to the outer control).
+                <div
+                  key={term.id}
+                  role="presentation"
+                  className={`pane-tab-slot ${term.id === active?.id ? "is-active" : ""} ${
+                    term.pinned ? "is-pinned" : ""
+                  }`}
+                  data-tab-kind="terminal"
+                  data-tab-id={term.id}
+                  onPointerDown={(e) => {
+                    if (renamingId !== term.id) beginTabDrag(e, "terminal", term.id);
                   }}
-                  onDoubleClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setRenamingId(term.id);
-                  }}
-                  onMouseEnter={(e) =>
-                    showTip(e, `${term.program} ${term.args.join(" ")}\n${term.cwd}`)
-                  }
-                  onMouseLeave={hideTip}
+                  onContextMenu={openMenu}
                 >
-                  <span className={`dot dot--${r?.state ?? "idle"}`} />
-                  <TerminalMark term={term} size={13} />
-                  {renamingId === term.id ? (
-                    <InlineRename
-                      value={label}
-                      onCommit={(next) => {
-                        updateTerminal(term.id, { title: next });
-                        setRenamingId(null);
-                      }}
-                      onCancel={() => setRenamingId(null)}
-                    />
-                  ) : (
-                    <span className="pane-tab-label">{label}</span>
-                  )}
-                  {roles[term.id] && (
-                    <span className="pane-tab-role">{roles[term.id].name}</span>
-                  )}
-                  {/* Running now beats "armed": the current stage is the most
-                      urgent information the tab can carry. */}
-                  {flowMarks[term.id] ? (
-                    <span
-                      className={`pane-tab-flow is-${flowMarks[term.id].status}`}
-                      data-tip-wrap=""
-                      data-tip={t("Fluxo \"{name}\" — etapa {step}/{total}", {
-                        name: flowMarks[term.id].name,
-                        step: flowMarks[term.id].step,
-                        total: flowMarks[term.id].total,
-                      })}
-                    >
-                      <Workflow size={10} aria-hidden="true" />
-                      {flowMarks[term.id].step}/{flowMarks[term.id].total}
-                      <span className="sr-only">
-                        {t("— executando o fluxo {name}, etapa {step} de {total}", {
+                  <button
+                    type="button"
+                    role="tab"
+                    id={`tab-${term.id}`}
+                    aria-selected={term.id === active?.id}
+                    aria-controls={`panel-${term.id}`}
+                    tabIndex={term.id === active?.id ? 0 : -1}
+                    className="pane-tab"
+                    onClick={select}
+                    // Middle button closes the tab — same as every browser and
+                    // every tabbed terminal.
+                    onAuxClick={(e) => {
+                      if (e.button !== 1) return;
+                      e.preventDefault();
+                      void confirmCloseTerminal(term.id);
+                    }}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setRenamingId(term.id);
+                    }}
+                    onMouseEnter={(e) =>
+                      showTip(e, `${term.program} ${term.args.join(" ")}\n${term.cwd}`)
+                    }
+                    onMouseLeave={hideTip}
+                  >
+                    <span className={`dot dot--${r?.state ?? "idle"}`} />
+                    {term.pinned ? (
+                      <Pin size={13} className="pane-tab-pin" aria-hidden="true" />
+                    ) : (
+                      <TerminalMark term={term} size={15} />
+                    )}
+                    {renamingId === term.id ? (
+                      <InlineRename
+                        value={label}
+                        onCommit={(next) => {
+                          updateTerminal(term.id, { title: next });
+                          setRenamingId(null);
+                        }}
+                        onCancel={() => setRenamingId(null)}
+                      />
+                    ) : (
+                      <span className="pane-tab-label">{label}</span>
+                    )}
+                    {roles[term.id] && (
+                      <span className="pane-tab-role">{roles[term.id].name}</span>
+                    )}
+                    {/* Running now beats "armed": the current stage is the most
+                        urgent information the tab can carry. */}
+                    {flowMarks[term.id] ? (
+                      <span
+                        className={`pane-tab-flow is-${flowMarks[term.id].status}`}
+                        data-tip-wrap=""
+                        data-tip={t("Fluxo \"{name}\" — etapa {step}/{total}", {
                           name: flowMarks[term.id].name,
                           step: flowMarks[term.id].step,
                           total: flowMarks[term.id].total,
                         })}
+                      >
+                        <Workflow size={10} aria-hidden="true" />
+                        {flowMarks[term.id].step}/{flowMarks[term.id].total}
+                        <span className="sr-only">
+                          {t("— executando o fluxo {name}, etapa {step} de {total}", {
+                            name: flowMarks[term.id].name,
+                            step: flowMarks[term.id].step,
+                            total: flowMarks[term.id].total,
+                          })}
+                        </span>
                       </span>
-                    </span>
-                  ) : armed[term.id] ? (
-                    <span
-                      className="pane-tab-flow is-armed"
-                      data-tip-wrap=""
-                      data-tip={t(
-                        "O Enter desta CLI entra no fluxo \"{name}\" ({n} etapas). Desarme no cartão do fluxo, no canvas.",
-                        { name: armed[term.id].name, n: armed[term.id].etapas },
-                      )}
-                    >
-                      <Workflow size={10} aria-hidden="true" />
-                      <span className="sr-only">
-                        {t("— o Enter desta CLI entra no fluxo {name}", { name: armed[term.id].name })}
+                    ) : armed[term.id] ? (
+                      <span
+                        className="pane-tab-flow is-armed"
+                        data-tip-wrap=""
+                        data-tip={t(
+                          "O Enter desta CLI entra no fluxo \"{name}\" ({n} etapas). Desarme no cartão do fluxo, no canvas.",
+                          { name: armed[term.id].name, n: armed[term.id].etapas },
+                        )}
+                      >
+                        <Workflow size={10} aria-hidden="true" />
+                        <span className="sr-only">
+                          {t("— o Enter desta CLI entra no fluxo {name}", { name: armed[term.id].name })}
+                        </span>
                       </span>
-                    </span>
-                  ) : null}
-                  {/* What is parked for this CLI (`lib/queue.ts`). A number,
-                      not a dot: "3 esperando" and "1 esperando" are different
-                      news, and the queue is the one badge here whose size
-                      matters. */}
-                  {queued[term.id] ? (
-                    <span
-                      className="pane-tab-queue"
-                      data-tip-wrap=""
-                      data-tip={t(
-                        "{n} na fila, entram sozinhos quando a CLI ficar livre",
-                        { n: queued[term.id] },
-                      )}
-                    >
-                      <ListPlus size={10} aria-hidden="true" />
-                      {queued[term.id]}
-                      <span className="sr-only">
-                        {t(", {n} prompt(s) na fila", { n: queued[term.id] })}
+                    ) : null}
+                    {/* What is parked for this CLI (`lib/queue.ts`). A number,
+                        not a dot: "3 esperando" and "1 esperando" are different
+                        news, and the queue is the one badge here whose size
+                        matters. */}
+                    {queued[term.id] ? (
+                      <span
+                        className="pane-tab-queue"
+                        data-tip-wrap=""
+                        data-tip={t(
+                          "{n} na fila, entram sozinhos quando a CLI ficar livre",
+                          { n: queued[term.id] },
+                        )}
+                      >
+                        <ListPlus size={10} aria-hidden="true" />
+                        {queued[term.id]}
+                        <span className="sr-only">
+                          {t(", {n} prompt(s) na fila", { n: queued[term.id] })}
+                        </span>
                       </span>
-                    </span>
-                  ) : null}
-                  {/* The badges are empty circles; the sr-only text is what
-                      carries the state into the tab's accessible name. */}
-                  {r?.blocked ? (
-                    <span
-                      className="badge-blocked"
-                      data-tip-wrap=""
-                      data-tip={r.blockedAsk ?? t("Esperando uma resposta sua")}
-                    >
-                      <span className="sr-only">— {t("esperando uma resposta sua")}</span>
-                    </span>
-                  ) : r?.finished ? (
-                    <span className="badge-finished" data-tip={t("Terminou de trabalhar")}>
-                      <span className="sr-only">— {t("terminou de trabalhar")}</span>
-                    </span>
-                  ) : r?.unread ? (
-                    <span className="badge-unread" data-tip={t("Saída nova")}>
-                      <span className="sr-only">— {t("saída nova")}</span>
-                    </span>
-                  ) : null}
-                </button>
-                <button
-                  type="button"
-                  className="pane-tab-close"
-                  aria-label={t("Fechar {name}", { name: label })}
-                  data-tip={t("Fechar")}
-                  onClick={() => void confirmCloseTerminal(term.id)}
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            );
-          })}
+                    ) : null}
+                    {/* The badges are empty circles; the sr-only text is what
+                        carries the state into the tab's accessible name. */}
+                    {r?.blocked ? (
+                      <span
+                        className="badge-blocked"
+                        data-tip-wrap=""
+                        data-tip={r.blockedAsk ?? t("Esperando uma resposta sua")}
+                      >
+                        <span className="sr-only">— {t("esperando uma resposta sua")}</span>
+                      </span>
+                    ) : r?.finished ? (
+                      <span className="badge-finished" data-tip={t("Terminou de trabalhar")}>
+                        <span className="sr-only">— {t("terminou de trabalhar")}</span>
+                      </span>
+                    ) : r?.unread ? (
+                      <span className="badge-unread" data-tip={t("Saída nova")}>
+                        <span className="sr-only">— {t("saída nova")}</span>
+                      </span>
+                    ) : null}
+                  </button>
+                  <button
+                    type="button"
+                    className="pane-tab-close"
+                    aria-label={t("Fechar {name}", { name: label })}
+                    data-tip={t("Fechar")}
+                    onClick={() => void confirmCloseTerminal(term.id)}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              );
+            }
 
-          {/* Files, after the CLIs and in the same bar: the tab where the
-              agent works and the tab where the file is read sit side by side,
-              which is the whole reason the editor stopped being a window. */}
-          {orderTabs(
-            docs.map((d) => ({
-              id: d.id,
-              groupId: d.groupId,
-              slot: d.slot,
-              pinned: d.pinned === true,
-              preview: d.preview === true,
-              dirty: isDirty(d) && !isReadOnly(d),
-              doc: d,
-            })),
-          ).map(({ doc: d }) => {
-            const dirty = isDirty(d) && !isReadOnly(d);
-            return (
-              <div
-                key={d.id}
-                role="presentation"
-                className={`pane-tab-slot pane-tab-slot--doc ${
-                  d.id === activeDoc?.id ? "is-active" : ""
-                } ${d.pinned ? "is-pinned" : ""} ${d.preview ? "is-preview" : ""}`}
-                data-tab-kind="doc"
-                data-tab-id={d.id}
-                onPointerDown={(e) => beginTabDrag(e, "doc", d.id)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  useEditor.getState().setActive(d.id);
-                  setTabMenu({ id: d.id, anchor: { x: e.clientX, y: e.clientY } });
-                }}
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  id={`tab-${d.id}`}
-                  aria-selected={d.id === activeDoc?.id}
-                  aria-controls={`panel-${d.id}`}
-                  tabIndex={d.id === activeDoc?.id ? 0 : -1}
-                  className="pane-tab"
-                  onMouseEnter={(e) => showTip(e, `${d.path}\n${d.root}`)}
-                  onMouseLeave={hideTip}
-                  onClick={() => useEditor.getState().setActive(d.id)}
-                  // A double click is the gesture everyone already knows for
-                  // "no, keep this one": it ends the preview.
-                  onDoubleClick={() => useEditor.getState().keepOpen(d.id)}
-                  onAuxClick={(e) => {
-                    if (e.button !== 1) return;
-                    e.preventDefault();
-                    void closeDocTab(d.id);
-                  }}
-                >
-                  <span className="pane-tab-file" aria-hidden="true">
-                    {d.pinned ? (
-                      <Pin size={11} className="pane-tab-pin" />
-                    ) : (
-                      <FileGlyph name={fileName(d.path)} size={13} />
-                    )}
-                  </span>
-                  <span className="pane-tab-label">{tabLabel(d, docs)}</span>
-                  {(d.stale || d.missing) && (
-                    <AlertTriangle size={12} className="pane-tab-warn" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="pane-tab-close"
-                  aria-label={
-                    dirty
-                      ? t("Fechar {name} (não salvo)", { name: fileName(d.path) })
-                      : t("Fechar {name}", { name: fileName(d.path) })
-                  }
-                  data-tip={dirty ? t("Fechar (não salvo)") : t("Fechar")}
-                  onClick={() => void closeDocTab(d.id)}
-                >
-                  {dirty ? <span className="editor-dot" aria-hidden="true" /> : <X size={12} />}
-                </button>
-              </div>
-            );
-          })}
-
-          {/* Browsers, last: a page open beside the CLI that is editing it,
-              with the whole pane's size — the same reason files became tabs. */}
-          {browsers.map((b) => {
-            const label = browserLabel(b);
-            const select = () => {
-              setActiveTab(groupId, slot, b.id);
-              // A browser in focus is no terminal in focus — keys must not
-              // keep going to a CLI the user can no longer see.
-              focusTerminal(null, slot);
-            };
-            const openContextMenu = (e: React.MouseEvent) => {
-              e.preventDefault();
-              e.stopPropagation();
-              select();
-              setTabMenu({ id: b.id, anchor: { x: e.clientX, y: e.clientY } });
-            };
-            return (
-              <div
-                key={b.id}
-                role="presentation"
-                className={`pane-tab-slot pane-tab-slot--browser ${
-                  b.id === activeBrowser?.id ? "is-active" : ""
-                }`}
-                data-tab-kind="browser"
-                data-tab-id={b.id}
-                onPointerDown={(e) => {
-                  if (renamingId !== b.id) beginTabDrag(e, "browser", b.id);
-                }}
-                onContextMenu={openContextMenu}
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  id={`tab-${b.id}`}
-                  aria-selected={b.id === activeBrowser?.id}
-                  aria-controls={`panel-${b.id}`}
-                  tabIndex={b.id === activeBrowser?.id ? 0 : -1}
-                  className="pane-tab"
-                  onMouseEnter={(e) => showTip(e, b.url)}
-                  onMouseLeave={hideTip}
-                  onClick={select}
-                  onAuxClick={(e) => {
-                    if (e.button !== 1) return;
-                    e.preventDefault();
-                    useBrowsers.getState().close(b.id);
-                  }}
-                  onDoubleClick={(e) => {
+            const d = ref.kind === "doc" ? docs.find((x) => x.id === ref.id) : null;
+            if (d) {
+              const dirty = isDirty(d) && !isReadOnly(d);
+              return (
+                <div
+                  key={d.id}
+                  role="presentation"
+                  className={`pane-tab-slot pane-tab-slot--doc ${
+                    d.id === activeDoc?.id ? "is-active" : ""
+                  } ${d.pinned ? "is-pinned" : ""}`}
+                  data-tab-kind="doc"
+                  data-tab-id={d.id}
+                  onPointerDown={(e) => beginTabDrag(e, "doc", d.id)}
+                  onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    setRenamingId(b.id);
+                    useEditor.getState().setActive(d.id);
+                    setTabMenu({ id: d.id, anchor: { x: e.clientX, y: e.clientY } });
                   }}
                 >
-                  <Globe size={13} className="pane-tab-file" aria-hidden="true" />
-                  {renamingId === b.id ? (
-                    <InlineRename
-                      value={label}
-                      onCommit={(next) => {
-                        useBrowsers.getState().patch(b.id, { name: next });
-                        setRenamingId(null);
-                      }}
-                      onCancel={() => setRenamingId(null)}
-                    />
-                  ) : (
-                    <span className="pane-tab-label">{label}</span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="pane-tab-close"
-                  aria-label={t("Fechar {name}", { name: label })}
-                  data-tip={t("Fechar")}
-                  onClick={() => useBrowsers.getState().close(b.id)}
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            );
-          })}
+                  <button
+                    type="button"
+                    role="tab"
+                    id={`tab-${d.id}`}
+                    aria-selected={d.id === activeDoc?.id}
+                    aria-controls={`panel-${d.id}`}
+                    tabIndex={d.id === activeDoc?.id ? 0 : -1}
+                    className="pane-tab"
+                    onMouseEnter={(e) => showTip(e, `${d.path}\n${d.root}`)}
+                    onMouseLeave={hideTip}
+                    onClick={() => useEditor.getState().setActive(d.id)}
+                    onAuxClick={(e) => {
+                      if (e.button !== 1) return;
+                      e.preventDefault();
+                      void closeDocTab(d.id);
+                    }}
+                  >
+                    <span className="pane-tab-file" aria-hidden="true">
+                      {d.pinned ? (
+                        <Pin size={13} className="pane-tab-pin" />
+                      ) : (
+                        <FileGlyph name={fileName(d.path)} size={15} />
+                      )}
+                    </span>
+                    <span className="pane-tab-label">{tabLabel(d, docs)}</span>
+                    {(d.stale || d.missing) && (
+                      <AlertTriangle size={12} className="pane-tab-warn" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="pane-tab-close"
+                    aria-label={
+                      dirty
+                        ? t("Fechar {name} (não salvo)", { name: fileName(d.path) })
+                        : t("Fechar {name}", { name: fileName(d.path) })
+                    }
+                    data-tip={dirty ? t("Fechar (não salvo)") : t("Fechar")}
+                    onClick={() => void closeDocTab(d.id)}
+                  >
+                    {dirty ? <span className="editor-dot" aria-hidden="true" /> : <X size={14} />}
+                  </button>
+                </div>
+              );
+            }
 
-          {/* The notebook, last: one global tab (there is a single notebook),
-              docked beside the CLIs for the same reason files and pages are. */}
-          {notes && (
-            <div
-              role="presentation"
-              className={`pane-tab-slot pane-tab-slot--notes ${activeNotes ? "is-active" : ""}`}
-              data-tab-kind="notes"
-              data-tab-id={NOTES_TAB_ID}
-              onPointerDown={(e) => beginTabDrag(e, "notes", NOTES_TAB_ID)}
-              onContextMenu={(e) => {
+            const b =
+              ref.kind === "browser" ? browsers.find((x) => x.id === ref.id) : null;
+            if (b) {
+              const label = browserLabel(b);
+              const select = () => {
+                setActiveTab(groupId, slot, b.id);
+                // A browser in focus is no terminal in focus — keys must not
+                // keep going to a CLI the user can no longer see.
+                focusTerminal(null, slot);
+              };
+              const openContextMenu = (e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
-                setTabMenu({ id: NOTES_TAB_ID, anchor: { x: e.clientX, y: e.clientY } });
-              }}
-            >
-              <button
-                type="button"
-                role="tab"
-                id={`tab-${NOTES_TAB_ID}`}
-                aria-selected={activeNotes}
-                aria-controls={`panel-${NOTES_TAB_ID}`}
-                tabIndex={activeNotes ? 0 : -1}
-                className="pane-tab"
-                onMouseEnter={(e) =>
-                  showTip(e, t("Anotações — o caderno de notas markdown"))
-                }
-                onMouseLeave={hideTip}
-                onClick={() => {
-                  setActiveTab(groupId, slot, NOTES_TAB_ID);
-                  // The notebook in focus is no terminal in focus — same
-                  // rule as a document or a browser tab.
-                  focusTerminal(null, slot);
-                }}
-                onAuxClick={(e) => {
-                  if (e.button !== 1) return;
-                  e.preventDefault();
-                  useNotes.getState().closeDock();
-                }}
-              >
-                <NotebookPen size={13} className="pane-tab-file" aria-hidden="true" />
-                <span className="pane-tab-label">{t("Anotações")}</span>
-              </button>
-              <button
-                type="button"
-                className="pane-tab-close"
-                aria-label={t("Fechar a aba de anotações")}
-                data-tip={t("Fechar")}
-                onClick={() => useNotes.getState().closeDock()}
-              >
-                <X size={12} />
-              </button>
-            </div>
-          )}
+                select();
+                setTabMenu({ id: b.id, anchor: { x: e.clientX, y: e.clientY } });
+              };
+              return (
+                <div
+                  key={b.id}
+                  role="presentation"
+                  className={`pane-tab-slot pane-tab-slot--browser ${
+                    b.id === activeBrowser?.id ? "is-active" : ""
+                  } ${b.pinned ? "is-pinned" : ""}`}
+                  data-tab-kind="browser"
+                  data-tab-id={b.id}
+                  onPointerDown={(e) => {
+                    if (renamingId !== b.id) beginTabDrag(e, "browser", b.id);
+                  }}
+                  onContextMenu={openContextMenu}
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    id={`tab-${b.id}`}
+                    aria-selected={b.id === activeBrowser?.id}
+                    aria-controls={`panel-${b.id}`}
+                    tabIndex={b.id === activeBrowser?.id ? 0 : -1}
+                    className="pane-tab"
+                    onMouseEnter={(e) => showTip(e, b.url)}
+                    onMouseLeave={hideTip}
+                    onClick={select}
+                    onAuxClick={(e) => {
+                      if (e.button !== 1) return;
+                      e.preventDefault();
+                      useBrowsers.getState().close(b.id);
+                    }}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setRenamingId(b.id);
+                    }}
+                  >
+                    {b.pinned ? (
+                      <Pin size={13} className="pane-tab-pin" aria-hidden="true" />
+                    ) : (
+                      <Globe size={15} className="pane-tab-file" aria-hidden="true" />
+                    )}
+                    {renamingId === b.id ? (
+                      <InlineRename
+                        value={label}
+                        onCommit={(next) => {
+                          useBrowsers.getState().patch(b.id, { name: next });
+                          setRenamingId(null);
+                        }}
+                        onCancel={() => setRenamingId(null)}
+                      />
+                    ) : (
+                      <span className="pane-tab-label">{label}</span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="pane-tab-close"
+                    aria-label={t("Fechar {name}", { name: label })}
+                    data-tip={t("Fechar")}
+                    onClick={() => useBrowsers.getState().close(b.id)}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              );
+            }
+
+            if (ref.kind === "notes") {
+              return (
+                <div
+                  key={NOTES_TAB_ID}
+                  role="presentation"
+                  className={`pane-tab-slot pane-tab-slot--notes ${activeNotes ? "is-active" : ""}`}
+                  data-tab-kind="notes"
+                  data-tab-id={NOTES_TAB_ID}
+                  onPointerDown={(e) => beginTabDrag(e, "notes", NOTES_TAB_ID)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setTabMenu({ id: NOTES_TAB_ID, anchor: { x: e.clientX, y: e.clientY } });
+                  }}
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    id={`tab-${NOTES_TAB_ID}`}
+                    aria-selected={activeNotes}
+                    aria-controls={`panel-${NOTES_TAB_ID}`}
+                    tabIndex={activeNotes ? 0 : -1}
+                    className="pane-tab"
+                    onMouseEnter={(e) =>
+                      showTip(e, t("Anotações — o caderno de notas markdown"))
+                    }
+                    onMouseLeave={hideTip}
+                    onClick={() => {
+                      setActiveTab(groupId, slot, NOTES_TAB_ID);
+                      // The notebook in focus is no terminal in focus — same
+                      // rule as a document or a browser tab.
+                      focusTerminal(null, slot);
+                    }}
+                    onAuxClick={(e) => {
+                      if (e.button !== 1) return;
+                      e.preventDefault();
+                      useNotes.getState().closeDock();
+                    }}
+                  >
+                    <NotebookPen size={15} className="pane-tab-file" aria-hidden="true" />
+                    <span className="pane-tab-label">{t("Anotações")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="pane-tab-close"
+                    aria-label={t("Fechar a aba de anotações")}
+                    data-tip={t("Fechar")}
+                    onClick={() => useNotes.getState().closeDock()}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              );
+            }
+
+            // A tab whose row left the store between the order and the paint.
+            return null;
+          })}
         </div>
 
         {/* The balloon lives outside the scrolling strip — the only way for
@@ -976,7 +1018,7 @@ export function TerminalPane({
           aria-label={t("Nova aba nesta barra")}
           onClick={newCli}
         >
-          <Plus size={14} />
+          <Plus size={17} />
         </button>
 
         <div className="pane-gap" />
@@ -1006,7 +1048,7 @@ export function TerminalPane({
               data-working={isRunning || undefined}
               onClick={() => active && void useLive.getState().openFor(active)}
             >
-              <Activity size={13} />
+              <Activity size={15} />
             </button>
           )}
           {/* The composer used to have a button only on the canvas card, so
@@ -1022,7 +1064,7 @@ export function TerminalPane({
               useUI.getState().setComposerOpen(true);
             }}
           >
-            <MessageSquarePlus size={13} />
+            <MessageSquarePlus size={15} />
           </button>
           <button
             className={`icon-btn ${searchOpen ? "is-active" : ""}`}
@@ -1031,7 +1073,7 @@ export function TerminalPane({
             aria-pressed={searchOpen}
             onClick={() => setSearchOpen((v) => !v)}
           >
-            <Search size={13} />
+            <Search size={15} />
           </button>
           {isRunning ? (
             <button
@@ -1042,7 +1084,7 @@ export function TerminalPane({
                 active && act(() => ipc.suspendPty(active.id), t("falha ao suspender"))
               }
             >
-              <PauseCircle size={13} />
+              <PauseCircle size={15} />
             </button>
           ) : (
             <button
@@ -1051,7 +1093,7 @@ export function TerminalPane({
               aria-label={t("Iniciar ou retomar")}
               onClick={() => active && handles.current[active.id]?.start()}
             >
-              <Play size={13} />
+              <Play size={15} />
             </button>
           )}
           <button
@@ -1068,7 +1110,7 @@ export function TerminalPane({
               });
             }}
           >
-            <MoreVertical size={13} />
+            <MoreVertical size={15} />
           </button>
         </div>
         )}

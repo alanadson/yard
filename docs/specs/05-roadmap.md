@@ -52,9 +52,10 @@ orphan `node.exe` in Task Manager; `type big_file.txt` does not freeze the UI.
       (`lib/termArgs.ts`)
 - [x] Shortcuts: new terminal, switch tab (Ctrl+1..9, Ctrl+Tab), close view,
       search (search addon)
-- [x] Tab drag & drop: any tab (CLI, file, browser) moves between panes and
-      reorders on the bar — dropping on the left/right half of another tab
-      inserts before/after (`lib/tabDrag.ts`)
+- [x] Tab drag & drop: any tab (CLI, file, browser, notebook) moves between
+      panes and reorders on the bar, in front of a tab of **any** kind — the
+      bar is one order, not one section per kind (`lib/tabDrag.ts`,
+      `lib/paneBar.ts`, saved as `GroupLayout.tabOrder`)
 
 **Acceptance:** 6 terminals in 2 groups, rearrangeable, each with independent
 state.

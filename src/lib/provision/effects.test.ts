@@ -17,6 +17,7 @@ const ipcMock = vi.hoisted(() => ({
   worktreeRemove: vi.fn(),
   branchDeleteIfUnchanged: vi.fn(),
   worktreeList: vi.fn(async () => []),
+  spawnPty: vi.fn(async () => undefined),
   saveWorkspace: vi.fn(async () => ({ accepted: true, rev: 1 })),
   readPrefs: vi.fn(async () => ({}) as Record<string, string>),
   writePref: vi.fn(async () => undefined),
@@ -195,5 +196,111 @@ describe("undoing", () => {
 
     await fx.dropGroup(ground.id);
     expect(useProjects.getState().groupsOf(projectId)).toHaveLength(1);
+  });
+});
+
+/**
+ * The regression that motivated this file's newest test: opening a front
+ * dropped the user on the canvas. "Clonar o layout do chão" applied a
+ * *score* — the canvas format — and a score, when it lands on an empty
+ * group, turns that group to the canvas. So a worktree created to hold an
+ * agent's panes opened on a board nobody had asked to see, with the ground's
+ * CLIs nowhere in it. The canvas is its own place: nothing that creates a
+ * front is allowed to walk into it.
+ */
+describe("cloning the ground", () => {
+  it("copies the ground's panes and leaves the front on the grid — creating a front never opens the canvas", async () => {
+    const projectId = freshProject();
+    const s = useProjects.getState();
+    const ground = s.groupsOf(projectId)[0];
+    s.updateLayout(ground.id, { mode: "spotlight", panelCount: 3 });
+    s.addTerminal({ groupId: ground.id, title: "dev", program: "pwsh.exe", cwd: PROJECT });
+    s.addTerminal({ groupId: ground.id, title: "logs", program: "pwsh.exe", cwd: PROJECT, slot: 1 });
+
+    const fx = yardEffects({ projectId, projectPath: PROJECT, copyGround: true });
+    const groupId = await fx.registerGroup(item(), {
+      path: "C:/proj/.yard/floors/login",
+      branch: "yard/login",
+      headOid: "abc",
+    });
+
+    const after = useProjects.getState();
+    expect(after.layoutOf(groupId).surface).toBe("grid");
+    expect(after.terminalsOn(groupId, "canvas")).toHaveLength(0);
+    expect(after.terminalsOn(groupId, "grid").map((t) => t.title)).toEqual(["dev", "logs"]);
+    expect(after.layoutOf(groupId).mode).toBe("spotlight");
+    expect(after.layoutOf(groupId).panelCount).toBe(3);
+  });
+
+  it("gives the clones the front's own worktree as their working root", async () => {
+    const projectId = freshProject();
+    const s = useProjects.getState();
+    const ground = s.groupsOf(projectId)[0];
+    s.addTerminal({ groupId: ground.id, title: "dev", program: "pwsh.exe", cwd: PROJECT });
+
+    const fx = yardEffects({ projectId, projectPath: PROJECT, copyGround: true });
+    const groupId = await fx.registerGroup(item(), {
+      path: "C:/proj/.yard/floors/login",
+      branch: "yard/login",
+      headOid: "abc",
+    });
+
+    const cwds = useProjects
+      .getState()
+      .terminalsOn(groupId, "grid")
+      .map((t) => t.cwd);
+    expect(cwds).toEqual(["C:/proj/.yard/floors/login"]);
+  });
+
+  it("leaves the ground's board out of it — a card is not a tab", async () => {
+    const projectId = freshProject();
+    const s = useProjects.getState();
+    const ground = s.groupsOf(projectId)[0];
+    s.addTerminal({
+      groupId: ground.id,
+      title: "card",
+      program: "pwsh.exe",
+      cwd: PROJECT,
+      surface: "canvas",
+    });
+
+    const fx = yardEffects({ projectId, projectPath: PROJECT, copyGround: true });
+    const groupId = await fx.registerGroup(item(), {
+      path: "C:/proj/.yard/floors/login",
+      branch: "yard/login",
+      headOid: "abc",
+    });
+
+    const after = useProjects.getState();
+    expect(after.terminalsOf(groupId)).toHaveLength(0);
+    expect(after.layoutOf(groupId).surface).toBe("grid");
+  });
+});
+
+describe("the agent the front was opened for", () => {
+  it("comes up as a tab even with the ground showing its board — provisioning does not touch the canvas", async () => {
+    const projectId = freshProject();
+    const s = useProjects.getState();
+    const ground = s.groupsOf(projectId)[0];
+    s.updateLayout(ground.id, { surface: "canvas" });
+
+    const fx = yardEffects({
+      projectId,
+      projectPath: PROJECT,
+      agentBin: () => "claude.exe",
+      agentName: () => "Claude",
+    });
+    const plan = item({ action: "use_ground", agentId: "claude" });
+    const groupId = await fx.registerGroup(plan, { path: PROJECT, branch: "main", headOid: null });
+    const terminalId = await fx.launchAgent(plan, groupId, {
+      path: PROJECT,
+      branch: "main",
+      headOid: null,
+    });
+
+    const after = useProjects.getState();
+    expect(groupId).toBe(ground.id);
+    expect(after.terminal(terminalId!)?.surface).toBe("grid");
+    expect(after.layoutOf(ground.id).canvas?.nodes ?? {}).toEqual({});
   });
 });

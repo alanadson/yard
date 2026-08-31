@@ -3056,14 +3056,6 @@ button.sb-chip:active {
   height: 7px;
 }
 
-/* A glance, not a decision: the tab a single click on the tree opened, and
-   that the next single click replaces. Italic is the convention every editor
-   uses for it, and it is the only signal that costs no room in a bar that is
-   already tight. */
-.pane-tab-slot--doc.is-preview .pane-tab-label {
-  font-style: italic;
-}
-
 /* A pin takes the file glyph's place rather than adding to the row: the bar
    has no spare pixels, and a pinned tab is recognised by its own mark far
    faster than by an extra one. */
@@ -3087,15 +3079,17 @@ button.sb-chip:active {
   filter: drop-shadow(0 0 3px rgb(64 209 110 / 45%));
 }
 
-/* 40px, not 33px: this bar is where the CLIs and the open files live side by
-   side, and it is clicked more than anything else in the app. At the old
-   height the tabs were 22px chips — legible, but a target you aim at. */
+/* 52px, and 40 was already not 33: this bar is where the CLIs and the open
+   files live side by side, and it is clicked more than anything else in the
+   app. Every step up here answered the same complaint: the chips read fine,
+   but you had to *aim* at them. At 52 the tab is a 34px chip with 14px text:
+   a target you hit without looking. */
 .pane-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 40px;
-  padding: 0 8px 0 6px;
+  gap: 8px;
+  height: 52px;
+  padding: 0 10px 0 8px;
   background: var(--bg-raised);
   border-bottom: 1px solid rgb(var(--well) / 28%);
   box-shadow: var(--hairline);
@@ -3219,11 +3213,18 @@ body.is-tab-drag .pane-dropnew {
    tabs. The close control used to be a `role="button"` span *inside* the tab
    — a nested interactive role, unreachable from the keyboard. The slot is
    what carries the hover/active surface, so the two read as one chip. */
+/* The actions on the right of the bar (Live, composer, search, suspend,
+   more): the app's 25px icon button is a dot in a 52px bar. */
+.pane-header .icon-btn {
+  width: 30px;
+  height: 30px;
+}
+
 .pane-tab-slot {
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  padding-right: 5px;
+  padding-right: 6px;
   border-radius: var(--r-tab);
 }
 
@@ -3246,16 +3247,14 @@ body.is-tab-drag .pane-dropnew {
   color: var(--text-bright);
 }
 
-/* Insertion caret while a tab is dragged over another: a bar on the edge
-   where the drop would land. Box-shadow, not border — the row must not
-   shift while the drag is in flight. Placed after `.is-active` on purpose:
-   during the drag the caret wins over the active tab's relief. */
-.pane-tab-slot.drop-before {
-  box-shadow: -2px 0 0 0 var(--accent);
-}
-
-.pane-tab-slot.drop-after {
-  box-shadow: 2px 0 0 0 var(--accent);
+/* The hole the drop would fall into. There is no caret drawn anywhere: the
+   tabs after the drop point slide aside by exactly the width of the tab in
+   hand (`lib/tabDrag.ts` sets the transform), so the gap that opens *is* the
+   answer — the same width, in the same place, as what is about to land there.
+   Transform, never layout: a bar that reflowed on every frame would move the
+   very edges the drag is measuring itself against. */
+body.is-tab-drag .pane-tab-slot {
+  transition: transform 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 /* The dragged tab's double, riding under the pointer (cloned into <body> by
@@ -3289,10 +3288,17 @@ body.is-tab-drag .pane-dropnew {
   opacity: 0;
 }
 
-/* The original stays in place while its double travels — dimmed, so the bar
-   shows both where the tab came from and that it has not left yet. */
+/* The original leaves the bar the moment the tab is in hand: it is under the
+   pointer now, and a dimmed copy left behind made the bar carry the same tab
+   twice. Folded to nothing rather than `display: none` so the element stays
+   in the tree — it is the one holding the pointer capture that keeps the drag
+   alive over the native browser panes. */
 .pane-tab-slot.is-drag-source {
-  opacity: 0.35;
+  width: 0;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* While a tab is in hand: no text selection under the path, and the cursor
@@ -3311,12 +3317,12 @@ body.is-tab-drag * {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  max-width: 210px;
-  padding: 6px 5px 6px 10px;
+  max-width: 240px;
+  padding: 9px 6px 9px 12px;
   border: 0;
   background: none;
   border-radius: var(--r-tab);
-  font-size: var(--fs-md);
+  font-size: var(--fs-lg);
   color: var(--text-dim);
   white-space: nowrap;
   cursor: pointer;
@@ -3408,12 +3414,12 @@ body.is-tab-drag * {
 .pane-tab-close {
   display: grid;
   place-items: center;
-  width: 19px;
-  height: 19px;
+  width: 22px;
+  height: 22px;
   flex-shrink: 0;
   border: 0;
   background: none;
-  border-radius: 4px;
+  border-radius: 6px;
   color: var(--text-dim);
   cursor: pointer;
   opacity: 0;
@@ -3440,8 +3446,8 @@ body.is-tab-drag * {
 .pane-tab-add {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   flex-shrink: 0;
   border-radius: var(--r-tab);
   color: var(--text-dim);
@@ -3839,10 +3845,14 @@ body.is-tab-drag * {
   flex-shrink: 0;
 }
 
+/* A `<form>`, so Enter navigates, and `margin: 0` because the browser gives
+   every form a bottom margin of 1em: the bar centres the margin box, so
+   without this the capsule floats above the middle of its own toolbar. */
 .cv-portal-url {
   flex: 1;
   min-width: 0;
   display: flex;
+  margin: 0;
 }
 
 .cv-portal-url input {
@@ -3858,10 +3868,70 @@ body.is-tab-drag * {
   box-shadow: none;
 }
 
+/* The address field does NOT take the app's blue focus ring. Everywhere else
+   the blue says "the keyboard is here" against chrome that is otherwise grey;
+   here the field runs the whole width of a browser, so the ring became a blue
+   bar across the pane, decoration the size of a header. Focus still shows,
+   quietly: the border lifts from 9% to 34% of the veil, which reads in both
+   appearances without painting anything. */
 .cv-portal-url input:focus {
   outline: none;
-  border-color: rgb(10 132 255 / 60%);
-  box-shadow: 0 0 0 3px rgb(10 132 255 / 20%);
+  border-color: rgb(var(--veil) / 34%);
+  box-shadow: none;
+}
+
+/* --- the browser tab's frame, in a pane ---------------------------------
+   The host reuses `.pane-doc` and the toolbar reuses the card's
+   `.cv-portal-bar` above; only the column and the growing body are the pane's
+   own, because the pane sizes by flex where the card sizes by hand.
+
+   THIS BLOCK HAS TO STAY BELOW THE CARD'S. `.pane-browser-bar` and
+   `.cv-portal-bar` are both a single class, so nothing but document order
+   separates them: written higher up, the card's 28px strip won the bar while
+   the 40px address capsule (a descendant selector, out of that fight) kept
+   its size, and the field spilled out of a toolbar that had no top edge left.
+   `styles.test.ts` reads the cascade and locks it. */
+.pane-browser {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pane-browser-body {
+  flex: 1;
+  min-height: 0;
+}
+
+/* The card's toolbar is 28px because a card on the board is small and its bar
+   is a strip of chrome around a thumbnail. In a pane it is the browser's
+   *own* chrome, under a 52px tab bar and over a full page: at the card's
+   metrics the address read as a caption and the four glyphs were 12px targets
+   in a bar the width of the window. So the pane grows its own: 60px tall, a
+   40px address capsule and buttons a browser's size.
+   The body is measured with a `ResizeObserver`, so the native surface follows
+   the new height with no constant to keep level. */
+.pane-browser-bar {
+  height: 60px;
+  gap: 5px;
+  padding: 0 10px;
+}
+
+.pane-browser-bar .icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-md);
+}
+
+.pane-browser-bar .cv-portal-url {
+  margin-left: 5px;
+}
+
+.pane-browser-bar .cv-portal-url input {
+  height: 40px;
+  padding: 0 16px;
+  font-size: var(--fs-lg);
 }
 
 .cv-portal-body {

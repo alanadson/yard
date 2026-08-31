@@ -277,6 +277,11 @@ export interface TerminalRow {
   sort: number;
   alive: boolean;
   createdAt: number;
+  /**
+   * Kept at the front of its pane's bar, and out of every crowd close. A
+   * column since schema v8; a row written before it comes back `false`.
+   */
+  pinned?: boolean;
 }
 
 export interface WorkspaceSnapshot {

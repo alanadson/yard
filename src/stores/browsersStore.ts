@@ -35,6 +35,8 @@ export interface PaneBrowser {
   muted?: boolean;
   /** Auto-reload when a local address starts serving something new. */
   live?: boolean;
+  /** Kept at the front of its pane's bar, and out of every crowd close. */
+  pinned?: boolean;
 }
 
 const KV_TABS = "panes.browsers";
@@ -72,6 +74,7 @@ export function parsePaneBrowsers(raw: string | undefined): PaneBrowser[] {
         : undefined,
       muted: r.muted === true ? true : undefined,
       live: typeof r.live === "boolean" ? r.live : undefined,
+      pinned: r.pinned === true ? true : undefined,
     });
   }
   return out;
@@ -97,6 +100,8 @@ interface BrowsersState {
    * section when `beforeId` is null.
    */
   move: (id: string, groupId: string, slot: number, beforeId?: string | null) => void;
+  /** Fixes the page at the front of its bar, or lets it loose again. */
+  togglePin: (id: string) => void;
   close: (id: string) => void;
   /** Group(s) leaving the workspace — rows and engines go together. */
   dropGroups: (groupIds: Iterable<string>) => void;
@@ -137,6 +142,14 @@ export const useBrowsers = create<BrowsersState>((set, get) => ({
 
   patch: (id, p) => {
     const tabs = get().tabs.map((t) => (t.id === id ? { ...t, ...p } : t));
+    set({ tabs });
+    persist(tabs);
+  },
+
+  togglePin: (id) => {
+    const tabs = get().tabs.map((t) =>
+      t.id === id ? { ...t, pinned: t.pinned ? undefined : true } : t,
+    );
     set({ tabs });
     persist(tabs);
   },

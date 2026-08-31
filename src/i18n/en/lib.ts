@@ -248,6 +248,8 @@ export default {
   "Aba anterior": "Previous tab",
   "Ir para a aba 1 (até Ctrl+9)": "Go to tab 1 (up to Ctrl+9)",
   "Focar o painel 1 (até Ctrl+Shift+6)": "Focus pane 1 (up to Ctrl+Shift+6)",
+  "Mover a aba em foco um lugar na barra (Ctrl+Shift+→ para a direita)":
+    "Move the focused tab one place along the bar (Ctrl+Shift+→ for the right)",
   "Próximo grupo do projeto": "Next group of the project",
   "No editor de código": "In the code editor",
   "Salvar o arquivo": "Save the file",
@@ -363,6 +365,8 @@ export default {
   "Fechar as salvas": "Close the saved ones",
   "Fixar": "Pin",
   "Desafixar": "Unpin",
+  "Mover para a esquerda": "Move left",
+  "Mover para a direita": "Move right",
   "Revelar na árvore": "Reveal in the tree",
   "Renomear…": "Rename…",
   "Excluir…": "Delete…",

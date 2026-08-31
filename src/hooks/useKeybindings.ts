@@ -12,6 +12,9 @@ import { jumpToAttention } from "../lib/attention";
 import { toggleBroadcast } from "../lib/broadcastToggle";
 import { closeDocTab } from "../lib/editorActions";
 import { confirmCloseTerminal } from "../lib/lifecycle";
+import { stepInBar, type TabRef } from "../lib/paneBar";
+import { paneTabs } from "../lib/paneTabs";
+import { moveTab } from "../lib/tabDrag";
 import { useBench } from "../stores/benchStore";
 import { useBrowsers } from "../stores/browsersStore";
 import { useChanges } from "../stores/changesStore";
@@ -19,7 +22,6 @@ import { useEditor } from "../stores/editorStore";
 import { useCosts } from "../stores/costsStore";
 import { useLive } from "../stores/liveStore";
 import {
-  NOTES_TAB_ID,
   notesCenterVisible,
   notesOverlayVisible,
   useNotes,
@@ -257,6 +259,17 @@ export function useKeybindings() {
         return;
       }
 
+      // Ctrl+Shift+← / →: the tab in front walks one place along its bar.
+      // The same command the tab's menu carries, for the hand that is already
+      // on the keyboard. Arrows, and not a letter, because the gesture is
+      // about a direction; with Shift, because Ctrl+arrow moves by word
+      // inside every terminal there is.
+      if (e.shiftKey && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
+        e.preventDefault();
+        moveActiveTab(e.code === "ArrowLeft" ? -1 : 1);
+        return;
+      }
+
       // Ctrl+Shift+G — next group of the active project
       if (e.shiftKey && e.code === "KeyG") {
         e.preventDefault();
@@ -318,10 +331,27 @@ function closeActiveTab() {
   const ctx = focusedTabs();
   const target = ctx?.tabs.find((t) => t.id === ctx.activeId) ?? ctx?.tabs[0];
   if (!target) return;
-  if (target.kind === "term") void confirmCloseTerminal(target.id);
+  if (target.kind === "terminal") void confirmCloseTerminal(target.id);
   else if (target.kind === "doc") void closeDocTab(target.id);
   else if (target.kind === "browser") useBrowsers.getState().close(target.id);
   else useNotes.getState().closeDock();
+}
+
+/**
+ * Walks the tab in front of the focused bar one place to either side.
+ *
+ * One step in the bar the eye sees, which interleaves the four kinds: the
+ * neighbour a CLI trades places with may well be a file. `stepInBar` is what
+ * refuses the step that would drop a pinned tab behind a loose one, by the
+ * same rule that greys the menu row out (`lib/paneBar.ts`).
+ */
+function moveActiveTab(dir: -1 | 1) {
+  const ctx = focusedTabs();
+  const target = ctx?.tabs.find((t) => t.id === ctx.activeId);
+  if (!ctx || !target) return;
+  const step = stepInBar(ctx.tabs, target.id, dir);
+  if (!step) return;
+  moveTab(target.kind, target.id, ctx.groupId, ctx.slot, step.beforeId);
 }
 
 /**
@@ -339,42 +369,8 @@ function focusedCli(): string | null {
   }
   const ctx = focusedTabs();
   if (!ctx) return null;
-  const active = ctx.tabs.find((t) => t.id === ctx.activeId && t.kind === "term");
-  return active?.id ?? ctx.tabs.find((t) => t.kind === "term")?.id ?? null;
-}
-
-/** One tab of a pane's bar — the four kinds the bar paints. */
-interface TabRef {
-  id: string;
-  kind: "term" | "doc" | "browser" | "notes";
-}
-
-/**
- * Every tab of one bar, in the same order `TerminalPane` paints them: CLIs,
- * files, browsers, the notebook. Ctrl+Tab and Ctrl+1..9 walk exactly what is
- * on screen — a bar that paints four kinds of tab while the keyboard reaches
- * only two reads as a bug.
- */
-function tabsInSlot(groupId: string, slot: number): TabRef[] {
-  // A bar only ever paints the grid's CLIs: the board's cards are not tabs.
-  const all = useProjects.getState().terminalsOn(groupId, "grid");
-  const docs = useEditor.getState().docs.filter((d) => d.groupId === groupId);
-  const browsers = useBrowsers.getState().tabs.filter((b) => b.groupId === groupId);
-  const place = useNotes.getState().place;
-  const notesSlot =
-    place.kind === "tab" && place.groupId === groupId ? place.slot : null;
-  return [
-    ...all
-      .filter((t) => t.slot === slot)
-      .map((t): TabRef => ({ id: t.id, kind: "term" })),
-    ...docs
-      .filter((d) => d.slot === slot)
-      .map((d): TabRef => ({ id: d.id, kind: "doc" })),
-    ...browsers
-      .filter((b) => b.slot === slot)
-      .map((b): TabRef => ({ id: b.id, kind: "browser" })),
-    ...(notesSlot === slot ? [{ id: NOTES_TAB_ID, kind: "notes" } as TabRef] : []),
-  ];
+  const active = ctx.tabs.find((t) => t.id === ctx.activeId && t.kind === "terminal");
+  return active?.id ?? ctx.tabs.find((t) => t.kind === "terminal")?.id ?? null;
 }
 
 /**
@@ -415,12 +411,12 @@ function focusedTabs(): {
   const { focusedTerminalId, focusedSlot } = useUI.getState();
   const focused = focusedTerminalId ? terminal(focusedTerminalId) : undefined;
   const preferred = focused?.groupId === activeGroupId ? focused.slot : focusedSlot;
-  const occupied = (s: number) => tabsInSlot(activeGroupId, s).length > 0;
+  const occupied = (s: number) => paneTabs(activeGroupId, s).length > 0;
   const slot = occupied(preferred)
     ? preferred
     : (everything[0]?.slot ?? docs[0]?.slot ?? browsers[0]?.slot ?? notesSlot ?? 0);
 
-  const tabs = tabsInSlot(activeGroupId, slot);
+  const tabs = paneTabs(activeGroupId, slot);
 
   // Same rule as `TerminalPane`: the saved tab only counts if it is still there.
   const saved = layoutOf(activeGroupId).activeBySlot[slot];
@@ -433,7 +429,7 @@ function focusedTabs(): {
 function focusSlot(slot: number) {
   const { activeGroupId, layoutOf } = useProjects.getState();
   if (!activeGroupId) return;
-  const tabs = tabsInSlot(activeGroupId, slot);
+  const tabs = paneTabs(activeGroupId, slot);
   if (tabs.length === 0) return;
   const saved = layoutOf(activeGroupId).activeBySlot[slot];
   const target = tabs.find((t) => t.id === saved) ?? tabs[0];
@@ -451,5 +447,5 @@ function activateTab(groupId: string, slot: number, tab: TabRef) {
   // clicking the tab.
   useUI
     .getState()
-    .focusTerminal(tab.kind === "term" ? tab.id : null, slot);
+    .focusTerminal(tab.kind === "terminal" ? tab.id : null, slot);
 }

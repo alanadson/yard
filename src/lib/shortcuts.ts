@@ -74,6 +74,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       [["Ctrl", "Shift", "Tab"], "Aba anterior"],
       [["Ctrl", "1"], "Ir para a aba 1 (até Ctrl+9)"],
       [["Ctrl", "Shift", "1"], "Focar o painel 1 (até Ctrl+Shift+6)"],
+      [["Ctrl", "Shift", "←"], "Mover a aba em foco um lugar na barra (Ctrl+Shift+→ para a direita)"],
       [["Ctrl", "Shift", "G"], "Próximo grupo do projeto"],
       [["Ctrl", "Shift", "T"], "Reabrir a última aba de arquivo fechada"],
     ],

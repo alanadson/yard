@@ -15,7 +15,7 @@ vi.mock("../lib/ipc", () => ({
   },
 }));
 
-import { useProjects } from "./projectsStore";
+import { parseLayout, useProjects } from "./projectsStore";
 
 describe("projectsStore persistence", () => {
   beforeEach(() => {
@@ -308,6 +308,41 @@ describe("moveTerminal", () => {
     const tabs = useProjects.getState().terminalsOf(g);
     expect(tabs.filter((t) => t.slot === 0).map((t) => t.id)).toEqual([t1, t3]);
     expect(tabs.find((t) => t.id === t2)?.slot).toBe(1);
+  });
+
+  /**
+   * The pin the file tabs already had, now on a CLI: it holds the front of
+   * the bar, so `moveTerminalBy` has to refuse the swap that would drop it
+   * behind a loose tab: `orderTabs` would put it back on the next render and
+   * the user would see the command do nothing, silently.
+   */
+  it("fixing a CLI keeps it at the front of its own bar", () => {
+    const { g, t1, t2, t3 } = build();
+
+    useProjects.getState().toggleTerminalPin(t3);
+
+    expect(useProjects.getState().terminal(t3)?.pinned).toBe(true);
+    expect(useProjects.getState().tabsOfPane(g, 0).map((t) => t.id)).toEqual([t3, t1, t2]);
+  });
+
+  it("unfixing puts the CLI back where it was in the loose half", () => {
+    const { g, t1, t2, t3 } = build();
+
+    useProjects.getState().toggleTerminalPin(t3);
+    useProjects.getState().toggleTerminalPin(t3);
+
+    expect(useProjects.getState().terminal(t3)?.pinned).toBe(false);
+    expect(useProjects.getState().tabsOfPane(g, 0).map((t) => t.id)).toEqual([t1, t2, t3]);
+  });
+
+  it("a pinned CLI does not walk backwards into the loose ones", () => {
+    const { g, t1, t2, t3 } = build();
+    useProjects.getState().toggleTerminalPin(t1);
+
+    // t1 is alone in the pinned half: right would drop it behind t2.
+    useProjects.getState().moveTerminalBy(t1, 1);
+
+    expect(useProjects.getState().tabsOfPane(g, 0).map((t) => t.id)).toEqual([t1, t2, t3]);
   });
 
   it("dropping the tab onto itself changes nothing", () => {
@@ -765,5 +800,68 @@ describe("boards", () => {
       "C:/Workspace/Code/interagia",
     );
     expect(useProjects.getState().terminalsOn(b, "canvas")).toHaveLength(2);
+  });
+});
+
+/**
+ * The bar the user arranged by hand. It cannot live in any of the three tab
+ * stores — it interleaves all of them — so it rides with the group's layout,
+ * and what these lock down is that it survives the round trip through the
+ * JSON column and that a corrupt one never brings the group down with it.
+ */
+describe("tabOrder", () => {
+  beforeEach(() => {
+    useProjects.setState({
+      rev: 1,
+      loaded: true,
+      projects: [],
+      groups: [],
+      terminals: [],
+      activeProjectId: null,
+      activeGroupId: null,
+    });
+  });
+
+  const group = () => {
+    const p = useProjects.getState().addProject("P", "C:/Workspace/ord")!;
+    return useProjects.getState().addGroup(p, "G");
+  };
+
+  it("keeps one bar per pane", () => {
+    const g = group();
+
+    useProjects.getState().setTabOrder(g, 0, ["compose", "cli"]);
+    useProjects.getState().setTabOrder(g, 1, ["page"]);
+
+    expect(useProjects.getState().layoutOf(g).tabOrder).toEqual({
+      0: ["compose", "cli"],
+      1: ["page"],
+    });
+  });
+
+  it("survives the trip through the layout JSON", () => {
+    const g = group();
+    useProjects.getState().setTabOrder(g, 0, ["compose", "cli"]);
+
+    const json = useProjects.getState().groups.find((x) => x.id === g)!.layoutJson;
+
+    expect(parseLayout(json).tabOrder).toEqual({ 0: ["compose", "cli"] });
+  });
+
+  it("a group that never rearranged its bar writes no field at all", () => {
+    // Same rule as `canvas`: what was never used does not weigh on the JSON
+    // of every group in the workspace.
+    const g = group();
+
+    const json = useProjects.getState().groups.find((x) => x.id === g)!.layoutJson;
+
+    expect(parseLayout(json).tabOrder).toBeUndefined();
+    expect(json).not.toContain("tabOrder");
+  });
+
+  it("throws away a saved order that is not a list of ids", () => {
+    expect(
+      parseLayout(JSON.stringify({ tabOrder: { 0: "cli", 1: [1, "page"] } })).tabOrder,
+    ).toEqual({ 1: ["page"] });
   });
 });

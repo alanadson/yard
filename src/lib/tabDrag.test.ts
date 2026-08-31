@@ -18,7 +18,8 @@ vi.mock("./log", () => ({
   uiLog: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
 }));
 
-import { moveTab } from "./tabDrag";
+import { paneTabs } from "./paneTabs";
+import { moveTab, moveTabBy } from "./tabDrag";
 import { useBrowsers } from "../stores/browsersStore";
 import { useEditor, docId, type OpenDoc } from "../stores/editorStore";
 import { useProjects } from "../stores/projectsStore";
@@ -135,6 +136,87 @@ describe("moveTab", () => {
       "src/a.ts",
     ]);
     expect(useEditor.getState().activeId).toBe(b.id);
+  });
+
+  it("a CLI dropped on a file lands between the files", () => {
+    // The bar takes a drop anywhere: the kinds are a default order, not
+    // sections with walls between them.
+    const compose = doc("docker-compose.yml", 0);
+    const agents = doc("AGENTS.md", 0);
+    useProjects.setState({
+      groups: [group({ 0: "t1" })],
+      terminals: [term("t1", 0, 0)],
+    });
+    useEditor.setState({ docs: [compose, agents], activeId: null });
+
+    moveTab("terminal", "t1", "g1", 0, agents.id);
+
+    expect(paneTabs("g1", 0).map((t) => t.id)).toEqual([
+      compose.id,
+      "t1",
+      agents.id,
+    ]);
+  });
+
+  it("the bar the drop arranged is the one the pane paints again", () => {
+    const compose = doc("docker-compose.yml", 0);
+    useProjects.setState({
+      groups: [group({})],
+      terminals: [term("t1", 0, 0)],
+    });
+    useEditor.setState({ docs: [compose], activeId: null });
+
+    moveTab("terminal", "t1", "g1", 0, null);
+
+    expect(useProjects.getState().layoutOf("g1").tabOrder).toEqual({
+      0: [compose.id, "t1"],
+    });
+  });
+
+  it("a tab that leaves a pane leaves its saved bar too", () => {
+    const compose = doc("docker-compose.yml", 0);
+    useProjects.setState({
+      groups: [group({})],
+      terminals: [term("t1", 0, 0)],
+    });
+    useEditor.setState({ docs: [compose], activeId: null });
+    moveTab("terminal", "t1", "g1", 0, compose.id);
+
+    moveTab("terminal", "t1", "g1", 1, null);
+
+    const { tabOrder } = useProjects.getState().layoutOf("g1");
+    expect(tabOrder?.[0]).toEqual([compose.id]);
+    expect(tabOrder?.[1]).toEqual(["t1"]);
+  });
+
+  it("one step to the right trades places with a file, not with the next CLI", () => {
+    const compose = doc("docker-compose.yml", 0);
+    useProjects.setState({
+      groups: [group({})],
+      terminals: [term("t1", 0, 0), term("t2", 0, 1)],
+    });
+    useEditor.setState({ docs: [compose], activeId: null });
+    // Bar as painted: t1, t2, compose. One step right puts t1 after t2.
+    moveTabBy("terminal", "t1", "g1", 0, 1);
+
+    expect(paneTabs("g1", 0).map((t) => t.id)).toEqual(["t2", "t1", compose.id]);
+
+    // And again: now the neighbour is the file, and the CLI goes past it.
+    moveTabBy("terminal", "t1", "g1", 0, 1);
+
+    expect(paneTabs("g1", 0).map((t) => t.id)).toEqual(["t2", compose.id, "t1"]);
+  });
+
+  it("a step into a wall moves nothing", () => {
+    useProjects.setState({
+      groups: [group({})],
+      terminals: [term("t1", 0, 0), term("t2", 0, 1)],
+    });
+
+    moveTabBy("terminal", "t1", "g1", 0, -1);
+
+    expect(paneTabs("g1", 0).map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(useProjects.getState().layoutOf("g1").tabOrder).toBeUndefined();
   });
 
   it("a browser changes pane and lands before the target", () => {
