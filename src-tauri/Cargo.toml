@@ -58,7 +58,7 @@ ttf-parser = "0.25"
 regex = "1"
 # Portal screenshots (portal.rs): the files exist to be opened by agents, and
 # PNG is what agent APIs accept — the old BMPs could not be attached at all.
-png = "0.17"
+png = "0.18"
 # MCP manager (mcp.rs): Codex keeps its servers in `~/.codex/config.toml`, and
 # editing that file must keep the user's comments and layout — toml_edit works
 # on the document, not on a value tree. The other CLIs use JSON (serde_json).

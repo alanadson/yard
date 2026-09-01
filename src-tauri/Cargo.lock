@@ -6083,7 +6083,7 @@ dependencies = [
  "notify",
  "notify-debouncer-mini",
  "parking_lot",
- "png 0.17.16",
+ "png 0.18.1",
  "portable-pty",
  "regex",
  "rusqlite",
