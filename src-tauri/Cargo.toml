@@ -32,7 +32,7 @@ portable-pty = "0.9"
 rusqlite = { version = "0.32", features = ["bundled"] }
 which = "7"
 sysinfo = "0.32"
-notify = "7"
+notify = "8"
 notify-debouncer-mini = "0.5"
 dirs = "5"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
