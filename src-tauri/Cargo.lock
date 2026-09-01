@@ -6106,7 +6106,7 @@ dependencies = [
  "ttf-parser",
  "ureq",
  "which",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
  "zip 2.4.2",
 ]
 
