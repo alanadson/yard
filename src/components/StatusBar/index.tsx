@@ -52,6 +52,8 @@ import { useNotes } from "../../stores/notesStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useTerminals } from "../../stores/terminalsStore";
 import { useUI } from "../../stores/uiStore";
+import { FloorsControl } from "../Floors";
+import { showsFloorsControl } from "../Floors/place";
 import { StatusChip } from "./StatusChip";
 import { agentSegments, agentsCaption, flowChip, gitChip } from "./statusBar";
 
@@ -81,6 +83,7 @@ export function StatusBar() {
       <div className="statusbar-left">
         <AgentsChip />
         <GitChipView />
+        <FrontsChipView />
         <FlowChipView />
         <BudgetChip />
       </div>
@@ -199,6 +202,22 @@ function GitChipView() {
       <PrMark />
     </button>
   );
+}
+
+/**
+ * The fronts of the project on screen: the overview popover and its button.
+ * It floated over a project's canvas, and a project's group has no canvas
+ * any more (the canvas is the boards); here it stands beside the branch chip,
+ * which reads the same project. `Floors/place.ts` says when: never on a
+ * board, which has no project and so no fronts.
+ */
+function FrontsChipView() {
+  const activeGroupId = useProjects((s) => s.activeGroupId);
+  const shown = useProjects((s) =>
+    showsFloorsControl({ board: !!s.activeGroupId && s.isBoard(s.activeGroupId) }),
+  );
+  if (!activeGroupId || !shown) return null;
+  return <FloorsControl groupId={activeGroupId} />;
 }
 
 /**

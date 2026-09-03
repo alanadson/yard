@@ -16,10 +16,108 @@
 import { useEffect, useId, useState } from "react";
 
 import { useT } from "../../../hooks/useT";
+import {
+  ACTION_LABELS,
+  CANVAS_ACTIONS,
+  chordFromEvent,
+  chordLabel,
+  conflicts,
+  type CanvasAction,
+} from "../../../lib/keymap";
 import { SETTINGS_SHORTCUTS, groupsNamed } from "../../../lib/shortcuts";
 import { normalizeHotkey } from "../../../lib/tray";
+import { useKeymap } from "../../../stores/keymapStore";
 import { useUI } from "../../../stores/uiStore";
 import { Card, GroupTitle } from "../rows";
+
+/**
+ * The board's keys, each with a recorder: press "Gravar", then the chord.
+ * Pure modifiers are waited through, Esc cancels, and a chord already used
+ * by another action is reported above the list rather than refused, because
+ * the user may be halfway through swapping two keys.
+ */
+function CanvasKeysCard() {
+  const t = useT();
+  const map = useKeymap((s) => s.map);
+  const overrides = useKeymap((s) => s.overrides);
+  const bind = useKeymap((s) => s.bind);
+  const reset = useKeymap((s) => s.reset);
+  const [arming, setArming] = useState<CanvasAction | null>(null);
+
+  useEffect(() => {
+    if (!arming) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        setArming(null);
+        return;
+      }
+      if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
+      bind(arming, chordFromEvent(e));
+      setArming(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [arming, bind]);
+
+  const clashes = conflicts(map);
+
+  return (
+    <>
+      <GroupTitle>{t("No canvas")}</GroupTitle>
+      <p className="hint">
+        {t(
+          "Clique em Gravar e pressione a combinação. Teclas soltas (V, N…) só valem com o foco no canvas; Esc cancela a gravação; Padrão devolve o original.",
+        )}
+      </p>
+      {clashes.length > 0 && (
+        <p className="hint hint--error" role="alert">
+          {t("Dois comandos na mesma tecla: {list}", {
+            list: clashes
+              .map(([a, b]) => `${t(ACTION_LABELS[a])} / ${t(ACTION_LABELS[b])}`)
+              .join("; "),
+          })}
+        </p>
+      )}
+      <Card>
+        {CANVAS_ACTIONS.map((action) => {
+          const chord = map[action];
+          const custom = action in overrides;
+          return (
+            <div className="set-key-row" key={action}>
+              <span>{t(ACTION_LABELS[action])}</span>
+              <span className="set-keys">
+                {arming === action ? (
+                  <em>{t("pressione a combinação…")}</em>
+                ) : chord ? (
+                  chordLabel(chord)
+                    .split("+")
+                    .map((k) => <kbd key={k}>{k}</kbd>)
+                ) : (
+                  <em>{t("desligado")}</em>
+                )}
+                <button className="linkish" onClick={() => setArming(action)}>
+                  {t("Gravar")}
+                </button>
+                {chord && (
+                  <button className="linkish" onClick={() => bind(action, null)}>
+                    {t("Desligar")}
+                  </button>
+                )}
+                {custom && (
+                  <button className="linkish" onClick={() => reset(action)}>
+                    {t("Padrão")}
+                  </button>
+                )}
+              </span>
+            </div>
+          );
+        })}
+      </Card>
+    </>
+  );
+}
 
 function SummonHotkeyRow() {
   const t = useT();
@@ -104,6 +202,7 @@ export function SecShortcuts() {
           </Card>
         </div>
       ))}
+      <CanvasKeysCard />
       <p className="hint">
         {t(
           "Fora essas, tudo que você digita vai direto para a CLI — o Yard não intercepta teclas que o terminal precisa. Os atalhos do editor, do markdown e do canvas aparecem na lista completa (Ctrl+Shift+H).",

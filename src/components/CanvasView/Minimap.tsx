@@ -25,6 +25,8 @@ export interface MiniBox {
   y: number;
   w: number;
   h: number;
+  /** A terminal running an agent paints in the agent's own colour. */
+  color?: string;
 }
 
 interface Props {
@@ -128,6 +130,7 @@ function MinimapImpl({ boxes, vp, view, selection, onJump, onClose }: Props) {
             width={Math.max(2, b.w * scale)}
             height={Math.max(2, b.h * scale)}
             rx={3}
+            style={b.color ? { fill: b.color } : undefined}
           />
         ))}
         <rect

@@ -26,6 +26,18 @@ describe("normalizeFloor", () => {
     });
   });
 
+  it("keeps the colour the user gave the front, and only a colour", () => {
+    expect(normalizeFloor({ kind: "isolated", branch: "b", color: "#5fa8ff" })).toEqual({
+      kind: "isolated",
+      branch: "b",
+      color: "#5fa8ff",
+    });
+    expect(normalizeFloor({ kind: "isolated", branch: "b", color: "red" })).toEqual({
+      kind: "isolated",
+      branch: "b",
+    });
+  });
+
   it("discards an unknown kind and structural garbage", () => {
     expect(normalizeFloor(undefined)).toBeUndefined();
     expect(normalizeFloor(null)).toBeUndefined();

@@ -1,12 +1,15 @@
 /**
  * Which pane group the title bar's layout switch and the sidebar's canvas
- * row are talking about.
+ * row are talking about, and whether the project's panels are on screen.
  *
- * A standalone board has no panes, but the door into it must not disappear
- * while it is selected: the group the user came from still owns
- * Auto/Grade/Holofote, and that is the group the canvas row flips back to.
+ * The canvas is the boards and nothing else (`lib/surface.ts`), and it is a
+ * **side** of the app the user stands on, `canvasSide` in the store: a board
+ * puts them there, a project's group takes them back, and deleting the last
+ * board leaves them there with no board to show. A board has no panes of
+ * its own, but the door out of it must not disappear while it is selected:
+ * the group the user came from still owns Auto/Grade/Holofote, and that is
+ * the group the canvas row flips back to.
  */
-import type { Surface } from "./surface";
 
 interface GroupRef {
   id: string;
@@ -17,29 +20,31 @@ interface LayoutControlsInput {
   activeGroupId: string | null;
   activeProjectId: string | null;
   groupBeforeBoard: string | null;
-  activeSurface: Surface;
   groups: GroupRef[];
 }
 
 export interface LayoutControlsState {
   /** The project group whose pane mode the switch reads and writes. */
   groupId: string;
-  /** Whether Canvas is the surface currently in front of the user. */
+  /** Whether a board (the canvas) is what is in front of the user. */
   canvasActive: boolean;
+}
+
+function activeOf(input: { activeGroupId: string | null; groups: GroupRef[] }) {
+  return input.groups.find((group) => group.id === input.activeGroupId);
 }
 
 export function layoutControlsState({
   activeGroupId,
   activeProjectId,
   groupBeforeBoard,
-  activeSurface,
   groups,
 }: LayoutControlsInput): LayoutControlsState | null {
-  const active = groups.find((group) => group.id === activeGroupId);
+  const active = activeOf({ activeGroupId, groups });
   if (!active) return null;
 
   if (active.projectId !== null) {
-    return { groupId: active.id, canvasActive: activeSurface === "canvas" };
+    return { groupId: active.id, canvasActive: false };
   }
 
   const remembered = groups.find(
@@ -58,10 +63,10 @@ export function layoutControlsState({
 /**
  * Whether the title bar paints the pane switch at all.
  *
- * The canvas is the group's *other* surface, so with the board up the switch
- * describes something nobody can see: it used to sit there dimmed, a live
- * control for an absent screen. It leaves instead, and the way in and out of
- * the canvas is the sidebar's row, which is a toggle.
+ * The switch describes the panes, and a board has none: left on screen
+ * behind the board it was a live control for an absent screen. It leaves
+ * instead, and the way in and out of the canvas is the sidebar's row, which
+ * is a toggle.
  */
 export function paneSwitchVisible(controls: LayoutControlsState | null): boolean {
   return controls !== null && !controls.canvasActive;
@@ -70,26 +75,22 @@ export function paneSwitchVisible(controls: LayoutControlsState | null): boolean
 /**
  * What the sidebar's Canvas row does, in every state the workspace can be in.
  *
- * The row is the app's only door into the canvas since the title bar's button
- * left, so — unlike the pane switch — it is never absent: a door that is only
- * there once you are already inside is not a door. `layoutControlsState`
- * alone could not answer for the two states below, and in both of them the
- * row simply vanished:
- *
- * - **no group open at all** (a fresh workspace, or every tab closed): there
- *   is no group whose other surface the canvas could be, but the boards are
- *   the canvas belonging to no project — so the row goes to one of those, and
- *   with none in the workspace yet it reports `null` and the caller makes one;
- * - **a board with no panes behind it**: the row is pressed, and there is no
- *   group to go back to — the panes' own empty state is where it lands.
+ * The row is the app's only door into the canvas, so, unlike the pane
+ * switch, it is never absent: a door that is only there once you are already
+ * inside is not a door. Closed, it leads to a board, the only place the
+ * canvas exists: the one visited last this session, else the first in the
+ * bar, and with none in the workspace yet it reports `null` and the caller
+ * makes one. Pressed (the user is on the canvas side, on a board or on the
+ * empty space the last board left), it points at the panes to come back to,
+ * or `null` when there are none: the panes' own empty state.
  */
 export type CanvasDoor = {
-  /** Whether the canvas is what is on screen — the row reads pressed. */
+  /** Whether the user is on the canvas side: the row reads pressed. */
   open: boolean;
   /**
-   * The group the click acts on: whose canvas to open while closed, whose
-   * panes to come back to while open. `null` is the honest answer, never a
-   * reason to hide the row.
+   * The group the click acts on: the board to open while closed, the panes
+   * to come back to while open. `null` is the honest answer, never a reason
+   * to hide the row.
    */
   group: string | null;
 };
@@ -97,16 +98,35 @@ export type CanvasDoor = {
 interface CanvasDoorInput extends LayoutControlsInput {
   /** The boards, in the order the bar paints them. */
   boards: { id: string }[];
+  /** The board the user stood on last this session, if any. */
+  lastBoard: string | null;
+  /** Whether the user is on the canvas side (`projectsStore.canvasSide`). */
+  canvasSide: boolean;
 }
 
-export function canvasDoor({ boards, ...input }: CanvasDoorInput): CanvasDoor {
-  const controls = layoutControlsState(input);
-  if (controls) return { open: controls.canvasActive, group: controls.groupId };
+export function canvasDoor({
+  boards,
+  lastBoard,
+  canvasSide,
+  ...input
+}: CanvasDoorInput): CanvasDoor {
+  if (canvasSide) {
+    return { open: true, group: layoutControlsState(input)?.groupId ?? null };
+  }
+  const remembered = boards.find((board) => board.id === lastBoard);
+  return { open: false, group: remembered?.id ?? boards[0]?.id ?? null };
+}
 
-  // No group to read. Either the active one is a board with nothing behind it
-  // — the canvas is up, and back is the panes' empty state — or nothing is
-  // open at all, and the way into the canvas is a board.
-  const active = input.groups.find((group) => group.id === input.activeGroupId);
-  if (active) return { open: true, group: null };
-  return { open: false, group: boards[0]?.id ?? null };
+/**
+ * Whether the changes panel and the bench, and the two doors that open them,
+ * are on screen.
+ *
+ * Both read the active *project*: its working tree, its tasks, its files. A
+ * board belongs to no project, so on the canvas side, with a board up or on
+ * the empty space the last board left, they would describe a project nobody
+ * is looking at. They leave with the canvas side and come back with the
+ * panes.
+ */
+export function projectPanelsShown(input: { canvasSide: boolean }): boolean {
+  return !input.canvasSide;
 }

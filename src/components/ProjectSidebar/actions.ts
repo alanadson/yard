@@ -53,10 +53,10 @@ export function notesAction(state: SidebarActionState): SidebarActionLabel {
 }
 
 /**
- * The canvas, the group's other surface. It used to be a button in the title
- * bar, next to the pane switch, where it read as a fourth shape of the grid
- * it is not: it has its own cards, its own CLIs and its own board. Here it is
- * one more place to go, in the bar that already lists them, and one row does
+ * The canvas, which is the boards. It used to be a button in the title bar,
+ * next to the pane switch, where it read as a fourth shape of the grid it is
+ * not: a board has its own cards, its own CLIs and no panes. Here it is one
+ * more place to go, in the bar that already lists them, and one row does
  * both trips: pressed, it is the way back to the panes.
  */
 export function canvasAction(state: SidebarActionState): SidebarActionLabel {

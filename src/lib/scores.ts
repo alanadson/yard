@@ -1,18 +1,23 @@
 /**
  * Scores: save and reapply a group's entire arrangement.
  *
- * A score stores what repeats across projects — which CLIs exist, how they
- * are laid out, who talks to whom, the roles, the notes and the drawings —
- * and does **not** store what belongs to that project: absolute `cwd`, ids
- * and live processes. Applying creates everything stopped (`alive: false`),
- * with the destination project's `cwd`; starting remains the user's decision.
+ * A score stores what repeats across boards (which CLIs exist, how they
+ * are laid out, who talks to whom, the roles, the notes and the drawings)
+ * and does **not** store where they ran: absolute `cwd`, ids and live
+ * processes. A score is an arrangement of the canvas, and the canvas is the
+ * boards (`lib/surface.ts`), so it only ever lands on a board. Applying
+ * creates everything stopped (`alive: false`), in the folder the caller
+ * names or, failing that, the one the board's last card was given; starting
+ * remains the user's decision.
  *
  * The on-disk file lives in Rust (`scores.rs`); the format and id remapping
  * live here.
  */
 import { nanoid } from "nanoid";
 
+import { suggestBoardFolder } from "./boardFolder";
 import { commitCanvasExternal } from "./canvasWrite";
+import { t } from "./i18n";
 import { ipc, type PtyKind } from "./ipc";
 import { baseName } from "./terminals";
 import {
@@ -137,8 +142,11 @@ export interface ApplyResult {
  * When the group already has content, the arrangement lands to the right
  * of what exists instead of on top of it.
  *
- * `opts.cwd`: working root of the created terminals. It is how a floor
- * clones the ground's layout — same cards, worktree cwd.
+ * `opts.cwd`: working root of the created terminals; without it, the folder
+ * of the board's newest card, which is what two cards in a row usually want.
+ *
+ * Throws on a project's group: it has no canvas to arrange, and the cards
+ * would be tabs with rectangles nobody can see.
  */
 export function applyScore(
   score: ScoreFile,
@@ -146,25 +154,28 @@ export function applyScore(
   opts?: { cwd?: string },
 ): ApplyResult {
   const s = useProjects.getState();
-  const project = s.projectOfGroup(groupId);
-  const cwd = opts?.cwd ?? project?.path ?? "";
+  if (!s.isBoard(groupId)) {
+    throw new Error(
+      t("Uma partitura só se aplica num quadro: ela é um arranjo do canvas, e o canvas são os quadros."),
+    );
+  }
+  const cwd = opts?.cwd ?? suggestBoardFolder(s.terminalsOf(groupId), "");
   const current = s.layoutOf(groupId).canvas ?? EMPTY_CANVAS;
   const hasContent = Object.keys(current.nodes).length > 0 || current.items.length > 0;
   const dx = hasContent ? occupiedRight(current) + 120 : 0;
 
   const idMap = new Map<string, string>();
-  for (const t of score.terminals) {
+  for (const term of score.terminals) {
     const fresh = s.addTerminal({
       groupId,
-      title: t.title,
-      kind: t.kind,
-      agentId: t.agentId,
-      program: t.program,
-      args: t.args,
+      title: term.title,
+      kind: term.kind,
+      agentId: term.agentId,
+      program: term.program,
+      args: term.args,
       cwd,
-      surface: "canvas",
     });
-    idMap.set(t.key, fresh);
+    idMap.set(term.key, fresh);
   }
   for (const it of score.canvas.items) idMap.set(it.id, nanoid(8));
 
@@ -217,11 +228,6 @@ export function applyScore(
     routines: [...(c.routines ?? []), ...routines],
     rolePresets: { ...(c.rolePresets ?? {}), ...(score.canvas.rolePresets ?? {}) },
   }));
-
-  // Without this a new group would open in the automatic grid and the
-  // arrangement — positions, notes, arrows — would be invisible: a score
-  // only exists on the canvas.
-  if (!hasContent) s.updateLayout(groupId, { surface: "canvas" });
 
   return { terminals: score.terminals.length, items: items.length };
 }

@@ -75,7 +75,7 @@ src/
 │   ├── StatusBar/           # footer: agents waiting, branch, flows, RAM; Busca/composer/shortcuts buttons
 │   ├── ProjectSidebar/      # tree: projects → ground/fronts (branches) → terminals
 │   ├── WorkspaceGrid/       # react-resizable-panels: automatic/grid/spotlight layouts
-│   ├── CanvasView/          # the group's other surface: infinite canvas (cards, notes, drawing)
+│   ├── CanvasView/          # the boards: infinite canvas (cards, notes, drawing)
 │   ├── TerminalPane/        # frame: title, sub-tabs, actions (restart/suspend/kill)
 │   ├── XTermView/           # the xterm itself (attach, resize, input)
 │   ├── Settings/            # Settings (Ctrl+Shift+P): centered sheet, category menu + page
@@ -232,7 +232,10 @@ closing a front deletes a folder the app never made. The one column it did end u
 it belongs to. `layoutJson` carries the other half of the split —
 `{ mode: auto|grid|spotlight, surface: grid|canvas }`, where `mode` used to hold
 `"canvas"` as a fourth value and wiped the pinned grid every time the user
-looked at the board (`src/lib/surface.ts`).
+looked at the board (`src/lib/surface.ts`). Since 2026-09-02 `surface` is a
+readout, not a choice: a board shows the canvas and a project's group its
+panes (`surfaceOf`), the store enforces it on every write, and a terminal is
+born on the surface of its group.
 
 The second column it cost is `groups.project_id` becoming nullable (v7). A
 group with no project is a **board**: one rule, so no second flag can disagree

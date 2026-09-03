@@ -153,28 +153,38 @@ change) the role later, from the card's menu, next to the tab or with
 `yard role set` — then it's handed to the running process and stays on the
 command line for the next ones.
 
-**Canvas.** Two things, and they are separate on purpose.
+**Canvas.** The canvas is the **quadros** (boards), and nothing else.
 
-*A group's other surface*, not a fourth layout mode: its own row in the
-sidebar (under **Busca**, a toggle: pressed, it is the way back to the panes),
-its own CLIs, and the Auto/Grade/Holofote you pinned for the panes waiting
-untouched underneath. With the board up that switch leaves the title bar
-altogether, because it describes a screen nobody can see.
-A CLI belongs to one of the two, one opened on
-the board is a card and never a tab, one opened in a pane is a tab and never a
-card — and taking the screen to either (the tree, the search, `Ctrl+P`) turns
-the group to the right side first.
+*A **quadro** (board)* is the canvas as its own container: it belongs to
+**no project**, so it can hold cards from several folders at once, a Claude
+in `yard` next to a Codex in another repo, each card carrying its own folder.
+Boards live in their own section of the sidebar, shown while the user is on
+the canvas side, and the **Canvas** row above the tree (under **Busca**) is
+the door: it opens the board visited last (else the first, else it makes one)
+and, pressed on the canvas side, comes back to the project's group the user
+left. The canvas is a **side** of the app (`canvasSide` in the store), not a
+property of the active group: deleting the last board leaves the user there,
+with the boards section empty and the workspace asking for a new board, never
+on the projects tree. A board has no panes
+and no fronts, and "Nova CLI neste quadro" asks for a **folder** instead of
+a project, offering the last card's, which is the one question that only
+exists here. Modeled as a group with no project (`terminals` still hang off
+it), so cards, wires, roles, routines, flows and portals all work there
+unchanged.
 
-*A **quadro** (board)*, which is the canvas as its own container: it belongs to
-**no project**, so it can hold cards from several at once — a Claude in `yard`
-next to a Codex in another repo, each card carrying its own folder. Boards live
-in their own section at the top of the sidebar, above `PROJETOS`, because they
-are not inside any project; the tree below is where you pick which project a
-new card runs in. A board has no panes and no fronts — it is a board — and
-"Nova CLI neste quadro" asks for the folder instead of inferring it, which is
-the one question that only exists here. Modeled as a group with no project
-(`terminals` still hang off it), so cards, wires, roles, routines, flows and
-portals all work there unchanged.
+*A project's group has no canvas.* It shows its panes, and only its panes,
+with the Auto/Grade/Holofote you pinned; the surface is derived from what the
+group is (`surfaceOf` in `src/lib/surface.ts`), never flipped, and a CLI is
+born on the surface of its group: a card on a board, a tab in a project.
+Taking the screen to a CLI (the tree, the search, `Ctrl+P`) is a change of
+group. What is project-bound stays off the board: the changes panel and the
+bench, with their two doors in the title bar and their shortcuts, leave while
+a board is up; the fronts control stands in the status bar under a project's
+group; `yard recruit --floor` opens a tab of the front; a score (partitura)
+is saved from a board and lands on a board, in the folder of its last card.
+On the first boot after the change, a group that was showing its canvas comes
+out as a board with its cards, and every project's group goes back to its
+panes (`extractBoards` in `src/lib/boards.ts`).
 
 An infinite canvas with pan/zoom (snaps to 100%), terminals as draggable,
 resizable cards, freehand pen and shapes (roughjs + perfect-freehand), arrows,
@@ -416,8 +426,8 @@ adopts it as a front on the spot.
 default), with its own group, and the ground stays untouched. It opens on
 its panes: "Clonar o layout do chão" copies the ground's *grid* — which
 CLIs, in which pane, in the bar's order, under the same Grade/Holofote —
-stopped and rooted at the front's worktree (`lib/groundClone.ts`). The
-canvas is the group's other surface, and opening a front never takes
+stopped and rooted at the front's worktree (`lib/groundClone.ts`). A front
+has no canvas (the canvas is the boards), and opening a front never takes
 anybody there.
 
 "Abrir frente" is where a project grows one, and it does not write anything
@@ -678,7 +688,9 @@ about this project, a snippet only about the language.
 
 **Anotações (Notes) — the markdown notebook (`Ctrl+Shift+N`).** Knowledge that
 belongs to no project — decisions, studies, plans, bug recipes — gets a
-notebook of its own, full screen, with three panes: **nestable notebooks** (with
+notebook of its own, in the **central area** of the workspace or as a **pane
+tab** beside the CLIs (never a sheet over the window: a portal's page is an OS
+window no HTML backdrop covers), with three panes: **nestable notebooks** (with
 an icon and a count for the whole branch), **colored tags** and **note status**
 (active, on hold, done, discarded — resolved ones drop out of the everyday list
 and come back through their own row or the list's eye icon) on the left; the
@@ -1113,6 +1125,118 @@ wide as what is coming (no more caret line, the hole *is* the answer), the
 strip scrolls itself when the tab is held at its edge, and the ghost settles
 into the hole on release instead of blinking out.
 
+**The board as a place you move through** (2026-09-02). The camera stopped
+teleporting: fit, centre, zoom-to and "go to the agent asking" glide there
+(`lib/cameraTween.ts`, log-space zoom so a 4x and a 0.25x take the same time),
+and a pan released with speed keeps sliding and decays. With nothing selected
+the arrow keys pan; with a card selected `Ctrl+arrows` jump to the nearest
+card in that direction (`lib/spatialNav.ts`: a cone first, the half-plane as
+the fallback, side distance weighted twice) and `Enter` enters it. Every
+canvas key is rebindable in Configurações → Atalhos (`lib/keymap.ts`,
+`stores/keymapStore.ts`, kv `keys.canvas`; the toolbar tooltips read the
+binding). Snap to grid is a preference, `Alt` bypasses it for one gesture
+(`snapBoxToGrid`, `snapResizeToGrid` in `lib/arrange.ts`), and "focus the
+largest card on screen" is another (`largestVisible` in `lib/culling.ts`).
+Cards far outside the viewport are not painted at all (`visibleIds`, one
+viewport of margin so a pan does not blink), and the xterm inside a card is
+rendered at a step of the zoom, not at 1x stretched (`lib/renderScale.ts`).
+
+**Card chrome** (2026-09-02). Every card has a z-order (`raiseNode`,
+`lowerNode` in `lib/cardChrome.ts`), a pin that fixes its place (a pinned card
+refuses drags, arranges and `yard canvas move`), maximize/restore against the
+current viewport (the previous rectangle travels in `node.restore`), a rename
+on `F2` for every kind (`lib/rename.ts` keeps each kind's own limit and
+default), "copiar caminho" and "mostrar na pasta" where the card is a file
+(`lib/cardPath.ts` joins with the root's own separator). A CLI that reported a
+permission prompt through its hook reads "pedindo permissão" instead of
+"travado", on the card and in the HUD (`CanvasView/hud.ts`).
+
+**Guided placement** (2026-09-02). A card created without a point (the
+toolbar, `yard recruit`, a drop with no coordinates) is offered up to six
+numbered spots that do not overlap anything (`lib/placement.ts`: the free
+rectangles of the viewport carved by the existing boxes, a 40 px gap,
+ranked by size and distance to the centre); the first is taken by default,
+the number picks another, `F` places freely. Off by a switch in Interface.
+
+**Drops** (2026-09-02). Files and folders dragged from the OS land on the
+board (Tauri's drag-drop event: an image or video becomes a media card, a
+folder a tree, anything else a doc), rows of a tree card are draggable, and a
+path dropped on a terminal card is pasted quoted for that shell
+(`lib/canvasDrop.ts`: the plan, the step of 40 px between many, the quoting,
+the internal MIME).
+
+**The doc card** (2026-09-02). A text file opened on the board as a card
+(`doc` item, `lib/docNode.ts`, `DocCard.tsx`) through the editor store's
+`loadDoc`, with the same body as the editor tab and none of its chrome. It
+renders text; `.docx` is not rendered.
+
+**Fronts on the board** (2026-09-02). A card wears the colour of the front it
+belongs to (`lib/floorColor.ts`: a hash of the group id, or the colour chosen
+in the fronts popover and saved in `FloorMeta.color`), and a click on the chip
+dims every other front (the lens). The popover gained a swatch per front, a
+PR pill when the branch has one open (copies the URL) and "atualizar do chão"
+(`lib/floorMenu.ts`).
+
+**Portals** (2026-09-02). Viewport presets (phone, tablet, desktop:
+`PORTAL_VIEWPORTS` in `lib/portals.ts`), a screenshot button, the element an
+agent clicks or types into ringed for a moment inside the page
+(`MARK_JS` in `lib/portalDriver.ts`), URL suggestions from the visit history
+(`lib/urlHistory.ts`, capped at 300) and bookmarks with a star
+(`lib/portalBookmarks.ts`, both in `stores/portalWebStore.ts`).
+
+**The board itself** (2026-09-02). A background per board (grid style, colour,
+image and its opacity: `CanvasBackground` in `lib/canvas.ts`), the saved
+scores offered on an empty board, and the minimap painting each CLI in its
+brand colour.
+
+**`yard canvas`** (2026-09-02). The agent lays out its own corner:
+`list`, `move`, `resize`, `arrange`, `align`, `frame`, `pin`/`unpin`, `focus`,
+`zoom` (`lib/bridgeCanvasCmd.ts`), limited to what it reaches and never a
+pinned element; `focus` and `zoom` move the user's camera through
+`CANVAS_CAMERA_EVENT`.
+
+**Native CLI hooks** (2026-09-02). The silence detector guesses; the CLIs that
+have hooks now tell. Claude Code is launched with `--settings
+<data>\bin\claude-hooks.json` (written beside the shims by `bridge.rs`,
+nothing in the user's home folder) and Codex with `-c
+notify=["yard","hook","codex"]`; both flags come from `launchFor` in
+`lib/agentDefaults.ts`, never doubled, never across WSL or SSH. The shim
+receives `yard hook prompt|stop|permission|tool|session --stdin`
+(`lib/hookEvents.ts` parses both dialects) and the bridge moves the runtime
+mirror: a turn starting lifts the block, a tool running means the permission
+was granted, a permission prompt is a block with `permission: true`. Off by a
+switch in Configurações → Agentes.
+
+**Workers** (2026-09-02). A front opened for a task with one agent card in it
+is one object for the CLI (`lib/workerRuns.ts`): `yard worker create "Name"
+--task "…" [--agent x]` (the same road as "Nova tarefa", the front named
+exactly as asked), `list [--json]`, `inspect`, `wait`, `send`, `review` (the
+branch against the ground: files, counts, predicted conflicts), `apply`
+(land and close, `--keep-front`, `--close-siblings`), `keep` (the task goes,
+the front stays as an ordinary one), `discard` (the front goes, refused from
+inside it) and `stop`. The state is one word read from the runtime mirror:
+`starting`, `working`, `done`, `blocked`, `permission`, `stopped`, `exited`.
+
+**The canvas is the boards** (2026-09-02). A project's group stopped having
+the canvas as its other surface: the surface is derived from the group
+(`surfaceOf`, `lib/surface.ts`; `updateLayout` and `addTerminal` enforce it),
+the pane menu, the palette and the sidebar's Canvas row stopped flipping it
+(`canvasDoor` leads to the board visited last, `lastBoardId` in the store),
+and the first load carries the cards of a group that was showing its canvas
+into a board and puts the group back on its panes (`extractBoards`). Off the
+board, projects stay out of the canvas: "Nova CLI neste quadro" asks for a
+folder, never a project (`lib/boardFolder.ts` offers the last card's, else
+the home folder); a score only applies on a board (`applyScore` throws
+otherwise); `yard recruit --floor` opens a tab of the front, with no
+rectangle drawn anywhere. Off the canvas, the board stays out of the
+projects: the changes panel and the bench leave with their doors and their
+shortcuts while a board is up (`projectPanelsShown`, `lib/layoutControls.ts`),
+and the fronts control moved from the corner of a project's canvas to the
+status bar (`Floors/place.ts`). The canvas side is state of its own
+(`canvasSide`): deleting the last board keeps the user on it, with the
+boards section empty and a "Novo quadro" face in the workspace, and "Nova
+aba" there asks for a board before anything else.
+
 ## Golden rule
 
 The UI is **never** the owner of process state. Mounting an `XTermView` calls
@@ -1185,6 +1309,13 @@ to do the same.
   the day a certificate is bought, nothing but the two secrets changes. Until
   then SmartScreen asks once. The CSP is set (`src-tauri/tauri.conf.json`) and the Tauri capabilities
   are down to window controls, dialogs and notifications.
+- **Left out of the board work of 2026-09-02**, each on purpose: tabs inside
+  one portal card (one page per card, as before); `.docx` in the doc card
+  (text only); maximize for items (cards only, items have no viewport to
+  restore against); an icon per board in the sidebar; an onboarding tour;
+  docking and resizing the minimap. `yard worker review` prints the diffstat
+  and the predicted conflicts, not the patch: the patch is the worktree's own
+  `git diff`, which the caller can run.
 
 Validated end to end with the real app: boot → restore workspace from SQLite →
 attach → spawn → live PTY → scrollback on disk → an app crash leaves no orphan.

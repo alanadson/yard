@@ -46,16 +46,20 @@ import { GROUND_FLOOR, groupLabel } from "../../lib/floors";
 import { parseLayout, useProjects, type LayoutMode } from "../../stores/projectsStore";
 import { NO_WORKTREES, useWorktrees } from "../../stores/worktreesStore";
 import { useUI } from "../../stores/uiStore";
-import { layoutControlsState, paneSwitchVisible } from "../../lib/layoutControls";
+import {
+  layoutControlsState,
+  paneSwitchVisible,
+  projectPanelsShown,
+} from "../../lib/layoutControls";
 
 const appWindow = getCurrentWindow();
 
 /**
- * The shapes of the pane grid. Canvas is deliberately **not** here: it is the
- * group's other surface, with its own CLIs, and it is a door in the sidebar
- * (`ProjectSidebar/actions.ts`). As a fourth segment it shared this field and
- * wiped the Grade/Holofote the user had pinned every time they looked at the
- * board.
+ * The shapes of the pane grid. Canvas is deliberately **not** here: the
+ * canvas is the boards, groups with no project, and the door to them is a
+ * row in the sidebar (`ProjectSidebar/actions.ts`). As a fourth segment it
+ * shared this field and wiped the Grade/Holofote the user had pinned every
+ * time they looked at the board.
  */
 const MODES: { id: LayoutMode; label: string; tip: string }[] = [
   { id: "auto", label: "Auto", tip: "Automático: a grade segue os painéis usados" },
@@ -124,15 +128,19 @@ export function TitleBar() {
     activeGroupId,
     activeProjectId,
     groupBeforeBoard,
-    activeSurface: activeLayout?.surface ?? "grid",
     groups,
   });
   const controlGroup = groups.find((candidate) => candidate.id === controls?.groupId);
   const layout = controlGroup ? parseLayout(controlGroup.layoutJson) : null;
-  // With the canvas in front the pane switch has no screen to describe, and
-  // it leaves the bar (`lib/layoutControls.ts`). The way in and out of the
+  // With a board in front the pane switch has no screen to describe, and it
+  // leaves the bar (`lib/layoutControls.ts`). The way in and out of the
   // canvas is the sidebar's row, which is the same toggle.
   const paneSwitch = paneSwitchVisible(controls);
+  // The two doors on the right open panels about the active *project*, and a
+  // board belongs to none: they leave the bar with the board, and the panels
+  // behind them leave too (`App`).
+  const canvasSide = useProjects((s) => s.canvasSide);
+  const projectPanels = projectPanelsShown({ canvasSide });
   const floor = activeLayout?.floor;
   // The ground is called by the branch checked out at the project root, the
   // same name the sidebar prints for it.
@@ -180,6 +188,7 @@ export function TitleBar() {
               notes: notesOpen,
               statusBar: statusBarOpen,
               maximized,
+              board: !projectPanels,
             },
             {
               toggleSidebar,
@@ -314,29 +323,31 @@ export function TitleBar() {
           sidebar's). Open = the sidebar's blue pill; the count of changed
           files rides in the balloon and in the status bar, never as a pill
           here, see `dockToggle.ts`. */}
-      <div className="titlebar-doors">
-        <button
-          className="icon-btn dock-toggle"
-          data-tip={changesDoor.tip}
-          data-tip-at="right"
-          aria-label={changesDoor.label}
-          aria-pressed={changesOpen}
-          onClick={toggleChanges}
-        >
-          <FileDiff size={14} />
-        </button>
-        <button
-          className="icon-btn dock-toggle"
-          data-tip={benchDoor.tip}
-          data-tip-at="right"
-          aria-label={benchDoor.label}
-          aria-pressed={benchOpen}
-          onClick={toggleBench}
-        >
-          <PanelRight size={14} />
-          {benchDoor.dot && <span className="dock-toggle-dot" aria-hidden="true" />}
-        </button>
-      </div>
+      {projectPanels && (
+        <div className="titlebar-doors">
+          <button
+            className="icon-btn dock-toggle"
+            data-tip={changesDoor.tip}
+            data-tip-at="right"
+            aria-label={changesDoor.label}
+            aria-pressed={changesOpen}
+            onClick={toggleChanges}
+          >
+            <FileDiff size={14} />
+          </button>
+          <button
+            className="icon-btn dock-toggle"
+            data-tip={benchDoor.tip}
+            data-tip-at="right"
+            aria-label={benchDoor.label}
+            aria-pressed={benchOpen}
+            onClick={toggleBench}
+          >
+            <PanelRight size={14} />
+            {benchDoor.dot && <span className="dock-toggle-dot" aria-hidden="true" />}
+          </button>
+        </div>
+      )}
 
       {/* Windows window controls: minimize / maximize / close, flush to the
           top-right corner at the system's own metrics. No tooltip here —

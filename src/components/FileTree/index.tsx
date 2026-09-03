@@ -37,6 +37,8 @@ import { ContextMenu, type MenuAnchor } from "../ContextMenu";
 import { FileGlyph } from "../FileGlyph";
 import { InlineRename } from "../ContextMenu/InlineRename";
 import { copyText } from "../../lib/clipboard";
+import { writeDragPaths } from "../../lib/canvasDrop";
+import { joinPath as joinAbsolute } from "../../lib/cardPath";
 import { ipc, type DirEntryInfo, type GitFileStatus } from "../../lib/ipc";
 import { ancestors, joinPath, parentDir, useEditor } from "../../stores/editorStore";
 import { useChanges } from "../../stores/changesStore";
@@ -435,6 +437,7 @@ export function FileTree({
             <TreeRow
               key={row.key}
               row={row}
+              root={root}
               marks={marks}
               activePath={activePath ?? null}
               isTabStop={row.entry.path === tabStop}
@@ -503,6 +506,8 @@ export function FileTree({
 
 interface RowProps {
   row: Extract<Row, { kind: "entry" }>;
+  /** The tree's root: a drag carries the absolute path, not the relative one. */
+  root: string;
   marks: { byPath: Map<string, GitFileStatus>; dirsWithChanges: Set<string> };
   activePath: string | null;
   isTabStop: boolean;
@@ -518,6 +523,7 @@ interface RowProps {
 
 function TreeRow({
   row,
+  root,
   marks,
   activePath,
   isTabStop,
@@ -582,6 +588,14 @@ function TreeRow({
         onFocus={onFocus}
         onContextMenu={onContextMenu}
         onKeyDown={onKeyDown}
+        // A row can be carried onto the board (a card) or into a terminal
+        // (its path at the prompt). The payload is the absolute path.
+        draggable
+        onDragStart={(e) =>
+          writeDragPaths(e.dataTransfer, [
+            { path: joinAbsolute(root, entry.path), ...(entry.dir ? { dir: true } : {}) },
+          ])
+        }
       >
         <span className="ftree-twist" aria-hidden="true">
           {entry.dir &&

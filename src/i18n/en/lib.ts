@@ -327,6 +327,11 @@ export default {
   "Enquadrar tudo · Shift+2 enquadra a seleção": "Frame everything · Shift+2 frames the selection",
   "Mostrar ou esconder o minimapa": "Show or hide the minimap",
   "Andar pelo fio até o próximo conectado (← volta)": "Walk the wire to the next connected one (← goes back)",
+  "Ir para o cartão naquela direção (Enter entra nele)": "Go to the card in that direction (Enter steps into it)",
+  "Sem nada selecionado: deslocar a tela (Shift anda 4×)": "With nothing selected: pan the view (Shift moves 4×)",
+  "botão do meio": "middle button",
+  "Mover a tela; soltar em movimento continua deslizando": "Pan the view; releasing while moving keeps it sliding",
+  "Renomear o cartão selecionado": "Rename the selected card",
   "Espaço": "Space",
   "Mover a tela com qualquer ferramenta": "Pan the view with any tool",
   "2× clique": "double-click",
@@ -412,4 +417,7 @@ export default {
     "The front exists, but the agent did not come up: {detail}",
   "O setup da frente falhou: {detail}": "The front's setup failed: {detail}",
   "sem motivo": "no reason given",
+  "Pedindo permissão": "Asking for permission",
+  "Uma partitura só se aplica num quadro: ela é um arranjo do canvas, e o canvas são os quadros.":
+    "A score only applies on a board: it is an arrangement of the canvas, and the canvas is the boards.",
 } satisfies Record<string, string>;

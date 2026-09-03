@@ -259,6 +259,13 @@ fn bridge_remote() -> serde_json::Value {
     })
 }
 
+/// Where the settings file Claude Code is launched with lives (`bridge.rs`),
+/// so the frontend can put it on the command line (`lib/agentDefaults.ts`).
+#[tauri::command]
+fn bridge_hooks_file() -> String {
+    bridge::claude_hooks_file().to_string_lossy().into_owned()
+}
+
 #[tauri::command]
 fn default_shell() -> String {
     pty::default_shell()
@@ -1540,6 +1547,7 @@ pub fn run() {
             pty_export,
             search_scrollback,
             bridge_remote,
+            bridge_hooks_file,
             webhook_post,
             tray::tray_set_status,
             tray::window_summon,

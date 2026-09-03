@@ -102,7 +102,6 @@
      is composited (the comment after each is where it ends up). */
   --material-panel: rgb(36 36 36 / 60%); /* the bench → L* 7 */
   --material-doc: rgb(24 24 24 / 94%); /* the editor, the diff viewer → L* 7.5 */
-  --material-notes: rgb(27 27 27 / 86%); /* the notebook → L* 7.9 */
   --material-tip: rgb(47 47 47 / 96%); /* balloons → L* 19, the highest thing in the app */
   --material-sticky: rgb(35 35 35 / 96%); /* a header that content slides under → L* 13.5 */
 
@@ -981,122 +980,106 @@ kbd {
 }
 
 /* In-world tooltip (replaces the native `title` in the chrome): a dark
-   balloon that appears below the control after a short pause. The
-   native `title` is a white Windows box — foreign material amid the glass.
-   `aria-label` remains the one that speaks to the screen reader. */
+   balloon that appears next to the control after a short pause. The native
+   `title` is a white Windows box, foreign material amid the glass.
+   `aria-label` remains the one that speaks to the screen reader.
+
+   It is **one element**, `.tip-layer`, fixed in `<body>` and driven by
+   `lib/tipLayer.ts` from the control's `data-tip` (+ `data-tip-at`,
+   `data-tip-side`, `data-tip-wrap`, read in `lib/tip.ts`). Until 2026-09 it
+   was a `::after` of the control itself, which lost text in two ways no
+   stylesheet can undo: clipped by the scrollport the control lived in (the
+   sidebar tree cut "Abrir frente…" at its edge; the bench body and the tab
+   strip clipped theirs outright) and covered by any panel painted after the
+   control's stacking context (the title bar's doors opened their balloon
+   under the bench: the bar's `backdrop-filter` is a stacking context, and
+   the bench paints later). In the body it belongs to no scrollport and to the
+   root stacking context, and its position (side, flip, slide) is measured
+   against the window instead of guessed per control. */
+
+/* Kept although the balloon no longer hangs off the control: marks drawn with
+   `position: absolute` inside these controls (badges, dots) were placed
+   against this box. */
 [data-tip] {
   position: relative;
 }
 
-[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  /* The 8px offset is a **transparent border**, not a loose `top`. A real gap
-     there drops the `:hover` on the way to the balloon, and it vanishes before
-     it can be reached — which is what WCAG 1.4.13 ("hoverable") forbids. This
-     way the sensitive area touches the control and the balloon is still drawn
-     8px below. The thread of light on top still comes from `--hairline` (an
-     `inset` shadow, drawn at the edge of the padding box), so the look does
-     not change.
-
-     Why not a `::before` as the bridge: `data-tip` sits on 101 classes, and
-     `.crumb::before` is already a separator — the bridge would have knocked it
-     out of place. A border collides with nobody. */
-  top: 100%;
-  border-top: 8px solid transparent;
-  background-clip: padding-box;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 300;
+.tip-layer {
+  position: fixed;
+  left: 0;
+  top: 0;
+  /* Above every panel, menu and popover; only the tab in hand rides higher
+     (`.tab-drag-ghost`, 10001). */
+  z-index: 10000;
+  width: max-content;
+  max-width: min(420px, 100vw - 12px);
   padding: 4px 9px;
   border-radius: 8px;
   background: var(--material-tip);
-  border: 1px solid rgb(var(--veil) / 10%);
+  /* The bridge (below) is a transparent border: the material has to stop at
+     the padding box, or it would paint the bridge as well. */
+  background-clip: padding-box;
+  --tip-edge: rgb(var(--veil) / 10%);
+  border: 1px solid var(--tip-edge);
   box-shadow:
     0 6px 18px rgb(var(--shade) / 45%),
     var(--hairline);
   color: var(--text-bright);
   font-size: var(--fs-xs);
   font-weight: 400;
+  line-height: 1.45;
   letter-spacing: 0;
   text-transform: none;
-  white-space: nowrap;
-  /* Invisible intercepts nothing: a balloon of up to 240px hanging over the
-     screen would eat the click of whoever sat underneath. */
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 120ms ease 0s;
-}
-
-[data-tip]:hover::after {
-  opacity: 1;
+  text-align: left;
+  /* A newline in the hint is a line break (the tabs say "command⏎folder");
+     everything else wraps at the cap instead of crossing the screen. */
+  white-space: pre-line;
+  overflow-wrap: anywhere;
   /* Open, the balloon accepts the pointer — WCAG 1.4.13's "hoverable", for
      whoever uses magnification and drags the pointer to the text to read it. */
   pointer-events: auto;
-  transition-delay: 500ms;
+  animation: tip-in 120ms ease;
 }
 
-/* Keyboard reaches the same balloon — without this, every icon-only control
-   is anonymous to whoever tabs through the chrome. */
-[data-tip]:focus-visible::after {
-  opacity: 1;
-  pointer-events: auto;
-  transition-delay: 500ms;
+/* Closed, it is not on the page: nothing invisible is left to eat the click
+   of whoever sits where the balloon was. Explicit, because any author
+   `display` on `.tip-layer` would outrank the UA's own `[hidden]`. */
+.tip-layer[hidden] {
+  display: none;
 }
 
-/* Esc dismisses an open balloon (WCAG 1.4.13); App sets `tips-off` on the
-   body and clears it on the next focus or pointer move. */
-body.tips-off [data-tip]:hover::after,
-body.tips-off [data-tip]:focus-visible::after {
-  opacity: 0;
-  /* Dismissed, it goes back to being transparent to the pointer. Without this
-     line the balloon would be invisible **and** clickable, eating the click of
-     whoever is underneath. */
-  pointer-events: none;
-  transition-delay: 0s;
+/* The 8px offset from the control is a **transparent border** on the side
+   that faces it, not a gap in the placement: a real gap drops the hover on
+   the way to the balloon, and it vanishes before it can be reached, which is
+   what WCAG 1.4.13 forbids. The thread of light still comes from `--hairline`
+   (an `inset` shadow, drawn at the edge of the padding box). The side is the
+   one the balloon actually opened on, after any flip. */
+.tip-layer[data-side="bottom"] {
+  border-top: 8px solid transparent;
 }
 
-/* Near window edges the balloon anchors to the control's own side,
-   otherwise half of it dies off-screen. */
-[data-tip][data-tip-at="left"]::after {
-  left: 0;
-  transform: none;
-}
-
-[data-tip][data-tip-at="right"]::after {
-  left: auto;
-  right: 0;
-  transform: none;
-}
-
-/* Controls at the window footer: the balloon goes up. The transparent bridge
-   switches sides with it — it has to sit between the control and the balloon. */
-[data-tip][data-tip-side="top"]::after {
-  top: auto;
-  bottom: 100%;
-  border-top: 0;
+.tip-layer[data-side="top"] {
   border-bottom: 8px solid transparent;
 }
 
-/* Canvas vertical palette: the balloon exits to the right, at button height.
-   Same bridge, now horizontal. */
-[data-tip][data-tip-side="right"]::after {
-  top: 50%;
-  left: 100%;
-  right: auto;
-  border-top: 0;
-  border-left: 10px solid transparent;
-  transform: translateY(-50%);
+.tip-layer[data-side="right"] {
+  border-left: 8px solid transparent;
 }
 
-/* Long texts (paths, explanations): wrap at up to ~240px instead of
-   crossing the screen in a single line. */
-[data-tip][data-tip-wrap]::after {
-  white-space: normal;
-  width: max-content;
+.tip-layer[data-side="left"] {
+  border-right: 8px solid transparent;
+}
+
+/* Long texts (paths, explanations): a narrow column reads better than a
+   420px line. */
+.tip-layer.is-wrap {
   max-width: 240px;
-  overflow-wrap: anywhere;
-  text-align: left;
+}
+
+@keyframes tip-in {
+  from {
+    opacity: 0;
+  }
 }
 
 .brand {
@@ -2262,6 +2245,13 @@ button.sb-chip:active {
   min-width: 0;
 }
 
+/* "Abrir em [pasta]" on a board: the folder is typed or picked, never a
+   project, and the field takes the room the picker used to. */
+.new-term-folder {
+  flex: 1 1 220px;
+  min-width: 160px;
+}
+
 .tree-origin {
   color: var(--text-dim);
   font-size: var(--fs-xs);
@@ -3108,26 +3098,13 @@ button.sb-chip:active {
   overflow-x: auto;
   /* Explicit, because CSS would not leave it `visible`: with one axis
      scrolling, the other becomes `auto` on its own — and a one-row strip that
-     can scroll vertically is a row that can leave. See the rule below for what
-     was filling that axis. */
+     can scroll vertically is a row that can leave. It happened: the tabs'
+     old `::after` balloons were 32px of overflow below a 28px strip, and one
+     wheel notch over the bar scrolled every tab out of view. The balloon is
+     fixed in `<body>` now (`.tip-layer`), and the strip clips nothing that
+     matters. */
   overflow-y: hidden;
   scrollbar-width: none;
-}
-
-/* The tabs' tooltip, inside a strip that scrolls.
-   The balloon is an absolute box hanging 8px *below* the tab and up to 240px
-   wide. In a 28px-tall strip that is 32px of scrollable overflow in the block
-   axis and ~30px in the inline one: one wheel notch over the bar scrolled
-   every tab out of view — the strip kept its width and painted nothing, which
-   reads as "the tabs vanished" — and the "there's more" fade stayed on for
-   good, because `scrollWidth` was never equal to `clientWidth`.
-   The balloon could not show from in here anyway: the strip clips it (proven
-   against the same balloon one level up, which shows fine). So the box goes;
-   the `data-tip` stays on the tab for the day the balloon is raised out of
-   the strip. */
-.pane-tabs [data-tip]::after,
-.editor-tabs [data-tip]::after {
-  content: none;
 }
 
 .pane-gap {
@@ -3137,30 +3114,6 @@ button.sb-chip:active {
 
 .pane-tabs::-webkit-scrollbar {
   display: none;
-}
-
-/* The tabs' balloon, drawn by React (see `.pane-tabs [data-tip]::after`
-   above): lives in the pane, not in the strip, which is what makes it show.
-   Same material as the global balloon — only the position is computed in JS. */
-.pane-tabtip {
-  position: absolute;
-  top: 42px;
-  transform: translateX(-50%);
-  z-index: 300;
-  max-width: min(420px, 90%);
-  padding: 4px 9px;
-  border-radius: 8px;
-  background: var(--material-tip);
-  border: 1px solid rgb(var(--veil) / 10%);
-  box-shadow:
-    0 6px 18px rgb(var(--shade) / 45%),
-    var(--hairline);
-  color: var(--text-bright);
-  font-size: var(--fs-xs);
-  line-height: 1.45;
-  white-space: pre-line;
-  overflow-wrap: anywhere;
-  pointer-events: none;
 }
 
 /* "New pane" strip: only exists while a tab is being dragged. It is the target

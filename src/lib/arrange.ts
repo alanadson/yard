@@ -378,3 +378,53 @@ export function snapResize(
 
   return { rect: out, guides };
 }
+
+// ---------------------------------------------------------------------------
+// the grid
+// ---------------------------------------------------------------------------
+
+/** The nearest grid line to `v`. Never returns a negative zero. */
+export function snapToGrid(v: number, size: number): number {
+  const s = Math.round(v / size) * size;
+  return s === 0 ? 0 : s;
+}
+
+/**
+ * A box on the grid. Moving snaps the origin and keeps the size; resizing
+ * snaps the far edges and keeps the origin, so the corner in the hand is the
+ * one that lands on a line. A box never shrinks below one cell.
+ */
+export function snapBoxToGrid(box: Box, size: number, mode: "move" | "resize"): Box {
+  if (mode === "move") return { ...box, x: snapToGrid(box.x, size), y: snapToGrid(box.y, size) };
+  return {
+    ...box,
+    w: Math.max(size, snapToGrid(box.x + box.w, size) - box.x),
+    h: Math.max(size, snapToGrid(box.y + box.h, size) - box.y),
+  };
+}
+
+/**
+ * A resize on the grid: only the edges that moved since `base` snap, each
+ * to its own line, so pulling the west side never makes the east side
+ * twitch. An edge cannot cross the opposite one; one cell is the floor.
+ */
+export function snapResizeToGrid(rect: Box, base: Box, size: number): Box {
+  const out = { ...rect };
+  const right = rect.x + rect.w;
+  const bottom = rect.y + rect.h;
+  if (Math.abs(rect.x - base.x) > 0.01) {
+    out.x = Math.min(snapToGrid(rect.x, size), right - size);
+    out.w = right - out.x;
+  }
+  if (Math.abs(right - (base.x + base.w)) > 0.01) {
+    out.w = Math.max(size, snapToGrid(right, size) - out.x);
+  }
+  if (Math.abs(rect.y - base.y) > 0.01) {
+    out.y = Math.min(snapToGrid(rect.y, size), bottom - size);
+    out.h = bottom - out.y;
+  }
+  if (Math.abs(bottom - (base.y + base.h)) > 0.01) {
+    out.h = Math.max(size, snapToGrid(bottom, size) - out.y);
+  }
+  return out;
+}

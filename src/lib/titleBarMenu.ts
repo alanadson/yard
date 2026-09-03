@@ -31,6 +31,12 @@ export interface TitleBarMenuContext {
   /** The footer (`StatusBar`) — hidden from Settings, shown again from here. */
   statusBar: boolean;
   maximized: boolean;
+  /**
+   * A board is on screen. The changes panel and the bench read the active
+   * project, and a board has none: their two entries leave the map with the
+   * doors they mirror (`projectPanelsShown` in `lib/layoutControls.ts`).
+   */
+  board?: boolean;
 }
 
 export function titleBarMenu(
@@ -46,20 +52,24 @@ export function titleBarMenu(
       shortcut: "Ctrl+B",
       onSelect: act.toggleSidebar,
     },
-    {
-      id: "changes",
-      label: t("Arquivos e alterações"),
-      checked: ctx.changes,
-      shortcut: "Ctrl+Shift+D",
-      onSelect: act.toggleChanges,
-    },
-    {
-      id: "bench",
-      label: t("Bancada"),
-      checked: ctx.bench,
-      shortcut: "Ctrl+Shift+B",
-      onSelect: act.toggleBench,
-    },
+    ...(ctx.board
+      ? []
+      : ([
+          {
+            id: "changes",
+            label: t("Arquivos e alterações"),
+            checked: ctx.changes,
+            shortcut: "Ctrl+Shift+D",
+            onSelect: act.toggleChanges,
+          },
+          {
+            id: "bench",
+            label: t("Bancada"),
+            checked: ctx.bench,
+            shortcut: "Ctrl+Shift+B",
+            onSelect: act.toggleBench,
+          },
+        ] satisfies MenuEntry[])),
     {
       id: "notes",
       label: t("Anotações"),

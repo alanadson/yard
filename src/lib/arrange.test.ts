@@ -9,11 +9,64 @@ import {
   alignBoxes,
   boxesIntersect,
   distributeBoxes,
+  snapBoxToGrid,
   snapMove,
   snapResize,
+  snapResizeToGrid,
+  snapToGrid,
   tidyBoxes,
   unionBox,
 } from "./arrange";
+
+describe("snapToGrid", () => {
+  it("rounds to the nearest grid line, either way", () => {
+    expect(snapToGrid(31, 26)).toBe(26);
+    expect(snapToGrid(40, 26)).toBe(52);
+    expect(snapToGrid(-10, 26)).toBe(-0 + 0);
+  });
+
+  it("snaps a box's origin and leaves its size alone when only moving", () => {
+    expect(snapBoxToGrid({ x: 31, y: 66, w: 111, h: 77 }, 26, "move")).toEqual({
+      x: 26,
+      y: 78,
+      w: 111,
+      h: 77,
+    });
+  });
+
+  it("snaps the far edges when resizing, keeping the origin", () => {
+    // Right edge 31 + 111 = 142 -> 130; bottom 66 + 77 = 143 -> 156.
+    expect(snapBoxToGrid({ x: 31, y: 66, w: 111, h: 77 }, 26, "resize")).toEqual({
+      x: 31,
+      y: 66,
+      w: 99,
+      h: 90,
+    });
+  });
+
+  it("a resize snaps only the edges the hand moved, so the still side never twitches", () => {
+    const base = { x: 52, y: 52, w: 104, h: 104 };
+    // The west edge was pulled from 52 to 41: it lands on 52 again and the
+    // east edge (156) does not move at all.
+    expect(snapResizeToGrid({ x: 41, y: 52, w: 115, h: 104 }, base, 26)).toEqual(base);
+    // The east edge was pulled to 171 -> 182; nothing else moves.
+    expect(snapResizeToGrid({ x: 52, y: 52, w: 119, h: 104 }, base, 26)).toEqual({
+      x: 52,
+      y: 52,
+      w: 130,
+      h: 104,
+    });
+  });
+
+  it("never snaps a box below a size of one cell", () => {
+    expect(snapBoxToGrid({ x: 0, y: 0, w: 5, h: 5 }, 26, "resize")).toEqual({
+      x: 0,
+      y: 0,
+      w: 26,
+      h: 26,
+    });
+  });
+});
 
 const box = (x: number, y: number, w = 100, h = 100) => ({ x, y, w, h });
 

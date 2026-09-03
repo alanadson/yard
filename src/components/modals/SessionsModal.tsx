@@ -9,7 +9,6 @@ import { Modal } from "./Modal";
 import { BrandIcon } from "../BrandIcon";
 import { useT } from "../../hooks/useT";
 import { brandById } from "../../lib/brands";
-import { placeCard } from "../../lib/canvasWrite";
 import { AsyncDisposer } from "../../lib/disposables";
 import { compactCount, kb, truncate } from "../../lib/format";
 import { locale } from "../../lib/i18n";
@@ -134,9 +133,8 @@ export function SessionsModal({ projectPath }: { projectPath: string }) {
         args,
         cwd,
       });
-      // A resumed session comes back on the surface the user is looking at —
-      // a tab among the tabs, or a card on the board.
-      const surface = useProjects.getState().layoutOf(groupId).surface;
+      // A resumed session comes back as a tab of the project's group: the
+      // session belongs to a project, and a project's group draws tabs.
       const id = addTerminal({
         groupId,
         program: born.program,
@@ -146,11 +144,7 @@ export function SessionsModal({ projectPath }: { projectPath: string }) {
         title: s.title ? truncate(s.title, 28) : t("{agent} (retomado)", { agent: s.agent }),
         agentId: s.agent,
         resume: args,
-        surface,
       });
-      // On the board it belongs where the user last pointed, not at the next
-      // automatic slot.
-      if (surface === "canvas") placeCard(groupId, id);
       useProjects.getState().updateTerminal(id, { alive: true });
       closeModal();
     } catch (e) {

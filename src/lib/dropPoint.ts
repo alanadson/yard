@@ -129,7 +129,15 @@ export function dropPointFor(
   groupId: string | null | undefined,
   size?: DropSize,
 ): DropPoint | null {
-  if (!groupId) return null;
-  const cam = readers.get(groupId)?.();
+  const cam = cameraFor(groupId);
   return cam ? dropAt(cam, size) : null;
+}
+
+/**
+ * The camera itself, for a caller that needs more than a point: the guided
+ * placement ranks its offers from the cursor and keeps them inside the view.
+ */
+export function cameraFor(groupId: string | null | undefined): DropCamera | null {
+  if (!groupId) return null;
+  return readers.get(groupId)?.() ?? null;
 }

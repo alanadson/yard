@@ -32,7 +32,6 @@ import {
   Activity,
   AlertTriangle,
   Pin,
-  AppWindow,
   Bot,
   ClipboardPaste,
   Eraser,
@@ -60,7 +59,6 @@ import type { XTermHandle } from "../XTermView";
 import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
 import { InlineRename } from "../ContextMenu/InlineRename";
 import { closeDocTab, docTabMenu } from "../../lib/editorActions";
-import { show } from "../../lib/navigate";
 import { paneMenu } from "../../lib/paneMenu";
 import { useT } from "../../hooks/useT";
 import { captureTextTarget, textMenuEntries } from "../../lib/textMenu";
@@ -233,13 +231,6 @@ export function TerminalPane({
     null,
   );
   const [overflow, setOverflow] = useState(false);
-  /**
-   * The tab's balloon, drawn here and not by the CSS: the tab strip scrolls,
-   * and an `::after` inside it is clipped by the strip itself — which is why
-   * the tab tooltips (command and folder) existed without ever showing.
-   */
-  const [tip, setTip] = useState<{ x: number; text: string } | null>(null);
-  const tipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [tabMenu, setTabMenu] = useState<{
     id: string;
     anchor: MenuAnchor;
@@ -366,28 +357,6 @@ export function TerminalPane({
     // four files left the "more tabs" fade lying until the next resize.
   }, [terminals.length, docs.length, browsers.length, notes]);
 
-  /** Holds the balloon for half a second, like the CSS balloon in the rest of the app. */
-  const showTip = (e: React.MouseEvent<HTMLElement>, text: string) => {
-    const target = e.currentTarget;
-    if (tipTimer.current) clearTimeout(tipTimer.current);
-    tipTimer.current = setTimeout(() => {
-      // Measured against the pane, which is what anchors the balloon — the
-      // strip scrolls, and a position relative to it would drift as soon as
-      // there was any scrolling (or the header's breathing room).
-      const pane = target.closest(".pane")?.getBoundingClientRect();
-      const r = target.getBoundingClientRect();
-      if (!pane) return;
-      setTip({ x: r.left - pane.left + r.width / 2, text });
-    }, 500);
-  };
-  const hideTip = () => {
-    if (tipTimer.current) clearTimeout(tipTimer.current);
-    setTip(null);
-  };
-  useEffect(() => () => {
-    if (tipTimer.current) clearTimeout(tipTimer.current);
-  }, []);
-
   /**
    * Arrow keys on the tab strip.
    *
@@ -462,7 +431,6 @@ export function TerminalPane({
     paneMenu(
       {
         mode: useProjects.getState().layoutOf(groupId).mode,
-        surface: useProjects.getState().layoutOf(groupId).surface,
         notesHere: notes,
       },
       {
@@ -470,7 +438,6 @@ export function TerminalPane({
         newBrowser: newBrowser,
         dockNotes: () => useNotes.getState().dockTo(groupId, slot),
         setMode: (mode) => useProjects.getState().updateLayout(groupId, { mode }),
-        showSurface: (surface) => show(groupId, surface),
       },
     );
 
@@ -482,16 +449,10 @@ export function TerminalPane({
     if (id === NOTES_TAB_ID) {
       return [
         {
-          id: "overlay",
-          label: t("Sobrepor à tela"),
-          icon: <AppWindow size={13} />,
-          onSelect: () => useNotes.getState().setPlaceKind("overlay"),
-        },
-        {
           id: "center",
           label: t("Ocupar a área central"),
           icon: <Maximize2 size={13} />,
-          onSelect: () => useNotes.getState().setPlaceKind("center"),
+          onSelect: () => useNotes.getState().placeCenter(),
         },
         { kind: "sep" },
         {
@@ -607,7 +568,6 @@ export function TerminalPane({
           aria-label={t("Abas do painel {n}", { n: slot + 1 })}
           data-overflow={overflow}
           onKeyDown={onTabsKeyDown}
-          onMouseLeave={hideTip}
         >
           {/* One bar, four kinds of tab, one order — the one the user
               arranged (`lib/paneBar.ts`). They used to be painted as three
@@ -670,10 +630,7 @@ export function TerminalPane({
                       e.stopPropagation();
                       setRenamingId(term.id);
                     }}
-                    onMouseEnter={(e) =>
-                      showTip(e, `${term.program} ${term.args.join(" ")}\n${term.cwd}`)
-                    }
-                    onMouseLeave={hideTip}
+                    data-tip={`${term.program} ${term.args.join(" ")}\n${term.cwd}`}
                   >
                     <span className={`dot dot--${r?.state ?? "idle"}`} />
                     {term.pinned ? (
@@ -814,8 +771,7 @@ export function TerminalPane({
                     aria-controls={`panel-${d.id}`}
                     tabIndex={d.id === activeDoc?.id ? 0 : -1}
                     className="pane-tab"
-                    onMouseEnter={(e) => showTip(e, `${d.path}\n${d.root}`)}
-                    onMouseLeave={hideTip}
+                    data-tip={`${d.path}\n${d.root}`}
                     onClick={() => useEditor.getState().setActive(d.id)}
                     onAuxClick={(e) => {
                       if (e.button !== 1) return;
@@ -890,8 +846,7 @@ export function TerminalPane({
                     aria-controls={`panel-${b.id}`}
                     tabIndex={b.id === activeBrowser?.id ? 0 : -1}
                     className="pane-tab"
-                    onMouseEnter={(e) => showTip(e, b.url)}
-                    onMouseLeave={hideTip}
+                    data-tip={b.url}
                     onClick={select}
                     onAuxClick={(e) => {
                       if (e.button !== 1) return;
@@ -958,10 +913,7 @@ export function TerminalPane({
                     aria-controls={`panel-${NOTES_TAB_ID}`}
                     tabIndex={activeNotes ? 0 : -1}
                     className="pane-tab"
-                    onMouseEnter={(e) =>
-                      showTip(e, t("Anotações — o caderno de notas markdown"))
-                    }
-                    onMouseLeave={hideTip}
+                    data-tip={t("Anotações — o caderno de notas markdown")}
                     onClick={() => {
                       setActiveTab(groupId, slot, NOTES_TAB_ID);
                       // The notebook in focus is no terminal in focus — same
@@ -994,14 +946,6 @@ export function TerminalPane({
             return null;
           })}
         </div>
-
-        {/* The balloon lives outside the scrolling strip — the only way for
-            it to show (see the comment at `.pane-tabs [data-tip]::after`). */}
-        {tip && (
-          <div className="pane-tabtip" style={{ left: tip.x }} role="presentation">
-            {tip.text}
-          </div>
-        )}
 
         {/* Glued to the last tab, the way every browser puts it. It used to sit
             at the far right of the bar (`.pane-tabs` grew to fill the pane), a

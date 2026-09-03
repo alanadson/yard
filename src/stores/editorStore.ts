@@ -481,6 +481,13 @@ interface EditorState {
    */
   openFile: (path: string) => Promise<void>;
   /**
+   * Reads a file into the store **without** opening a tab or the overlay,
+   * and answers its id. The document card on the canvas comes in this way:
+   * it wants the buffer, not a place in a bar. A file already open (as a tab
+   * or another card) is reused as is, edits included.
+   */
+  loadDoc: (root: string, path: string) => Promise<string>;
+  /**
    * Opens the diff of `path` as a tab beside the CLIs — a comparison, not
    * the file: read-only, nothing to read from disk, and a second ask for the
    * same comparison brings the tab forward instead of opening a twin.
@@ -915,6 +922,46 @@ export const useEditor = create<EditorState>((set, get) => {
         uiLog.warn(`não consegui abrir ${path}: ${e}`);
         throw e;
       }
+    },
+
+    loadDoc: async (root, path) => {
+      const id = docId(root, path);
+      if (get().docs.some((d) => d.id === id)) return id;
+      const file = await ipc.fsReadText(root, path);
+      // The read may finish after another attempt on the same file.
+      if (get().docs.some((d) => d.id === id)) return id;
+      const projectId = sameRoot(get().root, root) ? get().projectId : null;
+      set((s) => ({
+        docs: [
+          ...s.docs,
+          {
+            id,
+            projectId,
+            groupId: null,
+            slot: 0,
+            root,
+            path,
+            text: file.text,
+            saved: file.text,
+            diskVersion: 1,
+            modifiedAt: file.modifiedAt,
+            crlf: file.crlf,
+            savedCrlf: file.crlf,
+            bom: file.bom,
+            encoding: file.encoding,
+            binary: file.binary,
+            truncated: file.truncated,
+            lossy: file.lossy,
+            size: file.size,
+            media: file.media,
+            stale: false,
+            missing: false,
+            error: null,
+            saving: false,
+          },
+        ],
+      }));
+      return id;
     },
 
     openDiff: (path, spec) => {

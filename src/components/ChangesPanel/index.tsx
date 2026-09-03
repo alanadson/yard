@@ -48,6 +48,7 @@ import { useEditor } from "../../stores/editorStore";
 import { diffLineClass } from "../../lib/diff";
 import { ago } from "../../lib/format";
 import { useNow } from "../../hooks/useNow";
+import { useOccluder } from "../../hooks/useOccluder";
 import type { ChangedFile, FileDiff } from "../../lib/ipc";
 import {
   fetchDiff,
@@ -874,6 +875,11 @@ function DiffPeek({
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { file } = target;
+  // The preview floats to the left of the panel, over whatever pane is
+  // there: a browser pane's page (an OS window) would paint over it unless
+  // the rectangle is published and the page cuts a hole.
+  const peekRef = useRef<HTMLDivElement>(null);
+  useOccluder("peek", peekRef);
 
   useEffect(() => {
     let alive = true;
@@ -908,6 +914,7 @@ function DiffPeek({
 
   return (
     <div
+      ref={peekRef}
       className="peek"
       style={{ top: target.top, right: window.innerWidth - panelLeft + 8 }}
     >

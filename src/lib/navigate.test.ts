@@ -11,7 +11,6 @@ vi.mock("./ipc", () => ({
 
 import { jumpToAttention } from "./attention";
 import { goToTerminal, toggleCanvas } from "./navigate";
-import { type Surface } from "./surface";
 import { useProjects, type LayoutMode } from "../stores/projectsStore";
 import { useTerminals, type TerminalRuntime } from "../stores/terminalsStore";
 import { useUI } from "../stores/uiStore";
@@ -26,11 +25,12 @@ const RUNTIME: TerminalRuntime = {
   finishedAt: 0,
   blocked: false,
   blockedAsk: null,
+  permission: false,
   rssMb: 0,
   cpu: 0,
 };
 
-function build(surface: Surface = "grid", mode: LayoutMode = "auto") {
+function build(mode: LayoutMode = "auto") {
   useProjects.setState({
     rev: 1,
     loaded: true,
@@ -39,27 +39,33 @@ function build(surface: Surface = "grid", mode: LayoutMode = "auto") {
     terminals: [],
     activeProjectId: null,
     activeGroupId: null,
+    groupBeforeBoard: null,
+    lastBoardId: null,
+    canvasSide: false,
   });
   useTerminals.setState({ byId: {} });
   useUI.setState({ focusedTerminalId: null, canvasReveal: null });
 
+  // A project's group, which holds tabs, and a board, which holds cards: the
+  // canvas is the boards, so a card has no other place to be.
   const p = useProjects.getState().addProject("P", "C:/Workspace/x")!;
   const g = useProjects.getState().addGroup(p, "G");
-  useProjects.getState().updateLayout(g, { mode, surface });
-  const create = (title: string) =>
+  useProjects.getState().updateLayout(g, { mode });
+  const b = useProjects.getState().addBoard("Quadro");
+  useProjects.getState().setActiveGroup(g);
+  const create = (groupId: string, title: string) =>
     useProjects.getState().addTerminal({
-      groupId: g,
+      groupId,
       program: "pwsh",
       cwd: "C:/Workspace/x",
       title,
-      surface,
     });
-  return { g, t1: create("um"), t2: create("dois"), t3: create("tres") };
+  return { g, b, t1: create(g, "um"), t2: create(g, "dois"), t3: create(g, "tres"), c1: create(b, "cartao") };
 }
 
 describe("goToTerminal", () => {
   it("in the grid, brings the tab to the front and focuses the terminal", () => {
-    const { g, t1, t3 } = build("grid");
+    const { g, t1, t3 } = build();
     // The active tab is the last one created; the target is another.
     expect(useProjects.getState().layoutOf(g).activeBySlot[0]).toBe(t3);
 
@@ -70,39 +76,42 @@ describe("goToTerminal", () => {
     expect(useProjects.getState().activeGroupId).toBe(g);
   });
 
-  it("on the canvas, asks the camera to reveal the card", () => {
-    const { g, t1 } = build("canvas");
+  it("on a board, asks the camera to reveal the card", () => {
+    const { b, c1 } = build();
+    useProjects.getState().setActiveGroup(b);
 
-    goToTerminal(useProjects.getState().terminal(t1)!);
+    goToTerminal(useProjects.getState().terminal(c1)!);
 
-    expect(useUI.getState().canvasReveal).toEqual({ groupId: g, id: t1 });
-    expect(useUI.getState().focusedTerminalId).toBe(t1);
+    expect(useUI.getState().canvasReveal).toEqual({ groupId: b, id: c1 });
+    expect(useUI.getState().focusedTerminalId).toBe(c1);
   });
 
   /**
-   * Each terminal now lives on one surface only, so "take me to it" has to
-   * take the *screen* there too — landing on the other surface with "found
-   * it!" and nothing visible is the bug this whole file exists to prevent.
+   * Each terminal lives on one surface only, so "take me to it" has to take
+   * the *screen* there too: landing somewhere else with "found it!" and
+   * nothing visible is the bug this whole file exists to prevent. The
+   * contract that changed: the trip used to flip the group's own surface;
+   * a card's surface is its board now, so the trip is a change of group.
    */
-  it("a card pulls the group onto the canvas, even with the panes up", () => {
-    const { g, t1 } = build("canvas");
-    useProjects.getState().updateLayout(g, { surface: "grid" });
+  it("a card takes the screen to its board, even from a project's panes", () => {
+    const { b, c1 } = build();
 
-    goToTerminal(useProjects.getState().terminal(t1)!);
+    goToTerminal(useProjects.getState().terminal(c1)!);
 
-    expect(useProjects.getState().layoutOf(g).surface).toBe("canvas");
-    expect(useUI.getState().canvasReveal).toEqual({ groupId: g, id: t1 });
+    expect(useProjects.getState().activeGroupId).toBe(b);
+    expect(useUI.getState().canvasReveal).toEqual({ groupId: b, id: c1 });
   });
 
-  it("a tab pulls the group back to the panes, even with the board up", () => {
-    const { g, t1 } = build("grid");
-    useProjects.getState().updateLayout(g, { mode: "spotlight", surface: "canvas" });
+  it("a tab takes the screen back to its group, even from a board", () => {
+    const { g, b, t1 } = build("spotlight");
+    useProjects.getState().setActiveGroup(b);
 
     goToTerminal(useProjects.getState().terminal(t1)!);
 
+    expect(useProjects.getState().activeGroupId).toBe(g);
     const layout = useProjects.getState().layoutOf(g);
     expect(layout.surface).toBe("grid");
-    // The grid the user had pinned survives the trip — the two are separate now.
+    // The grid the user had pinned survives the trip.
     expect(layout.mode).toBe("spotlight");
     expect(layout.activeBySlot[0]).toBe(t1);
     expect(useUI.getState().focusedTerminalId).toBe(t1);
@@ -111,7 +120,7 @@ describe("goToTerminal", () => {
 
 describe("jumpToAttention", () => {
   it("serves whoever is blocked first, then whoever finished", () => {
-    const { t1, t2, t3 } = build("grid");
+    const { t1, t2, t3 } = build();
     useTerminals.setState({
       byId: {
         // Board order is t1, t2, t3 — the queue does not follow that order.
@@ -129,7 +138,7 @@ describe("jumpToAttention", () => {
   });
 
   it("with nobody waiting, warns instead of jumping", () => {
-    const { t1 } = build("grid");
+    const { t1 } = build();
     useTerminals.setState({ byId: { [t1]: { ...RUNTIME } } });
     useUI.setState({ toasts: [], focusedTerminalId: null });
 
@@ -159,6 +168,8 @@ describe("toggleCanvas", () => {
       activeProjectId: null,
       activeGroupId: null,
       groupBeforeBoard: null,
+      lastBoardId: null,
+      canvasSide: false,
     });
     return useProjects.getState().addProject("P", "C:/Workspace/canvas-door")!;
   }
@@ -178,7 +189,7 @@ describe("toggleCanvas", () => {
   it("with no group open it takes the board already there instead of making another", () => {
     const p = emptyWorkspace();
     const board = useProjects.getState().addBoard("Quadro");
-    useProjects.setState({ activeGroupId: null, activeProjectId: p });
+    useProjects.setState({ activeGroupId: null, activeProjectId: p, canvasSide: false });
 
     toggleCanvas();
 
@@ -196,14 +207,30 @@ describe("toggleCanvas", () => {
     expect(useProjects.getState().activeGroupId).toBeNull();
   });
 
-  it("on a group it flips that group's own surface, both ways", () => {
-    const { g } = build("grid");
+  /**
+   * The contract that changed: the door used to flip the active group's own
+   * surface. A project's group has no canvas any more, so the door leads to
+   * a board and, pressed again, back to the group it left.
+   */
+  it("from a project's group it goes to a board, and pressed again comes back to that group", () => {
+    const { g, b } = build();
 
     toggleCanvas();
-    expect(useProjects.getState().layoutOf(g).surface).toBe("canvas");
-
-    toggleCanvas();
+    expect(useProjects.getState().activeGroupId).toBe(b);
     expect(useProjects.getState().layoutOf(g).surface).toBe("grid");
+
+    toggleCanvas();
     expect(useProjects.getState().activeGroupId).toBe(g);
+  });
+
+  it("it opens the board visited last, not the first in the bar", () => {
+    const { g, b } = build();
+    const second = useProjects.getState().addBoard("Dois");
+    useProjects.getState().setActiveGroup(g);
+
+    toggleCanvas();
+
+    expect(useProjects.getState().activeGroupId).toBe(second);
+    expect(b).not.toBe(second);
   });
 });

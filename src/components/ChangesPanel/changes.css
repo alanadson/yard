@@ -152,11 +152,11 @@
 }
 
 /* A row outside the scroll viewport is neither measured nor painted. That is
-   two buttons, two SVGs and two `data-tip` balloons per row — and each balloon
-   is an absolute `::after` with shadow and `border-radius`, drawn even at
-   `opacity: 0`. The declared size is that of the collapsed row, so the
-   scrollbar does not jump; an expanded diff exceeds it and the browser
-   measures for real, which is what `auto` does. */
+   two buttons and two SVGs per row (and, until 2026-09, two `data-tip`
+   balloons drawn as `::after` boxes even at `opacity: 0`; the balloon is one
+   fixed element in `<body>` now). The declared size is that of the collapsed
+   row, so the scrollbar does not jump; an expanded diff exceeds it and the
+   browser measures for real, which is what `auto` does. */
 .file-list > li {
   content-visibility: auto;
   contain-intrinsic-size: auto 24px;

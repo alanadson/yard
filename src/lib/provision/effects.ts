@@ -155,11 +155,9 @@ export function yardEffects(input: EffectsInput): ProvisionEffects {
         program: born.program,
         args: born.args,
         cwd: at.path,
-        // A pane, always. It used to follow whatever the destination was
-        // showing, which meant provisioning onto a ground with the board up
-        // dealt the agent a card — the canvas being written to by something
-        // that has nothing to do with it.
-        surface: "grid",
+        // A pane, always: the destination is a project's group, and a
+        // project's group draws tabs and nothing else (the canvas is the
+        // boards). Provisioning never writes a card anywhere.
       });
       await startTerminalProcess(terminalId, {
         program: born.program,

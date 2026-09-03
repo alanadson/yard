@@ -44,11 +44,34 @@ export function resolveSelectorJs(sel: string): string {
   return `document.querySelector(${JSON.stringify(s)})`;
 }
 
+/**
+ * The mark an agent's action leaves on the element it touched: a ring in
+ * the board's accent that fades out and removes itself. Drawn inside the
+ * page (the engine is an OS window nothing in the app can paint over), in
+ * a fixed box so the page's own layout is never disturbed.
+ */
+export const MARK_JS = `const __yardMark = (el, kind) => {
+      try {
+        const r = el.getBoundingClientRect();
+        const box = document.createElement("div");
+        box.setAttribute("data-yard-mark", kind);
+        box.style.cssText = "position:fixed;z-index:2147483647;pointer-events:none;box-sizing:border-box;left:" + (r.left - 3) + "px;top:" + (r.top - 3) + "px;width:" + (r.width + 6) + "px;height:" + (r.height + 6) + "px;border:2px solid rgba(74,158,255,.95);border-radius:6px;box-shadow:0 0 0 4px rgba(74,158,255,.22);opacity:1;transition:opacity .35s ease .5s";
+        const dot = document.createElement("div");
+        dot.style.cssText = "position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;border-radius:50%;background:rgba(74,158,255,.95);box-shadow:0 1px 3px rgba(0,0,0,.45)";
+        box.appendChild(dot);
+        document.documentElement.appendChild(box);
+        requestAnimationFrame(() => { box.style.opacity = "0"; });
+        setTimeout(() => box.remove(), 950);
+      } catch (e) {}
+    };`;
+
 export function clickJs(sel: string): string {
   return `(() => {
     const el = ${resolveSelectorJs(sel)};
     if (!el) return "missing";
+    ${MARK_JS}
     el.scrollIntoView({ block: "center", inline: "nearest" });
+    __yardMark(el, "click");
     if (el.focus) el.focus();
     el.click();
     return "ok";
@@ -59,7 +82,9 @@ export function fillJs(sel: string, value: string): string {
   return `(() => {
     const el = ${resolveSelectorJs(sel)};
     if (!el) return "missing";
+    ${MARK_JS}
     el.scrollIntoView({ block: "center", inline: "nearest" });
+    __yardMark(el, "fill");
     if (el.focus) el.focus();
     const v = ${JSON.stringify(value)};
     const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
@@ -79,6 +104,8 @@ export function typeJs(sel: string | undefined, text: string): string {
   return `(() => {
     const el = ${target} || document.activeElement;
     if (!el) return "missing";
+    ${MARK_JS}
+    __yardMark(el, "type");
     if (el.focus) el.focus();
     const v = ${JSON.stringify(text)};
     if ("value" in el) {
@@ -128,6 +155,8 @@ export function hoverJs(sel: string): string {
   return `(() => {
     const el = ${resolveSelectorJs(sel)};
     if (!el) return "missing";
+    ${MARK_JS}
+    __yardMark(el, "hover");
     el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
     el.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
     return "ok";

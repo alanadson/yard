@@ -13,6 +13,7 @@ import {
   translateItem,
   NODE_FONT_MAX,
   normalizeCanvas,
+  withBackground,
   NOTE_FONT_MAX,
   reconcileItems,
   reconcileNodes,
@@ -730,5 +731,89 @@ describe("normalizeCanvas — triggers", () => {
   it("does not create the field when nothing valid is in it", () => {
     const out = normalizeCanvas({ viewport: { x: 0, y: 0, zoom: 1 }, nodes: {}, items: [], triggers: [] })!;
     expect(out.triggers).toBeUndefined();
+  });
+});
+
+describe("the board's background", () => {
+  it("keeps the grid style, the colour and the image with its opacity", () => {
+    const out = normalizeCanvas({
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: {},
+      items: [],
+      background: { grid: "lines", color: "#1a2b3c", image: "C:/wall/hills.jpg", opacity: 0.35 },
+    })!;
+    expect(out.background).toEqual({
+      grid: "lines",
+      color: "#1a2b3c",
+      image: "C:/wall/hills.jpg",
+      opacity: 0.35,
+    });
+  });
+
+  it("drops junk field by field and the whole thing when nothing is left", () => {
+    const out = normalizeCanvas({
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: {},
+      items: [],
+      background: { grid: "plaid", color: "blue", image: 7, opacity: "x" },
+    })!;
+    expect(out.background).toBeUndefined();
+    const half = normalizeCanvas({
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: {},
+      items: [],
+      background: { grid: "none", opacity: 9 },
+    })!;
+    expect(half.background).toEqual({ grid: "none", opacity: 1 });
+  });
+
+  it("withBackground merges a patch, removes what is undefined and drops an empty result", () => {
+    const base = normalizeCanvas({ viewport: { x: 0, y: 0, zoom: 1 }, nodes: {}, items: [] })!;
+    const lined = withBackground(base, { grid: "lines" });
+    expect(lined.background).toEqual({ grid: "lines" });
+    const coloured = withBackground(lined, { color: "#112233" });
+    expect(coloured.background).toEqual({ grid: "lines", color: "#112233" });
+    const cleared = withBackground(coloured, { grid: undefined, color: undefined });
+    expect("background" in cleared).toBe(false);
+  });
+});
+
+describe("card chrome fields", () => {
+  it("keeps a card's paint order, pin and maximize memory across a reload", () => {
+    const out = normalizeCanvas({
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: {
+        a: { x: 0, y: 0, w: 640, h: 400, z: 2, pinned: true, restore: { x: 1, y: 2, w: 300, h: 200 } },
+      },
+      items: [
+        { id: "n", type: "note", x: 0, y: 0, w: 200, h: 100, text: "", color: "#fff", pinned: true },
+      ],
+    })!;
+    expect(out.nodes.a.z).toBe(2);
+    expect(out.nodes.a.pinned).toBe(true);
+    expect(out.nodes.a.restore).toEqual({ x: 1, y: 2, w: 300, h: 200 });
+    expect(out.items[0].pinned).toBe(true);
+  });
+
+  it("drops junk written into those fields instead of trusting it", () => {
+    const out = normalizeCanvas({
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: { a: { x: 0, y: 0, w: 640, h: 400, z: "top", pinned: "yes", restore: { x: 1 } } },
+      items: [
+        { id: "n", type: "note", x: 0, y: 0, w: 200, h: 100, text: "", color: "#fff", pinned: "yes" },
+      ],
+    })!;
+    expect("z" in out.nodes.a).toBe(false);
+    expect("pinned" in out.nodes.a).toBe(false);
+    expect("restore" in out.nodes.a).toBe(false);
+    expect("pinned" in out.items[0]).toBe(false);
+  });
+
+  it("reconciliation notices a pin or a z change on an otherwise still card", () => {
+    const prev = { a: { x: 0, y: 0, w: 640, h: 400 } };
+    expect(reconcileNodes(prev, { a: { x: 0, y: 0, w: 640, h: 400, z: 1 } }).a).not.toBe(prev.a);
+    expect(reconcileNodes(prev, { a: { x: 0, y: 0, w: 640, h: 400, pinned: true } }).a).not.toBe(prev.a);
+    const note = { id: "n", type: "note" as const, x: 0, y: 0, w: 1, h: 1, text: "", color: "#fff" };
+    expect(reconcileItems([note], [{ ...note, pinned: true }])[0]).not.toBe(note);
   });
 });

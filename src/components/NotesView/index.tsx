@@ -7,26 +7,26 @@
  * Nothing here is project-scoped on purpose: the notebook is the user's
  * memory across every project.
  *
- * One notebook, three places to wear it — the switch in the top bar moves it
+ * One notebook, two places to wear it: the switch in the top bar moves it
  * between them (`notesStore.place`):
  *
- * - `NotesView`: the original overlay, raised over the workspace. Follows the
- *   editor's manners: `Esc` closes it (top layer only), the backdrop click
- *   closes it, and everything typed keeps living in the store.
  * - `NotesCenter`: the whole central workspace area — a first-class view, no
- *   backdrop, sidebar and side panels still at hand.
+ *   backdrop, sidebar and side panels still at hand. It *replaces* the grid
+ *   and the canvas rather than covering them: a portal's page is an OS
+ *   window no HTML sheet can cover, and the overlay this used to be painted
+ *   the site on top of the notes. Unmounting the workspace hides every
+ *   portal, so there is nothing left to paint through.
  * - `NotesEmbed`: the body of the notebook's pane tab, beside the CLIs.
  *
- * Only one of the three ever mounts at a time (see `NoteSurface`'s module
- * compartments): the store keeps a single `place`, the pane only mounts the
- * active tab, and the embed steps aside while the peek overlay is up.
+ * Only one of the two ever mounts at a time (see `NoteSurface`'s module
+ * compartments): the centre takes the grid's place, so no pane (and no tab
+ * body) is on screen while it is up.
  */
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import "../CodeEditor/editor.css";
 import "./notes.css";
 import {
   AlertTriangle,
-  AppWindow,
   Maximize2,
   NotebookPen,
   PanelTop,
@@ -40,8 +40,6 @@ import { NoteEditor } from "./NoteEditor";
 import { Resizer } from "../Resizer";
 import { useT } from "../../hooks/useT";
 import { tn } from "../../lib/i18n";
-import { useDialogFocus } from "../../hooks/useDialogFocus";
-import { isTopLayer } from "../../lib/layers";
 import {
   parseNotesQuery,
   visibleNotes,
@@ -50,80 +48,7 @@ import {
 import { LIST_DEFAULT, RAIL_DEFAULT, useNotes } from "../../stores/notesStore";
 import { useProjects } from "../../stores/projectsStore";
 
-type NotesVariant = "overlay" | "center" | "tab";
-
-/** The notebook as the overlay sheet — the original Ctrl+Shift+N surface. */
-export function NotesView() {
-  const open = useNotes((s) => s.open);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const t = useT();
-
-  useDialogFocus(rootRef, open, "anotacoes");
-
-  const close = useCallback(() => useNotes.getState().closeView(), []);
-
-  // Landing focus: the search box, unless something already asked for the
-  // title (a note just created) — the box is where a visit usually starts.
-  useEffect(() => {
-    if (open && !useNotes.getState().wantsFocus) useNotes.getState().focusSearch();
-  }, [open]);
-
-  // The view's own keys — only while it is the top surface, and never a key
-  // someone underneath (CodeMirror panels, the Select list) already claimed.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented) return;
-      if (!isTopLayer("anotacoes")) return;
-      if (e.key === "Escape") {
-        e.preventDefault();
-        close();
-        return;
-      }
-      const ctrl = e.ctrlKey || e.metaKey;
-      if (!ctrl) return;
-      // Ctrl+Shift+N — the same key that opened it closes it; the global
-      // handler cannot see it while a full surface is up.
-      if (e.shiftKey && e.code === "KeyN") {
-        e.preventDefault();
-        close();
-        return;
-      }
-      // Ctrl+N — a new note, from anywhere inside the view.
-      if (!e.shiftKey && e.code === "KeyN") {
-        e.preventDefault();
-        useNotes.getState().createNote();
-        return;
-      }
-      // Ctrl+Shift+F — the search box (inside the editor, Ctrl+F is CodeMirror's).
-      if (e.shiftKey && e.code === "KeyF") {
-        e.preventDefault();
-        useNotes.getState().focusSearch();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, close]);
-
-  if (!open) return null;
-
-  return (
-    // Only the primary button closes: with the right one the gesture is "open
-    // the menu", and closing the notebook from under it would be the wrong answer.
-    <div className="notes-backdrop" onMouseDown={(e) => e.button === 0 && close()}>
-      <div
-        ref={rootRef}
-        className="notes"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("Anotações")}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <NotesShell variant="overlay" />
-      </div>
-    </div>
-  );
-}
+type NotesVariant = "center" | "tab";
 
 /** The notebook filling the central workspace area — a view, not a dialog. */
 export function NotesCenter() {
@@ -135,8 +60,7 @@ export function NotesCenter() {
       aria-label={t("Anotações")}
       onKeyDown={(e) => {
         // The key that summoned it dismisses it even from inside a text
-        // field — the overlay behaves this way, the central place follows.
-        // (The global handler covers the key when focus is elsewhere.)
+        // field. (The global handler covers the key when focus is elsewhere.)
         if (
           !e.defaultPrevented &&
           (e.ctrlKey || e.metaKey) &&
@@ -158,13 +82,8 @@ export function NotesCenter() {
 
 /** The notebook as the body of its pane tab. */
 export function NotesEmbed() {
-  // The peek overlay (a canvas-mode group's answer to Ctrl+Shift+N) is the
-  // one case where the tab could be mounted at the same time as the sheet —
-  // and two surfaces may never mount together, so the tab yields.
-  const overlayUp = useNotes((s) => s.open);
   const t = useT();
   useLandingFocus();
-  if (overlayUp) return null;
   return (
     <section
       className="notes notes--tab"
@@ -176,7 +95,9 @@ export function NotesEmbed() {
   );
 }
 
-/** Same landing the overlay does, on mount — activating the tab is a visit. */
+/** Landing focus on mount: showing the notebook is a visit, and a visit
+ *  usually starts at the search box, unless something already asked for the
+ *  title (a note just created). */
 function useLandingFocus() {
   useEffect(() => {
     if (!useNotes.getState().wantsFocus) useNotes.getState().focusSearch();
@@ -184,9 +105,9 @@ function useLandingFocus() {
 }
 
 /**
- * The embedded variants' keys, scoped to focus inside the notebook — a
- * window listener would fire with the cursor in a CLI two panes away. Esc is
- * deliberately absent: these are views, not dialogs.
+ * The notebook's keys, scoped to focus inside it: a window listener would
+ * fire with the cursor in a CLI two panes away. Esc is deliberately absent:
+ * these are views, not dialogs.
  */
 function notebookKeys(e: React.KeyboardEvent) {
   if (e.defaultPrevented) return;
@@ -207,22 +128,13 @@ function notebookKeys(e: React.KeyboardEvent) {
   }
 }
 
-/** The three place buttons — where the notebook opens, switchable in place. */
+/** The two place buttons: where the notebook opens, switchable in place. */
 function PlaceSwitch() {
   const placeKind = useNotes((s) => s.place.kind);
   const activeGroupId = useProjects((s) => s.activeGroupId);
   const t = useT();
   return (
     <div className="md-modes" role="group" aria-label={t("Onde o caderno abre")}>
-      <button
-        className={`icon-btn ${placeKind === "overlay" ? "is-active" : ""}`}
-        data-tip={t("Sobreposto — o caderno flutua sobre a tela")}
-        aria-label={t("Abrir sobreposto")}
-        aria-pressed={placeKind === "overlay"}
-        onClick={() => useNotes.getState().setPlaceKind("overlay")}
-      >
-        <AppWindow size={14} />
-      </button>
       <button
         className={`icon-btn ${placeKind === "tab" ? "is-active" : ""}`}
         data-tip={
@@ -244,7 +156,7 @@ function PlaceSwitch() {
         data-tip={t("Área central — ocupa todo o espaço do workspace")}
         aria-label={t("Ocupar a área central")}
         aria-pressed={placeKind === "center"}
-        onClick={() => useNotes.getState().setPlaceKind("center")}
+        onClick={() => useNotes.getState().placeCenter()}
       >
         <Maximize2 size={14} />
       </button>
@@ -287,11 +199,11 @@ function NotesShell({ variant }: { variant: NotesVariant }) {
           >
             <Plus size={12} aria-hidden="true" /> {t("Nova nota")}
           </button>
-          {/* A tab closes on its own X in the bar; the other two close here. */}
-          {variant !== "tab" && (
+          {/* A tab closes on its own X in the bar; the centre closes here. */}
+          {variant === "center" && (
             <button
               className="icon-btn"
-              data-tip={variant === "overlay" ? t("Fechar (Esc)") : t("Fechar — volta ao grid")}
+              data-tip={t("Fechar — volta ao grid")}
               data-tip-at="right"
               aria-label={t("Fechar as anotações")}
               onClick={() => useNotes.getState().closeView()}

@@ -252,16 +252,21 @@ describe("cloning the ground", () => {
     expect(cwds).toEqual(["C:/proj/.yard/floors/login"]);
   });
 
-  it("leaves the ground's board out of it — a card is not a tab", async () => {
+  /**
+   * A card lives on a board, never in the ground (the canvas is the boards,
+   * `lib/surface.ts`), and a board is no part of any project: the clone of
+   * the ground does not go looking for cards that happen to run in the same
+   * folder.
+   */
+  it("leaves the boards out of it: a card is not a tab, even in the same folder", async () => {
     const projectId = freshProject();
     const s = useProjects.getState();
-    const ground = s.groupsOf(projectId)[0];
+    const board = s.addBoard("Quadro");
     s.addTerminal({
-      groupId: ground.id,
+      groupId: board,
       title: "card",
       program: "pwsh.exe",
       cwd: PROJECT,
-      surface: "canvas",
     });
 
     const fx = yardEffects({ projectId, projectPath: PROJECT, copyGround: true });
@@ -278,11 +283,10 @@ describe("cloning the ground", () => {
 });
 
 describe("the agent the front was opened for", () => {
-  it("comes up as a tab even with the ground showing its board — provisioning does not touch the canvas", async () => {
+  it("comes up as a tab of the ground, and provisioning writes nothing on any canvas", async () => {
     const projectId = freshProject();
     const s = useProjects.getState();
     const ground = s.groupsOf(projectId)[0];
-    s.updateLayout(ground.id, { surface: "canvas" });
 
     const fx = yardEffects({
       projectId,

@@ -12,10 +12,10 @@
  * - **grid**: the user pins 1–6 panes;
  * - **spotlight**: one large pane and the rest in a column beside it.
  *
- * The canvas is not a fourth shape: it is the group's **other surface**
- * (`layout.surface`), with terminals of its own. This component draws
- * whichever of the two is showing, and never mixes their CLIs — see
- * `lib/surface.ts`.
+ * The canvas is not a fourth shape: it is the **boards**, groups with no
+ * project, each with cards of its own (`layout.surface` is the readout).
+ * This component draws the board or the panes, whichever the group is, and
+ * never mixes their CLIs (see `lib/surface.ts`).
  *
  * The dividers are `react-resizable-panels`; each pane's size is session
  * state, not workspace state — what persists is the mode and the count.
@@ -26,13 +26,10 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 
 import { ContextMenu, type MenuAnchor } from "../ContextMenu";
 import { ErrorBoundary } from "../ErrorBoundary";
-import { FloorsControl } from "../Floors";
-import { showsFloorsControl } from "../Floors/place";
 import { FlowRunsBar } from "../CanvasView/FlowHud";
 import { TerminalPane } from "../TerminalPane";
 import { useT } from "../../hooks/useT";
 import { range } from "../../lib/format";
-import { show } from "../../lib/navigate";
 import { paneMenu } from "../../lib/paneMenu";
 import { onSurface } from "../../lib/surface";
 import { useBrowsers, type PaneBrowser } from "../../stores/browsersStore";
@@ -56,24 +53,20 @@ interface Props {
 }
 
 /**
- * The group body, plus what floats over it: the running pipeline, and the
- * Floors control — the latter on the canvas alone (`Floors/place.ts`).
+ * The group body, plus what floats over it: the running pipeline. The
+ * fronts control used to float here too, over a project's canvas; a
+ * project's group has no canvas any more, and the control stands in the
+ * status bar (`Floors/place.ts`).
  */
 export function WorkspaceGrid({ groupId }: Props) {
-  const onBoard = useProjects((s) => s.layoutOf(groupId).surface === "canvas");
-  // Floors are worktrees of a project, and a board has no project — its cards
-  // each carry their own folder. So the control has nothing to switch there.
   const isBoard = useProjects((s) => s.isBoard(groupId));
   return (
     <>
       <GridBody groupId={groupId} />
-      {/* On the canvas the full HUD already lives inside it; outside it, the
+      {/* On the board the full HUD already lives inside it; outside it, the
           running pipeline needs to exist somewhere — it was the only way to
           know which stage it is at and to cancel. */}
-      {!onBoard && <FlowRunsBar groupId={groupId} />}
-      {showsFloorsControl({ canvas: onBoard, board: isBoard }) && (
-        <FloorsControl groupId={groupId} />
-      )}
+      {!isBoard && <FlowRunsBar groupId={groupId} />}
     </>
   );
 }
@@ -285,7 +278,7 @@ function GridBody({ groupId }: Props) {
           <ContextMenu
             anchor={menu}
             items={paneMenu(
-              { mode: layout.mode, surface: layout.surface, notesHere: false },
+              { mode: layout.mode, notesHere: false },
               {
                 newCli: () =>
                   useUI.getState().openModal("new-terminal", { groupId, slot: 0 }),
@@ -293,7 +286,6 @@ function GridBody({ groupId }: Props) {
                 dockNotes: () => useNotes.getState().dockTo(groupId, 0),
                 setMode: (mode) =>
                   useProjects.getState().updateLayout(groupId, { mode }),
-                showSurface: (surface) => show(groupId, surface),
               },
             )}
             onClose={() => setMenu(null)}

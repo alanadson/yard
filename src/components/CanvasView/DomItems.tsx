@@ -331,7 +331,7 @@ function TextItemImpl({
       {/* Only while selected, and never mid-edit: the grips hang half outside
           the box, and on a short line the four corners would cover the very
           text you are trying to click. */}
-      {selected && !editing && (
+      {selected && !editing && !it.pinned && (
         <ResizeHandles
           dirs={CORNER_DIRS}
           onDown={startScale}
@@ -692,11 +692,13 @@ function NoteItemImpl({
           />
         </div>
       )}
-      <ResizeHandles
-        onDown={(e, dir) => onResizeStart(e, it, dir)}
-        onMove={onResizeMove}
-        onUp={onResizeEnd}
-      />
+      {!it.pinned && (
+        <ResizeHandles
+          onDown={(e, dir) => onResizeStart(e, it, dir)}
+          onMove={onResizeMove}
+          onUp={onResizeEnd}
+        />
+      )}
     </div>
   );
 }

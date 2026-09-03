@@ -58,9 +58,11 @@ import {
   BringToFront,
   ChevronLeft,
   ChevronRight,
+  ClipboardCopy,
   ClipboardPaste,
   Copy,
   Expand,
+  FolderOpen,
   FolderTree,
   Globe,
   Group as GroupIcon,
@@ -72,6 +74,8 @@ import {
   Maximize2,
   Pencil,
   PenSquare,
+  Pin,
+  PinOff,
   Plus,
   Scissors,
   ScanSearch,
@@ -91,6 +95,7 @@ import { CanvasToolbar, type Tool } from "./CanvasToolbar";
 import { BinderCard } from "./BinderCard";
 import { TreeCard } from "./TreeCard";
 import { MediaCard } from "./MediaCard";
+import { DocCard } from "./DocCard";
 import { FlowCard } from "./FlowCard";
 import { GroupFrame } from "./GroupFrame";
 import { FlowHud } from "./FlowHud";
@@ -110,29 +115,71 @@ import { COMMIT_DEBOUNCE_MS, NoteItem, TextItem } from "./DomItems";
 import { PortalCard } from "./PortalCard";
 import { TerminalCard, type RectPhase } from "./TerminalCard";
 import type { XTermHandle } from "../XTermView";
-import { useChanges } from "../../stores/changesStore";
 import { useEditor } from "../../stores/editorStore";
 import { useFlows } from "../../stores/flowStore";
-import { useLive } from "../../stores/liveStore";
-import { useProjects } from "../../stores/projectsStore";
+import { parseLayout, useProjects } from "../../stores/projectsStore";
+import { frontBadge, frontColor, frontOfPath, type FrontRef } from "../../lib/floorColor";
+import { brandOf } from "../../lib/brands";
+import { MARKS } from "../BrandIcon/marks";
 import { useUI } from "../../stores/uiStore";
-import { ipc, on, type PortalPlace, type TerminalRow } from "../../lib/ipc";
+import { ipc, on, type PortalPlace, type ScoreMeta, type TerminalRow } from "../../lib/ipc";
+import { applyScore, readScore } from "../../lib/scores";
 import { PortalBoundsQueue } from "../../lib/portalBoundsQueue";
 import { useOccluder } from "../../hooks/useOccluder";
+import { usePortalsCovered } from "../../hooks/usePortalsCovered";
 import { copyText, readClipboardText } from "../../lib/clipboard";
 import { registerDropCamera } from "../../lib/dropPoint";
+import {
+  lowerNode,
+  nodeOrder,
+  pinnedIds,
+  raiseNode,
+  setPinned,
+  toggleMaximize,
+} from "../../lib/cardChrome";
+import { canRename, renameItem } from "../../lib/rename";
+import { itemAbsolutePath } from "../../lib/cardPath";
+import { dropAt } from "../../lib/dropPoint";
+import { PLACEMENT_HINTS_EVENT, type PlacementHints as HintsDetail } from "../../lib/placement";
+import { PlacementHints } from "./PlacementHints";
+import { largestVisible, visibleIds } from "../../lib/culling";
+import { renderScaleFor } from "../../lib/renderScale";
+import { CANVAS_CAMERA_EVENT, type CameraRequest } from "../../lib/bridgeCanvasCmd";
+import {
+  actionFor,
+  chordFromEvent,
+  chordLabel,
+  sameChord,
+  type CanvasAction,
+} from "../../lib/keymap";
+import { useKeymap } from "../../stores/keymapStore";
+import { usePortalWeb } from "../../stores/portalWebStore";
 import { toggleTaskLine } from "../../lib/mdedit";
+import { anyLayerOpen } from "../../lib/layers";
 import { hostnameOf } from "../../lib/portals";
 import { retainLivePortals } from "../../lib/portalSpawn";
 import { baseName } from "../../lib/terminals";
 import { readInitialPrefs } from "../../lib/prefs";
 import { tabAction, selectionAnnouncement, itemName, escStep } from "../../lib/canvasKeys";
+import { nearestInDirection, nearestToPoint, type Direction } from "../../lib/spatialNav";
+import {
+  averageVelocity,
+  decayVelocity,
+  inertiaAlive,
+  inertiaWorthStarting,
+  stepCamera,
+  type Camera,
+  type Sample,
+  type Velocity,
+} from "../../lib/cameraTween";
 import {
   alignBoxes,
   boxesIntersect,
   distributeBoxes,
+  snapBoxToGrid,
   snapMove,
   snapResize,
+  snapResizeToGrid,
   tidyBoxes,
   unionBox,
   TIDY_ORDER,
@@ -169,6 +216,10 @@ import {
   splitForRoot,
   type MediaItem,
 } from "../../lib/mediaNode";
+import { DOC_MIN_H, DOC_MIN_W, type DocItem } from "../../lib/docNode";
+import { mediaUrl } from "../../lib/media";
+import { dropItems, hasDragPaths, readDragPaths, shellQuote } from "../../lib/canvasDrop";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   BINDER_DEFAULT_H,
   BINDER_DEFAULT_W,
@@ -194,10 +245,13 @@ import { flowsOf, wireOfPair, type FlowItem } from "../../lib/flow";
 import { cancelRunsOf, liveRunsOf } from "../../lib/flowRun";
 import {
   autoNodeRect,
+  BACKGROUND_OPACITY_DEFAULT,
   clamp,
   CANVAS_COLORS,
   CANVAS_EXTERNAL_WRITE,
   EMPTY_CANVAS,
+  withBackground,
+  type CanvasBackground,
   FLOW_DEFAULT_W,
   FLOW_MIN_H,
   FLOW_MIN_W,
@@ -311,19 +365,36 @@ let clipFallback: CanvasItem[] = [];
 
 const PREF_MINIMAP = "canvas.minimap";
 
+/** The arrow keys as directions, for the spatial jump and the keyboard pan. */
+const ARROW_DIRS: Record<string, Direction> = {
+  ArrowLeft: "left",
+  ArrowRight: "right",
+  ArrowUp: "up",
+  ArrowDown: "down",
+};
+
+/** How far one arrow press pans the camera, in screen px (Shift: four times). */
+const PAN_KEY_PX = 120;
+
 export function CanvasView({ groupId, terminals, canvas }: Props) {
   const t = useT();
   const updateCanvas = useProjects((s) => s.updateCanvas);
   const focusedTerminalId = useUI((s) => s.focusedTerminalId);
+  /** The board's keys, rebindable in Configurações › Atalhos (`lib/keymap.ts`). */
+  const keymap = useKeymap((s) => s.map);
+  const keymapRef = useRef(keymap);
+  keymapRef.current = keymap;
+  /** Land on the grid while dragging (Configurações › Interface). Ctrl frees the gesture. */
+  const snapGridPref = useUI((s) => s.prefs.snapGrid);
+  const snapGridRef = useRef(snapGridPref);
+  snapGridRef.current = snapGridPref;
+  const autoFocusPref = useUI((s) => s.prefs.autoFocusLargest);
   const focusTerminal = useUI((s) => s.focusTerminal);
   const openModal = useUI((s) => s.openModal);
   const modalOpen = useUI((s) => s.modal);
-  // Full-screen surfaces the app can open over the canvas — see
-  // `portalsHidden` below.
-  const composerOpen = useUI((s) => s.composerOpen);
-  const liveOpen = useLive((s) => s.phase !== "closed");
-  const diffOpen = useChanges((s) => s.viewer !== null);
-  const editorOpen = useEditor((s) => s.open);
+  // A full-window surface over the canvas blanks every portal card: the
+  // registry in `lib/layers` says which (see the note by `overlayActive`).
+  const portalsHidden = usePortalsCovered();
   const projectId = useProjects((s) => s.groups.find((g) => g.id === groupId)?.projectId ?? null);
   /**
    * Folder a relative path written inside a note points into (§12.3).
@@ -339,6 +410,37 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   );
 
   const data = canvas ?? EMPTY_CANVAS;
+
+  /**
+   * Every front of every project, for the badge a card wears when it runs
+   * somewhere other than the group it sits in (`lib/floorColor.ts`). A
+   * project canvas rarely needs it; a board, which holds cards from
+   * anywhere, is where two `claude` cards become "fix-login" and "main".
+   */
+  const groups = useProjects((s) => s.groups);
+  const projects = useProjects((s) => s.projects);
+  const fronts = useMemo<FrontRef[]>(() => {
+    const byProject = new Map(projects.map((p) => [p.id, p] as const));
+    const out: FrontRef[] = [];
+    for (const g of groups) {
+      const floor = parseLayout(g.layoutJson).floor;
+      if (floor?.kind === "isolated" && floor.worktreePath) {
+        out.push({
+          id: g.id,
+          name: g.name,
+          worktreePath: floor.worktreePath,
+          ...(floor.color ? { color: floor.color } : {}),
+        });
+      } else if (g.projectId) {
+        const p = byProject.get(g.projectId);
+        if (p) out.push({ id: g.id, name: p.name, worktreePath: p.path });
+      }
+    }
+    return out;
+  }, [groups, projects]);
+  const groupFront = useMemo(() => fronts.find((f) => f.id === groupId) ?? null, [fronts, groupId]);
+  /** The lens: the front whose cards are lit while every other steps back. */
+  const [focusedFront, setFocusedFront] = useState<string | null>(null);
 
   // --- session state (none of this persists) ---
   const [vp, setVp] = useState<CanvasViewport>(
@@ -397,6 +499,17 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     itemId: string | null;
     world: { x: number; y: number };
   } | null>(null);
+  /** The card whose header is an input right now (F2, double-click, menu). */
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  /**
+   * The spots offered to a card that was just born (`lib/placement.ts`):
+   * numbered ghosts around it, and `free` when F armed "put it where I click".
+   */
+  const [hints, setHints] = useState<{ id: string; spots: Box[]; free: boolean } | null>(
+    null,
+  );
+  const hintsRef = useRef(hints);
+  hintsRef.current = hints;
   const [, bump] = useReducer((x: number) => x + 1, 0);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -611,6 +724,33 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   const rectsRef = useRef(rects);
   rectsRef.current = rects;
 
+  /** Cards in paint order (`CanvasNode.z`), lowest first. */
+  const orderedCards = useMemo(() => {
+    const byId = new Map(sorted.map((t) => [t.id, t] as const));
+    return nodeOrder(
+      sorted.map((t) => t.id),
+      nodes,
+    ).map((id) => byId.get(id)!);
+  }, [sorted, nodes]);
+
+  /** Everything fixed in place: left out of every moving set. */
+  const pinned = useMemo(() => pinnedIds(data), [data]);
+  const pinnedRef = useRef(pinned);
+  pinnedRef.current = pinned;
+
+  /**
+   * The badge each card wears, memoized as a map so the object a card gets
+   * is the same one across pan frames (a fresh one would break its memo).
+   */
+  const frontOfCard = useMemo(() => {
+    const m = new Map<string, { id: string; name: string; color: string }>();
+    for (const t of sorted) {
+      const badge = frontBadge(frontOfPath(t.cwd, fronts), groupFront, projectId === null);
+      if (badge) m.set(t.id, { id: badge.id, name: badge.name, color: frontColor(badge) });
+    }
+    return m;
+  }, [sorted, fronts, groupFront, projectId]);
+
   // Dragging/resizing a note only touches its own DOM until pointerup; the
   // anchors need the same "live" state, otherwise the arrow detaches from the
   // note and only jumps into place at the end of the gesture. Filtering by type
@@ -624,7 +764,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           i.type === "flow" ||
           i.type === "binder" ||
           i.type === "tree" ||
-          i.type === "media") &&
+          i.type === "media" ||
+          i.type === "doc") &&
         itemDragDelta.ids.has(i.id),
     );
     return anchored ? itemDragDelta : null;
@@ -650,7 +791,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         it.type !== "flow" &&
         it.type !== "binder" &&
         it.type !== "tree" &&
-        it.type !== "media"
+        it.type !== "media" &&
+        it.type !== "doc"
       )
         continue;
       const live = noteResize?.id === it.id ? noteResize : null;
@@ -861,6 +1003,108 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     [groupId, updateCanvas],
   );
 
+  // --- camera glide ---
+  //
+  // Every jump of the camera goes through `glideTo`: a few frames of easing
+  // instead of a cut, so the eye follows the board instead of losing it. The
+  // arithmetic is `lib/cameraTween`; this is only the rAF loop around it. A
+  // wheel tick or a press on the board cancels it: the hand always wins. With
+  // the OS asking for reduced motion, the jump stays a jump.
+  const tween = useRef<{ target: Camera; cur: Camera; raf: number; last: number } | null>(
+    null,
+  );
+  const inertia = useRef<{ v: Velocity; raf: number; last: number } | null>(null);
+  const reducedMotion = useRef(false);
+  useEffect(() => {
+    const mq = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    if (!mq) return;
+    const read = () => {
+      reducedMotion.current = mq.matches;
+    };
+    read();
+    mq.addEventListener?.("change", read);
+    return () => mq.removeEventListener?.("change", read);
+  }, []);
+  const stopTween = useCallback(() => {
+    if (!tween.current) return;
+    cancelAnimationFrame(tween.current.raf);
+    tween.current = null;
+  }, []);
+  const stopInertia = useCallback(() => {
+    if (!inertia.current) return;
+    cancelAnimationFrame(inertia.current.raf);
+    inertia.current = null;
+  }, []);
+  useEffect(
+    () => () => {
+      stopTween();
+      stopInertia();
+    },
+    [stopInertia, stopTween],
+  );
+  const glideTo = useCallback(
+    (target: Camera) => {
+      stopInertia();
+      const goal = { ...target, zoom: clamp(target.zoom, ZOOM_MIN, ZOOM_MAX) };
+      if (reducedMotion.current) {
+        stopTween();
+        setVp(goal);
+        scheduleVpCommit();
+        return;
+      }
+      if (tween.current) cancelAnimationFrame(tween.current.raf);
+      const run = { target: goal, cur: vpRef.current, raf: 0, last: performance.now() };
+      tween.current = run;
+      const tick = (now: number) => {
+        if (tween.current !== run) return;
+        const { camera, done } = stepCamera(run.cur, run.target, now - run.last);
+        run.last = now;
+        run.cur = camera;
+        setVp(camera);
+        if (done) {
+          tween.current = null;
+          scheduleVpCommit();
+          return;
+        }
+        run.raf = requestAnimationFrame(tick);
+      };
+      run.raf = requestAnimationFrame(tick);
+    },
+    [scheduleVpCommit, stopInertia, stopTween],
+  );
+  /** Where the camera is heading: the glide's target while one runs, else where it is. */
+  const cameraGoal = useCallback((): Camera => tween.current?.target ?? vpRef.current, []);
+
+  /**
+   * A thrown pan keeps going. The release velocity comes from the last few
+   * pointer samples (`averageVelocity`), and the glide decays per frame until
+   * a repaint would move less than half a pixel.
+   */
+  const panSamples = useRef<Sample[]>([]);
+  const startInertia = useCallback(
+    (v0: Velocity) => {
+      stopTween();
+      const run = { v: v0, raf: 0, last: performance.now() };
+      inertia.current = run;
+      const tick = (now: number) => {
+        if (inertia.current !== run) return;
+        const dt = now - run.last;
+        run.last = now;
+        const z = vpRef.current.zoom;
+        setVp((v) => ({ ...v, x: v.x - (run.v.vx * dt) / z, y: v.y - (run.v.vy * dt) / z }));
+        run.v = decayVelocity(run.v, dt);
+        if (!inertiaAlive(run.v)) {
+          inertia.current = null;
+          scheduleVpCommit();
+          return;
+        }
+        run.raf = requestAnimationFrame(tick);
+      };
+      run.raf = requestAnimationFrame(tick);
+    },
+    [scheduleVpCommit, stopTween],
+  );
+
   // --- viewport ---
 
   const toWorld = useCallback((clientX: number, clientY: number) => {
@@ -926,24 +1170,22 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     [zoomAt],
   );
 
-  /** Jumps to an absolute zoom keeping whatever is at the center, centered. */
+  /** Glides to an absolute zoom keeping whatever is at the center, centered. */
   const zoomToLevel = useCallback(
     (level: number) => {
       const el = containerRef.current;
       if (!el) return;
       const zl = clamp(level, ZOOM_MIN, ZOOM_MAX);
-      setVp((v) => {
-        const cx = v.x + el.clientWidth / v.zoom / 2;
-        const cy = v.y + el.clientHeight / v.zoom / 2;
-        return {
-          zoom: zl,
-          x: cx - el.clientWidth / zl / 2,
-          y: cy - el.clientHeight / zl / 2,
-        };
+      const v = cameraGoal();
+      const cx = v.x + el.clientWidth / v.zoom / 2;
+      const cy = v.y + el.clientHeight / v.zoom / 2;
+      glideTo({
+        zoom: zl,
+        x: cx - el.clientWidth / zl / 2,
+        y: cy - el.clientHeight / zl / 2,
       });
-      scheduleVpCommit();
     },
-    [scheduleVpCommit],
+    [cameraGoal, glideTo],
   );
 
   const zoomTo100 = useCallback(() => zoomToLevel(1), [zoomToLevel]);
@@ -958,14 +1200,13 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         ZOOM_MIN,
         maxZoom,
       );
-      setVp({
+      glideTo({
         zoom,
         x: b.x - (el.clientWidth / zoom - b.w) / 2,
         y: b.y - (el.clientHeight / zoom - b.h) / 2,
       });
-      scheduleVpCommit();
     },
-    [scheduleVpCommit],
+    [glideTo],
   );
 
   /** Puts a world point in the middle of the screen without touching the zoom. */
@@ -973,14 +1214,28 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     (x: number, y: number) => {
       const el = containerRef.current;
       if (!el) return;
-      setVp((v) => ({
+      const v = cameraGoal();
+      glideTo({
         ...v,
         x: x - el.clientWidth / v.zoom / 2,
         y: y - el.clientHeight / v.zoom / 2,
-      }));
-      scheduleVpCommit();
+      });
     },
-    [scheduleVpCommit],
+    [cameraGoal, glideTo],
+  );
+
+  /**
+   * One arrow press with nothing selected: the camera slides one step.
+   * Pressing again before the glide ends stacks onto its target, so a held
+   * key reads as one continuous motion instead of a stutter.
+   */
+  const panByKey = useCallback(
+    (sx: number, sy: number, big: boolean) => {
+      const v = cameraGoal();
+      const px = (big ? PAN_KEY_PX * 4 : PAN_KEY_PX) / v.zoom;
+      glideTo({ ...v, x: v.x + sx * px, y: v.y + sy * px });
+    },
+    [cameraGoal, glideTo],
   );
 
   const fitView = useCallback(() => {
@@ -992,8 +1247,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       if (b) boxes.push(b);
     }
     if (boxes.length === 0) {
-      setVp({ x: -60, y: -60, zoom: 1 });
-      scheduleVpCommit();
+      glideTo({ x: -60, y: -60, zoom: 1 });
       return;
     }
     const bx = Math.min(...boxes.map((b) => b.x));
@@ -1004,7 +1258,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       w: Math.max(...boxes.map((b) => b.x + b.w)) - bx,
       h: Math.max(...boxes.map((b) => b.y + b.h)) - by,
     });
-  }, [currentData, frameBox, scheduleVpCommit]);
+  }, [currentData, frameBox, glideTo]);
 
   /**
    * Frames the selection (Shift+2), the twin of "enquadrar tudo".
@@ -1019,6 +1273,25 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     const u = unionBox(boxesOf(sel));
     if (u) frameBox(u, 80, 2);
   }, [boxesOf, fitView, frameBox]);
+
+  // `yard canvas focus|zoom`: an agent asking for the user's camera.
+  useEffect(() => {
+    const onCamera = (e: Event) => {
+      const d = (e as CustomEvent<CameraRequest & { groupId: string }>).detail;
+      if (!d || d.groupId !== groupId) return;
+      if (d.center) {
+        const b = boxOf(d.center);
+        if (b) {
+          selectOnly(d.center);
+          centerOn(b.x + b.w / 2, b.y + b.h / 2);
+        }
+      }
+      if (d.zoom === "fit") fitView();
+      else if (typeof d.zoom === "number") zoomToLevel(d.zoom);
+    };
+    window.addEventListener(CANVAS_CAMERA_EVENT, onCamera);
+    return () => window.removeEventListener(CANVAS_CAMERA_EVENT, onCamera);
+  }, [boxOf, centerOn, fitView, groupId, selectOnly, zoomToLevel]);
 
   // --- arrangement ---
 
@@ -1036,7 +1309,9 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
    */
   const applyMoves = useCallback(
     (moves: Moves) => {
-      const ids = Object.keys(moves);
+      // A pinned element stays where it is, whatever asked for the move.
+      const still = pinnedRef.current;
+      const ids = Object.keys(moves).filter((id) => !still.has(id));
       if (ids.length === 0) return;
       const rects = rectsRef.current;
       const boxes = itemBoxesRef.current;
@@ -1053,7 +1328,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           items: c.items.map((it) => {
             const target = moves[it.id];
             const b = boxes[it.id];
-            if (!target || !b) return it;
+            if (!target || !b || still.has(it.id)) return it;
             return translateItem(it, target.x - b.x, target.y - b.y);
           }),
         };
@@ -1099,17 +1374,16 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       const el = containerRef.current;
       const r = rectsRef.current[id] ?? anchorsRef.current[id];
       if (!el || !r) return;
-      setVp({
+      glideTo({
         zoom: 1,
         x: r.x + r.w / 2 - el.clientWidth / 2,
         y: r.y + r.h / 2 - el.clientHeight / 2,
       });
-      scheduleVpCommit();
       const t = sorted.find((x) => x.id === id);
       focusTerminal(id, t?.slot ?? 0);
       setTimeout(() => handlesRef.current[id]?.focus(), 60);
     },
-    [focusTerminal, scheduleVpCommit, sorted],
+    [focusTerminal, glideTo, sorted],
   );
 
   /** Zoom read at gesture time — changing it renders no cards. */
@@ -1137,6 +1411,9 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     void on
       .portalNav((p) => {
         if (gone) return;
+        // Every page reached, by the user or by the agent, goes into the
+        // shared history the address bars suggest from.
+        usePortalWeb.getState().visited(p.url);
         updateCanvas(groupId, (c) => ({
           ...c,
           items: c.items.map((i) =>
@@ -1211,6 +1488,9 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       }
     };
     const onWheel = (e: WheelEvent) => {
+      // The hand wins over any glide still running.
+      stopTween();
+      stopInertia();
       if (e.ctrlKey) {
         e.preventDefault();
         acc.dz += e.deltaY;
@@ -1233,7 +1513,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [scheduleFrame, scheduleVpCommit, zoomAt]);
+  }, [scheduleFrame, scheduleVpCommit, stopInertia, stopTween, zoomAt]);
 
   // --- drawing draft ---
   // The ref is the truth during the gesture (pointerup reads from it, never
@@ -1684,6 +1964,129 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     [],
   );
 
+  // --- the ground: grid, colour, picture -------------------------------------
+
+  const background: CanvasBackground = data.background ?? {};
+  const setBackground = useCallback(
+    (patch: Parameters<typeof withBackground>[1]) => {
+      commit((c) => withBackground(c, patch));
+    },
+    [commit],
+  );
+
+  /**
+   * The picture is an address on disk, like a media card's; the bytes come
+   * over `yardfile://`, and the read here is what registers its folder with
+   * the protocol (the same trick `MediaCard` explains).
+   */
+  const [bgUrl, setBgUrl] = useState<string | null>(null);
+  const bgImage = data.background?.image;
+  useEffect(() => {
+    if (!bgImage) {
+      setBgUrl(null);
+      return;
+    }
+    let alive = true;
+    const { root, path } = splitForRoot(bgImage, projectRoot);
+    const base = root ?? projectRoot;
+    if (!base) {
+      setBgUrl(null);
+      return;
+    }
+    void ipc
+      .fsReadText(base, path)
+      .then(() => {
+        if (alive) setBgUrl(mediaUrl(base, path));
+      })
+      .catch(() => {
+        if (alive) setBgUrl(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [bgImage, projectRoot]);
+
+  const pickBackgroundImage = useCallback(async () => {
+    const chosen = await openFileDialog({
+      multiple: false,
+      directory: false,
+      title: t("Escolher a imagem de fundo do canvas"),
+      filters: [
+        { name: t("Imagens"), extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "avif"] },
+      ],
+      ...(projectRoot ? { defaultPath: projectRoot } : {}),
+    });
+    if (typeof chosen !== "string") return;
+    setBackground({ image: chosen });
+  }, [projectRoot, setBackground]);
+
+  // --- drops: files from the tree or from the OS become cards ---------------
+
+  /** Plants the cards a drop produces (`lib/canvasDrop.ts`) and selects them. */
+  const dropEntriesAt = useCallback(
+    (entries: { path: string; dir?: boolean }[], at: { x: number; y: number }) => {
+      const created = dropItems(entries, at, projectRoot);
+      if (created.length === 0) return;
+      commit((c) => addItems(c, ...created));
+      setSelection(new Set(created.map((i) => i.id)));
+      announce(t("{n} cartão(ões) no canvas", { n: created.length }));
+    },
+    [announce, commit, projectRoot],
+  );
+
+  /**
+   * A drop from the OS lands as window coordinates and a list of paths, with
+   * nothing saying which are folders: each path is probed as a folder
+   * (`fsListDir` refuses a file), which is the same call the tree card will
+   * make on it a moment later. Over a terminal card the paths are typed at
+   * its prompt instead of becoming cards.
+   */
+  const dropFromOs = useCallback(
+    async (paths: string[], clientX: number, clientY: number) => {
+      const el = containerRef.current;
+      if (!el || paths.length === 0) return;
+      const hit = document.elementFromPoint(clientX, clientY);
+      if (!hit || !el.contains(hit)) return;
+      const card = (hit as HTMLElement).closest<HTMLElement>(".cv-card[data-id]");
+      if (card) {
+        const id = card.dataset.id ?? "";
+        handlesRef.current[id]?.typeText(`${paths.map((p) => shellQuote(p)).join(" ")} `);
+        return;
+      }
+      const entries = await Promise.all(
+        paths.map(async (path) => {
+          const dir = await ipc
+            .fsListDir(path, "")
+            .then(() => true)
+            .catch(() => false);
+          return dir ? { path, dir: true } : { path };
+        }),
+      );
+      dropEntriesAt(entries, toWorld(clientX, clientY));
+    },
+    [dropEntriesAt, toWorld],
+  );
+
+  useEffect(() => {
+    let gone = false;
+    let unlisten: (() => void) | null = null;
+    void getCurrentWebview()
+      .onDragDropEvent((ev) => {
+        if (gone || ev.payload.type !== "drop") return;
+        const dpr = window.devicePixelRatio || 1;
+        void dropFromOs(ev.payload.paths, ev.payload.position.x / dpr, ev.payload.position.y / dpr);
+      })
+      .then((u) => {
+        if (gone) u();
+        else unlisten = u;
+      })
+      .catch(() => {});
+    return () => {
+      gone = true;
+      unlisten?.();
+    };
+  }, [dropFromOs]);
+
   /**
    * Plants a flow card (a prompt pipeline) and opens the editor. The flow is
    * born empty and with no CLI at all — connecting a terminal to it (tool C)
@@ -1880,6 +2283,119 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     });
   }, []);
 
+  // --- guided placement (the ghosts after a card is born) ---
+
+  useEffect(() => {
+    const onHints = (e: Event) => {
+      const d = (e as CustomEvent<HintsDetail>).detail;
+      if (!d || d.groupId !== groupId) return;
+      setHints({ id: d.id, spots: d.spots, free: false });
+    };
+    window.addEventListener(PLACEMENT_HINTS_EVENT, onHints);
+    return () => window.removeEventListener(PLACEMENT_HINTS_EVENT, onHints);
+  }, [groupId]);
+
+  // The offer expires on its own: ghosts left on a board nobody answered
+  // become clutter. Not while aiming (free mode), where the user is busy.
+  useEffect(() => {
+    if (!hints || hints.free) return;
+    const timer = setTimeout(() => setHints(null), 12_000);
+    return () => clearTimeout(timer);
+  }, [hints]);
+
+  /** Moves the newborn card to a point, with an undo entry like a drag. */
+  const moveCardTo = useCallback(
+    (id: string, x: number, y: number) => {
+      const r = rectsRef.current[id];
+      if (!r) return;
+      commit((c) => ({ ...c, nodes: { ...c.nodes, [id]: { ...(c.nodes[id] ?? r), x, y } } }));
+    },
+    [commit],
+  );
+
+  const pickSpot = useCallback(
+    (index: number) => {
+      const h = hintsRef.current;
+      const s = h?.spots[index];
+      if (!h || !s) return;
+      moveCardTo(h.id, s.x, s.y);
+      // The offer stays up, so a second thought is one more keystroke.
+      setHints({ ...h, free: false });
+    },
+    [moveCardTo],
+  );
+
+  /**
+   * Says which element the keyboard just landed on, in the board's Tab order
+   * ("Terminal claude, 3 de 12"), so a jump reaches the screen reader.
+   */
+  const announceElement = useCallback(
+    (id: string) => {
+      const cards = sortedRef.current;
+      const drawn = itemsRef.current.filter((i) => i.type !== "connection");
+      const ids = [...cards.map((c) => c.id), ...drawn.map((i) => i.id)];
+      const index = ids.indexOf(id);
+      if (index < 0) return;
+      const card = cards[index];
+      announce(
+        card
+          ? selectionAnnouncement({ kind: "terminal", name: baseName(card) }, index, ids.length)
+          : selectionAnnouncement(
+              {
+                kind: "item",
+                type: drawn[index - cards.length].type,
+                name: itemName(drawn[index - cards.length]),
+              },
+              index,
+              ids.length,
+            ),
+      );
+    },
+    [announce],
+  );
+
+  /**
+   * Ctrl+arrow: the nearest element in that direction, selected and brought
+   * into view. Selected, not activated: chaining three jumps must not hand
+   * the keyboard to a terminal halfway; Enter is the step in. With nothing
+   * selected the jump starts from whatever is nearest the middle of the
+   * screen, so the key always does something on a board that has anything.
+   */
+  const jumpSpatial = useCallback(
+    (dir: Direction) => {
+      const boxes = allBoxes();
+      const sel = selectionRef.current;
+      const from = sel.size === 1 ? [...sel][0] : null;
+      let next: string | null;
+      if (from && boxes[from]) {
+        next = nearestInDirection(from, boxes, dir);
+      } else {
+        const el = containerRef.current;
+        const v = vpRef.current;
+        next = nearestToPoint(
+          {
+            x: v.x + (el?.clientWidth ?? 0) / v.zoom / 2,
+            y: v.y + (el?.clientHeight ?? 0) / v.zoom / 2,
+          },
+          boxes,
+        );
+      }
+      if (!next) return;
+      selectOnly(next);
+      const b = boxes[next];
+      centerOn(b.x + b.w / 2, b.y + b.h / 2);
+      announceElement(next);
+    },
+    [allBoxes, announceElement, centerOn, selectOnly],
+  );
+
+  /**
+   * Enter on a selected element steps into it. Defined further down (it
+   * needs the note editor); the ref is what lets the keyboard effect above
+   * that definition reach it without reordering half the file.
+   */
+  const activateRef = useRef<() => boolean>(() => false);
+
   useEffect(() => {
     /**
      * Arrow keys: 1px of world, 10 with Shift — the precision drag can't give.
@@ -1891,6 +2407,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       if (sel.size === 0) return;
       const moves: Moves = {};
       for (const id of sel) {
+        if (pinnedRef.current.has(id)) continue;
         const b = boxOf(id);
         if (b) moves[id] = { x: b.x + dx, y: b.y + dy };
       }
@@ -1925,19 +2442,18 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
 
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      // A surface on top of the canvas (modal, diff, editor) takes the whole
-      // keyboard: Delete here would erase the item behind it.
-      const blocked =
-        !!useUI.getState().modal ||
-        !!useChanges.getState().viewer ||
-        useEditor.getState().open;
+      // A surface on top of the canvas (a modal, the Busca, the diff, the
+      // editor…) takes the whole keyboard: Delete here would erase the item
+      // behind it. Same registry as `Esc` and the portals (`lib/layers`).
+      const blocked = anyLayerOpen();
 
       // The minimap survives a terminal holding the keyboard: it is about
       // *finding* your way on the board, and having to click the background
       // first is exactly the friction it exists to remove. (Jumping to
       // whoever asks for attention lives in `hooks/useKeybindings`: it
       // applies in any layout, not only here.)
-      if (!blocked && (e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "KeyM") {
+      const mm = keymapRef.current.minimap;
+      if (!blocked && mm && sameChord(mm, chordFromEvent(e))) {
         e.preventDefault();
         toggleMinimap();
         return;
@@ -1973,46 +2489,131 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       };
 
       const ctrl = e.ctrlKey || e.metaKey;
-      if (ctrl && !e.shiftKey && e.code === "KeyZ") {
+
+      // A placement offer is up: the digits take a spot, F arms "where I
+      // click", Esc keeps the card where it fell. Before the tool keys,
+      // because F is also the flow tool.
+      const hint = hintsRef.current;
+      if (hint && !ctrl && !e.altKey) {
+        const digit = e.code.match(/^Digit([1-9])$/);
+        if (digit) {
+          e.preventDefault();
+          pickSpot(Number(digit[1]) - 1);
+          return;
+        }
+        if (e.code === "KeyF") {
+          e.preventDefault();
+          setHints({ ...hint, free: !hint.free });
+          return;
+        }
+        if (e.code === "Escape") {
+          e.preventDefault();
+          setHints(null);
+          return;
+        }
+      }
+
+      /**
+       * F2 (or whatever it was rebound to): the in-place rename of the one
+       * selected card. A frame renames through its band (the same edit its
+       * double-click opens); a flow renames in its editor.
+       */
+      const renameSelected = (): boolean => {
+        const sel = selectionRef.current;
+        if (sel.size !== 1) return false;
+        const id = [...sel][0];
+        const it = itemsRef.current.find((i) => i.id === id);
+        if (!rectsRef.current[id] && !(it && canRename(it) && it.type !== "flow")) return false;
+        if (it?.type === "group") {
+          pushUndo();
+          setEditingId(id);
+        } else {
+          setRenamingId(id);
+        }
+        return true;
+      };
+
+      /** The rebindable keys (`lib/keymap.ts`). `true` = the key was spent. */
+      const runAction = (action: CanvasAction): boolean => {
+        if (action.startsWith("tool.")) {
+          setTool(action.slice("tool.".length) as Tool);
+          setConnectFrom(null);
+          return true;
+        }
+        switch (action) {
+          case "undo":
+            undo();
+            return true;
+          case "redo":
+            redo();
+            return true;
+          case "zoomIn":
+            zoomBy(1.25);
+            return true;
+          case "zoomOut":
+            zoomBy(1 / 1.25);
+            return true;
+          case "zoom100":
+            zoomTo100();
+            return true;
+          case "fit":
+            fitView();
+            return true;
+          case "fitSelection":
+            fitSelection();
+            return true;
+          case "minimap":
+            toggleMinimap();
+            return true;
+          case "tidy":
+            tidySelection();
+            return true;
+          // Ctrl+G wraps the selection in a frame (§5.4). Ungrouping is just
+          // deleting the frame, which `Delete` and the frame's menu do.
+          case "group":
+            groupSelection();
+            return true;
+          case "duplicate":
+            duplicateSelection();
+            return true;
+          case "selectAll":
+            selectAll();
+            return true;
+          case "strokeThinner":
+          case "strokeThicker": {
+            // Stroke width from the keyboard, the way every drawing app spells it.
+            const order: StrokeSize[] = ["s", "m", "l"];
+            setSize((cur) => {
+              const i = order.indexOf(cur) + (action === "strokeThicker" ? 1 : -1);
+              return order[clamp(i, 0, order.length - 1)];
+            });
+            return true;
+          }
+          case "rename":
+            return renameSelected();
+          default:
+            return false;
+        }
+      };
+      // The numeric keypad spells the same chords as the top row.
+      const code =
+        e.code === "Numpad0"
+          ? "Digit0"
+          : e.code === "NumpadAdd"
+            ? "Equal"
+            : e.code === "NumpadSubtract"
+              ? "Minus"
+              : e.code;
+      const action = actionFor(keymapRef.current, { ...e, code });
+      if (action && runAction(action)) {
         e.preventDefault();
-        undo();
         return;
       }
-      if (ctrl && (e.code === "KeyY" || (e.shiftKey && e.code === "KeyZ"))) {
+      // Ctrl+Y is redo's second spelling, kept off the map: it is what the
+      // shortcut table has promised since the first release.
+      if (ctrl && !e.shiftKey && e.code === "KeyY") {
         e.preventDefault();
         redo();
-        return;
-      }
-      // Zoom with the keyboard. Ctrl+1..9 is taken by the global shortcuts
-      // (focus the nth terminal), so framing lives on Shift+1 instead.
-      if (ctrl && (e.code === "Digit0" || e.code === "Numpad0")) {
-        e.preventDefault();
-        zoomTo100();
-        return;
-      }
-      if (ctrl && (e.code === "Equal" || e.code === "NumpadAdd")) {
-        e.preventDefault();
-        zoomBy(1.25);
-        return;
-      }
-      if (ctrl && (e.code === "Minus" || e.code === "NumpadSubtract")) {
-        e.preventDefault();
-        zoomBy(1 / 1.25);
-        return;
-      }
-      if (ctrl && !e.shiftKey && e.code === "KeyD") {
-        e.preventDefault();
-        duplicateSelection();
-        return;
-      }
-      // Ctrl+G wraps the selection in a frame (§5.4). There is no
-      // Ctrl+Shift+G to undo it: that one already belongs to "next group of
-      // the project" globally, and ungrouping is just deleting the frame —
-      // which `Delete` and the frame's own menu already do, without taking
-      // the members with it.
-      if (ctrl && !e.shiftKey && e.code === "KeyG") {
-        e.preventDefault();
-        groupSelection();
         return;
       }
       // Walking the wiring: Alt is what keeps this off Ctrl+arrow, which most
@@ -2020,16 +2621,6 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       if (ctrl && e.altKey && (e.code === "ArrowRight" || e.code === "ArrowLeft")) {
         e.preventDefault();
         walkWire(e.code === "ArrowRight" ? 1 : -1);
-        return;
-      }
-      if (ctrl && !e.shiftKey && e.code === "KeyA") {
-        e.preventDefault();
-        selectAll();
-        return;
-      }
-      if (ctrl && e.shiftKey && e.code === "KeyT") {
-        e.preventDefault();
-        tidySelection();
         return;
       }
       if (ctrl && !e.shiftKey && (e.code === "KeyC" || e.code === "KeyX")) {
@@ -2046,18 +2637,16 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         void pasteClipboard();
         return;
       }
+      // Ctrl+arrow: the element in that direction, selected and brought into
+      // view (`jumpSpatial`). Alt is the wire walk above; Shift belongs to the
+      // window (it moves the tab in the bar).
+      if (ctrl && !e.altKey && !e.shiftKey && ARROW_DIRS[e.code]) {
+        e.preventDefault();
+        jumpSpatial(ARROW_DIRS[e.code]);
+        return;
+      }
       if (ctrl) return; // Ctrl+T and friends belong to the global shortcuts
 
-      if (e.shiftKey && e.code === "Digit1") {
-        e.preventDefault();
-        fitView();
-        return;
-      }
-      if (e.shiftKey && e.code === "Digit2") {
-        e.preventDefault();
-        fitSelection();
-        return;
-      }
       if (e.code === "Tab") {
         // With focus on a card button, or no focus at all, `Tab` belongs to
         // the browser: hijacking it there trapped the keyboard inside the
@@ -2068,17 +2657,15 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         cycleElement(e.shiftKey ? -1 : 1);
         return;
       }
-      // Stroke width from the keyboard, the way every drawing app spells it.
-      if (e.code === "BracketLeft" || e.code === "BracketRight") {
-        e.preventDefault();
-        const order: StrokeSize[] = ["s", "m", "l"];
-        setSize((cur) => {
-          const i = order.indexOf(cur) + (e.code === "BracketRight" ? 1 : -1);
-          return order[clamp(i, 0, order.length - 1)];
-        });
+      // Enter steps into the selected element (the terminal takes the
+      // keyboard, a note opens for writing). Only with focus on the board
+      // itself: on a card's button, Enter is that button's click.
+      if (e.code === "Enter" && !e.shiftKey && !e.altKey) {
+        if ((boardFocus.isBoard || !focus || focus === document.body) && activateRef.current()) {
+          e.preventDefault();
+        }
         return;
       }
-
       if (e.code === "Space") {
         if (!e.repeat) setSpaceHeld(true);
         e.preventDefault();
@@ -2093,32 +2680,17 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         ArrowDown: [0, step],
       };
       if (arrows[e.code]) {
-        if (selectionRef.current.size === 0) return;
         e.preventDefault();
+        // Nothing in hand: the arrows move the camera instead of nothing.
+        if (selectionRef.current.size === 0) {
+          const [sx, sy] = arrows[e.code];
+          panByKey(Math.sign(sx), Math.sign(sy), e.shiftKey);
+          return;
+        }
         nudge(arrows[e.code][0], arrows[e.code][1], e.repeat);
         return;
       }
 
-      const toolByKey: Record<string, Tool> = {
-        KeyV: "select",
-        KeyH: "pan",
-        KeyP: "pen",
-        KeyE: "eraser",
-        KeyR: "rect",
-        KeyO: "ellipse",
-        KeyL: "line",
-        KeyA: "arrow",
-        KeyT: "text",
-        KeyN: "note",
-        KeyW: "portal",
-        KeyC: "connect",
-        KeyF: "flow",
-      };
-      if (toolByKey[e.code]) {
-        setTool(toolByKey[e.code]);
-        setConnectFrom(null);
-        return;
-      }
       if (e.code === "Delete" || e.code === "Backspace") {
         deleteSelectionAsked();
         return;
@@ -2174,7 +2746,12 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     fitSelection,
     fitView,
     groupId,
+    groupSelection,
+    jumpSpatial,
+    panByKey,
     pasteClipboard,
+    pickSpot,
+    pushUndo,
     redo,
     selectAll,
     tidySelection,
@@ -2221,6 +2798,10 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     // The fixed UI (toolbar, zoom) never becomes pan: capturing the pointer
     // here would swallow the button click.
     if (target.closest(".cv-toolbar, .cv-camera")) return;
+    // A press on the board ends any glide: the box and the pan must start
+    // from where the camera *is*, not from where it was heading.
+    stopTween();
+    stopInertia();
     if (!target.closest(".xterm, input, textarea")) focusCanvas();
     // Clicking outside closes the note/text being edited. We can't wait for the
     // native blur: the pan's `preventDefault` (just below) suppresses the
@@ -2245,6 +2826,30 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     const onBg =
       target === containerRef.current || target.classList.contains("cv-bg");
     const middle = e.button === 1;
+    // A placement offer is up. In free mode a press on the background is the
+    // answer ("here"); any other press means the user moved on.
+    const hint = hintsRef.current;
+    if (hint) {
+      if (hint.free && e.button === 0 && onBg) {
+        e.preventDefault();
+        const el = containerRef.current;
+        const v = vpRef.current;
+        const r = rectsRef.current[hint.id];
+        if (el && r) {
+          const spot = dropAt(
+            {
+              view: { x: v.x, y: v.y, w: el.clientWidth / v.zoom, h: el.clientHeight / v.zoom },
+              cursor: toWorld(e.clientX, e.clientY),
+            },
+            { w: r.w, h: r.h },
+          );
+          moveCardTo(hint.id, spot.x, spot.y);
+        }
+        setHints(null);
+        return;
+      }
+      if (!target.closest(".cv-ghost")) setHints(null);
+    }
     /**
      * Dragging the empty background with the selection tool draws a rubber
      * band; it used to pan.
@@ -2258,6 +2863,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     if (e.button === 0 && tool === "select" && onBg && !spaceHeld) {
       e.preventDefault();
       setConnectFrom(null);
+      // A click on empty board also lifts the front lens.
+      setFocusedFront(null);
       const w = toWorld(e.clientX, e.clientY);
       const base = e.shiftKey ? selectionRef.current : EMPTY_SEL;
       if (!e.shiftKey) setSelection(EMPTY_SEL);
@@ -2276,6 +2883,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       vx: vpRef.current.x,
       vy: vpRef.current.y,
     };
+    panSamples.current = [{ x: e.clientX, y: e.clientY, t: e.timeStamp }];
     setPanning(true);
     containerRef.current?.setPointerCapture(e.pointerId);
   };
@@ -2308,6 +2916,10 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     const p = panSess.current;
     if (!p || e.pointerId !== p.pointerId) return;
     panLast.current = { x: e.clientX, y: e.clientY };
+    // The tail of the gesture, for the throw on release.
+    const s = panSamples.current;
+    s.push({ x: e.clientX, y: e.clientY, t: e.timeStamp });
+    if (s.length > 12) s.shift();
     scheduleFrame("pan", flushPan);
   };
 
@@ -2350,7 +2962,14 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       y: p.vy - (e.clientY - p.cy) / z,
     }));
     setPanning(false);
-    scheduleVpCommit();
+    // A flick keeps the board sliding; a slow release just stops.
+    const thrown = averageVelocity([
+      ...panSamples.current,
+      { x: e.clientX, y: e.clientY, t: e.timeStamp },
+    ]);
+    panSamples.current = [];
+    if (inertiaWorthStarting(thrown) && !reducedMotion.current) startInertia(thrown);
+    else scheduleVpCommit();
   };
 
   // --- items: select and drag (selection tool) ---
@@ -2380,6 +2999,12 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       const snap = snapMove(moving, targets, SNAP_TOL / vpRef.current.zoom);
       dx += snap.dx;
       dy += snap.dy;
+      // The grid, when asked for, has the last word over the magnet.
+      if (snapGridRef.current) {
+        const g = snapBoxToGrid({ ...s.union, x: s.union.x + dx, y: s.union.y + dy }, GRID, "move");
+        dx = g.x - s.union.x;
+        dy = g.y - s.union.y;
+      }
       return { dx, dy, guides: snap.guides };
     },
     [allBoxes, toWorld],
@@ -2428,6 +3053,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         moving = new Set([id]);
         setSelection(moving);
       }
+      // A pinned item takes the selection and refuses the drag.
+      if (pinnedRef.current.has(id)) return;
 
       // Alt duplicates: the copies take the place of the originals under the
       // hand, so the gesture reads as "pull a copy out of this one".
@@ -2451,6 +3078,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       // are not in `itemBoxes` yet (that memo is a render behind).
       const live = currentData().items;
       for (const mid of carried) {
+        if (pinnedRef.current.has(mid)) continue;
         const r = rectsRef.current[mid];
         if (r) {
           bases[mid] = { x: r.x, y: r.y, w: r.w, h: r.h };
@@ -2526,20 +3154,20 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     (w: { x: number; y: number }): string | null => {
       const inside = (r: CanvasNode) =>
         w.x >= r.x && w.x <= r.x + r.w && w.y >= r.y && w.y <= r.y + r.h;
-      for (let i = sorted.length - 1; i >= 0; i--) {
-        const r = rectsRef.current[sorted[i].id];
-        if (r && inside(r)) return sorted[i].id;
+      for (let i = orderedCards.length - 1; i >= 0; i--) {
+        const r = rectsRef.current[orderedCards[i].id];
+        if (r && inside(r)) return orderedCards[i].id;
       }
       for (const it of items) {
         if (
-          (it.type === "note" || it.type === "portal" || it.type === "flow") &&
+          (it.type === "note" || it.type === "portal" || it.type === "flow" || it.type === "doc") &&
           inside({ x: it.x, y: it.y, w: it.w, h: it.h })
         )
           return it.id;
       }
       return null;
     },
-    [items, sorted],
+    [items, orderedCards],
   );
 
   // Cursor/hover only matter once a connection origin is chosen (that's what
@@ -2797,6 +3425,29 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   );
 
   /**
+   * Enter on the selection: a terminal card takes the keyboard, a note or a
+   * text opens for writing. Anything else has nothing to step into.
+   */
+  const activateSelected = useCallback((): boolean => {
+    const sel = selectionRef.current;
+    if (sel.size !== 1) return false;
+    const id = [...sel][0];
+    if (rectsRef.current[id]) {
+      const card = sortedRef.current.find((c) => c.id === id);
+      focusTerminal(id, card?.slot ?? 0);
+      handlesRef.current[id]?.focus();
+      return true;
+    }
+    const it = itemsRef.current.find((i) => i.id === id);
+    if (it && (it.type === "note" || it.type === "text")) {
+      beginTextEdit(id);
+      return true;
+    }
+    return false;
+  }, [beginTextEdit, focusTerminal]);
+  activateRef.current = activateSelected;
+
+  /**
    * Focus for the textarea that just came on stage, with the cursor at the end.
    *
    * `useCallback` is not decoration: an inline ref would be a new function
@@ -3005,7 +3656,13 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       const targets = Object.entries(allBoxes())
         .filter(([id]) => id !== s.id)
         .map(([, b]) => b);
-      return snapResize(raw, s.start, targets, SNAP_TOL / z, s.minW, s.minH);
+      const out = snapResize(raw, s.start, targets, SNAP_TOL / z, s.minW, s.minH);
+      if (!snapGridRef.current) return out;
+      const g = snapResizeToGrid(out.rect, s.start, GRID);
+      return {
+        rect: { ...g, w: Math.max(s.minW, g.w), h: Math.max(s.minH, g.h) },
+        guides: out.guides,
+      };
     },
     [allBoxes],
   );
@@ -3027,11 +3684,11 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       e: React.PointerEvent,
       it: Extract<
         CanvasItem,
-        { type: "note" | "flow" | "group" | "media" | "binder" | "tree" }
+        { type: "note" | "flow" | "group" | "media" | "doc" | "binder" | "tree" }
       >,
       dir: ResizeDir,
     ) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || it.pinned) return;
       e.stopPropagation();
       const min =
         it.type === "flow"
@@ -3040,6 +3697,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             ? { w: GROUP_MIN_W, h: GROUP_MIN_H }
             : it.type === "media"
               ? { w: MEDIA_MIN_W, h: MEDIA_MIN_H }
+              : it.type === "doc"
+                ? { w: DOC_MIN_W, h: DOC_MIN_H }
               : it.type === "binder"
                 ? { w: BINDER_MIN_W, h: BINDER_MIN_H }
                 : it.type === "tree"
@@ -3094,6 +3753,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           i.type === "flow" ||
           i.type === "group" ||
           i.type === "media" ||
+          i.type === "doc" ||
           i.type === "binder" ||
           i.type === "tree"
             ? { ...i, x: r.x, y: r.y, w: r.w, h: r.h }
@@ -3142,7 +3802,12 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       if (base.w !== rect.w || base.h !== rect.h) {
         if (free) return none;
         const s = snapResize(rect, base, targets, tol, NODE_MIN_W, NODE_MIN_H);
-        return { rect: { ...rect, ...s.rect }, guides: s.guides, followers: {} as Moves };
+        let box: Box = s.rect;
+        if (snapGridRef.current) {
+          const g = snapResizeToGrid(box, base, GRID);
+          box = { ...g, w: Math.max(NODE_MIN_W, g.w), h: Math.max(NODE_MIN_H, g.h) };
+        }
+        return { rect: { ...rect, ...box }, guides: s.guides, followers: {} as Moves };
       }
 
       let dx = rect.x - base.x;
@@ -3154,6 +3819,12 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         dx += s.dx;
         dy += s.dy;
         guides = s.guides;
+        // The grid, when asked for, has the last word over the magnet.
+        if (snapGridRef.current) {
+          const g = snapBoxToGrid({ ...union, x: union.x + dx, y: union.y + dy }, GRID, "move");
+          dx = g.x - union.x;
+          dy = g.y - union.y;
+        }
       }
       const followers: Moves = {};
       for (const [fid, b] of Object.entries(bases)) {
@@ -3194,7 +3865,10 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         // is going to move — the card alone, or the selection it belongs to.
         const sel = selectionRef.current;
         const group = sel.has(id) && sel.size > 1 ? sel : new Set([id]);
-        dragBases.current = boxesOf(group);
+        // A pinned member of the selection stays behind.
+        dragBases.current = boxesOf(
+          [...group].filter((gid) => gid === id || !pinnedRef.current.has(gid)),
+        );
         dragUnion.current = unionBox(dragBases.current);
       }
       const g = nodeGeometry(id, rect);
@@ -3245,6 +3919,32 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   const registerHandle = useCallback((id: string, h: XTermHandle | null) => {
     handlesRef.current[id] = h;
   }, []);
+
+  /**
+   * Optional: once the camera settles, the card filling most of the screen
+   * takes the keyboard (`largestVisible`). Never while a gesture is on or a
+   * group is selected, and never when it would only repeat the focus.
+   */
+  useEffect(() => {
+    if (!autoFocusPref) return;
+    const timer = setTimeout(() => {
+      if (selectionRef.current.size > 1) return;
+      if (nodeLive.current || itemSess.current || panSess.current) return;
+      const el = containerRef.current;
+      if (!el) return;
+      const v = vpRef.current;
+      const id = largestVisible(rectsRef.current, {
+        x: v.x,
+        y: v.y,
+        w: el.clientWidth / v.zoom,
+        h: el.clientHeight / v.zoom,
+      });
+      if (!id || id === useUI.getState().focusedTerminalId) return;
+      const card = sortedRef.current.find((c) => c.id === id);
+      focusTerminal(id, card?.slot ?? 0);
+    }, 160);
+    return () => clearTimeout(timer);
+  }, [autoFocusPref, focusTerminal, vp.x, vp.y, vp.zoom]);
 
   const patchPortal = useCallback(
     (id: string, patch: Partial<Extract<CanvasItem, { type: "portal" }>>) => {
@@ -3312,6 +4012,10 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         );
         snapped = s.rect;
         hints = s.guides;
+        if (snapGridRef.current) {
+          const g = snapResizeToGrid(snapped, base, GRID);
+          snapped = { ...g, w: Math.max(PORTAL_MIN_W, g.w), h: Math.max(PORTAL_MIN_H, g.h) };
+        }
       }
       if (phase === "live") {
         setNoteResize({ id, w: snapped.w, h: snapped.h });
@@ -3353,6 +4057,9 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         // key instead of persisting as `"color": null` in the workspace JSON.
         if (merged.color) next.color = merged.color;
         if (merged.fontSize != null) next.fontSize = merged.fontSize;
+        if (merged.z != null) next.z = merged.z;
+        if (merged.pinned) next.pinned = true;
+        if (merged.restore) next.restore = merged.restore;
         return { ...c, nodes: { ...c.nodes, [id]: next } };
       });
     },
@@ -3367,6 +4074,64 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   const onNodeFontSize = useCallback(
     (id: string, px?: number) => patchNode(id, { fontSize: px }),
     [patchNode],
+  );
+
+  /** "Trazer para a frente" / "Enviar para trás" for a card (`lib/cardChrome`). */
+  const onNodeOrder = useCallback(
+    (id: string, dir: "front" | "back") => {
+      commit((c) => (dir === "front" ? raiseNode(c, id) : lowerNode(c, id)));
+    },
+    [commit],
+  );
+
+  const onPinToggle = useCallback(
+    (id: string, next: boolean) => {
+      commit((c) => setPinned(c, id, next));
+    },
+    [commit],
+  );
+
+  /** Fills the visible board with the card, or gives its rectangle back. */
+  const onNodeMaximize = useCallback(
+    (id: string) => {
+      const el = containerRef.current;
+      const r = rectsRef.current[id];
+      if (!el || !r) return;
+      const v = vpRef.current;
+      const view = { x: v.x, y: v.y, w: el.clientWidth / v.zoom, h: el.clientHeight / v.zoom };
+      commit((c) => ({
+        ...c,
+        nodes: { ...c.nodes, [id]: toggleMaximize(c.nodes[id] ?? r, view, v.zoom) },
+      }));
+    },
+    [commit],
+  );
+
+  const renameCanvasItem = useCallback(
+    (id: string, name: string) => {
+      commit((c) => renameItem(c, id, name));
+    },
+    [commit],
+  );
+  const startRename = useCallback((id: string) => setRenamingId(id), []);
+  const endRename = useCallback(() => setRenamingId(null), []);
+
+  const copyItemPath = useCallback(
+    (it: CanvasItem) => {
+      const p = itemAbsolutePath(it, projectRoot);
+      if (p) void copyText(p);
+    },
+    [projectRoot],
+  );
+  const revealItem = useCallback(
+    (it: CanvasItem) => {
+      const p = itemAbsolutePath(it, projectRoot);
+      if (!p) return;
+      void ipc
+        .revealPath(p)
+        .catch((e) => useUI.getState().showToast(String(e), "error"));
+    },
+    [projectRoot],
   );
 
   // --- context menu (right-click on anything on the canvas) ---
@@ -3724,6 +4489,71 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           shortcut: "Ctrl+Shift+M",
           onSelect: toggleMinimap,
         },
+        { kind: "sep" },
+        {
+          id: "bg",
+          label: t("Fundo do canvas"),
+          icon: <ImageIcon size={13} />,
+          submenu: [
+            {
+              id: "dots",
+              label: t("Pontos"),
+              checked: (background.grid ?? "dots") === "dots",
+              onSelect: () => setBackground({ grid: undefined }),
+            },
+            {
+              id: "lines",
+              label: t("Linhas"),
+              checked: background.grid === "lines",
+              onSelect: () => setBackground({ grid: "lines" }),
+            },
+            {
+              id: "nogrid",
+              label: t("Sem grade"),
+              checked: background.grid === "none",
+              onSelect: () => setBackground({ grid: "none" }),
+            },
+            { kind: "sep" },
+            {
+              kind: "swatches",
+              label: t("Cor do fundo"),
+              colors: CANVAS_COLORS,
+              active: background.color,
+              onPick: (c) => setBackground({ color: c }),
+              onClear: () => setBackground({ color: undefined }),
+            },
+            { kind: "sep" },
+            {
+              id: "img",
+              label: background.image ? t("Trocar a imagem de fundo…") : t("Imagem de fundo…"),
+              icon: <ImageIcon size={13} />,
+              onSelect: () => void pickBackgroundImage(),
+            },
+            ...(background.image
+              ? ([
+                  {
+                    kind: "stepper",
+                    label: t("Opacidade da imagem"),
+                    value: `${Math.round((background.opacity ?? BACKGROUND_OPACITY_DEFAULT) * 100)}%`,
+                    onStep: (d: number) =>
+                      setBackground({
+                        opacity: clamp(
+                          (background.opacity ?? BACKGROUND_OPACITY_DEFAULT) + d * 0.1,
+                          0.05,
+                          1,
+                        ),
+                      }),
+                  },
+                  {
+                    id: "noimg",
+                    label: t("Remover a imagem"),
+                    icon: <Trash2 size={13} />,
+                    onSelect: () => setBackground({ image: undefined, opacity: undefined }),
+                  },
+                ] as MenuEntry[])
+              : []),
+          ],
+        },
       ];
     }
 
@@ -3761,6 +4591,42 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         onSelect: () => reorderItem(it.id, "back"),
       },
     ];
+    const pinEntry: MenuEntry = {
+      id: "pin",
+      label: it.pinned ? t("Soltar (voltar a mover)") : t("Fixar no lugar"),
+      icon: it.pinned ? <PinOff size={13} /> : <Pin size={13} />,
+      onSelect: () => onPinToggle(it.id, !it.pinned),
+    };
+    // A frame renames through its band and a flow in its editor; the rest
+    // have a header that turns into a field.
+    const renameEntry: MenuEntry[] =
+      canRename(it) && it.type !== "group" && it.type !== "flow"
+        ? [
+            {
+              id: "rename",
+              label: t("Renomear"),
+              icon: <Pencil size={13} />,
+              shortcut: "F2",
+              onSelect: () => setRenamingId(it.id),
+            },
+          ]
+        : [];
+    const pathEntries: MenuEntry[] = itemAbsolutePath(it, projectRoot)
+      ? [
+          {
+            id: "copypath",
+            label: t("Copiar caminho"),
+            icon: <ClipboardCopy size={13} />,
+            onSelect: () => copyItemPath(it),
+          },
+          {
+            id: "reveal",
+            label: t("Mostrar na pasta"),
+            icon: <FolderOpen size={13} />,
+            onSelect: () => revealItem(it),
+          },
+        ]
+      : [];
 
     switch (it.type) {
       case "note":
@@ -3843,6 +4709,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             icon: it.locked ? <Unlock size={13} /> : <Lock size={13} />,
             onSelect: () => toggleLock(it.id),
           },
+          ...renameEntry,
+          pinEntry,
           dup,
           { kind: "sep" },
           ...order,
@@ -3903,6 +4771,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               beginTextEdit(it.id);
             },
           },
+          pinEntry,
           dup,
           { kind: "sep" },
           ...order,
@@ -3941,6 +4810,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               });
             },
           },
+          ...renameEntry,
+          pinEntry,
           dup,
           { kind: "sep" },
           ...order,
@@ -3956,6 +4827,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             icon: <Pencil size={13} />,
             onSelect: () => editFlow(it.id),
           },
+          pinEntry,
           dup,
           { kind: "sep" },
           ...order,
@@ -3988,6 +4860,9 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             onSelect: () => patchTree(it.id, { path: "", expanded: [] }),
           },
           { kind: "sep" },
+          ...renameEntry,
+          ...pathEntries,
+          pinEntry,
           dup,
           ...order,
           { kind: "sep" },
@@ -4043,6 +4918,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               ]
             : []),
           { kind: "sep" },
+          ...renameEntry,
+          pinEntry,
           ...order,
           { kind: "sep" },
           {
@@ -4079,6 +4956,31 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             onSelect: () => void replaceMediaFile(it.id),
           },
           { kind: "sep" },
+          ...renameEntry,
+          ...pathEntries,
+          pinEntry,
+          dup,
+          ...order,
+          { kind: "sep" },
+          del,
+        ];
+      case "doc":
+        return [
+          swatches,
+          ...(it.root
+            ? []
+            : [
+                {
+                  id: "open",
+                  label: t("Abrir no editor"),
+                  icon: <PenSquare size={13} />,
+                  onSelect: () => openMediaInEditor(it.path),
+                } as MenuEntry,
+              ]),
+          { kind: "sep" },
+          ...renameEntry,
+          ...pathEntries,
+          pinEntry,
           dup,
           ...order,
           { kind: "sep" },
@@ -4100,6 +5002,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             onSelect: () => selectGroupContents(it.id),
           },
           { kind: "sep" },
+          pinEntry,
           dup,
           ...order,
           { kind: "sep" },
@@ -4128,6 +5031,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               ),
           },
           { kind: "sep" },
+          pinEntry,
           dup,
           ...order,
           { kind: "sep" },
@@ -4139,6 +5043,50 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   // --- render derivatives ---
 
   const z = vp.zoom;
+
+  /**
+   * The terminals' atlas scale, settled: it follows the zoom only once the
+   * zoom has stopped moving for a beat, because each step rebuilds every
+   * glyph atlas on the board and a pinch would otherwise do that per frame.
+   */
+  const [renderScale, setRenderScale] = useState(1);
+  useEffect(() => {
+    const next = renderScaleFor(z);
+    const timer = setTimeout(() => setRenderScale(next), 120);
+    return () => clearTimeout(timer);
+  }, [z]);
+
+  /**
+   * What is worth painting: everything inside the viewport plus a screen of
+   * margin (`lib/culling.ts`), and whatever the user is in the middle of.
+   * Off-screen terminals coalesce their output slowly; off-screen notes,
+   * files, trees and binders are not mounted at all.
+   */
+  const shown = useMemo(() => {
+    const keep: string[] = [...selection];
+    if (focusedTerminalId) keep.push(focusedTerminalId);
+    if (editingId) keep.push(editingId);
+    if (renamingId) keep.push(renamingId);
+    if (hints) keep.push(hints.id);
+    return visibleIds(
+      { ...itemBoxes, ...rects },
+      { x: vp.x, y: vp.y, w: viewSize.w / z, h: viewSize.h / z },
+      keep,
+    );
+  }, [
+    selection,
+    focusedTerminalId,
+    editingId,
+    renamingId,
+    hints,
+    itemBoxes,
+    rects,
+    vp.x,
+    vp.y,
+    z,
+    viewSize.w,
+    viewSize.h,
+  ]);
 
   const draftItem: CanvasItem | null = useMemo(() => {
     if (!draft) return null;
@@ -4316,20 +5264,18 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   const overlayActive =
     DRAW_TOOLS.includes(tool) || !!modalOpen || !!ctxMenu || !!zoomMenu || cardMenuOpen;
 
-  /**
-   * The surfaces that cover the workspace *whole* — a modal, Ao Vivo, the
-   * diff, the editor, the composer.
-   *
-   * These are the only ones that blank a portal outright: no z-index reaches
-   * an OS window, and behind a full-screen backdrop there is nothing to see
-   * anyway. Everything else that floats over the canvas — every menu, and the
-   * transparent `.cv-overlay` a draw tool mounts — publishes its rectangle
-   * (`occludersStore`) and only the portals it actually lands on step aside.
-   *
-   * This used to be `overlayActive` wholesale, which meant picking the pen or
-   * right-clicking one card blanked every site on the board.
-   */
-  const portalsHidden = !!modalOpen || liveOpen || diffOpen || editorOpen || composerOpen;
+  // `portalsHidden` (declared with the store reads at the top) is what blanks
+  // a portal outright: the surfaces that cover the workspace *whole* (a
+  // modal, the Busca, the composer, the editor, the diff, Ao Vivo) read from
+  // the one registry in `lib/layers`. No z-index reaches an OS window, and
+  // behind a full-screen backdrop there is nothing to see anyway. Everything
+  // else that floats over the canvas (every menu, and the transparent
+  // `.cv-overlay` a draw tool mounts) publishes its rectangle
+  // (`occludersStore`) and only the portals it actually lands on step aside.
+  //
+  // This used to be `overlayActive` wholesale, which meant picking the pen or
+  // right-clicking one card blanked every site on the board; then a list typed
+  // out here, which forgot the Busca.
 
   // Memoized because these run on the pan path: `items` only changes on a
   // commit, but this component re-renders on every frame of a camera move.
@@ -4340,17 +5286,23 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           // A filed note is drawn by its fichário, not by the board. It is
           // still an item — still addressable by the CLI, still wired — it
           // just has one place on screen, and that place is the tab.
-          i.type === "text" || (i.type === "note" && !filed.has(i.id)),
+          (i.type === "text" || (i.type === "note" && !filed.has(i.id))) && shown.has(i.id),
       ),
-    [items, filed],
+    [items, filed, shown],
   );
   const treeItems = useMemo(
-    () => items.filter((i): i is TreeItem => i.type === "tree"),
-    [items],
+    () => items.filter((i): i is TreeItem => i.type === "tree" && shown.has(i.id)),
+    [items, shown],
   );
+  // The whole list, not only the visible ones: the note menu lists every
+  // binder a note can be filed into, wherever it sits.
   const binderItems = useMemo(
     () => items.filter((i): i is BinderItem => i.type === "binder"),
     [items],
+  );
+  const binderCards = useMemo(
+    () => binderItems.filter((i) => shown.has(i.id)),
+    [binderItems, shown],
   );
   const portalItems = useMemo(
     () =>
@@ -4360,8 +5312,12 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     [items],
   );
   const mediaItems = useMemo(
-    () => items.filter((i): i is MediaItem => i.type === "media"),
-    [items],
+    () => items.filter((i): i is MediaItem => i.type === "media" && shown.has(i.id)),
+    [items, shown],
+  );
+  const docItems = useMemo(
+    () => items.filter((i): i is DocItem => i.type === "doc" && shown.has(i.id)),
+    [items, shown],
   );
   const groupItems = useMemo(
     () =>
@@ -4381,7 +5337,19 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     const out: MiniBox[] = [];
     for (const t of sorted) {
       const r = rects[t.id];
-      if (r) out.push({ id: t.id, kind: "terminal", x: r.x, y: r.y, w: r.w, h: r.h });
+      if (!r) continue;
+      // An agent's card wears the agent's colour, so the map reads "which
+      // one is where" without a label.
+      const brand = brandOf(t);
+      out.push({
+        id: t.id,
+        kind: "terminal",
+        x: r.x,
+        y: r.y,
+        w: r.w,
+        h: r.h,
+        ...(brand ? { color: MARKS[brand].color } : {}),
+      });
     }
     for (const it of items) {
       const b = itemBoxes[it.id];
@@ -4397,6 +5365,53 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
 
   const empty = sorted.length === 0 && items.length === 0;
 
+  /**
+   * An empty board with saved arrangements offers them right there: the
+   * scores dialog is three clicks away, and "start from the one I saved" is
+   * the first thing a person wants from a blank canvas. A score's CLIs are
+   * born in the folder the board's last card was given (`lib/scores.ts`),
+   * and on an empty board that is nowhere yet: they come up stopped, and the
+   * folder is the user's to set before starting them.
+   */
+  const [scores, setScores] = useState<ScoreMeta[]>([]);
+  useEffect(() => {
+    if (!empty) {
+      setScores([]);
+      return;
+    }
+    let alive = true;
+    void ipc
+      .scoreList()
+      .then((list) => {
+        if (alive) setScores(list);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [empty]);
+  const applyScoreHere = useCallback(
+    async (name: string) => {
+      try {
+        const data = await readScore(name);
+        const r = applyScore(data, groupId);
+        useUI
+          .getState()
+          .showToast(
+            t("“{name}” aplicada: {n} CLI(s) criadas paradas — inicie quando quiser.", {
+              name,
+              n: r.terminals,
+            }),
+          );
+        // Frame what just landed, once React has painted it.
+        setTimeout(fitView, 0);
+      } catch (e) {
+        useUI.getState().showToast(String(e), "error");
+      }
+    },
+    [fitView, groupId],
+  );
+
   return (
     <div
       ref={containerRef}
@@ -4406,7 +5421,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       // scale is a seven-pixel target.
       className={`cv cv--${tool} ${spaceHeld ? "cv--space" : ""} ${
         panning ? "is-panning" : ""
-      } ${z < 0.45 ? "cv--far" : ""}`}
+      } ${z < 0.45 ? "cv--far" : ""} ${hints?.free ? "cv--place" : ""}`}
       // Focusable, never a Tab stop: the keyboard shortcuts below only fire
       // while focus is in here, and `portalEscape` hands focus back to it.
       tabIndex={-1}
@@ -4414,17 +5429,46 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       onPointerMove={onContainerPointerMove}
       onPointerUp={onContainerPointerUp}
       onContextMenu={onContainerContextMenu}
+      // A file carried from the tree: a card where it lands. A terminal card
+      // stops the same drag on its own and takes the path instead.
+      onDragOver={(e) => {
+        if (!hasDragPaths(e.dataTransfer)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDrop={(e) => {
+        const entries = readDragPaths(e.dataTransfer);
+        if (entries.length === 0) return;
+        e.preventDefault();
+        dropEntriesAt(entries, toWorld(e.clientX, e.clientY));
+      }}
     >
       {/* What the Tab cycle just selected. See `anunciar`. */}
       <div className="sr-only" role="status" aria-live="polite">
         {announcement}
       </div>
 
+      {/* The picture, fixed to the viewport like a desktop wallpaper: it
+          never pans, so it costs nothing per frame. */}
+      {bgUrl && (
+        <div
+          className="cv-wall"
+          style={{
+            backgroundImage: `url("${bgUrl}")`,
+            opacity: background.opacity ?? BACKGROUND_OPACITY_DEFAULT,
+          }}
+        />
+      )}
       <div
-        className="cv-bg"
+        className={`cv-bg cv-bg--${background.grid ?? "dots"}`}
         style={{
           backgroundSize: `${GRID * z}px ${GRID * z}px`,
           backgroundPosition: `${(-vp.x * z) % (GRID * z)}px ${(-vp.y * z) % (GRID * z)}px`,
+          // A tint of the chosen colour over the theme's own ground, never
+          // the raw swatch: the palette is the board's light chroma.
+          ...(background.color
+            ? { backgroundColor: `color-mix(in srgb, ${background.color} 22%, transparent)` }
+            : {}),
         }}
       />
 
@@ -4587,6 +5631,10 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               onMenuOpen={setCardMenuOpen}
               onRect={onPortalRect}
               onBounds={onPortalBounds}
+              renaming={renamingId === raw.id}
+              onRenameStart={startRename}
+              onRenameEnd={endRename}
+              onRename={renameCanvasItem}
             />
           );
         })}
@@ -4619,11 +5667,15 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               onResizeStart={startNoteResize}
               onResizeMove={moveNoteResize}
               onResizeEnd={endNoteResize}
+              renaming={renamingId === raw.id}
+              onRenameStart={startRename}
+              onRenameEnd={endRename}
+              onRename={renameCanvasItem}
             />
           );
         })}
 
-        {binderItems.map((raw) => {
+        {binderCards.map((raw) => {
           const { dx, dy } = shiftOf(raw.id);
           const connectClass =
             tool === "connect" && connectFrom === raw.id
@@ -4660,6 +5712,10 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               onResizeStart={startNoteResize}
               onResizeMove={moveNoteResize}
               onResizeEnd={endNoteResize}
+              renaming={renamingId === raw.id}
+              onRenameStart={startRename}
+              onRenameEnd={endRename}
+              onRename={renameCanvasItem}
             />
           );
         })}
@@ -4691,6 +5747,45 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               onResizeStart={startNoteResize}
               onResizeMove={moveNoteResize}
               onResizeEnd={endNoteResize}
+              renaming={renamingId === raw.id}
+              onRenameStart={startRename}
+              onRenameEnd={endRename}
+              onRename={renameCanvasItem}
+            />
+          );
+        })}
+
+        {docItems.map((raw) => {
+          const { dx, dy } = shiftOf(raw.id);
+          const connectClass =
+            tool === "connect" && connectFrom === raw.id
+              ? "is-connect-source"
+              : tool === "connect" && hoverNode === raw.id && connectFrom
+                ? "is-connect-target"
+                : "";
+          return (
+            <DocCard
+              key={raw.id}
+              it={raw}
+              dx={dx}
+              dy={dy}
+              w={noteResize?.id === raw.id ? noteResize.w : raw.w}
+              h={noteResize?.id === raw.id ? noteResize.h : raw.h}
+              selected={selection.has(raw.id)}
+              faded={pendingErase.has(raw.id)}
+              connectClass={connectClass}
+              projectRoot={projectRoot}
+              onItemDown={onItemDown}
+              onItemMove={onItemMove}
+              onItemUp={onItemUp}
+              onOpen={openMediaInEditor}
+              onResizeStart={startNoteResize}
+              onResizeMove={moveNoteResize}
+              onResizeEnd={endNoteResize}
+              renaming={renamingId === raw.id}
+              onRenameStart={startRename}
+              onRenameEnd={endRename}
+              onRename={renameCanvasItem}
             />
           );
         })}
@@ -4727,7 +5822,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           );
         })}
 
-        {sorted.map((t) => (
+        {orderedCards.map((t) => (
           <TerminalCard
             key={t.id}
             term={t}
@@ -4754,8 +5849,33 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             onFocusZoom={focusNode}
             onMenuOpen={setCardMenuOpen}
             registerHandle={registerHandle}
+            onOrder={onNodeOrder}
+            onPin={onPinToggle}
+            onMaximize={onNodeMaximize}
+            renaming={renamingId === t.id}
+            onRenameStart={startRename}
+            onRenameEnd={endRename}
+            visible={shown.has(t.id)}
+            renderScale={renderScale}
+            front={frontOfCard.get(t.id)}
+            frontFocus={
+              focusedFront ? (frontOfCard.get(t.id)?.id === focusedFront ? "on" : "off") : null
+            }
+            onFocusFront={setFocusedFront}
           />
         ))}
+
+        {hints && !hints.free && rects[hints.id] && (
+          <PlacementHints
+            spots={hints.spots}
+            hereIndex={hints.spots.findIndex(
+              (s) =>
+                Math.abs(s.x - rects[hints.id].x) < 0.5 &&
+                Math.abs(s.y - rects[hints.id].y) < 0.5,
+            )}
+            onPick={pickSpot}
+          />
+        )}
       </div>
 
       <ItemsLayer
@@ -4801,6 +5921,20 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             <strong>{t("autoriza um agente a falar com o outro")}</strong>{" "}
             {t("(e a ler as notas ligadas a ele). Sem cabo, cada um só enxerga a si mesmo.")}
           </p>
+          {scores.length > 0 && (
+            <div className="cv-hint-scores">
+              <p>{t("Ou comece de uma partitura salva:")}</p>
+              <ul>
+                {scores.slice(0, 6).map((s) => (
+                  <li key={s.name}>
+                    <button className="linkish" onClick={() => void applyScoreHere(s.name)}>
+                      {s.name}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 
@@ -4881,6 +6015,17 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         </div>
       )}
 
+      {hints && (
+        <div className="cv-status">
+          {hints.free
+            ? t("Clique onde o cartão deve ficar · F volta às vagas · Esc mantém onde está")
+            : t(
+                "Vaga 1 a {n} pelo número (ou clique nela) · F coloca onde você clicar · Esc mantém onde está",
+                { n: hints.spots.length },
+              )}
+        </div>
+      )}
+
       <FlowHud
         groupId={groupId}
         flows={flowItems}
@@ -4899,6 +6044,10 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         onColor={setColor}
         size={size}
         onSize={setSize}
+        keyFor={(id) => {
+          const chord = keymap[`tool.${id}` as CanvasAction];
+          return chord ? chordLabel(chord) : "";
+        }}
         canUndo={undoRef.current.length > 0}
         canRedo={redoRef.current.length > 0}
         onUndo={undo}

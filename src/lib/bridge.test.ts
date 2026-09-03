@@ -3,13 +3,13 @@
  * `yard recruit "Nome" --floor "Frente"`.
  *
  * The pure rules of the CLI live in `bridgeCore.ts` and are tested there.
- * This file exists for a single thing the pure part cannot see: a recruit is
- * a **card**, and this command always writes the card's rectangle onto the
- * front's canvas. It used to take the front's *current* surface for the row
- * itself, which was the same thing only while a new front happened to open on
- * the canvas. It does not any more (`lib/groundClone.ts`), so the two halves
- * disagreed: a tab in a pane, with a rectangle for it on a board where no
- * card was ever drawn.
+ * This file exists for a single thing the pure part cannot see: where the
+ * recruit is born. A front is a project's group, and a project's group has
+ * no canvas (the canvas is the boards, `lib/surface.ts`), so the recruit is a
+ * **tab** of that front, and no rectangle is written for it anywhere. The
+ * contract that changed: it used to be a card on the front's canvas, drawn
+ * on a board the front could show; the front cannot show one any more, and a
+ * card there would be a CLI nobody can see.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -46,7 +46,7 @@ beforeEach(() => {
 });
 
 describe("recruiting onto another front", () => {
-  it("is born a card on that front's board, never a tab with a rectangle nobody drew", async () => {
+  it("is born a tab of that front, with no rectangle on any board: a front has no canvas", async () => {
     const s = useProjects.getState();
     const projectId = s.addProject("proj", PROJECT)!;
     const ground = s.groupsOf(projectId)[0];
@@ -57,7 +57,6 @@ describe("recruiting onto another front", () => {
       agentId: "claude",
       program: "claude.exe",
       cwd: PROJECT,
-      surface: "canvas",
     });
     const front = s.addGroup(projectId, "Frente", { activate: false });
 
@@ -69,9 +68,11 @@ describe("recruiting onto another front", () => {
     expect(res.code).toBe(0);
     const after = useProjects.getState();
     const born = after.terminalsOf(front).find((t) => t.title === "Nova");
-    expect(born?.surface).toBe("canvas");
-    // The rectangle and the row agree: the card the command drew is the row
-    // it created.
-    expect(Object.keys(after.layoutOf(front).canvas?.nodes ?? {})).toEqual([born!.id]);
+    expect(born?.surface).toBe("grid");
+    expect(after.layoutOf(front).canvas?.nodes ?? {}).toEqual({});
+    // The answer says where it went, and does not send the caller to a
+    // canvas that is not there.
+    expect(res.output).toContain("aba");
+    expect(res.output).not.toContain("canvas");
   });
 });

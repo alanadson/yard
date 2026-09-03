@@ -1,7 +1,7 @@
 /**
- * Anotações — the full-screen markdown notebook (Ctrl+Shift+N): notes that
- * live in nestable notebooks, wear colored labels and a status, and open in
- * the same four-mode markdown editor the files get.
+ * Anotações, the markdown notebook (Ctrl+Shift+N): notes that live in
+ * nestable notebooks, wear colored labels and a status, and open in the same
+ * four-mode markdown editor the files get.
  *
  * These are **not** the canvas sticky notes. A sticky note belongs to one
  * group's board and travels inside `layout_json`; a notebook note is knowledge
@@ -49,12 +49,18 @@ const MD_MODES: NotesMdMode[] = ["live", "source", "split", "read"];
  * compartments are module singletons, so two mounted notebooks would fight
  * over the same restored editor states.
  *
- * - `overlay`: the sheet over the whole window (the original Ctrl+Shift+N).
- * - `tab`: docked as a tab of a pane, beside the CLIs, files and browsers.
  * - `center`: the whole central workspace area, panels and sidebar untouched.
+ *   The default, and where every fallback lands.
+ * - `tab`: docked as a tab of a pane, beside the CLIs, files and browsers.
+ *
+ * There used to be a third, `overlay`, a sheet over the whole window. It is
+ * gone on purpose: a portal's page is an OS window that no HTML sheet covers,
+ * so opening the notebook over a browser painted the site on top of the
+ * notes. The centre *replaces* the grid and the canvas instead of covering
+ * them, which unmounts every portal underneath: nothing left to paint
+ * through. A saved `overlay` is read as `center` (`parsePlace`).
  */
 export type NotesPlace =
-  | { kind: "overlay" }
   | { kind: "center" }
   | { kind: "tab"; groupId: string; slot: number };
 
@@ -144,10 +150,10 @@ export function sanitizeData(data: NotesData): {
 }
 
 export function parsePlace(raw: string | undefined): NotesPlace {
-  if (!raw) return { kind: "overlay" };
+  if (!raw) return { kind: "center" };
   try {
     const p = JSON.parse(raw) as { kind?: unknown; groupId?: unknown; slot?: unknown };
-    if (p?.kind === "center") return { kind: "center" };
+    // `overlay` (retired) and anything unknown fall through to the centre.
     if (p?.kind === "tab" && typeof p.groupId === "string" && p.groupId) {
       return {
         kind: "tab",
@@ -161,24 +167,17 @@ export function parsePlace(raw: string | undefined): NotesPlace {
   } catch {
     /* fall through to the default */
   }
-  return { kind: "overlay" };
+  return { kind: "center" };
 }
 
 /**
- * Is the notebook covering the window as an overlay right now? What
- * `lib/layers` and the global shortcuts consult. `place: tab` counts too:
- * that is the "peek" overlay a canvas-mode group answers with (its panes —
- * and therefore the tab — are not on screen, so the sheet is).
+ * Is the notebook occupying the central workspace area right now? What the
+ * global shortcuts and the attention rules consult. `place: tab` counts too:
+ * with the dock's group showing the canvas there is no tab bar to jump to,
+ * so `open` there means "shown in the centre, the dock kept".
  */
-export function notesOverlayVisible(): boolean {
-  const s = useNotes.getState();
-  return s.open && s.place.kind !== "center";
-}
-
-/** Is the notebook occupying the central workspace area? */
 export function notesCenterVisible(): boolean {
-  const s = useNotes.getState();
-  return s.open && s.place.kind === "center";
+  return useNotes.getState().open;
 }
 
 export function parseCollection(raw: string | undefined): {
@@ -220,9 +219,9 @@ const SAVE_DELAY = 600;
 interface NotesState {
   loaded: boolean;
   /**
-   * The notebook is summoned in its place (overlay/center). With `place:
-   * tab` the tab itself is always in the bar; `open` there means the peek
-   * overlay (see `notesOverlayVisible`).
+   * The notebook is on screen in the centre. With `place: tab` the tab
+   * itself is always in the bar; `open` there means the centre is showing it
+   * because the dock's group has no tab bar (see `notesCenterVisible`).
    */
   open: boolean;
   /** Where the notebook lives — see `NotesPlace`. */
@@ -257,11 +256,11 @@ interface NotesState {
    * Says why with a toast when it cannot (no group, canvas layout).
    */
   dockHere: () => boolean;
-  /** The tab's X: back to a closed overlay, pane bar repaired. */
+  /** The tab's X: back to the centre, closed, pane bar repaired. */
   closeDock: () => void;
-  /** The placement switch: show the notebook as overlay or center. */
-  setPlaceKind: (kind: "overlay" | "center") => void;
-  /** Boot: a dock whose group left the workspace falls back to the overlay. */
+  /** The placement switch: show the notebook in the centre (from the tab). */
+  placeCenter: () => void;
+  /** Boot: a dock whose group left the workspace falls back to the centre. */
   prune: () => void;
   /** Group(s) leaving the workspace mid-session — same fallback. */
   dropGroups: (groupIds: Iterable<string>) => void;
@@ -424,15 +423,15 @@ export const useNotes = create<NotesState>((set, get) => {
 
   /**
    * Brings the docked tab to the screen: its group active, its tab on top.
-   * A canvas-mode group has no tab bar to show it in — the peek overlay
-   * answers instead (the panes are unmounted there, so the one-surface rule
-   * holds). A dock whose group vanished falls back to the overlay for good.
+   * A board has no tab bar to show it in: the centre answers instead, the
+   * dock kept (the centre replaces the board, so the one-surface rule
+   * holds). A dock whose group vanished falls back to the centre for good.
    */
   const revealDock = (dock: { groupId: string; slot: number }): void => {
     const projects = useProjects.getState();
     if (!projects.groups.some((g) => g.id === dock.groupId)) {
-      set({ place: { kind: "overlay" }, open: true });
-      persistPlace({ kind: "overlay" });
+      set({ place: { kind: "center" }, open: true });
+      persistPlace({ kind: "center" });
       persist(KV_OPEN, "true");
       return;
     }
@@ -449,7 +448,7 @@ export const useNotes = create<NotesState>((set, get) => {
   return {
     loaded: false,
     open: false,
-    place: { kind: "overlay" },
+    place: { kind: "center" },
     notes: [],
     notebooks: [],
     tags: [],
@@ -530,7 +529,9 @@ export const useNotes = create<NotesState>((set, get) => {
 
     toggleView: () => {
       // A docked notebook has no "toggle": the shortcut reveals the tab and
-      // its X is what closes it. Everywhere else, the toggle of always.
+      // its X is what closes it (unless the centre is standing in for a tab
+      // bar the canvas does not have; then the key dismisses the centre).
+      // Everywhere else, the toggle of always.
       if (get().place.kind === "tab" && !get().open) get().openView();
       else if (get().open) get().closeView();
       else get().openView();
@@ -557,12 +558,13 @@ export const useNotes = create<NotesState>((set, get) => {
         useUI.getState().showToast(t("Abra um grupo antes de pôr as anotações numa aba."));
         return false;
       }
+      // The canvas is the boards, and a board has no tab bar.
       if (projects.layoutOf(groupId).surface === "canvas") {
         useUI
           .getState()
           .showToast(
             t(
-              "Este grupo está mostrando o canvas, que não tem barra de abas — volte para os painéis ou use a área central.",
+              "Um quadro não tem barra de abas: use a área central, ou encaixe o caderno num painel de um grupo.",
             ),
           );
         return false;
@@ -580,16 +582,16 @@ export const useNotes = create<NotesState>((set, get) => {
       const { place } = get();
       if (place.kind !== "tab") return;
       get().flush();
-      set({ place: { kind: "overlay" }, open: false, wantsFocus: null });
-      persistPlace({ kind: "overlay" });
+      set({ place: { kind: "center" }, open: false, wantsFocus: null });
+      persistPlace({ kind: "center" });
       persist(KV_OPEN, "false");
       repairSlot(place.groupId, place.slot);
     },
 
-    setPlaceKind: (kind) => {
+    placeCenter: () => {
       const before = get().place;
-      if (before.kind === kind && get().open) return;
-      const place: NotesPlace = { kind };
+      if (before.kind === "center" && get().open) return;
+      const place: NotesPlace = { kind: "center" };
       // "Show it there" is the gesture — the notebook stays on screen.
       set({ place, open: true });
       persistPlace(place);
@@ -601,8 +603,8 @@ export const useNotes = create<NotesState>((set, get) => {
       const { place } = get();
       if (place.kind !== "tab") return;
       if (useProjects.getState().groups.some((g) => g.id === place.groupId)) return;
-      set({ place: { kind: "overlay" } });
-      persistPlace({ kind: "overlay" });
+      set({ place: { kind: "center" } });
+      persistPlace({ kind: "center" });
     },
 
     dropGroups: (groupIds) => {
@@ -611,9 +613,9 @@ export const useNotes = create<NotesState>((set, get) => {
       const outside = new Set(groupIds);
       if (!outside.has(place.groupId)) return;
       // The group took the pane with it — nothing to repair, only the fall
-      // back to the overlay (closed: losing a group must not pop a sheet).
-      set({ place: { kind: "overlay" }, open: false });
-      persistPlace({ kind: "overlay" });
+      // back to the centre (closed: losing a group must not pop the notebook).
+      set({ place: { kind: "center" }, open: false });
+      persistPlace({ kind: "center" });
       persist(KV_OPEN, "false");
     },
 

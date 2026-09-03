@@ -2,59 +2,35 @@
 
 /* --- notes (the markdown notebook, Ctrl+Shift+N) ---
 
-   Three panes over a translucent sheet, in the same material as the viewer:
-   rail (notebooks/statuses/tags) → list with previews → the note in the same
-   markdown editor the files get. Chroma here is content — the status dot and
-   the tag colors are user data, never chrome. */
+   Three panes in the workspace's own material: rail (notebooks/statuses/tags)
+   → list with previews → the note in the same markdown editor the files get.
+   Chroma here is content: the status dot and the tag colors are user data,
+   never chrome.
 
-.notes-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 122; /* under the editor (125) and the composer; above the viewer (120) — lib/layers.ts tracks it */
-  display: grid;
-  place-items: center;
-  background: rgb(var(--shade) / 45%);
-  backdrop-filter: blur(6px);
-  animation: fade-in 140ms ease-out;
-}
+   No backdrop and no fixed sheet on purpose: the notebook takes the central
+   area (or a pane tab), it never floats over the window. A portal's page is
+   an OS window that no HTML sheet covers, and the translucent overlay this
+   used to be showed the site on top of the notes. */
 
+/* Central area: a "single pane" filling the middle, the same material as a
+   .pane; the sidebar and the side panels stay at hand. It follows the pane's
+   shape too, and the pane is seated flush against the chassis: no radius, no
+   drop shadow, just the frame. */
 .notes {
-  width: min(1680px, 96vw);
-  height: min(1020px, 94vh);
+  width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--material-notes);
-  backdrop-filter: var(--blur-sheet);
-  border: 1px solid rgb(var(--veil) / 12%);
-  border-radius: var(--r-xl);
-  box-shadow: var(--shadow-3), var(--hairline);
-}
-
-/* --- the notebook's other two places (notesStore.place) --- */
-
-/* Central area: a "single pane" filling the middle — the same material as a
-   .pane, no backdrop; the sidebar and the side panels stay at hand. It
-   follows the pane's shape too, and the pane is seated flush against the
-   chassis now: no radius, no drop shadow, just the frame. */
-.notes--center {
-  width: 100%;
-  height: 100%;
   background: var(--bg-panel);
-  backdrop-filter: none;
   border: 1px solid var(--border);
-  border-radius: 0;
   box-shadow: var(--hairline);
 }
 
 /* Pane tab: the body is the .pane-doc (opaque); only the skeleton here. */
 .notes--tab {
-  width: 100%;
-  height: 100%;
   background: transparent;
-  backdrop-filter: none;
   border: none;
-  border-radius: 0;
   box-shadow: none;
   /* Narrow pane: the side columns give way entirely (rules below). */
   container-type: inline-size;

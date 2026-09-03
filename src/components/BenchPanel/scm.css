@@ -361,12 +361,12 @@
   border-bottom: 1px solid var(--border-soft);
 
   /* A row outside the scrollport is neither measured nor painted. That is
-     four buttons, three SVGs and four `data-tip` balloons per row — each
-     balloon an absolute `::after` with a shadow and `border-radius`, drawn
-     even at `opacity: 0`. The declared size is the collapsed row's, so the
-     scrollbar does not dance while scrolling. Collapsed it is 29px; an open
-     diff exceeds that and the browser measures for real, which is what
-     `auto` does. */
+     four buttons and three SVGs per row (and, until 2026-09, four `data-tip`
+     balloons drawn as `::after` boxes even at `opacity: 0`; the balloon is
+     one fixed element in `<body>` now). The declared size is the collapsed
+     row's, so the scrollbar does not dance while scrolling. Collapsed it is
+     29px; an open diff exceeds that and the browser measures for real, which
+     is what `auto` does. */
   content-visibility: auto;
   contain-intrinsic-size: auto 29px;
 }

@@ -54,6 +54,11 @@ export interface FloorMeta {
   task?: FloorTask;
   /** Agent catalog id this floor was opened for (fan-out). */
   agentId?: string;
+  /**
+   * The colour the front's cards wear on a board (`lib/floorColor.ts`).
+   * Absent = one hashed from the group id, which is what most fronts keep.
+   */
+  color?: string;
 }
 
 /** Implicit ground of any group without floor metadata. */
@@ -83,6 +88,11 @@ export function normalizeFloor(raw: unknown): FloorMeta | undefined {
   }
   if (r.adopted === true) floor.adopted = true;
   if (typeof r.agentId === "string" && r.agentId.trim()) floor.agentId = r.agentId;
+  // Only a hex colour: the value lands in a `style` attribute, and a word
+  // written there by a crooked save is a word nobody meant.
+  if (typeof r.color === "string" && /^#[0-9a-f]{6}$/i.test(r.color.trim())) {
+    floor.color = r.color.trim();
+  }
   if (r.task && typeof r.task === "object") {
     const t = r.task as Partial<FloorTask>;
     if (

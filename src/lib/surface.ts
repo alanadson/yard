@@ -1,6 +1,6 @@
 /**
- * The two surfaces of a group — the pane grid and the canvas — and the rules
- * that keep them apart.
+ * The two surfaces, the pane grid and the canvas, and the rules that keep
+ * them apart.
  *
  * They used to be the same place with two skins. `layoutJson.mode` held four
  * values (`auto | grid | spotlight | canvas`) and every terminal of the group
@@ -11,17 +11,28 @@
  * erased the Grade/Holofote the user had pinned, because it was the same
  * field.
  *
- * So the axis is split in two:
+ * So the axis was split in two (`mode` keeps only the grid shapes,
+ * `auto | grid | spotlight`; `surface` says which of the two is shown), and
+ * then the second half stopped being a choice at all. **The canvas is the
+ * boards.** A board (a group with no project) shows the canvas; a project's
+ * group shows its panes; nothing flips either. `surfaceOf` is that rule, and
+ * the persisted `surface` is a readout of it, kept so the layout JSON and the
+ * terminal rows still say where each thing is drawn.
  *
- * - `mode` keeps only the grid shapes (`auto | grid | spotlight`);
- * - `surface` says which of the two the group is **showing**.
- *
- * And the same word marks the terminal: a CLI belongs to one surface and is
- * only ever drawn there.
+ * The same word marks the terminal: a CLI belongs to one surface, the one of
+ * its group, and is only ever drawn there.
  */
 
 /** Where a terminal lives, and which of the two the group is showing. */
 export type Surface = "grid" | "canvas";
+
+/**
+ * The surface a group shows, from what the group is. A board is the canvas;
+ * a project's group is its panes. There is no field that could disagree.
+ */
+export function surfaceOf(group: { projectId: string | null }): Surface {
+  return group.projectId === null ? "canvas" : "grid";
+}
 
 /**
  * What a terminal with nothing written on it is. Everything that existed

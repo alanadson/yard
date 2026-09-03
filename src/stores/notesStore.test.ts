@@ -1,21 +1,60 @@
+/**
+ * The notebook has two places, the centre of the workspace and a pane tab,
+ * and never a sheet over the window: the sheet was an HTML overlay, and a
+ * portal's page (an OS window) painted straight through it. The rules here
+ * keep every fallback landing in the centre, and the canvas answer ("summon
+ * the docked notebook where there is no tab bar") landing there too.
+ */
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  NOTES_TAB_ID,
   notesCenterVisible,
-  notesOverlayVisible,
   parseCollection,
   parsePlace,
   parseStatus,
   sanitizeData,
   useNotes,
 } from "./notesStore";
+import { useProjects } from "./projectsStore";
 import type { NotesData } from "../lib/ipc";
 
+/**
+ * A group seeded straight into the store, on the surface the test names. The
+ * canvas is the boards (`lib/surface.ts`), so "canvas" seeds a board, a group
+ * with no project; "grid" seeds a project's group.
+ */
+const seedGroup = (id: string, surface: "grid" | "canvas") => {
+  useProjects.setState({
+    projects: [],
+    groups: [
+      {
+        id,
+        projectId: surface === "canvas" ? null : "p1",
+        name: "Grupo",
+        layoutJson: JSON.stringify({ surface }),
+        suspended: false,
+        sort: 0,
+      },
+    ],
+    terminals: [],
+    activeProjectId: "p1",
+    activeGroupId: id,
+  });
+};
+
 const resetStore = () => {
+  useProjects.setState({
+    projects: [],
+    groups: [],
+    terminals: [],
+    activeProjectId: null,
+    activeGroupId: null,
+  });
   useNotes.setState({
     loaded: true,
     open: false,
-    place: { kind: "overlay" },
+    place: { kind: "center" },
     notes: [],
     notebooks: [],
     tags: [],
@@ -80,14 +119,18 @@ describe("parseCollection", () => {
 });
 
 describe("parsePlace", () => {
-  it("anything off the format falls back to the overlay", () => {
-    expect(parsePlace(undefined)).toEqual({ kind: "overlay" });
-    expect(parsePlace("{noise")).toEqual({ kind: "overlay" });
-    expect(parsePlace('{"kind":"tab"}')).toEqual({ kind: "overlay" });
-    expect(parsePlace('{"kind":"banana"}')).toEqual({ kind: "overlay" });
+  it("anything off the format falls back to the centre", () => {
+    expect(parsePlace(undefined)).toEqual({ kind: "center" });
+    expect(parsePlace("{noise")).toEqual({ kind: "center" });
+    expect(parsePlace('{"kind":"tab"}')).toEqual({ kind: "center" });
+    expect(parsePlace('{"kind":"banana"}')).toEqual({ kind: "center" });
   });
 
-  it("accepts the three places and normalises the slot", () => {
+  it("a place saved as the retired overlay comes back in the centre, no sheet ever again", () => {
+    expect(parsePlace('{"kind":"overlay"}')).toEqual({ kind: "center" });
+  });
+
+  it("accepts the two places and normalises the slot", () => {
     expect(parsePlace('{"kind":"center"}')).toEqual({ kind: "center" });
     expect(parsePlace('{"kind":"tab","groupId":"g1","slot":2}')).toEqual({
       kind: "tab",
@@ -103,42 +146,62 @@ describe("parsePlace", () => {
 });
 
 describe("where the notebook lives", () => {
-  it("docking closes the sheet; the tab's X gives back a closed overlay", () => {
+  it("docking closes the centre; the tab's X gives back the centre, closed", () => {
     useNotes.getState().openView();
     useNotes.getState().dockTo("g1", 1);
     expect(useNotes.getState().place).toEqual({ kind: "tab", groupId: "g1", slot: 1 });
     expect(useNotes.getState().open).toBe(false);
     useNotes.getState().closeDock();
-    expect(useNotes.getState().place).toEqual({ kind: "overlay" });
+    expect(useNotes.getState().place).toEqual({ kind: "center" });
     expect(useNotes.getState().open).toBe(false);
   });
 
-  it("switching places keeps the notebook on screen", () => {
+  it("from the tab, 'take the centre' moves the notebook and keeps it on screen", () => {
     useNotes.getState().dockTo("g1", 0);
-    useNotes.getState().setPlaceKind("center");
+    useNotes.getState().placeCenter();
     expect(useNotes.getState().place).toEqual({ kind: "center" });
     expect(useNotes.getState().open).toBe(true);
     expect(notesCenterVisible()).toBe(true);
-    expect(notesOverlayVisible()).toBe(false);
-    useNotes.getState().setPlaceKind("overlay");
-    expect(notesOverlayVisible()).toBe(true);
   });
 
-  it("the dock's group vanishing drops the tab back to the overlay", () => {
+  it("the dock's group vanishing drops the tab back to the centre, closed", () => {
     useNotes.getState().dockTo("g1", 0);
     useNotes.getState().dropGroups(["outro"]);
     expect(useNotes.getState().place.kind).toBe("tab");
     useNotes.getState().dropGroups(["g1"]);
-    expect(useNotes.getState().place).toEqual({ kind: "overlay" });
+    expect(useNotes.getState().place).toEqual({ kind: "center" });
     expect(useNotes.getState().open).toBe(false);
   });
 
   it("dockHere with no active group refuses and explains", () => {
     expect(useNotes.getState().dockHere()).toBe(false);
-    expect(useNotes.getState().place).toEqual({ kind: "overlay" });
+    expect(useNotes.getState().place).toEqual({ kind: "center" });
   });
 
-  it("in the overlay the toggle is still the usual one", () => {
+  it("summoning the notebook docked in a grid group jumps to its tab, no centre", () => {
+    seedGroup("g1", "grid");
+    useNotes.getState().dockTo("g1", 0);
+    useProjects.getState().setActiveTab("g1", 0, "outra-aba");
+    useNotes.getState().openView();
+    expect(useNotes.getState().open).toBe(false);
+    expect(notesCenterVisible()).toBe(false);
+    expect(useProjects.getState().layoutOf("g1").activeBySlot[0]).toBe(NOTES_TAB_ID);
+  });
+
+  it("a board has no tab bar: summoning the docked notebook shows it in the centre and keeps the dock", () => {
+    seedGroup("g1", "canvas");
+    useNotes.getState().dockTo("g1", 0);
+    useNotes.getState().openView();
+    expect(useNotes.getState().open).toBe(true);
+    expect(useNotes.getState().place).toEqual({ kind: "tab", groupId: "g1", slot: 0 });
+    expect(notesCenterVisible()).toBe(true);
+    // The same key dismisses it: back to the board, the dock untouched.
+    useNotes.getState().toggleView();
+    expect(useNotes.getState().open).toBe(false);
+    expect(useNotes.getState().place.kind).toBe("tab");
+  });
+
+  it("in the centre the toggle is still the usual one", () => {
     useNotes.getState().toggleView();
     expect(useNotes.getState().open).toBe(true);
     useNotes.getState().toggleView();

@@ -273,8 +273,7 @@ describe("the shell's first paint", () => {
  */
 const CHROME_SURFACES: ReadonlyArray<{ sel: string; over: string; what: string }> = [
   { sel: ".bench-glass", over: "--bg", what: "the bench" },
-  { sel: "[data-tip]::after", over: "--bg-panel", what: "every tooltip in the app" },
-  { sel: ".pane-tabtip", over: "--bg-panel", what: "the tab balloon" },
+  { sel: ".tip-layer", over: "--bg-panel", what: "every tooltip in the app" },
   { sel: ".editor", over: "--bg", what: "the code editor" },
   { sel: ".viewer", over: "--bg", what: "the diff viewer" },
   { sel: ".notes", over: "--bg", what: "the notebook" },
@@ -375,7 +374,7 @@ const CHROMATIC_VEILS: readonly RegExp[] = [
 ];
 
 /** A dark ink that has to stay dark: it rides on a fill the user chose. */
-const INK_ON_FILL: readonly RegExp[] = [/^\.cv-(media|binder|tree)-head$/];
+const INK_ON_FILL: readonly RegExp[] = [/^\.cv-(media|binder|tree|doc)-head$/, /^\.cv-card-front$/];
 
 /**
  * Every opaque hex in a value that lands inside the dark ladder's range —

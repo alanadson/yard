@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  cameraFor,
   dropAt,
   dropPointFor,
   registerDropCamera,
@@ -107,6 +108,14 @@ describe("registerDropCamera", () => {
   it("a canvas with no element on screen yet has no answer", () => {
     const off = registerDropCamera("g4", () => null);
     expect(dropPointFor("g4")).toBeNull();
+    off();
+  });
+
+  it("hands the whole camera to whoever needs more than a point", () => {
+    const off = registerDropCamera("g6", () => cam({ x: 3, y: 4 }));
+    expect(cameraFor("g6")).toEqual(cam({ x: 3, y: 4 }));
+    expect(cameraFor("nobody")).toBeNull();
+    expect(cameraFor(null)).toBeNull();
     off();
   });
 

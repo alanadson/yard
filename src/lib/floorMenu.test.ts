@@ -20,9 +20,11 @@ function actions(): FloorMenuActions {
   return {
     goTo: vi.fn(),
     land: vi.fn(),
+    updateFromGround: vi.fn(),
     runHooks: vi.fn(),
     unload: vi.fn(),
     copy: vi.fn(),
+    setColor: vi.fn(),
     close: vi.fn(),
   };
 }
@@ -42,6 +44,39 @@ const isolated = {
   liveCount: 2,
   busy: false,
 };
+
+describe("floorRowMenu: the road back from the ground", () => {
+  it("an isolated floor can pull the ground's branch in, when the ground has one", () => {
+    const act = actions();
+    const entries = floorRowMenu({ ...isolated, groundBranch: "main" }, act);
+    const item = findItem(entries, "update");
+    expect(item).toBeDefined();
+    expect(item!.label).toContain("main");
+    item!.onSelect?.();
+    expect(act.updateFromGround).toHaveBeenCalled();
+  });
+
+  it("neither the ground nor a floor without git has anything to pull", () => {
+    expect(ids(floorRowMenu({ ...isolated, isGround: true, floor: undefined, groundBranch: "main" }, actions()))).not.toContain("update");
+    expect(
+      ids(floorRowMenu({ ...isolated, floor: { kind: "plain" as const }, groundBranch: "main" }, actions())),
+    ).not.toContain("update");
+    expect(ids(floorRowMenu(isolated, actions()))).not.toContain("update");
+  });
+
+  it("a floor offers a colour for its cards on a board, and a way back to the automatic one", () => {
+    const act = actions();
+    const entries = floorRowMenu({ ...isolated, color: "#5fa8ff" }, act);
+    const swatches = entries.find((e) => e.kind === "swatches") as Extract<MenuEntry, { kind: "swatches" }>;
+    expect(swatches).toBeDefined();
+    expect(swatches.active).toBe("#5fa8ff");
+    swatches.onPick("#40d16e");
+    expect(act.setColor).toHaveBeenCalledWith("#40d16e");
+    swatches.onClear?.();
+    expect(act.setColor).toHaveBeenCalledWith(null);
+    expect(floorRowMenu({ ...isolated, isGround: true, floor: undefined }, act).some((e) => e.kind === "swatches")).toBe(false);
+  });
+});
 
 describe("floorRowMenu", () => {
   it("go to the floor is the first entry — it is what a click already does", () => {

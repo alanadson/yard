@@ -21,8 +21,8 @@
      the end): a sheet narrower than its window would otherwise keep a full
      menu it cannot afford. */
   container-type: inline-size;
-  /* The rounded corners clip the two panes; the balloons all point inward
-     (`data-tip-at="right"`), so nothing that matters is cut. */
+  /* The rounded corners clip the two panes; the `data-tip` balloons are drawn
+     in `<body>`, so they are not among what gets cut. */
   overflow: hidden;
   background: var(--material-sheet);
   backdrop-filter: var(--blur-sheet);

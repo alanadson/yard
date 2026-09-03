@@ -377,8 +377,30 @@ fn write_shims_to(dir: &std::path::Path) -> std::io::Result<()> {
         dir.join("YARD-BRIDGE.md"),
         format!("# Yard — agent bridge\n\n{BRIDGE_DOC}"),
     )?;
+    std::fs::write(dir.join(CLAUDE_HOOKS_FILE), CLAUDE_HOOKS_JSON)?;
     Ok(())
 }
+
+/// The settings file Claude Code is launched with (`--settings <file>`),
+/// written beside the shims so nothing lands in the user's home. Every hook
+/// is the `yard` shim told which event it carries; the frontend reads the
+/// same JSON on stdin (`src/lib/hookEvents.ts`).
+pub const CLAUDE_HOOKS_FILE: &str = "claude-hooks.json";
+
+pub fn claude_hooks_file() -> PathBuf {
+    bin_dir().join(CLAUDE_HOOKS_FILE)
+}
+
+const CLAUDE_HOOKS_JSON: &str = r#"{
+  "hooks": {
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "yard hook prompt --stdin" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "yard hook stop --stdin" }] }],
+    "Notification": [{ "matcher": "permission_prompt", "hooks": [{ "type": "command", "command": "yard hook permission --stdin" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "yard hook tool --stdin" }] }],
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "yard hook session --stdin" }] }]
+  }
+}
+"#;
 
 /// The pipe client. Compatible with Windows PowerShell 5.1 (no `??`,
 /// no chain operators, no ternary).
@@ -545,13 +567,23 @@ be read and written.
 - `yard portal click|fill|type|key|hover|scroll|resize|ua|screenshot|evaluate|html|text|info "Name" …`
 - `yard portal close "Name"` — remove the card. Destructive: only when the user explicitly asks.
 - `yard recruit "Name" [--agent claude|codex|...] [--role "text or saved role"] [--dir PATH]` — spawn a new agent terminal on the canvas, auto-connected to you; `--role` is handed to the new CLI on start, so it begins already knowing its job
-- `yard recruit "Name" --floor "Floor Name"` — spawn the agent on that floor's canvas instead, with the floor's worktree as cwd (no cable: connections never cross floors)
+- `yard recruit "Name" --floor "Floor Name"` — spawn the agent as a tab of that floor instead, with the floor's worktree as cwd (no cable: connections never cross floors, and a floor has no canvas)
 - `yard recruit "Name" --replace "Old Name" --agent codex` — swap the process behind an existing card, keeping its position, connections and role
 - `yard floor list`: ground and floors of this project. The ground is the project root, on whatever branch is checked out there; a floor is an isolated git worktree with a branch and a canvas of its own. A project has no other kind of child: plain folder-groups are gone
 - `yard floor create "Name" [--branch x] [--existing-branch] [--adopt PATH] [--no-git] [--copy-ground] [--base REF] [--worktree-name FOLDER] [--dry-run] [--json]`: provision a new floor silently (the user's screen does not switch); `--copy-ground` clones the ground layout with stopped terminals. `--adopt PATH` opens the floor on a worktree git already knows about instead of creating one: nothing is written to the disk, and closing that floor never deletes it. `--base REF` picks the commit the branch grows from (frozen as an OID before anything is written) and `--worktree-name FOLDER` picks the folder under `.yard/floors/`. `--dry-run` prints the plan and writes nothing; `--json` prints that same plan (or result) with stable error codes. Exit codes: 0 all done, 2 the plan was refused, 3 partial, 4 something this run made is still on disk, 5 cancelled
 - `yard floor land "Name" [--close] [--keep-losers]` — merge the floor's branch onto the ground (refuses dirty trees and predicted conflicts). `--close` removes the floor afterwards; without `--keep-losers` the other floors of the same task go too
 - `yard floor compare` — diffstat of every isolated floor against the ground
 - `yard floor fanout "Name" --prompt "…" [--agents claude,codex] [--copy-ground]` — same prompt, one isolated floor per agent
+- `yard worker create "Name" --task "…" [--agent claude|codex|…] [--copy-ground]`: one isolated front, one agent card inside it, the task typed in as its first prompt; the front keeps the name you gave. Without `--agent`, the worker is the same CLI as you. `--stdin` takes the task from stdin
+- `yard worker list [--json]`: every worker of this project with its state: `starting`, `working`, `done`, `blocked` (asking something), `permission` (the CLI's own hook said it waits on a permission), `stopped`, `exited`
+- `yard worker inspect "Name"`: agent, branch, worktree path, card id, the task. A name, a unique prefix of it, or the group id all address a worker
+- `yard worker wait "Name" [--until stopped|done|blocked] [--timeout s]`: block until the worker's card gets there, like `yard wait` but without a cable (workers live on other fronts)
+- `yard worker send "Name" "text" [--queue]`: type into the worker (or `--stdin`); `--queue` leaves it for its next idle
+- `yard worker review "Name"`: its branch against the ground: files with counts, predicted conflicts, dirty trees; what `apply` will see
+- `yard worker apply "Name" [--keep-front] [--close-siblings]`: merge the branch onto the ground and close the front (`--keep-front` leaves it open); `--close-siblings` also closes the other fronts of the same task
+- `yard worker keep "Name"`: the front stays as an ordinary front (branch and worktree intact) and stops being a worker
+- `yard worker discard "Name"`: close the front: worktree and branch go (an adopted worktree is left alone). Refused from inside that front
+- `yard worker stop "Name"`: kill the worker's process; the front and its files stay
 - `yard dismiss "Name"` — stop and remove a recruit you are connected to (destructive; prefer asking the user)
 - `yard role set "Agent Name" "text or saved role name"` — the instructions are delivered to that agent right away (and stay on its command line for later starts), so use the wording you want it to follow
 - `yard role show ["Agent Name"]` — the role of an agent, or the text of a saved role
@@ -568,6 +600,11 @@ be read and written.
 - When the USER types a prompt in a wired CLI, Yard intercepts the Enter and runs the pipeline there by itself — you never forward anything, and connecting sends nothing. Just honor each `[Yard · Fluxo ...]` stamp (`yard flow stage`, follow, summarize); never pass a `[Yard ...]` message to `yard flow run`
 - `yard flow status ["Flow Name"]` / `yard flow cancel "Flow Name"` — follow or stop a run; never poll a running flow in a loop
 - `yard score save "Name"` / `score list` / `score apply "Name"` — save and reapply the whole group arrangement. Saving refuses a name already taken; add `--force` only when the user asked to replace that arrangement
+- `yard canvas list [--json]`: everything on the canvas with its position and size; `[conectado]` marks what you reach
+- `yard canvas move "Name" X Y` / `move "Name" --by DX DY` / `resize "Name" W H`: lay out a card or item you reach (never a pinned one)
+- `yard canvas arrange [--layout grid|row|column] ["Name"...]` / `align left|hcenter|right|top|vcenter|bottom "A" "B"`: tidy your corner of the board; with no names, you and everything wired to you
+- `yard canvas frame "Group name" ["Member"...]`: a named frame around them; `pin|unpin "Name"` fixes or frees an element
+- `yard canvas focus "Name"` / `zoom fit|N%`: move the user's camera (use sparingly: it is their screen)
 - `yard notify "message"` — native notification to the user (only when the user asked to be notified)
 - `yard debug` — diagnose bridge issues; run this FIRST if any command fails
 - `yard help` — full usage
@@ -810,10 +847,24 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         write_shims_to(&dir).expect("shims");
 
-        for f in ["yard.cmd", "yard.ps1", "yard", "YARD-BRIDGE.md"] {
+        for f in ["yard.cmd", "yard.ps1", "yard", "YARD-BRIDGE.md", CLAUDE_HOOKS_FILE] {
             assert!(dir.join(f).is_file(), "missing {f}");
         }
         assert_eq!(help_path().file_name().unwrap(), "YARD-BRIDGE.md");
+        assert_eq!(claude_hooks_file().file_name().unwrap(), CLAUDE_HOOKS_FILE);
+
+        // The hooks file has to be JSON Claude Code accepts, and every event
+        // the frontend knows how to read has to be in it.
+        let hooks: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join(CLAUDE_HOOKS_FILE)).unwrap())
+                .expect("hooks file is JSON");
+        for event in ["UserPromptSubmit", "Stop", "Notification", "PostToolUse", "SessionStart"] {
+            let cmd = hooks["hooks"][event][0]["hooks"][0]["command"]
+                .as_str()
+                .unwrap_or_else(|| panic!("no command for {event}"));
+            assert!(cmd.starts_with("yard hook "), "{event}: {cmd}");
+            assert!(cmd.ends_with("--stdin"), "{event}: {cmd}");
+        }
 
         let ps1 = std::fs::read_to_string(dir.join("yard.ps1")).unwrap();
         // Windows PowerShell 5.1 does not have these operators: if one of them

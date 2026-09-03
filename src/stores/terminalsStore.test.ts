@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { isLive, reachedWait, type TerminalRuntime } from "./terminalsStore";
+import { isLive, reachedWait, useTerminals, type TerminalRuntime } from "./terminalsStore";
 
 function runtime(patch: Partial<TerminalRuntime> = {}): TerminalRuntime {
   return {
@@ -18,6 +18,7 @@ function runtime(patch: Partial<TerminalRuntime> = {}): TerminalRuntime {
     finishedAt: 0,
     blocked: false,
     blockedAsk: null,
+    permission: false,
     rssMb: 0,
     cpu: 0,
     ...patch,
@@ -33,6 +34,40 @@ const BLOCKED = runtime({
   blockedAsk: "Do you want to proceed?",
 });
 const DEAD = runtime({ state: "exited", pid: null });
+
+describe("what a CLI's own hook tells the mirror", () => {
+  it("a permission prompt is a block with its own flag, so the badge can say which", () => {
+    useTerminals.setState({ byId: {} });
+    useTerminals.getState().markRunning("t1", 42);
+    useTerminals.getState().markPermission("t1", "Claude needs your permission to use Bash");
+    const rt = useTerminals.getState().get("t1");
+    expect(rt.blocked).toBe(true);
+    expect(rt.permission).toBe(true);
+    expect(rt.blockedAsk).toContain("Bash");
+    expect(rt.finished).toBe(true);
+  });
+
+  it("the turn starting again lifts the block and the flag", () => {
+    useTerminals.setState({ byId: {} });
+    useTerminals.getState().markRunning("t1", 42);
+    useTerminals.getState().markPermission("t1", "ask");
+    useTerminals.getState().hookTurnStart("t1");
+    const rt = useTerminals.getState().get("t1");
+    expect(rt.blocked).toBe(false);
+    expect(rt.permission).toBe(false);
+    expect(rt.finished).toBe(false);
+  });
+
+  it("a tool running means the permission was granted; the plain silence block stays a block", () => {
+    useTerminals.setState({ byId: {} });
+    useTerminals.getState().markRunning("t1", 42);
+    useTerminals.getState().markPermission("t1", "ask");
+    useTerminals.getState().hookWorking("t1");
+    expect(useTerminals.getState().get("t1").blocked).toBe(false);
+    useTerminals.getState().markBlocked("t1", "(y/N)");
+    expect(useTerminals.getState().get("t1").permission).toBe(false);
+  });
+});
 
 describe("isLive", () => {
   it("counts running and starting, nothing else", () => {

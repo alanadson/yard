@@ -67,7 +67,7 @@ import {
   type Note,
 } from "../../lib/notes";
 import { useExtensions } from "../../stores/extensionsStore";
-import { notesOverlayVisible, useNotes, type NotesMdMode } from "../../stores/notesStore";
+import { notesCenterVisible, useNotes, type NotesMdMode } from "../../stores/notesStore";
 import { useUI } from "../../stores/uiStore";
 import { useT } from "../../hooks/useT";
 import { locale, t } from "../../lib/i18n";
@@ -163,15 +163,16 @@ function OpenNote({ note }: { note: Note }) {
    * A web address becomes a portal on the canvas — the same destination the
    * file editor already gave. It used to go to `open_external`, which only
    * accepts a path that exists on disk, so every link in a note answered
-   * "esse arquivo não está mais no disco". The notebook sheet steps aside so
-   * the portal shows up where it landed, as the editor does.
+   * "esse arquivo não está mais no disco". The notebook, when it is the
+   * centre, steps aside so the portal shows up where it landed, as the
+   * editor does (as a tab it stays: the portal lands beside it).
    */
   const onOpenUrl = useCallback((href: string) => {
     if (!openWebAddress(href)) {
       useUI.getState().showToast(t("Não sei abrir “{href}”.", { href }), "error");
       return;
     }
-    if (notesOverlayVisible()) useNotes.getState().closeView();
+    if (notesCenterVisible()) useNotes.getState().closeView();
   }, []);
   const onOpenPath = useCallback(() => {
     useUI

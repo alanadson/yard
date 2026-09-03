@@ -154,7 +154,6 @@ export default {
   "Substituir partitura": "Replace score",
   "Partitura “{name}” substituída.": "Score “{name}” replaced.",
   "Partitura “{name}” salva.": "Score “{name}” saved.",
-  "Escolha um projeto antes de aplicar a partitura.": "Choose a project before applying the score.",
   "“{name}” aplicada: {n} CLI(s) criadas paradas — inicie quando quiser.":
     "“{name}” applied: {n} CLI(s) created stopped — start them whenever you want.",
   "Falha ao aplicar: {e}": "Failed to apply: {e}",
@@ -168,18 +167,19 @@ export default {
   "O arranjo guarda as CLIs (programa, argumentos, título), posições, papéis, notas, conexões, desenhos e rotinas. A pasta de trabalho ":
     "The arrangement keeps the CLIs (program, arguments, title), positions, roles, notes, connections, drawings and routines. The working folder ",
   "não vai junto": "does not go along",
-  ": ao aplicar, ela vem do projeto de destino.": ": when applying, it comes from the target project.",
+  ": ao aplicar, as CLIs nascem paradas na pasta do último cartão do quadro.":
+    ": when applying, the CLIs are born stopped in the folder of the board's last card.",
   "Não consegui ler as partituras: {reason}.": "Could not read the scores: {reason}.",
   "Dê um nome à partitura antes de salvar.": "Name the score before saving it.",
-  "Abra um grupo para salvar o arranjo dele.": "Open a group to save its arrangement.",
+  "Abra um quadro para salvar o arranjo dele.": "Open a board to save its arrangement.",
   "Salvando…": "Saving…",
   "Aplicando…": "Applying…",
   "Nenhuma partitura salva ainda.": "No score saved yet.",
-  "Acrescentar o arranjo ao grupo “{name}” — as CLIs e notas entram ao lado do que já existe. Não dá para desfazer com Ctrl+Z: para tirar, exclua os cartões.":
-    "Add the arrangement to the group “{name}” — the CLIs and notes land beside what is already there. Ctrl+Z cannot undo it: to remove, delete the cards.",
+  "Acrescentar o arranjo ao quadro “{name}”: as CLIs e notas entram ao lado do que já existe. Não dá para desfazer com Ctrl+Z: para tirar, exclua os cartões.":
+    "Add the arrangement to the board “{name}”: the CLIs and notes land beside what is already there. Ctrl+Z cannot undo it: to remove, delete the cards.",
   "Aplicar aqui": "Apply here",
-  "Criar um grupo novo com este arranjo": "Create a new group with this arrangement",
-  "Grupo novo": "New group",
+  "Criar um quadro novo com este arranjo": "Create a new board with this arrangement",
+  "Quadro novo": "New board",
   "Excluir a partitura {name}": "Delete the score {name}",
 
   // -- Custos e uso --------------------------------------------------------
@@ -383,14 +383,20 @@ export default {
   "o caderno de notas markdown vira uma aba deste painel": "the markdown notebook becomes a tab of this pane",
   "não instalado — instale a CLI e detecte de novo": "not installed — install the CLI and detect again",
   "não encontrado nesta máquina": "not found on this machine",
-  "Um quadro não tem barra de abas — encaixe o caderno num painel de um grupo, ou use o caderno em tela.":
-    "A board has no tab bar — dock the notebook in a group's pane, or use the notebook on screen.",
-  "Esse grupo está mostrando o canvas, que não tem barra de abas — volte para os painéis antes de encaixar o caderno.":
-    "This group is showing the canvas, which has no tab bar — go back to the panes before docking the notebook.",
   "Num quadro o navegador é um portal: use a ferramenta de portal na barra do quadro.":
     "On a board the browser is a portal: use the portal tool in the board's toolbar.",
   'O projeto "{name}" não tem pasta cadastrada — informe o caminho nas configurações do projeto.':
     'The project "{name}" has no folder registered — enter the path in the project settings.',
+  "Informe a pasta em que a CLI vai rodar.": "Say which folder the CLI will run in.",
+  "Crie um quadro primeiro: no canvas, a CLI é um cartão de um quadro.":
+    "Create a board first: on the canvas, a CLI is a card of a board.",
+  "No canvas, a CLI é um cartão de um quadro, e não há nenhum quadro ainda.":
+    "On the canvas a CLI is a card of a board, and there is no board yet.",
+  'A pasta "{folder}" não existe.': 'The folder "{folder}" does not exist.',
+  "pasta em que a CLI vai rodar": "folder the CLI will run in",
+  "Pasta da CLI": "CLI folder",
+  "Escolher uma pasta do disco": "Pick a folder from the disk",
+  "Escolher…": "Choose…",
   'A pasta "{folder}" não existe — confira o caminho do projeto.':
     'The folder "{folder}" does not exist — check the project path.',
   "Não consegui abrir: {e}": "Could not open: {e}",
@@ -405,12 +411,9 @@ export default {
     "Everything here is born inside a project (a folder on disk) — and there is none yet.",
   "Adicionar projeto…": "Add project…",
   "Abrir em": "Open in",
-  "Projeto da CLI": "CLI project",
   "Branch ou worktree": "Branch or worktree",
   "Escolha onde": "Choose where",
-  "Em qual branch ou worktree deste projeto a CLI vai rodar": "Which branch or worktree of this project the CLI will run in",
   "Onde a CLI vai rodar: o chão do projeto, na branch dele, ou uma frente": "Where the CLI will run: the project's ground, on its branch, or a front",
-  "Em qual projeto esta CLI vai rodar": "Which project this CLI runs in",
   "Procurando CLIs…": "Looking for CLIs…",
   "Início rápido": "Quick start",
   "Detectar de novo": "Detect again",

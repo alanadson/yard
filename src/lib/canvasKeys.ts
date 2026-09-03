@@ -87,6 +87,7 @@ const KIND_LABELS: Record<CanvasItemType, string> = {
   portal: "Portal",
   flow: "Fluxo",
   media: "Arquivo",
+  doc: "Documento",
   binder: "Fichário",
   tree: "Árvore de arquivos",
   group: "Grupo",

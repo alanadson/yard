@@ -1803,3 +1803,59 @@
   align-items: start;
   margin: 0;
 }
+
+/* The colour a front's cards wear on a board, and the pull request the
+   front's branch has on the server. */
+.floors-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgb(var(--shade) / 25%);
+}
+
+.floors-badge--pr {
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.floors-badge--pr.is-open {
+  color: var(--green);
+}
+
+.floors-badge--pr.is-merged {
+  color: var(--accent-text);
+}
+
+.floors-badge--pr.is-closed {
+  color: var(--red);
+}
+
+/* In the status bar the control is a chip among chips: no floating corner,
+   the button at the bar's own height, and the list opening upward from the
+   chip's left edge (it used to be right-aligned to a button in the corner
+   of the workspace, where the popover had a screen edge to lean on). */
+.statusbar .floors-ctl {
+  position: relative;
+  right: auto;
+  bottom: auto;
+}
+
+.statusbar .floors-btn {
+  height: 22px;
+  padding: 0 8px;
+  background: none;
+  backdrop-filter: none;
+  border: 0;
+  border-radius: var(--r-sm);
+}
+
+.statusbar .floors-btn:hover,
+.statusbar .floors-btn.is-active {
+  background: var(--bg-hover);
+}
+
+.statusbar .floors-pop {
+  left: 0;
+  right: auto;
+}

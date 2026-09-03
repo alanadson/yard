@@ -68,7 +68,6 @@
      a light one turns whatever is behind it into noise under the text. */
   --material-panel: rgb(250 250 253 / 82%);
   --material-doc: rgb(252 252 254 / 96%);
-  --material-notes: rgb(251 251 253 / 92%);
   --material-tip: rgb(252 252 254 / 97%);
   --material-sticky: rgb(250 250 253 / 96%);
   --slab: 250 250 253;
@@ -201,16 +200,17 @@
   border-bottom-color: rgb(0 0 0 / 9%);
 }
 
-:root[data-theme="light"] [data-tip]::after,
-:root[data-theme="light"] .pane-tabtip,
 :root[data-theme="light"] .menu,
 :root[data-theme="light"] .toast,
 :root[data-theme="light"] .usage-pop {
   border-color: rgb(0 0 0 / 10%);
 }
 
-:root[data-theme="light"] [data-tip]::after,
-:root[data-theme="light"] .pane-tabtip {
+/* The balloon's edge goes through its own token, not `border-color`: the
+   shorthand would also paint the transparent bridge on the side that faces
+   the control (`.tip-layer[data-side]`), an 8px bar of grey under every hint. */
+:root[data-theme="light"] .tip-layer {
+  --tip-edge: rgb(0 0 0 / 10%);
   box-shadow: 0 6px 18px rgb(0 0 0 / 14%), var(--hairline);
 }
 

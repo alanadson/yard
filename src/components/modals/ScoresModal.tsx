@@ -1,10 +1,12 @@
 /**
  * Scores: save the group's arrangement and reapply it elsewhere.
  *
- * "Arrangement" is everything that repeats across projects — which CLIs,
+ * "Arrangement" is everything that repeats across boards — which CLIs,
  * where they sit, who talks to whom, roles, notes, drawings and routines.
- * What belongs to the project (the working folder) comes from the destination,
- * never from the saved file.
+ * It is an arrangement of the canvas, and the canvas is the boards
+ * (`lib/surface.ts`): a score is saved from a board and lands on a board,
+ * here or a new one. The working folder is not in the file: the cards run
+ * where the board's last card ran (`lib/scores.ts`).
  */
 import { useEffect, useState } from "react";
 import "./scores.css";
@@ -23,10 +25,8 @@ import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
 
 interface Payload {
-  /** Source group (to save) and default destination (to apply). */
+  /** Source board (to save) and default destination (to apply). */
   groupId?: string;
-  /** Project where "Apply in a new group" should create the group. */
-  projectId?: string;
 }
 
 export function ScoresModal() {
@@ -35,15 +35,17 @@ export function ScoresModal() {
   const showToast = useUI((s) => s.showToast);
   const payload = useUI((s) => s.modalPayload) as Payload | null;
   const groups = useProjects((s) => s.groups);
-  const addGroup = useProjects((s) => s.addGroup);
+  const addBoard = useProjects((s) => s.addBoard);
   const setActiveGroup = useProjects((s) => s.setActiveGroup);
 
   const groupId = payload?.groupId ?? "";
   const group = groups.find((g) => g.id === groupId);
-  const projectId = payload?.projectId ?? group?.projectId ?? "";
+  // Only a board has an arrangement to save or to add to: opened from a
+  // project's group (or from the palette), the dialog is the list alone.
+  const board = group && group.projectId === null ? group : undefined;
 
   const [items, setList] = useState<LoadState<ScoreMeta[]>>(LOADING);
-  const [itemName, setName] = useState(group?.name ?? "");
+  const [itemName, setName] = useState(board?.name ?? "");
   /**
    * The id of the action in flight (`lib/busy.ts`), not a flat boolean: the
    * button that fired it says so, the others only refuse the click. Saving
@@ -70,8 +72,8 @@ export function ScoresModal() {
       setErr(t("Dê um nome à partitura antes de salvar."));
       return;
     }
-    if (!groupId) {
-      setErr(t("Abra um grupo para salvar o arranjo dele."));
+    if (!board) {
+      setErr(t("Abra um quadro para salvar o arranjo dele."));
       return;
     }
     setErr(null);
@@ -115,20 +117,14 @@ export function ScoresModal() {
     reload();
   };
 
-  const applyIt = async (score: ScoreMeta, inNewGroup: boolean) => {
-    setBusy(`aplicar:${score.name}:${inNewGroup ? "novo" : "aqui"}`);
+  const applyIt = async (score: ScoreMeta, inNewBoard: boolean) => {
+    setBusy(`aplicar:${score.name}:${inNewBoard ? "novo" : "aqui"}`);
     try {
       const data = await readScore(score.name);
-      let target = groupId;
-      if (inNewGroup || !target) {
-        if (!projectId) {
-          // Reachable again: the button that gets here is no longer the one
-          // holding this sentence shut (`components/feedback.test.ts`).
-          showToast(t("Escolha um projeto antes de aplicar a partitura."), "error");
-          return;
-        }
-        target = addGroup(projectId, score.name);
-      }
+      // "Here" is the board this dialog was opened from; anywhere else is a
+      // new board named after the score. Never a project's group: it has no
+      // canvas for the arrangement to land on.
+      const target = inNewBoard || !board ? addBoard(score.name) : board.id;
       const r = applyScore(data, target);
       setActiveGroup(target);
       showToast(
@@ -163,10 +159,10 @@ export function ScoresModal() {
 
   return (
     <Modal title={t("Partituras")} onClose={closeModal} wide>
-      {group && (
+      {board && (
         <div className="score-save">
           <label className="grow">
-            {t("Salvar “{name}” como", { name: group.name })}
+            {t("Salvar “{name}” como", { name: board.name })}
             <input
               value={itemName}
               placeholder={t("nome da partitura")}
@@ -202,7 +198,7 @@ export function ScoresModal() {
           "O arranjo guarda as CLIs (programa, argumentos, título), posições, papéis, notas, conexões, desenhos e rotinas. A pasta de trabalho ",
         )}
         <strong>{t("não vai junto")}</strong>
-        {t(": ao aplicar, ela vem do projeto de destino.")}
+        {t(": ao aplicar, as CLIs nascem paradas na pasta do último cartão do quadro.")}
       </p>
 
       <div className="score-list">
@@ -230,15 +226,15 @@ export function ScoresModal() {
                 {new Date(s.updatedAt).toLocaleString(locale())} · {kb(s.sizeBytes, 1)}
               </small>
             </div>
-            {group && (
+            {board && (
               <button
                 className="btn"
                 disabled={refusesClick(here)}
                 aria-busy={isBusy(here)}
                 data-tip-wrap=""
                 data-tip={t(
-                  "Acrescentar o arranjo ao grupo “{name}” — as CLIs e notas entram ao lado do que já existe. Não dá para desfazer com Ctrl+Z: para tirar, exclua os cartões.",
-                  { name: group.name },
+                  "Acrescentar o arranjo ao quadro “{name}”: as CLIs e notas entram ao lado do que já existe. Não dá para desfazer com Ctrl+Z: para tirar, exclua os cartões.",
+                  { name: board.name },
                 )}
                 onClick={() => void applyIt(s, false)}
               >
@@ -246,18 +242,15 @@ export function ScoresModal() {
                 {isBusy(here) ? t("Aplicando…") : t("Aplicar aqui")}
               </button>
             )}
-            {/* Not gated on `projectId`: without a project the press is what
-                says so ("Escolha um projeto antes de aplicar a partitura"),
-                and a dead button never got to say it. */}
             <button
               className="btn"
               disabled={refusesClick(fresh)}
               aria-busy={isBusy(fresh)}
-              data-tip={t("Criar um grupo novo com este arranjo")}
+              data-tip={t("Criar um quadro novo com este arranjo")}
               onClick={() => void applyIt(s, true)}
             >
               <FolderOpen size={13} />{" "}
-              {isBusy(fresh) ? t("Aplicando…") : t("Grupo novo")}
+              {isBusy(fresh) ? t("Aplicando…") : t("Quadro novo")}
             </button>
             <button
               className="icon-btn icon-btn--danger"

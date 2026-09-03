@@ -55,6 +55,8 @@ export interface XTermHandle {
   clear: () => void;
   /** Pastes the clipboard into the PTY (the menu's "Colar"). */
   paste: () => void;
+  /** Writes text into the PTY as if typed (a dropped path, for instance). */
+  typeText: (text: string) => void;
   /** Columns the terminal currently shows — 0 before it has been laid out. */
   cols: () => number;
   findNext: (q: string) => void;
@@ -507,6 +509,10 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
     paste: () => {
       termRef.current?.focus();
       pasteFromClipboard(true);
+    },
+    typeText: (text) => {
+      termRef.current?.focus();
+      void ipc.writePty(id, text).catch(() => {});
     },
     cols: () => termRef.current?.cols ?? 0,
     clear: () => {

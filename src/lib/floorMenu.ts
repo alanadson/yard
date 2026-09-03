@@ -11,6 +11,7 @@
  * it) and has no worktree of its own. A floor without git (`plain`) has a
  * worktree but no branch, so it does not land either.
  */
+import { FRONT_HUES } from "./floorColor";
 import { isIsolatedFloor, type FloorMeta } from "./floors";
 import type { MenuEntry } from "../components/ContextMenu";
 import { t } from "./i18n";
@@ -18,9 +19,13 @@ import { t } from "./i18n";
 export interface FloorMenuActions {
   goTo: () => void;
   land: () => void;
+  /** Merges the ground's branch into the floor: the road back, before the road forward. */
+  updateFromGround: () => void;
   runHooks: () => void;
   unload: () => void;
   copy: (text: string) => void;
+  /** The colour the floor's cards wear on a board; `null` = the automatic one. */
+  setColor: (color: string | null) => void;
   close: () => void;
 }
 
@@ -32,6 +37,10 @@ export interface FloorMenuContext {
   liveCount: number;
   /** A slow operation is already in progress on this list. */
   busy: boolean;
+  /** The branch checked out at the project root, when git says which. */
+  groundBranch?: string;
+  /** The colour chosen for this floor, if any. */
+  color?: string;
 }
 
 export function floorRowMenu(ctx: FloorMenuContext, act: FloorMenuActions): MenuEntry[] {
@@ -47,6 +56,26 @@ export function floorRowMenu(ctx: FloorMenuContext, act: FloorMenuActions): Menu
       label: t("Aterrissar no chão…"),
       disabled: ctx.busy,
       onSelect: act.land,
+    });
+    // A front that grew old while the ground moved on lands with conflicts.
+    // Pulling the ground in first is the cheap half of that merge.
+    if (ctx.groundBranch) {
+      entries.push({
+        id: "update",
+        label: t("Atualizar a partir do chão (merge de {branch})", { branch: ctx.groundBranch }),
+        disabled: ctx.busy,
+        onSelect: act.updateFromGround,
+      });
+    }
+  }
+  if (isFloor) {
+    entries.push({ kind: "sep" }, {
+      kind: "swatches",
+      label: t("Cor da frente nos quadros"),
+      colors: FRONT_HUES,
+      active: ctx.color,
+      onPick: (c) => act.setColor(c),
+      onClear: () => act.setColor(null),
     });
   }
   if (floor?.hooks?.run.length) {

@@ -79,6 +79,9 @@ export default {
   "Endereço — http://localhost:5173, exemplo.com…": "Address — http://localhost:5173, example.com…",
   "Energético": "Energy drink",
   "Escolha um grupo para começar": "Pick a group to begin",
+  "Nenhum quadro ainda": "No board yet",
+  "Um quadro é o canvas como container próprio: cartões soltos, notas e conexões, cada CLI na pasta que você escolher.":
+    "A board is the canvas as a container of its own: loose cards, notes and connections, each CLI in the folder you choose.",
   "Esconder a bancada ({key})": "Hide the bench ({key})",
   "Esconder a barra": "Hide the sidebar",
   "Esconder a barra lateral ({key})": "Hide the sidebar ({key})",
@@ -262,7 +265,6 @@ export default {
   "Sessão": "Session",
   "Sessões de agentes…": "Agent sessions…",
   "Sobe a CLI com {args} — a última conversa deste projeto volta com ela": "Starts the CLI with {args} — this project's last conversation comes back with it",
-  "Sobrepor à tela": "Float over the screen",
   "Suspender": "Suspend",
   "Suspender grupo": "Suspend group",
   "Suspender grupo ({n})": "Suspend group ({n})",

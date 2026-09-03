@@ -1,7 +1,17 @@
 import { lazy, useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { AlertTriangle, Download, FolderOpen, FolderPlus, Loader2, Plus, RefreshCw, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Download,
+  FolderOpen,
+  FolderPlus,
+  Frame,
+  Loader2,
+  Plus,
+  RefreshCw,
+  X,
+} from "lucide-react";
 
 import { ContextMenu, type MenuAnchor } from "./components/ContextMenu";
 import { GlobalMenu } from "./components/ContextMenu/GlobalMenu";
@@ -42,6 +52,7 @@ import { uiLog } from "./lib/log";
 import { readInitialPrefs } from "./lib/prefs";
 import { setQuitHandler } from "./lib/quit";
 import { startPtyWatch } from "./lib/ptyWatch";
+import { startTipLayer } from "./lib/tipLayer";
 import { baseName } from "./lib/terminals";
 import { welcomeCall } from "./lib/welcome";
 import { useAgentDefaults } from "./stores/agentDefaultsStore";
@@ -55,9 +66,12 @@ import { INTERRUPTED, useFlows } from "./stores/flowStore";
 import { useLive } from "./stores/liveStore";
 import { useNotes } from "./stores/notesStore";
 import { startKeepAwake, usePower } from "./stores/powerStore";
+import { useKeymap } from "./stores/keymapStore";
+import { usePortalWeb } from "./stores/portalWebStore";
 import { useOnboarding } from "./stores/onboardingStore";
 import { useUpdater } from "./stores/updaterStore";
 import { installUpdate } from "./lib/updateFlow";
+import { projectPanelsShown } from "./lib/layoutControls";
 import { useProjects } from "./stores/projectsStore";
 import { useReview } from "./stores/reviewStore";
 import { isLive, useTerminals } from "./stores/terminalsStore";
@@ -96,11 +110,8 @@ const BenchPanel = lazy(() =>
   import("./components/BenchPanel").then((m) => ({ default: m.BenchPanel })),
 );
 // The notebook rides the same wagon as the editor: CodeMirror only downloads
-// when someone opens notes (or a file).
-const NotesView = lazy(() =>
-  import("./components/NotesView").then((m) => ({ default: m.NotesView })),
-);
-// Same module, other place: the notebook occupying the central area.
+// when someone opens notes (or a file). It occupies the central area, never
+// a sheet over the window (a portal's page would paint through it).
 const NotesCenter = lazy(() =>
   import("./components/NotesView").then((m) => ({ default: m.NotesCenter })),
 );
@@ -201,14 +212,22 @@ export default function App() {
   const activeGroupId = useProjects((s) => s.activeGroupId);
   const activeProjectId = useProjects((s) => s.activeProjectId);
   const projects = useProjects((s) => s.projects);
-  const changesOpen = useChanges((s) => s.open);
+  // The canvas side: a board on screen, or the empty space the last board
+  // left. The changes panel and the bench read the active project, and a
+  // board belongs to none: on the canvas side both stay off, and their doors
+  // leave the title bar (`lib/layoutControls.ts`).
+  const canvasSide = useProjects((s) => s.canvasSide);
+  const addBoard = useProjects((s) => s.addBoard);
+  const projectPanels = projectPanelsShown({ canvasSide });
+  const changesOpen = useChanges((s) => s.open) && projectPanels;
   const viewerOpen = useChanges((s) => s.viewer !== null);
-  const benchOpen = useBench((s) => s.open);
+  const benchOpen = useBench((s) => s.open) && projectPanels;
   const editorOpen = useEditor((s) => s.open);
+  // The notebook on screen means the central area, in the workspace's place
+  // (a docked notebook has its tab there instead, and `open` stays false,
+  // except for a canvas group, which has no tab bar and answers with the
+  // centre too).
   const notesOpen = useNotes((s) => s.open);
-  // Where the notebook lives decides which face `notesOpen` shows: the
-  // overlay sheet, or the central area in the workspace's place.
-  const notesCenter = useNotes((s) => s.place.kind === "center");
   const liveOpen = useLive((s) => s.phase !== "closed");
   const loadPrefs = useUI((s) => s.loadPrefs);
   const sidebarOpen = useUI((s) => s.sidebarOpen);
@@ -296,27 +315,9 @@ export default function App() {
   // backend.
   useEffect(() => startKeepAwake(), []);
 
-  // Esc dismisses an open tooltip balloon (WCAG 1.4.13). Capture phase and no
-  // preventDefault: the same Esc keeps closing whatever layer owns it — this
-  // only hides balloons until the focus or the pointer moves on.
-  useEffect(() => {
-    const release = () => {
-      document.body.classList.remove("tips-off");
-      window.removeEventListener("focusin", release, true);
-      window.removeEventListener("pointermove", release, true);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      document.body.classList.add("tips-off");
-      window.addEventListener("focusin", release, true);
-      window.addEventListener("pointermove", release, true);
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => {
-      window.removeEventListener("keydown", onKey, true);
-      release();
-    };
-  }, []);
+  // The tooltip balloon: one fixed element in <body>, fed by every `data-tip`
+  // in the app: hover, keyboard focus, Esc (see `lib/tip.ts`).
+  useEffect(() => startTipLayer(), []);
 
   // A staged backup import survives a reload of the webview: ask the backend,
   // not the session, so the warning bar comes back after F5 too.
@@ -347,6 +348,8 @@ export default function App() {
         bootPrefs.then((prefs) => useExtensions.getState().load(prefs)),
         bootPrefs.then((prefs) => useNotes.getState().load(prefs)),
         bootPrefs.then((prefs) => usePower.getState().load(prefs)),
+        bootPrefs.then((prefs) => useKeymap.getState().load(prefs)),
+        bootPrefs.then((prefs) => usePortalWeb.getState().load(prefs)),
         // Pipelines that were running when the interface went away. They come
         // back marked as interrupted — the PTY survived the reload, the engine
         // did not, and vanishing silently was the worst possible outcome.
@@ -772,7 +775,7 @@ export default function App() {
       >
         {sidebarOpen && <ProjectSidebar />}
         <main className="workspace">
-          {notesOpen && notesCenter ? (
+          {notesOpen ? (
             // The notebook in its central place takes the whole area the
             // grid would get — the panels and sidebar around it keep working.
             <Overlay
@@ -798,12 +801,19 @@ export default function App() {
                   anchor={welcomeMenu}
                   onClose={() => setWelcomeMenu(null)}
                   items={[
-                    {
-                      id: "add",
-                      label: t("Adicionar projeto"),
-                      icon: <FolderPlus size={13} />,
-                      onSelect: () => openModal("new-project"),
-                    },
+                    canvasSide
+                      ? {
+                          id: "add",
+                          label: t("Novo quadro"),
+                          icon: <Frame size={13} />,
+                          onSelect: () => addBoard(""),
+                        }
+                      : {
+                          id: "add",
+                          label: t("Adicionar projeto"),
+                          icon: <FolderPlus size={13} />,
+                          onSelect: () => openModal("new-project"),
+                        },
                     {
                       id: "palette",
                       label: t("Paleta de comandos"),
@@ -827,37 +837,58 @@ export default function App() {
                   alt=""
                   aria-hidden="true"
                 />
-                <h2>
-                  {projects.length === 0
-                    ? t("Comece pela pasta de um projeto")
-                    : t("Escolha um grupo para começar")}
-                </h2>
-                <p>
-                  {projects.length === 0
-                    ? t("O Yard roda as CLIs de agentes dentro dessa pasta e acompanha o que elas mexem no disco.")
-                    : t("Cada grupo é um conjunto de CLIs sobre o mesmo projeto. Selecione um na barra lateral.")}
-                </p>
-                {/* One button per face, and never the same one: the fresh
-                    install is missing a folder, the install with projects is
-                    missing the gesture the tab bar's `+` gives, the same
-                    "Nova aba" dialog, born with no pane to ask for it. */}
-                <button
-                  className="btn btn--primary"
-                  onClick={() =>
-                    openModal(welcome.action === "new-project" ? "new-project" : "new-terminal")
-                  }
-                >
-                  {welcome.action === "new-project" ? (
-                    <FolderPlus size={13} />
-                  ) : (
-                    <Plus size={13} />
-                  )}{" "}
-                  {t(welcome.label)}
-                </button>
+                {/* The canvas side with no board: the last one was deleted, or
+                    the door was pressed on an empty workspace. The canvas only
+                    exists as a board, so this face asks for one and never
+                    sends the user to a project. */}
+                {canvasSide ? (
+                  <>
+                    <h2>{t("Nenhum quadro ainda")}</h2>
+                    <p>
+                      {t(
+                        "Um quadro é o canvas como container próprio: cartões soltos, notas e conexões, cada CLI na pasta que você escolher.",
+                      )}
+                    </p>
+                    <button className="btn btn--primary" onClick={() => addBoard("")}>
+                      <Frame size={13} /> {t("Novo quadro")}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <h2>
+                      {projects.length === 0
+                        ? t("Comece pela pasta de um projeto")
+                        : t("Escolha um grupo para começar")}
+                    </h2>
+                    <p>
+                      {projects.length === 0
+                        ? t("O Yard roda as CLIs de agentes dentro dessa pasta e acompanha o que elas mexem no disco.")
+                        : t("Cada grupo é um conjunto de CLIs sobre o mesmo projeto. Selecione um na barra lateral.")}
+                    </p>
+                    {/* One button per face, and never the same one: the fresh
+                        install is missing a folder, the install with projects is
+                        missing the gesture the tab bar's `+` gives, the same
+                        "Nova aba" dialog, born with no pane to ask for it. */}
+                    <button
+                      className="btn btn--primary"
+                      onClick={() =>
+                        openModal(welcome.action === "new-project" ? "new-project" : "new-terminal")
+                      }
+                    >
+                      {welcome.action === "new-project" ? (
+                        <FolderPlus size={13} />
+                      ) : (
+                        <Plus size={13} />
+                      )}{" "}
+                      {t(welcome.label)}
+                    </button>
+                  </>
+                )}
                 <div className="welcome-hints">
                   {/* With zero projects Ctrl+T ends in "add a project first" —
-                      teaching it here made the very first flow a dead end. */}
-                  {projects.length > 0 && (
+                      teaching it here made the very first flow a dead end; on
+                      the canvas side it asks for a board first. */}
+                  {!canvasSide && projects.length > 0 && (
                     <span className="welcome-hint">
                       <kbd>Ctrl</kbd> + <kbd>T</kbd> {t("abre um terminal")}
                     </span>
@@ -892,9 +923,6 @@ export default function App() {
       </Overlay>
       <Overlay where={t("o visualizador de diff")} fallback={<LoadingOverlay />}>
         {viewerOpen && <DiffViewer />}
-      </Overlay>
-      <Overlay where={t("o caderno")} fallback={<LoadingOverlay />}>
-        {notesOpen && !notesCenter && <NotesView />}
       </Overlay>
       <Overlay where={t("o editor")} fallback={<LoadingOverlay />}>
         {editorOpen && <CodeEditor />}

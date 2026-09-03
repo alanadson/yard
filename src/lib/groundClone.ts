@@ -77,10 +77,10 @@ export function groundClone(
 /**
  * Recreates the clone inside `groupId`, stopped, rooted at `cwd`.
  *
- * Every tab is born on the grid — explicitly, not by inheriting whatever the
- * destination happens to be showing. This is the one call that walks from one
- * group to another, and a front that clones the ground must not be able to
- * land a CLI on a board.
+ * Every tab is born on the grid, because the destination is a front, a
+ * project's group, and a project's group draws tabs and nothing else: the
+ * canvas is the boards (`lib/surface.ts`), and a front cannot land a CLI on
+ * one.
  */
 export function applyGroundClone(clone: GroundClone, groupId: string, cwd: string): void {
   const s = useProjects.getState();
@@ -95,7 +95,6 @@ export function applyGroundClone(clone: GroundClone, groupId: string, cwd: strin
       program: tab.program,
       args: tab.args,
       cwd,
-      surface: "grid",
     });
     // `addTerminal` has no pin of its own: pinning is a gesture on an existing
     // tab, and the clone is the only caller that starts one already pinned.

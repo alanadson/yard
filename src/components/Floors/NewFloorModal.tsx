@@ -72,7 +72,6 @@ import { branchChoices, type BranchChoice, type BranchWhere } from "../../lib/de
 import { parseHookLines, type FloorHooks } from "../../lib/floors";
 import { baseWarningOf, baseWarningText } from "../../lib/floorSync";
 import { ipc, type AgentInfo, type Preflight, type ScmBranch } from "../../lib/ipc";
-import { show } from "../../lib/navigate";
 import {
   cleanupItems,
   runBatch,
@@ -488,7 +487,6 @@ export function NewFloorModal() {
   const openFront = (item: ItemReport) => {
     if (!item.groupId) return;
     useProjects.getState().setActiveGroup(item.groupId);
-    show(item.groupId, useProjects.getState().layoutOf(item.groupId).surface);
     closeModal();
   };
 

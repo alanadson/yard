@@ -152,8 +152,9 @@ MCP manager — **shipped 2026-08-26** as Configurações → Servidores MCP
 Neither of the two was in the plan; both changed what the app is. They are
 recorded here as a delivered phase, with what is still pending.
 
-**Canvas** (the group's other surface — see `src/lib/surface.ts`; it shipped as
-a 4th layout mode and was split off later). Infinite canvas with pan/zoom
+**Canvas** (the boards, and nothing else: see `src/lib/surface.ts`; it shipped
+as a 4th layout mode, was split off as the group's other surface, and since
+2026-09-02 is the boards alone). Infinite canvas with pan/zoom
 (snaps to 100%), terminals as draggable/resizable cards, freehand pen and
 shapes (roughjs + perfect-freehand), arrows, text, sticky notes with light
 markdown, curved connections, eraser, undo/redo, single-key shortcuts.
@@ -323,6 +324,25 @@ Closing the tab restores the default place; a group deleted or pruned at boot
 does too (`prune`/`dropGroups`, like the browsers). In a narrow pane the
 notebook gives up columns through a container query — the rail goes first,
 then the list — instead of crushing the editor.
+
+**Notes: the overlay place retired, and one registry for "the portal is
+covered"** (2026-09-01). The sheet over the window is gone: a portal's page is
+an OS window that no HTML backdrop covers, so opening the notebook over a
+browser painted the site on top of the notes. Two places remain: the
+**central area** (the default, and where every fallback lands: `closeDock`,
+`prune`, `dropGroups`, and a `notes.place` saved as `overlay`) and the **pane
+tab**. A group in canvas mode, which has no tab bar, answers `Ctrl+Shift+N`
+with the central area, the dock kept; the centre *replaces* the grid and the
+canvas, which unmounts every portal underneath: nothing left to paint
+through. The same bug had a second face: the list of surfaces that blank a
+portal was typed out by hand in the pane browser and in the canvas card, and
+both had forgotten the Busca (`Ctrl+P` over a browser pane put the page on top
+of the palette). `lib/layers`, the registry that already ordered `Esc`, now
+also feeds `hooks/usePortalsCovered`, so a surface that joins the list covers
+the portals by the same act; the canvas's "keyboard blocked by a surface"
+check reads it too. Two more floating things learnt to publish their
+rectangle to `occludersStore`: the Frentes control and its popover on the
+board, and the diff peek of the changes panel.
 
 **Pending on this line:**
 
@@ -545,3 +565,38 @@ then the list — instead of crushing the editor.
       version probes), `@codemirror/lsp-client` in the file editor with one
       client per (root, server), the catalog and its install lines in
       Configurações → Editor, and the LSP keys in the shortcuts table.
+- [x] **The board, closed out** (2026-09-02). Camera glide and inertia
+      (`lib/cameraTween.ts`), spatial navigation on `Ctrl+arrows`
+      (`lib/spatialNav.ts`), rebindable canvas keys (`lib/keymap.ts`,
+      `stores/keymapStore.ts`), grid snap with `Alt` bypass, culling and
+      xterm render scale (`lib/culling.ts`, `lib/renderScale.ts`), card
+      z-order, pin, maximize and rename (`lib/cardChrome.ts`, `lib/rename.ts`),
+      guided placement (`lib/placement.ts`), OS drops and tree drags
+      (`lib/canvasDrop.ts`), the doc card (`lib/docNode.ts`), front colours
+      and the lens (`lib/floorColor.ts`), board background
+      (`CanvasBackground`), portal presets, screenshot, history and bookmarks
+      (`lib/portals.ts`, `lib/urlHistory.ts`, `lib/portalBookmarks.ts`), and
+      `yard canvas` (`lib/bridgeCanvasCmd.ts`).
+- [x] **Native CLI hooks** (2026-09-02). Claude Code launched with
+      `--settings <data>\bin\claude-hooks.json` and Codex with `-c notify=…`
+      (`launchFor` in `lib/agentDefaults.ts`; the file from `bridge.rs`), the
+      shim receiving `yard hook …` (`lib/hookEvents.ts`) and the runtime
+      mirror gaining `permission`: the badge says which kind of block it is.
+      Off by a switch in Configurações → Agentes; not across WSL or SSH.
+- [x] **Workers as one object** (2026-09-02). `yard worker
+      create|list|inspect|wait|send|review|apply|keep|discard|stop` over the
+      fronts opened for a task (`lib/workerRuns.ts`: which fronts count, which
+      card speaks, one state word, lookup by name, prefix or id).
+- [x] **The canvas is the boards** (2026-09-02). The surface is derived from
+      the group (`surfaceOf` in `lib/surface.ts`), a project's group never
+      shows the canvas, the Canvas row leads to a board (`canvasDoor`), the
+      project panels and their doors leave while a board is up
+      (`projectPanelsShown`), the fronts control stands in the status bar
+      (`Floors/place.ts`), a board's new CLI asks for a folder
+      (`lib/boardFolder.ts`), scores land only on boards, the first load
+      carries the cards of a group that showed its canvas into a board
+      (`extractBoards`), and the canvas side survives the last board's
+      deletion (`canvasSide` in the store).
+- [ ] Still open on the board: tabs inside one portal card, `.docx` in the
+      doc card, maximize for items, a board icon in the sidebar, an onboarding
+      tour, minimap docking and resizing.

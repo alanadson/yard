@@ -58,10 +58,11 @@ import { FileGlyph } from "../FileGlyph";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { noteName, portalName } from "../../lib/canvas";
 import { mediaNodeName } from "../../lib/mediaNode";
+import { docNodeName } from "../../lib/docNode";
 import { treeNodeName } from "../../lib/treeNode";
 import { isTopLayer } from "../../lib/layers";
 import { toggleBroadcast } from "../../lib/broadcastToggle";
-import { goToCanvasItem, goToTerminal, show, toggleCanvas } from "../../lib/navigate";
+import { goToCanvasItem, goToTerminal, toggleCanvas } from "../../lib/navigate";
 import { requestQuit } from "../../lib/quit";
 import { checkForUpdates } from "../../lib/updateFlow";
 import { useBroadcast } from "../../stores/broadcastStore";
@@ -781,6 +782,18 @@ function buildEntries(world: World): PaletteEntry[] {
           weight: local.weight,
           run: () => goToCanvasItem(g.id, item.id),
         });
+      } else if (item.type === "doc") {
+        // A document card is the same file as a tab: findable by name and path.
+        out.push({
+          id: `doc:${item.id}`,
+          kind: "media",
+          title: docNodeName(item),
+          subtitle: `${item.path} — ${local.label}`,
+          icon: <FileGlyph name={docNodeName(item)} size={14} />,
+          keywords: [item.path, item.root ?? "", "arquivo canvas documento editor doc"], // i18n-ok
+          weight: local.weight,
+          run: () => goToCanvasItem(g.id, item.id),
+        });
       } else if (item.type === "group") {
         // A frame is the only name the user ever gives to a *region* of the
         // board. Finding "Frontend" and landing on the frame is how you get
@@ -1141,7 +1154,7 @@ function actions(world: World): PaletteEntry[] {
       title: t("Anotações na área central"),
       subtitle: t("o caderno ocupa todo o espaço do workspace"),
       keywords: ["nota", "caderno", "central", "tela", "expandir", "anotacao", "notes center", "expand"],
-      run: () => useNotes.getState().setPlaceKind("center"),
+      run: () => useNotes.getState().placeCenter(),
     },
     {
       id: "action:sidebar",
@@ -1384,14 +1397,15 @@ function actions(world: World): PaletteEntry[] {
     });
   }
 
-  // The canvas is the group's other surface, not a fourth mode: one row that
-  // flips between the two, and it carries the weight because it is the only
-  // one that changes *what* is on screen rather than its shape. It sits
+  // The canvas is the boards, not a fourth mode: one row that goes onto a
+  // board and back, and it carries the weight because it is the only one
+  // that changes *what* is on screen rather than its shape. It sits
   // **outside** the block below on purpose — the shapes of the grid need a
-  // group, the canvas does not: with every tab closed it is still reachable,
-  // through a board (`toggleCanvas`).
-  const onBoard =
-    hasGroup && useProjects.getState().layoutOf(world.activeGroupId!).surface === "canvas";
+  // project's group, the canvas does not: with every tab closed it is still
+  // reachable, through a board (`toggleCanvas`).
+  // The canvas side, with a board up or on the empty space the last board
+  // left: either way the row is the way back to the panes.
+  const onBoard = useProjects.getState().canvasSide;
   rows.push({
     id: "action:surface-canvas",
     kind: "action",
@@ -1404,7 +1418,8 @@ function actions(world: World): PaletteEntry[] {
     run: () => toggleCanvas(),
   });
 
-  if (hasGroup) {
+  // A board has no panes, so it has no shape to pick.
+  if (hasGroup && !onBoard) {
     const groupId = world.activeGroupId!;
     const layout = useProjects.getState().layoutOf(groupId);
     const modes: { mode: LayoutMode; label: string; hint: string }[] = [
@@ -1413,17 +1428,14 @@ function actions(world: World): PaletteEntry[] {
       { mode: "spotlight", label: t("Modo holofote"), hint: t("um grande, o resto pequeno") },
     ];
     for (const m of modes) {
-      if (m.mode === layout.mode && !onBoard) continue;
+      if (m.mode === layout.mode) continue;
       rows.push({
         id: `action:layout-${m.mode}`,
         kind: "action",
         title: m.label,
         subtitle: m.hint,
         keywords: ["layout", "modo", "grupo", "paineis", "mode", "group", "panes", "auto", "grid", "spotlight"],
-        run: () => {
-          useProjects.getState().updateLayout(groupId, { mode: m.mode });
-          show(groupId, "grid");
-        },
+        run: () => useProjects.getState().updateLayout(groupId, { mode: m.mode }),
       });
     }
   }

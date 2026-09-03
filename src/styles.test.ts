@@ -26,9 +26,9 @@ import { AA_MIN, passesAA, contrastRatio, blendOver, lightness } from "./lib/con
 // `?raw` instead of `fs`: it is the same loader the app uses, and the suite
 // stays free of new dependencies (there is no `@types/node` here, on purpose).
 import bootCss from "./styles.css?raw";
-// These two arrive on boot because `WorkspaceGrid` imports `FloorsControl` and
-// `FlowRunsBar` statically — the last test in this file is what locks that
-// assumption.
+// These two arrive on boot because `StatusBar` imports `FloorsControl` and
+// `WorkspaceGrid` imports `FlowRunsBar`, both statically — the last test in
+// this file is what locks that assumption.
 import canvasCss from "./components/CanvasView/canvas.css?raw";
 import floorsCss from "./components/Floors/floors.css?raw";
 
@@ -56,6 +56,7 @@ import appSrc from "./App.tsx?raw";
 import browserSrc from "./components/BrowserPane/index.tsx?raw";
 import floorsSrc from "./components/Floors/index.tsx?raw";
 import gridSrc from "./components/WorkspaceGrid/index.tsx?raw";
+import statusBarSrc from "./components/StatusBar/index.tsx?raw";
 import paneSrc from "./components/TerminalPane/index.tsx?raw";
 import sidebarSrc from "./components/ProjectSidebar/index.tsx?raw";
 
@@ -227,10 +228,12 @@ describe("CSS the boot guarantees", () => {
     });
   }
 
-  it("the grid imports floors and the flow bar without `lazy` — it is what puts both CSS files in the boot", () => {
+  it("the status bar imports floors and the grid the flow bar, without `lazy`: it is what puts both CSS files in the boot", () => {
     // If one of these becomes `lazy()`, `floors.css`/`canvas.css` leave the
-    // entry bundle and this file's `CSS_DO_BOOT` list starts to lie.
-    expect(gridSrc).toMatch(/^import \{ FloorsControl \} from "\.\.\/Floors";$/m);
+    // entry bundle and this file's `CSS_DO_BOOT` list starts to lie. The
+    // fronts control moved from the grid to the status bar (`Floors/place.ts`),
+    // which is chrome, on screen from the first paint.
+    expect(statusBarSrc).toMatch(/^import \{ FloorsControl \} from "\.\.\/Floors";$/m);
     expect(gridSrc).toMatch(/^import \{ FlowRunsBar \} from "\.\.\/CanvasView\/FlowHud";$/m);
   });
 });
@@ -724,20 +727,22 @@ describe("focus signal on fields", () => {
 });
 
 /**
- * WCAG 1.4.13 (content on hover/focus) asks three things of the tooltip
- * balloon: that it can be **dismissed** without moving the pointer, that it
- * **persists** until focus or the pointer leave, and that the pointer can be
- * **moved over it**.
+ * The tooltip balloon is **one fixed element in `<body>`** (`lib/tipLayer.ts`),
+ * not a `::after` of the control, which is what it was until 2026-09, and
+ * what lost text in three places at once: a `::after` is clipped by any
+ * scrollport its control lives in (the sidebar tree cut "Abrir frente…" at
+ * its left edge, the bench body and the tab strip clipped theirs outright),
+ * and it is covered by any panel painted after its stacking context (the
+ * title bar's doors opened their balloon *under* the bench, because the bar's
+ * `backdrop-filter` is a stacking context of its own and the bench paints
+ * later). Neither can be fixed from CSS; this locks the shape so it does not
+ * creep back one "small" `::after` at a time.
  *
- * The first two were already in place (`body.tips-off` via Esc, and the
- * balloon only leaves when hover/focus leave). The third was missing: the
- * balloon was always `pointer-events: none`, so the pointer passed through it
- * and the hover dropped before reaching it — the case of whoever uses screen
- * magnification and needs to drag the pointer to the text to read it.
- *
- * Invisible, it **has** to stay transparent to the pointer: a balloon of up to
- * 240px hanging 8px below the control would eat the click of whoever sat
- * underneath.
+ * WCAG 1.4.13 (content on hover/focus) asks three things of it: dismissable
+ * (Esc) and persistent (it only leaves when hover/focus leave) are the state
+ * machine in `lib/tip.ts`, tested there; **hoverable** is CSS: the open
+ * balloon accepts the pointer, and there is no dead gap between the control
+ * and the text for the hover to drop in.
  */
 describe("tooltip balloon", () => {
   const stripped = bootCss.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -750,53 +755,47 @@ describe("tooltip balloon", () => {
     return "";
   }
 
-  it("at rest, the balloon does not intercept the pointer", () => {
-    expect(ruleBody("[data-tip]::after")).toMatch(/pointer-events:\s*none/);
+  it("is one fixed element above every panel, not a `::after` of the control", () => {
+    const layer = ruleBody(".tip-layer");
+    expect(layer).toMatch(/position:\s*fixed/);
+    expect(layer).toMatch(/z-index:\s*10000/);
+    expect(stripped).not.toMatch(/\[data-tip\][^{,]*::(after|before)/);
   });
 
-  for (const trigger of [":hover", ":focus-visible"]) {
-    it(`opened by \`${trigger}\`, the balloon can receive the pointer`, () => {
-      expect(ruleBody(`[data-tip]${trigger}::after`)).toMatch(
-        /pointer-events:\s*auto/,
-      );
-    });
-  }
+  it("open, the balloon can receive the pointer", () => {
+    expect(ruleBody(".tip-layer")).toMatch(/pointer-events:\s*auto/);
+  });
 
-  it("there is no dead gap between the control and the balloon", () => {
-    // The offset has to come from a transparent border, not from a `top` that
-    // leaves 8px of nothing in between: crossing a gap drops the `:hover`
+  it("closed, it is not on the page at all: no invisible rectangle left to eat a click", () => {
+    expect(ruleBody(".tip-layer[hidden]")).toMatch(/display:\s*none/);
+  });
+
+  it("there is no dead gap between the control and the balloon, whichever side it opens on", () => {
+    // The offset is a transparent border on the side that faces the control,
+    // not a gap in the placement: crossing 8px of nothing drops the hover
     // before the pointer reaches the text.
-    const bubble = ruleBody("[data-tip]::after");
-    expect(bubble).toMatch(/top:\s*100%/);
-    expect(bubble).toMatch(/border-top:\s*8px solid transparent/);
-    expect(bubble).toMatch(/background-clip:\s*padding-box/);
+    expect(ruleBody(".tip-layer")).toMatch(/background-clip:\s*padding-box/);
+    for (const [side, edge] of [
+      ["bottom", "top"],
+      ["top", "bottom"],
+      ["right", "left"],
+      ["left", "right"],
+    ]) {
+      expect(ruleBody(`.tip-layer[data-side="${side}"]`), side).toMatch(
+        new RegExp(`border-${edge}:\\s*8px solid transparent`),
+      );
+    }
   });
 
   /**
-   * The bridge **cannot** be a `::before` of the control: `data-tip` sits on
-   * 101 classes of this app and `.crumb::before` is already the breadcrumb
-   * separator — the bridge would have yanked it out of the flow and dropped it
-   * 8px down. It is locked here because it is the solution that looks obvious
-   * and breaks silently.
+   * The strip's private `.pane-tabtip` existed only because the shared
+   * balloon could not leave the strip. With the balloon in `<body>` a second
+   * one would open twice, so the tabs carry a plain `data-tip` like every
+   * other control, and the private balloon is gone from the pane and the CSS.
    */
-  it("the bridge does not use the control's `::before`", () => {
-    expect(stripped).not.toMatch(/\[data-tip\][^{,]*::before/);
-  });
-});
-
-/**
- * The trap in the fix above: by giving the open balloon `pointer-events: auto`,
- * `Esc` (which only lowered the opacity) would start leaving on screen an
- * **invisible, clickable** rectangle of up to 240px, eating the click of
- * whoever sat underneath.
- */
-describe("balloon dismissed by Esc", () => {
-  it("goes back to being transparent to the pointer, not just invisible", () => {
-    const stripped = bootCss.replace(/\/\*[\s\S]*?\*\//g, "");
-    const rule = /body\.tips-off[^{]*\{([^}]*)\}/.exec(stripped);
-    expect(rule, "the tips-off rule is gone").not.toBeNull();
-    expect(rule![1]).toMatch(/opacity:\s*0/);
-    expect(rule![1]).toMatch(/pointer-events:\s*none/);
+  it("the tab strip does not draw a balloon of its own", () => {
+    expect(paneSrc).not.toMatch(/pane-tabtip|showTip/);
+    expect(stripped).not.toMatch(/\.pane-tabtip/);
   });
 });
 

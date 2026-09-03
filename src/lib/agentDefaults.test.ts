@@ -321,6 +321,34 @@ describe("wslLaunch", () => {
   });
 });
 
+describe("launchFor: the hooks the CLIs report through", () => {
+  const card = { program: "claude", args: [], cwd: "C:\\p" };
+  const hooks = { enabled: true, claudeSettings: "C:\\data\\bin\\claude-hooks.json" };
+
+  it("hands Claude Code the settings file on its own flag", () => {
+    expect(launchFor({}, "claude", card, hooks).args).toEqual([
+      "--settings",
+      "C:\\data\\bin\\claude-hooks.json",
+    ]);
+  });
+
+  it("hands Codex the notify program on its own flag", () => {
+    const out = launchFor({}, "codex", { ...card, program: "codex" }, hooks);
+    expect(out.args).toEqual(["-c", 'notify=["yard","hook","codex"]']);
+  });
+
+  it("never doubles a flag the user already spelled, and adds nothing when off", () => {
+    const spelled = launchFor({}, "claude", { ...card, args: ["--settings", "mine.json"] }, hooks);
+    expect(spelled.args).toEqual(["--settings", "mine.json"]);
+    expect(launchFor({}, "claude", card, { ...hooks, enabled: false }).args).toEqual([]);
+    expect(launchFor({}, "claude", card, { enabled: true, claudeSettings: null }).args).toEqual([]);
+  });
+
+  it("leaves a CLI with no documented hook alone", () => {
+    expect(launchFor({}, "aider", { ...card, program: "aider" }, hooks).args).toEqual([]);
+  });
+});
+
 describe("launchFor", () => {
   const card = {
     program: "claude.cmd",

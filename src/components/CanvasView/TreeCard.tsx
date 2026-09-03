@@ -16,6 +16,8 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, GitBranch, RefreshCw } from "lucide-react";
 
+import { InlineRename } from "../ContextMenu/InlineRename";
+
 import { ResizeHandles } from "./ResizeHandles";
 import { FileGlyph } from "../FileGlyph";
 import { ipc, type ChangedFile, type DirEntryInfo, type ScmCommit } from "../../lib/ipc";
@@ -53,6 +55,11 @@ interface Props {
   onResizeStart: (e: React.PointerEvent, it: TreeItem, dir: ResizeDir) => void;
   onResizeMove: (e: React.PointerEvent) => void;
   onResizeEnd: (e: React.PointerEvent) => void;
+  /** The in-place rename is open on this card (the board owns which one). */
+  renaming: boolean;
+  onRenameStart: (id: string) => void;
+  onRenameEnd: () => void;
+  onRename: (id: string, name: string) => void;
 }
 
 /** One row of the flattened tree. */
@@ -80,6 +87,10 @@ function TreeCardImpl({
   onResizeStart,
   onResizeMove,
   onResizeEnd,
+  renaming,
+  onRenameStart,
+  onRenameEnd,
+  onRename,
 }: Props) {
   const t = useT();
   const root = it.root || projectRoot;
@@ -203,9 +214,27 @@ function TreeCardImpl({
         onPointerMove={onItemMove}
         onPointerUp={onItemUp}
       >
-        <span className="cv-tree-title" title={it.path || root}>
-          {treeNodeName(it)}
-        </span>
+        {renaming ? (
+          <InlineRename
+            value={treeNodeName(it)}
+            onCommit={(next) => {
+              onRename(it.id, next);
+              onRenameEnd();
+            }}
+            onCancel={onRenameEnd}
+          />
+        ) : (
+          <span
+            className="cv-tree-title"
+            title={it.path || root}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              onRenameStart(it.id);
+            }}
+          >
+            {treeNodeName(it)}
+          </span>
+        )}
         {/* Up one folder — the only navigation the card needs, since going
             down is what clicking a folder already does. */}
         {it.path && (
@@ -366,11 +395,13 @@ function TreeCardImpl({
         )}
       </div>
 
-      <ResizeHandles
-        onDown={(e, dir) => onResizeStart(e, it, dir)}
-        onMove={onResizeMove}
-        onUp={onResizeEnd}
-      />
+      {!it.pinned && (
+        <ResizeHandles
+          onDown={(e, dir) => onResizeStart(e, it, dir)}
+          onMove={onResizeMove}
+          onUp={onResizeEnd}
+        />
+      )}
     </div>
   );
 }

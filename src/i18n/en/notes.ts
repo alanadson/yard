@@ -11,8 +11,6 @@ export default {
   // --- the notebook: places, top bar --------------------------------------
   Anotações: "Notes",
   "Onde o caderno abre": "Where the notebook opens",
-  "Sobreposto — o caderno flutua sobre a tela": "Overlay — the notebook floats over the screen",
-  "Abrir sobreposto": "Open as an overlay",
   "Em aba — no painel em foco, ao lado das CLIs": "As a tab — in the focused pane, next to the CLIs",
   "Em aba — abra um grupo primeiro": "As a tab — open a group first",
   "Abrir em aba no painel": "Open as a pane tab",
@@ -22,7 +20,6 @@ export default {
     "Writing is failing — the last change is not saved yet.",
   "Nova nota (Ctrl+N)": "New note (Ctrl+N)",
   "Nova nota": "New note",
-  "Fechar (Esc)": "Close (Esc)",
   "Fechar — volta ao grid": "Close — back to the grid",
   "Fechar as anotações": "Close the notes",
   "Largura da coluna de cadernos": "Width of the notebooks column",

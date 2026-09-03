@@ -9,7 +9,8 @@
  * and then disabled the very button that would have shown it — dead code for
  * exactly the user it existed for, on the first screen of a fresh install.
  * `ScoresModal` did the same to `showToast("Escolha um projeto antes de
- * aplicar a partitura.")`.
+ * aplicar a partitura.")`, a sentence it no longer needs at all: a score
+ * lands on a board, made on the spot when there is none.
  *
  * **How a panel says it is working.** The good one names the action in flight
  * (`{busy ? t("Aterrissando…") : …}` + `aria-busy`, `lib/busy.ts`). The weak
@@ -72,11 +73,19 @@ describe("how a form refuses", () => {
     expect(onboardingSrc).toContain('role="alert"');
   });
 
-  it("Partituras still knows how to ask for the project it needs", () => {
-    expect(scoresSrc).toContain("Escolha um projeto antes de aplicar a partitura.");
-    // And the button that reaches that sentence is not the one holding it shut.
-    const guilty = disabledExpressions(scoresSrc).filter((e) => e.includes("projectId"));
-    expect(guilty, "the sentence is unreachable behind its own button").toEqual([]);
+  /**
+   * The contract that changed: the dialog used to refuse with "Escolha um
+   * projeto antes de aplicar a partitura." A score is an arrangement of the
+   * canvas, and the canvas is the boards, so there is no project to ask for:
+   * applying makes a board when there is none, and nothing is gated.
+   */
+  it("Partituras has nothing left to refuse: a score lands on a board, made on the spot", () => {
+    expect(scoresSrc).not.toContain("Escolha um projeto");
+    expect(scoresSrc).toContain("addBoard(");
+    const guilty = disabledExpressions(scoresSrc).filter(
+      (e) => e.includes("projectId") || e.includes("board"),
+    );
+    expect(guilty, "a button is holding the apply shut").toEqual([]);
   });
 });
 

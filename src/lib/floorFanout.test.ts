@@ -222,3 +222,15 @@ describe("where the agents land", () => {
     expect(placeCard).not.toHaveBeenCalled();
   });
 });
+
+describe("floorNameFor", () => {
+  it("a fleet names its fronts after the task and the agent, so five are five", async () => {
+    const { floorNameFor } = await import("./floorFanout");
+    expect(floorNameFor({ name: "Login", agentName: "Claude Code" })).toBe("Login · Claude Code");
+  });
+
+  it("a single worker keeps the name it was given: the caller will address it by that", async () => {
+    const { floorNameFor } = await import("./floorFanout");
+    expect(floorNameFor({ name: "Login", agentName: "Claude Code", exact: true })).toBe("Login");
+  });
+});

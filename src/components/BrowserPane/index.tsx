@@ -29,6 +29,7 @@ import {
 
 import { ContextMenu, type MenuEntry } from "../ContextMenu";
 import { useGrabMode } from "../../hooks/useGrabMode";
+import { usePortalsCovered } from "../../hooks/usePortalsCovered";
 import { useT } from "../../hooks/useT";
 import { t } from "../../lib/i18n";
 import {
@@ -42,9 +43,6 @@ import { isLocalUrl } from "../../lib/portalLive";
 import { portalPreferenceMenu } from "../../lib/portalMenu";
 import { hostnameOf, normalizePortalUrl } from "../../lib/portals";
 import { useBrowsers, type PaneBrowser } from "../../stores/browsersStore";
-import { useChanges } from "../../stores/changesStore";
-import { useEditor } from "../../stores/editorStore";
-import { useLive } from "../../stores/liveStore";
 import { rectsOverlap, useOccluders } from "../../stores/occludersStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
@@ -66,15 +64,10 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
   const showToast = useUI((s) => s.showToast);
   const patch = useBrowsers((s) => s.patch);
   const occluders = useOccluders((s) => s.rects);
-  // The surfaces that cover the workspace whole — the same list the canvas
-  // uses (`portalsHidden`): only these blank the page, everything else that
-  // floats becomes a hole cut out of it.
-  const modalOpen = useUI((s) => s.modal);
-  const composerOpen = useUI((s) => s.composerOpen);
-  const liveOpen = useLive((s) => s.phase !== "closed");
-  const diffOpen = useChanges((s) => s.viewer !== null);
-  const editorOverlay = useEditor((s) => s.open);
-  const covered = !!modalOpen || composerOpen || liveOpen || diffOpen || editorOverlay;
+  // The surfaces that cover the workspace whole, one registry (`lib/layers`),
+  // shared with the canvas card: only these blank the page, everything else
+  // that floats becomes a hole cut out of it.
+  const covered = usePortalsCovered();
 
   const projectId = useProjects((s) => s.projectOfGroup(tab.groupId)?.id ?? null);
 

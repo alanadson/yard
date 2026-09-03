@@ -1398,3 +1398,312 @@
   border-color: var(--green);
   box-shadow: 0 0 0 3px rgb(64 209 110 / 18%), var(--cv-lift);
 }
+
+/* --- card chrome: pinned, maximized, and the agent's state on the rim --- */
+
+/* Pinned: the header stops reading as a handle, and says so with a glyph. */
+.cv-card.is-pinned .cv-card-head {
+  cursor: default;
+}
+
+.cv-card-pin {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.7;
+}
+
+/* What the agent is up to, at a glance from across the board: a green rim
+   when it finished, an amber one that breathes while it waits on you. The
+   badge in the header says the same up close; the rim is for the card you
+   are not looking at. Focus keeps its own blue: the keyboard's whereabouts
+   beat the agent's mood. */
+.cv-card.is-finished:not(.is-focused) {
+  border-color: rgb(64 209 110 / 55%);
+}
+
+.cv-card.is-blocked:not(.is-focused) {
+  border-color: rgb(240 195 60 / 75%);
+  animation: cv-card-wait 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes cv-card-wait {
+  from {
+    box-shadow:
+      0 0 0 0 rgb(240 195 60 / 0%),
+      var(--cv-lift),
+      var(--cv-edge);
+  }
+  to {
+    box-shadow:
+      0 0 0 4px rgb(240 195 60 / 22%),
+      var(--cv-lift),
+      var(--cv-edge);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cv-card.is-blocked:not(.is-focused) {
+    animation: none;
+    box-shadow:
+      0 0 0 4px rgb(240 195 60 / 22%),
+      var(--cv-lift),
+      var(--cv-edge);
+  }
+}
+
+/* Maximized: lifted a notch, so the card that covers the board reads as the
+   thing on top of it rather than as the board itself. */
+.cv-card.is-max {
+  box-shadow: var(--cv-lift-hi), var(--cv-edge);
+}
+
+/* --- guided placement: the numbered spots offered to a newborn card --- */
+
+.cv-ghost {
+  position: absolute;
+  border: 1.5px dashed rgb(94 160 255 / 70%);
+  border-radius: var(--r-xl);
+  background: rgb(10 132 255 / 6%);
+  cursor: pointer;
+  z-index: 4;
+  transition: background var(--dur-2) ease;
+}
+
+.cv-ghost:hover {
+  background: rgb(10 132 255 / 14%);
+}
+
+/* The spot the card is on right now: the offer it already took. */
+.cv-ghost.is-here {
+  border-style: solid;
+  background: transparent;
+  pointer-events: none;
+}
+
+/* Counter-scaled: a number has to be legible from any zoom, and the world
+   is scaled as a whole. `--cv-z` is the zoom the world div publishes. */
+.cv-ghost-num {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: var(--bg-raised);
+  color: var(--accent-text);
+  border: 1px solid rgb(94 160 255 / 70%);
+  font: 600 12px/1 var(--font-ui, system-ui);
+  font-variant-numeric: tabular-nums;
+  transform: scale(calc(1 / var(--cv-z, 1)));
+  transform-origin: top left;
+  box-shadow: var(--cv-lift);
+}
+
+/* The terminal drawn bigger and shrunk back (`lib/renderScale.ts`): the
+   wrapper is `renderScale` times the body, scaled down by the same factor,
+   so the columns and rows the PTY sees never change. */
+.cv-card-scale {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  transform-origin: 0 0;
+}
+
+/* Free mode: the next click is the answer. */
+.cv.cv--place,
+.cv.cv--place .cv-bg {
+  cursor: crosshair;
+}
+
+/* --- document card: a source file open on the board --- */
+
+.cv-doc {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  z-index: 2;
+  background: rgb(var(--slab) / 96%);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--cv-lift), var(--cv-edge);
+  overflow: hidden;
+  --cv-grab: min(30px, calc(11px / var(--cv-z, 1)));
+}
+
+.cv-doc-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 26px;
+  flex: 0 0 auto;
+  cursor: grab;
+  border-bottom: 1px solid var(--border);
+  color: rgb(0 0 0 / 82%);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.cv-doc-head:active {
+  cursor: grabbing;
+}
+
+.cv-doc-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-doc-btn {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: rgb(var(--well) / 12%);
+  color: inherit;
+  cursor: pointer;
+}
+
+.cv-doc-btn:hover {
+  background: rgb(var(--well) / 22%);
+}
+
+/* The body is the editor: it gets every pointer event and the whole box. */
+.cv-doc-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  cursor: default;
+}
+
+.cv-doc-body > * {
+  flex: 1;
+  min-height: 0;
+}
+
+.cv-doc-body .cv-media-msg {
+  flex: none;
+  margin: auto;
+}
+
+.cv-doc.is-selected::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border: 1.5px solid rgb(94 160 255 / 65%);
+  border-radius: calc(var(--r-lg) + 7px);
+  box-shadow: 0 0 0 4px rgb(10 132 255 / 8%);
+  pointer-events: none;
+}
+
+.cv-doc.is-connect-source {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--cv-lift);
+}
+
+.cv-doc.is-connect-target {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgb(64 209 110 / 18%), var(--cv-lift);
+}
+
+/* --- the front a card runs in (`lib/floorColor.ts`) --- */
+
+/* The chip wears the front's colour; the ink is the same dark-on-fill the
+   notes and the media strip use, because the fill is one of the board's own
+   light chromas. */
+.cv-card-front {
+  font-size: 10px;
+  line-height: 17px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 999px;
+  color: rgb(0 0 0 / 82%);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 130px;
+  flex-shrink: 1;
+  cursor: pointer;
+  box-shadow: inset 0 0.5px 0 rgb(var(--veil) / 30%);
+}
+
+.cv-card-front.is-active {
+  box-shadow:
+    inset 0 0.5px 0 rgb(var(--veil) / 30%),
+    0 0 0 2px rgb(var(--slab) / 100%),
+    0 0 0 3.5px currentColor;
+}
+
+/* The lens: the cards of the other fronts step back. */
+.cv-card.is-dim {
+  opacity: 0.42;
+  filter: saturate(0.4);
+  transition:
+    opacity var(--dur-2) ease,
+    filter var(--dur-2) ease;
+}
+
+.cv-card.is-front-focus:not(.is-focused) {
+  border-color: var(--cv-front, var(--border));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--cv-front, transparent) 25%, transparent),
+    var(--cv-lift),
+    var(--cv-edge);
+}
+
+/* --- the ground: grid variants and the picture behind it --- */
+
+.cv-bg--lines {
+  background-image:
+    linear-gradient(to right, rgb(var(--veil) / 6%) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(var(--veil) / 6%) 1px, transparent 1px);
+}
+
+.cv-bg--none {
+  background-image: none;
+}
+
+.cv-wall {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  pointer-events: none;
+}
+
+/* --- the empty board offering the saved scores --- */
+
+.cv-hint-scores ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 12px;
+}
+
+/* A permission prompt the CLI reported itself: the same yellow as a block,
+   with a ring so it reads as the one to walk over first. */
+.cv-card-hud-state.is-permission {
+  color: var(--yellow);
+  font-weight: 600;
+}
+.cv-card.is-permission .badge-blocked {
+  box-shadow:
+    0 0 0 3px var(--yellow-bg),
+    0 0 7px rgb(240 195 60 / 70%);
+}

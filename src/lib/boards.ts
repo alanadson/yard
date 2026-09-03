@@ -14,7 +14,7 @@
  */
 import { normalizeCanvas } from "./canvas";
 import type { GroupRow, TerminalRow } from "./ipc";
-import { onSurface, splitLegacyMode } from "./surface";
+import { normalizeSurface, onSurface, splitLegacyMode } from "./surface";
 
 /** Enough of a project to name a board after it. */
 interface NamedProject {
@@ -36,13 +36,31 @@ export interface ExtractResult {
 }
 
 /**
- * A canvas is "in use" when someone put something on it — a card, a drawing,
- * a note. An untouched canvas is an empty field, not a board, and turning
- * those into rows would litter the bar with one entry per group ever visited.
+ * A canvas is "in use" when someone put something on it (a card, a drawing,
+ * a note) or when a CLI lives on it, even one whose rectangle was never
+ * written: a project's group cannot draw a card any more, so a card left in
+ * one would simply vanish. An untouched canvas is an empty field, not a
+ * board, and turning those into rows would litter the bar with one entry per
+ * group ever visited.
  */
-function inUse(canvas: { nodes: object; items: unknown[] } | undefined): boolean {
+function inUse(
+  canvas: { nodes: object; items: unknown[] } | undefined,
+  cardsOnIt: number,
+): boolean {
+  if (cardsOnIt > 0) return true;
   if (!canvas) return false;
   return Object.keys(canvas.nodes).length > 0 || canvas.items.length > 0;
+}
+
+/**
+ * What the persisted JSON says the group is showing, read the way
+ * `parseLayout` reads it: an explicit `surface` wins over the legacy
+ * four-valued `mode`.
+ */
+function claimedSurface(parsed: Record<string, unknown>): "grid" | "canvas" {
+  return parsed.surface === undefined
+    ? splitLegacyMode(parsed.mode).surface
+    : normalizeSurface(parsed.surface);
 }
 
 /**
@@ -68,6 +86,15 @@ export function extractBoards(
   const boardOf = new Map<string, string>();
   const nextGroups: GroupRow[] = [];
   const boards: GroupRow[] = [];
+  // The boards already standing. A board's id is derived from its group, so
+  // a group that carries a canvas again after its board came out (a tab's
+  // `yard recruit` still writes wires there) would mint a twin with the same
+  // id, and two rows with one id is a snapshot the database refuses.
+  const standing = new Set(groups.filter((g) => g.projectId === null).map((g) => g.id));
+  // Whether anything but the boards changed: a project's group that claimed
+  // the canvas with nothing on it goes back to its panes, and that alone is
+  // worth a save.
+  let normalized = false;
   // Past the last board that already exists, so a second run (or a board the
   // user made by hand) does not collide on `sort`.
   let sort = groups.reduce(
@@ -89,12 +116,30 @@ export function extractBoards(
       continue;
     }
     const canvas = normalizeCanvas(parsed.canvas);
-    if (!inUse(canvas)) {
-      nextGroups.push(group);
+    const id = boardIdFor(group.id);
+    const cardsOnIt = terminals.filter(
+      (t) => t.groupId === group.id && normalizeSurface(t.surface) === "canvas",
+    ).length;
+    if (!inUse(canvas, cardsOnIt) || standing.has(id)) {
+      // Left standing as a project's group, and a project's group shows its
+      // panes, whatever the JSON was told before the canvas became the
+      // boards (`lib/surface.ts`).
+      if (claimedSurface(parsed) === "canvas" || parsed.mode === "canvas") {
+        nextGroups.push({
+          ...group,
+          layoutJson: JSON.stringify({
+            ...parsed,
+            mode: splitLegacyMode(parsed.mode).mode,
+            surface: "grid",
+          }),
+        });
+        normalized = true;
+      } else {
+        nextGroups.push(group);
+      }
       continue;
     }
 
-    const id = boardIdFor(group.id);
     boardOf.set(group.id, id);
     // `<projeto> · <grupo>`, so the user recognises where it came from. A
     // group whose project is gone is named after itself — better a bare name
@@ -134,7 +179,7 @@ export function extractBoards(
     });
   }
 
-  if (!boards.length) return { groups, terminals, changed: false, boardOf };
+  if (!boards.length && !normalized) return { groups, terminals, changed: false, boardOf };
 
   // The cards follow their canvas. Their `cwd` travels untouched, which is
   // exactly what lets one board end up mixing projects.

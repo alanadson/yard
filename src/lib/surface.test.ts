@@ -11,6 +11,7 @@ import {
   normalizeSurface,
   onSurface,
   splitLegacyMode,
+  surfaceOf,
   type Surface,
 } from "./surface";
 
@@ -67,5 +68,21 @@ describe("onSurface", () => {
   it("returns the same reference when nothing was filtered out — the grid re-renders on identity", () => {
     const onlyGrid = [{ id: "a", surface: "grid" as Surface }];
     expect(onSurface(onlyGrid, "grid")).toBe(onlyGrid);
+  });
+});
+
+/**
+ * The canvas is the boards, and nothing else. A group's surface is not a
+ * field anyone flips: a board (a group with no project) shows the canvas, a
+ * project's group shows its panes. One rule, derived from what the group is,
+ * so no persisted value can put a project's group on the canvas again.
+ */
+describe("surfaceOf", () => {
+  it("a board shows the canvas", () => {
+    expect(surfaceOf({ projectId: null })).toBe("canvas");
+  });
+
+  it("a project's group shows its panes, whatever it was told before", () => {
+    expect(surfaceOf({ projectId: "yard" })).toBe("grid");
   });
 });

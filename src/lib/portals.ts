@@ -135,3 +135,28 @@ export function uniquePortalNames(portals: PortalItem[]): Map<string, string> {
 }
 
 export { hostnameOf, portalName };
+
+/**
+ * Device sizes a portal can take. The card *is* the viewport (the page gets
+ * the body's size, and `yard portal resize` keeps that rule), so a preset is
+ * a card size: the page plus the chrome around it.
+ */
+export interface PortalViewport {
+  id: "phone" | "tablet" | "desktop";
+  /** What the menu prints; translated where drawn. */
+  label: string;
+  w: number;
+  h: number;
+}
+
+// i18n-scan: tables
+export const PORTAL_VIEWPORTS: readonly PortalViewport[] = [
+  { id: "phone", label: "Celular", w: 390, h: 844 },
+  { id: "tablet", label: "Tablet", w: 768, h: 1024 },
+  { id: "desktop", label: "Desktop", w: 1280, h: 800 },
+];
+
+/** The card that shows a page of that size, never below the card's floor. */
+export function cardSizeForViewport(p: { w: number; h: number }): { w: number; h: number } {
+  return { w: Math.max(320, p.w + 2), h: p.h + PORTAL_CHROME_H };
+}

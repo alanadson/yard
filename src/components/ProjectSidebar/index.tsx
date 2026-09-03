@@ -101,8 +101,9 @@ export function ProjectSidebar() {
   const groups = useProjects((s) => s.groups);
   const addBoard = useProjects((s) => s.addBoard);
   /**
-   * Which sections the bar paints. On the canvas the only thing that can be on
-   * screen is a board, so the projects tree gives way to the boards.
+   * Which sections the bar paints. The canvas is the boards, so on the canvas
+   * side (a board on screen, or the empty space the last board left) the
+   * projects tree gives way to the boards.
    *
    * The subscription is a **boolean**, and the object is built in a memo. A
    * selector returning `sectionsFor(...)` directly hands Zustand a fresh
@@ -110,12 +111,10 @@ export function ProjectSidebar() {
    * "Maximum update depth exceeded" — the render feeding itself. Same rule as
    * every list slice in `WorkspaceGrid`.
    */
-  const onCanvas = useProjects(
-    (s) => !!s.activeGroupId && s.layoutOf(s.activeGroupId).surface === "canvas",
-  );
+  const canvasSide = useProjects((s) => s.canvasSide);
   const sections = useMemo(
-    () => sectionsFor(onCanvas ? "canvas" : "grid"),
-    [onCanvas],
+    () => sectionsFor(canvasSide ? "canvas" : "grid"),
+    [canvasSide],
   );
   const terminals = useProjects((s) => s.terminals);
   const activeGroupId = useProjects((s) => s.activeGroupId);
@@ -161,12 +160,13 @@ export function ProjectSidebar() {
   // into the things this bar cannot list.
   const openPalette = useUI((s) => s.openPalette);
   const search = searchAction();
-  // The canvas is the third door, between the two: the group's other surface,
-  // not a shape of the pane grid it sat beside in the title bar. The row is
-  // the toggle (pressed, it is the way back to the panes) and it reads the
-  // group `layoutControls` points at, which on a board is the group the user
-  // came from, the one that owns the panes to go back to.
+  // The canvas is the third door, between the two: the boards, not a shape
+  // of the pane grid it sat beside in the title bar. The row is the toggle
+  // (pressed, it is the way back to the panes) and it reads what
+  // `layoutControls` points at: closed, the board visited last; on a board,
+  // the group the user came from, the one that owns the panes to go back to.
   const groupBeforeBoard = useProjects((s) => s.groupBeforeBoard);
+  const lastBoardId = useProjects((s) => s.lastBoardId);
   const showToast = useUI((s) => s.showToast);
   const t = useT();
   const focusedTerminalId = useUI((s) => s.focusedTerminalId);
@@ -225,15 +225,16 @@ export function ProjectSidebar() {
   // The canvas door, and it is always painted: it is the only way in since
   // the title bar's button left, and a door that only appears once you are
   // inside is not a door. `canvasDoor` answers for every state — on a board
-  // it points back at the group the user came from, with nothing open it
-  // points at a board, and `null` means the board has yet to be made.
+  // it points back at the group the user came from, off it it points at a
+  // board, and `null` means the board has yet to be made.
   const door = canvasDoor({
     activeGroupId,
     activeProjectId,
     groupBeforeBoard,
-    activeSurface: onCanvas ? "canvas" : "grid",
     groups,
     boards,
+    lastBoard: lastBoardId,
+    canvasSide,
   });
   const canvas = canvasAction({ open: door.open });
 
@@ -587,6 +588,14 @@ export function ProjectSidebar() {
           icon: <Pencil size={13} />,
           onSelect: () => beginRename("board", board.id),
         },
+        {
+          // A score is an arrangement of the canvas, and the canvas is the
+          // boards: this is the one menu the door belongs in.
+          id: "scores",
+          label: t("Partituras…"),
+          icon: <Music size={13} />,
+          onSelect: () => openModal("scores", { groupId: board.id }),
+        },
         { kind: "sep" },
         {
           id: "new-board",
@@ -643,12 +652,6 @@ export function ProjectSidebar() {
           icon: <History size={13} />,
           onSelect: () => openModal("sessions", { projectPath: project.path }),
         },
-        {
-          id: "scores",
-          label: t("Partituras…"),
-          icon: <Music size={13} />,
-          onSelect: () => openModal("scores", { projectId: project.id }),
-        },
         { kind: "sep" },
         {
           id: "delete",
@@ -700,13 +703,6 @@ export function ProjectSidebar() {
           icon: <GitBranch size={13} />,
           onSelect: () =>
             group.projectId && openModal("new-floor", { projectId: group.projectId }),
-        },
-        {
-          id: "scores",
-          label: t("Partituras…"),
-          icon: <Music size={13} />,
-          onSelect: () =>
-            openModal("scores", { groupId: group.id, projectId: group.projectId }),
         },
         { kind: "sep" },
         {

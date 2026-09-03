@@ -64,6 +64,42 @@ export default {
   "está ligada.": "is on.",
   "Barra de título": "Title bar",
   "Medidor de limites de uso": "Usage-limit meter",
+  "Sugerir onde o cartão novo entra": "Offer spots for a new card",
+  "No canvas": "On the canvas",
+  "Encaixar na grade": "Snap to the grid",
+  "O que a CLI conta sozinha": "What the CLI reports itself",
+  "Ler os hooks das CLIs que têm": "Read the hooks of the CLIs that have them",
+  "Claude Code recebe um arquivo de configuração na linha de comando (nada é escrito na sua pasta pessoal) e o Codex um programa de aviso: o turno começou, terminou, uma permissão está sendo pedida. O detector de silêncio continua para as CLIs sem hook. Vale a partir da próxima abertura da CLI; não atravessa WSL nem SSH":
+    "Claude Code gets a settings file on its command line (nothing is written into your home folder) and Codex a notify program: the turn started, ended, a permission is being asked. The silence detector stays on for the CLIs without hooks. Applies from the next start of the CLI; does not cross WSL or SSH",
+  "Ao arrastar ou redimensionar, o cartão cai nas linhas da grade do fundo (26 px). O ímã às bordas dos vizinhos continua; Alt segurado dispensa a grade naquele gesto":
+    "While dragging or resizing, the card lands on the background grid lines (26 px). The magnet to the neighbours' edges stays; holding Alt skips the grid for that gesture",
+  "Focar o cartão que ocupa a tela": "Focus the card filling the screen",
+  "Quando a câmera para, a CLI que preenche a maior parte da tela recebe o teclado sem um clique. Desligado por padrão: um foco que anda sozinho é uma escolha, não uma surpresa":
+    "When the camera settles, the CLI filling most of the screen takes the keyboard without a click. Off by default: a focus that moves on its own is a choice, not a surprise",
+  "Clique em Gravar e pressione a combinação. Teclas soltas (V, N…) só valem com o foco no canvas; Esc cancela a gravação; Padrão devolve o original.":
+    "Click Record and press the combination. Bare keys (V, N…) only count with the canvas focused; Esc cancels the recording; Default brings the original back.",
+  "Dois comandos na mesma tecla: {list}": "Two commands on the same key: {list}",
+  "pressione a combinação…": "press the combination…",
+  "Gravar": "Record",
+  "Ferramenta: selecionar": "Tool: select",
+  "Ferramenta: mover a tela": "Tool: pan",
+  "Ferramenta: caneta": "Tool: pen",
+  "Ferramenta: borracha": "Tool: eraser",
+  "Ferramenta: retângulo": "Tool: rectangle",
+  "Ferramenta: elipse": "Tool: ellipse",
+  "Ferramenta: linha": "Tool: line",
+  "Ferramenta: seta": "Tool: arrow",
+  "Ferramenta: texto": "Tool: text",
+  "Ferramenta: nota": "Tool: note",
+  "Ferramenta: portal": "Tool: portal",
+  "Ferramenta: conectar": "Tool: connect",
+  "Ferramenta: fluxo": "Tool: flow",
+  "Agrupar a seleção": "Group the selection",
+  "Duplicar a seleção": "Duplicate the selection",
+  "Traço mais fino": "Thinner stroke",
+  "Traço mais grosso": "Thicker stroke",
+  "Ao nascer no canvas sem um ponto escolhido (Ctrl+T, sessão retomada), o cartão cai na melhor vaga e as outras aparecem numeradas: 2 a 6 trocam de vaga, F coloca onde você clicar, Esc deixa onde caiu":
+    "Born on the canvas with no chosen point (Ctrl+T, a resumed session), the card lands on the best spot and the others show up numbered: 2 to 6 switch spots, F places it where you click, Esc leaves it where it fell",
   "Quanto resta das janelas do Claude, do Codex e do Grok, na barra de título":
     "How much is left of the Claude, Codex and Grok windows, in the title bar",
 

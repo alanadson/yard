@@ -47,6 +47,13 @@ export interface TerminalRuntime {
   blocked: boolean;
   /** What it is asking, in one line. Tooltip and notification body. */
   blockedAsk: string | null;
+  /**
+   * The block is a permission prompt the CLI itself reported through its
+   * hook (`lib/hookEvents.ts`), not a guess from the tail of the output.
+   * Always with `blocked`; the badge says "pedindo permissão" instead of
+   * "travado", which is a different thing to walk over and answer.
+   */
+  permission: boolean;
   rssMb: number;
   cpu: number;
 }
@@ -61,6 +68,7 @@ const EMPTY: TerminalRuntime = {
   finishedAt: 0,
   blocked: false,
   blockedAsk: null,
+  permission: false,
   rssMb: 0,
   cpu: 0,
 };
@@ -171,6 +179,9 @@ interface TerminalsState {
   markError: (id: string, message: string) => void;
   markFinished: (id: string) => void;
   markBlocked: (id: string, ask: string) => void;
+  markPermission: (id: string, ask: string) => void;
+  hookTurnStart: (id: string) => void;
+  hookWorking: (id: string) => void;
   clearBlocked: (id: string) => void;
   markRead: (id: string) => void;
   applyResources: (
@@ -213,6 +224,7 @@ export const useTerminals = create<TerminalsState>((set, get) => ({
       finished: false,
       blocked: false,
       blockedAsk: null,
+      permission: false,
     }),
 
   markRunning: (id, pid) =>
@@ -224,6 +236,7 @@ export const useTerminals = create<TerminalsState>((set, get) => ({
       finished: false,
       blocked: false,
       blockedAsk: null,
+      permission: false,
     }),
 
   markExited: (id, code, reason) => {
@@ -233,6 +246,7 @@ export const useTerminals = create<TerminalsState>((set, get) => ({
       finished: false,
       blocked: false,
       blockedAsk: null,
+      permission: false,
       exit: { code, reason, at: Date.now() },
     });
     clearPersistedAlive(id);
@@ -250,6 +264,7 @@ export const useTerminals = create<TerminalsState>((set, get) => ({
       unread: true,
       blocked: false,
       blockedAsk: null,
+      permission: false,
     }),
 
   markBlocked: (id, ask) =>
@@ -259,7 +274,33 @@ export const useTerminals = create<TerminalsState>((set, get) => ({
       unread: true,
       blocked: true,
       blockedAsk: ask,
+      permission: false,
     }),
+
+  /**
+   * The CLI itself said it is waiting on a permission (`yard hook
+   * permission`): a block like the tail detector's, flagged so the card can
+   * say which kind. It stays until the CLI reports work again or writes.
+   */
+  markPermission: (id, ask) =>
+    get().patch(id, {
+      finished: true,
+      finishedAt: Date.now(),
+      unread: true,
+      blocked: true,
+      blockedAsk: ask,
+      permission: true,
+    }),
+
+  /** `yard hook prompt`: a turn began, so nothing is waiting any more. */
+  hookTurnStart: (id) =>
+    get().patch(id, { finished: false, blocked: false, blockedAsk: null, permission: false }),
+
+  /** `yard hook tool`: a tool ran, so the permission it waited on was granted. */
+  hookWorking: (id) => {
+    if (!get().byId[id]?.blocked) return;
+    get().patch(id, { blocked: false, blockedAsk: null, permission: false });
+  },
 
   /**
    * It started writing again — whatever it was asking for, it got.
@@ -272,7 +313,7 @@ export const useTerminals = create<TerminalsState>((set, get) => ({
    */
   clearBlocked: (id) => {
     if (!get().byId[id]?.blocked) return;
-    get().patch(id, { blocked: false, blockedAsk: null });
+    get().patch(id, { blocked: false, blockedAsk: null, permission: false });
   },
 
   markRead: (id) =>
@@ -281,6 +322,7 @@ export const useTerminals = create<TerminalsState>((set, get) => ({
       finished: false,
       blocked: false,
       blockedAsk: null,
+      permission: false,
     }),
 
   applyResources: (perPty, totals) =>

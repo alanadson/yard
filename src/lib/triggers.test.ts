@@ -31,6 +31,7 @@ function rt(patch: Partial<TerminalRuntime> = {}): TerminalRuntime {
     finishedAt: 0,
     blocked: false,
     blockedAsk: null,
+    permission: false,
     rssMb: 0,
     cpu: 0,
     ...patch,

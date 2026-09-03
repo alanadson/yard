@@ -25,7 +25,7 @@ import {
   type TerminalRow,
 } from "./ipc";
 import { uiLog } from "./log";
-import { closeTerminal, disposePty } from "./lifecycle";
+import { closeGroup, closeTerminal, disposePty } from "./lifecycle";
 import {
   applyScore,
   readScore,
@@ -50,8 +50,19 @@ import {
   type WaitUntil,
 } from "../stores/terminalsStore";
 import { bridgeCallerRect as callerRect, commitBridgeCanvas as commitCanvas } from "./bridgeCanvas";
+import { boardElements, CANVAS_CAMERA_EVENT, runCanvasCommand } from "./bridgeCanvasCmd";
+import { parseHookEvent } from "./hookEvents";
 import {
-  autoNodeRect,
+  findWorker,
+  formatWorkerInspect,
+  formatWorkerList,
+  formatWorkerReview,
+  keptFloor,
+  WORKER_USAGE,
+  workerRows,
+} from "./workerRuns";
+import { t } from "./i18n";
+import {
   clampRoutineInterval,
   EMPTY_CANVAS,
   NODE_DEFAULT_H,
@@ -280,9 +291,278 @@ export async function handleBridgeRequest(req: BridgeRequest): Promise<BridgeRes
       );
     case "trigger":
       return cmdTrigger(ctx, argv.slice(1), req);
+    case "canvas":
+      return cmdCanvas(ctx, argv.slice(1));
+    case "worker":
+      return cmdWorker(ctx, argv.slice(1), req);
+    case "hook":
+      return cmdHook(ctx, argv.slice(1), req);
     default:
       return err(`yard: comando desconhecido "${cmd}". Rode \`yard help\`.\n`);
   }
+}
+
+// --- hooks ------------------------------------------------------------------
+
+/**
+ * Workers as one object: a front opened for a task with one agent card
+ * inside it (`lib/workerRuns.ts` reads them; `fanOutTask` makes them). No
+ * cable is involved: a worker lives on another front, which no connection
+ * crosses, so the reach here is the project, the same as `yard floor`.
+ */
+async function cmdWorker(ctx: Ctx, args: string[], req: BridgeRequest): Promise<BridgeResponse> {
+  const sub = (args[0] ?? "list").toLowerCase();
+  const project = useProjects.getState().projectOfGroup(ctx.groupId);
+  if (!project) return err("yard: o grupo deste terminal não pertence a um projeto.\n");
+
+  // Read fresh every time: create, apply and discard all move the store.
+  const rowsNow = () => {
+    const s = useProjects.getState();
+    const rt = useTerminals.getState().byId;
+    return workerRows({
+      groups: s.groupsOf(project.id),
+      floorOf: (gid) => s.layoutOf(gid).floor,
+      terminalsOf: (gid) => s.terminalsOf(gid),
+      runtimeOf: (tid) => rt[tid],
+    });
+  };
+
+  if (sub === "list") {
+    const p = parseFlags(args.slice(1), { "--json": "bool" });
+    const rows = rowsNow();
+    if (p.bool.json) return ok(JSON.stringify(rows, null, 2) + "\n");
+    return ok(formatWorkerList(rows, project.name));
+  }
+
+  if (sub === "create") {
+    const p = parseFlags(args.slice(1), {
+      "--task": "string",
+      "--prompt": "string",
+      "--agent": "string",
+      "--copy-ground": "bool",
+      "--stdin": "stdin",
+    });
+    const name = p.positional[0];
+    const prompt = (p.fromStdin ? req.stdin : (p.string.task ?? p.string.prompt)) ?? "";
+    if (!name || !prompt.trim()) return { code: 2, output: WORKER_USAGE };
+
+    // Without `--agent` the worker is the same CLI as the caller, which is
+    // what makes `yard worker create "X" --task "…"` a one-line delegation.
+    const detected = await ipc.detectAgents(false);
+    const want = (p.string.agent ?? ctx.caller.agentId ?? "").toLowerCase();
+    const found = detected.find(
+      (a) => a.id.toLowerCase() === want || a.name.toLowerCase() === want,
+    );
+    const fan = found ? agentAsFanout(found) : null;
+    if (!fan) {
+      const available = detected.filter((a) => a.installed).map((a) => a.id);
+      return err(
+        want
+          ? `yard: agente "${want}" não está instalado. Disponíveis: ${available.join(", ")}.\n`
+          : `yard: diga o agente com --agent. Disponíveis: ${available.join(", ")}.\n`,
+      );
+    }
+    try {
+      const result = await fanOutTask({
+        projectId: project.id,
+        name,
+        prompt,
+        agents: [fan],
+        copyGround: !!p.bool["copy-ground"],
+        exactName: true,
+      });
+      const born = result.floors[0];
+      if (!born) {
+        return err(`yard: ${result.failures.join("; ") || "não consegui criar o worker"}\n`);
+      }
+      const floor = useProjects.getState().layoutOf(born.groupId).floor;
+      const stopped = result.notStarted.some((f) => f.groupId === born.groupId);
+      return ok(
+        `worker "${born.name}" criado [${stopped ? "stopped" : "starting"}]\n` +
+          `  agente: ${born.agentId}\n` +
+          `  branch: ${floor?.branch ?? "?"}\n` +
+          `  worktree: ${floor?.worktreePath ?? "?"}\n` +
+          `  cartão: ${born.terminalId}\n` +
+          `  grupo: ${born.groupId}\n` +
+          (result.failures.length ? `  avisos: ${result.failures.join("; ")}\n` : "") +
+          `Acompanhe com \`yard worker wait "${born.name}"\`; leia com \`yard worker review "${born.name}"\`.\n`,
+      );
+    } catch (e) {
+      return err(`yard: não consegui criar o worker: ${e}\n`);
+    }
+  }
+
+  // Everything below addresses one worker.
+  const query = args[1];
+  if (!query) return { code: 2, output: WORKER_USAGE };
+  const row = findWorker(rowsNow(), query);
+  if (!row) return err(`yard: não achei o worker "${query}". Veja \`yard worker list\`.\n`);
+  const group = useProjects.getState().groups.find((g) => g.id === row.groupId);
+  if (!group) return err(`yard: o grupo do worker "${row.name}" sumiu.\n`);
+
+  switch (sub) {
+    case "inspect":
+      return ok(formatWorkerInspect(row));
+
+    case "wait": {
+      const p = parseFlags(args.slice(2), { "--until": "string", "--timeout": "number" });
+      const until = (p.string.until ?? "stopped") as WaitUntil;
+      if (until !== "stopped" && until !== "done" && until !== "blocked") {
+        return err(`yard: --until aceita stopped, done ou blocked (recebi "${until}").\n`);
+      }
+      if (!row.terminalId) return err(`yard: o worker "${row.name}" não tem cartão para esperar.\n`);
+      const timeoutMs =
+        p.number.timeout && p.number.timeout > 0
+          ? p.number.timeout * 1_000
+          : Math.max(30_000, (req.timeoutMs ?? 600_000) - 15_000);
+      const reached = await waitForReach([row.terminalId], until, false, null, timeoutMs);
+      const after = findWorker(rowsNow(), row.groupId) ?? row;
+      if (!reached.has(row.terminalId)) {
+        return err(
+          `yard: "${row.name}" não chegou em "${until}" em ${Math.round(timeoutMs / 1_000)}s ` +
+            `(está [${after.state}]).\n`,
+        );
+      }
+      return ok(`"${row.name}" [${after.state}]${after.ask ? ` (pergunta: ${after.ask})` : ""}\n`);
+    }
+
+    case "send": {
+      const p = parseFlags(args.slice(2), { "--queue": "bool", "--stdin": "stdin" });
+      const text = p.fromStdin ? (req.stdin ?? "") : (p.positional[0] ?? "");
+      if (!text.trim()) return { code: 2, output: WORKER_USAGE };
+      if (!row.terminalId) return err(`yard: o worker "${row.name}" não tem cartão para receber.\n`);
+      if (p.bool.queue) {
+        const queued = useQueue
+          .getState()
+          .enqueue(row.terminalId, text, "bridge", ctx.nameOf.get(ctx.caller.id));
+        return queued.ok
+          ? ok(queuedLine(row.name, queued.position ?? 1))
+          : err(`yard: a fila de "${row.name}" está cheia.\n`);
+      }
+      const can = await waitUntilSendable(row.terminalId);
+      if (!can.ok) {
+        return err(`yard: "${row.name}" não pode receber agora (${can.reason}). Use --queue.\n`);
+      }
+      await injectPrompt(row.terminalId, text);
+      return ok(`enviado para "${row.name}" (${text.length} caracteres).\n`);
+    }
+
+    case "review": {
+      try {
+        return ok(formatWorkerReview(await previewFloor(project, group)));
+      } catch (e) {
+        return err(`yard: não consegui comparar: ${e}\n`);
+      }
+    }
+
+    case "apply": {
+      const p = parseFlags(args.slice(2), { "--keep-front": "bool", "--close-siblings": "bool" });
+      try {
+        const result = await landFloor(project, group);
+        if (!result.ok) {
+          return err(
+            `yard: ${result.message}` +
+              (result.conflictPaths.length ? `\n  conflitos: ${result.conflictPaths.join(", ")}` : "") +
+              "\n",
+          );
+        }
+        const closeWinner = !p.bool["keep-front"];
+        const closeSiblings = !!p.bool["close-siblings"];
+        const warnings =
+          closeWinner || closeSiblings
+            ? await settleAfterLand({ project, winner: group, closeWinner, closeSiblings })
+            : [];
+        return ok(`${result.message}` + (warnings.length ? ` (${warnings.join("; ")})` : "") + "\n");
+      } catch (e) {
+        return err(`yard: não consegui aplicar: ${e}\n`);
+      }
+    }
+
+    case "keep": {
+      const floor = useProjects.getState().layoutOf(row.groupId).floor;
+      if (floor) useProjects.getState().updateLayout(row.groupId, { floor: keptFloor(floor) });
+      return ok(`"${row.name}" agora é uma frente comum (branch ${row.branch ?? "?"}).\n`);
+    }
+
+    case "discard": {
+      if (row.groupId === ctx.groupId) {
+        return err(`yard: você está dentro de "${row.name}"; descarte a partir de outra frente.\n`);
+      }
+      try {
+        await closeGroup(row.groupId);
+        return ok(`worker "${row.name}" descartado.\n`);
+      } catch (e) {
+        return err(`yard: não consegui descartar: ${e}\n`);
+      }
+    }
+
+    case "stop": {
+      if (!row.terminalId) return ok(`"${row.name}" já não tem processo.\n`);
+      await disposePty(row.terminalId);
+      useProjects.getState().updateTerminal(row.terminalId, { alive: false });
+      return ok(`worker "${row.name}" parado; a frente fica.\n`);
+    }
+
+    default:
+      return { code: 2, output: WORKER_USAGE };
+  }
+}
+
+/**
+ * A CLI's own hook reporting on its turn (`lib/hookEvents.ts`). Not for
+ * agents to call by hand, and absent from the help: the caller is the CLI
+ * process itself, through the settings file or notify program Yard handed
+ * it at launch. Whatever it says lands on the runtime mirror of the caller.
+ */
+function cmdHook(ctx: Ctx, args: string[], req: BridgeRequest): BridgeResponse {
+  const event = parseHookEvent(args, req.stdin);
+  if (!event) return err("yard: hook desconhecido.\n");
+  const mirror = useTerminals.getState();
+  const id = ctx.caller.id;
+  switch (event.kind) {
+    case "turn-start":
+      mirror.hookTurnStart(id);
+      break;
+    case "turn-end":
+      mirror.markFinished(id);
+      break;
+    case "permission":
+      mirror.markPermission(id, event.ask || t("Pedindo permissão"));
+      break;
+    case "working":
+      mirror.hookWorking(id);
+      break;
+    case "session":
+      break;
+  }
+  return ok("");
+}
+
+// --- canvas -----------------------------------------------------------------
+
+/**
+ * The board's layout from the agent's side (`lib/bridgeCanvasCmd.ts` decides;
+ * this commits and moves the camera). A layout change goes through the same
+ * external commit as a note write, so the user's undo never swallows it.
+ */
+function cmdCanvas(ctx: Ctx, args: string[]): BridgeResponse {
+  const r = runCanvasCommand({
+    argv: args,
+    canvas: ctx.canvas,
+    elements: boardElements(ctx),
+    callerId: ctx.caller.id,
+  });
+  if (!r.ok) return err(r.output);
+  if (r.canvas) {
+    const next = r.canvas;
+    commitCanvas(ctx.groupId, () => next);
+  }
+  if (r.camera) {
+    window.dispatchEvent(
+      new CustomEvent(CANVAS_CAMERA_EVENT, { detail: { groupId: ctx.groupId, ...r.camera } }),
+    );
+  }
+  return ok(r.output);
 }
 
 // --- handoff ----------------------------------------------------------------
@@ -1075,7 +1355,7 @@ async function cmdRecruit(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
   if (!name) {
     return err(
       'uso: yard recruit "Nome" [--agent claude|codex|…] [--role "…"] [--dir PATH]\n' +
-        '     yard recruit "Nome" --floor "Frente"       (nasce no canvas da frente)\n' +
+        '     yard recruit "Nome" --floor "Frente"       (nasce numa aba da frente)\n' +
         '     yard recruit "Nome" --replace "Antigo" [--agent …]   (troca o processo do cartão)\n',
     );
   }
@@ -1142,7 +1422,6 @@ async function cmdRecruit(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
     program: born.program,
     args: born.args,
     cwd,
-    surface: normalizeSurface(ctx.caller.surface),
   });
 
   const rect = callerRect(ctx);
@@ -1303,15 +1582,12 @@ async function recruitOnFloor(
   }
 
   // The front's own root, not the caller's: that is the whole point of
-  // opening a card there.
+  // opening a CLI there.
   const cwd = plan.dir ?? s.rootOfGroup(group.id) ?? ctx.caller.cwd;
-  // A recruit is a card, and the lines below draw one: its rectangle goes on
-  // that front's canvas no matter what the front is showing right now. Taking
-  // the surface from the group instead was the same thing only while a new
-  // front happened to open on the canvas — it does not any more — and the two
-  // halves then disagreed: a tab in a pane, with a rectangle for it on a board
-  // where no card was ever drawn.
-  const nth = s.terminalsOn(group.id, "canvas").length;
+  // A front is a project's group, and a project's group has no canvas (the
+  // canvas is the boards, `lib/surface.ts`): the recruit is a tab of that
+  // front, and no rectangle is written for it anywhere. The role still goes
+  // into the group's canvas JSON, which is where every tab's role lives.
   const born = bornAs(plan.rowAgentId, plan.program, plan.cliArgs, cwd);
   const id = s.addTerminal({
     groupId: group.id,
@@ -1321,14 +1597,12 @@ async function recruitOnFloor(
     program: born.program,
     args: born.args,
     cwd,
-    surface: "canvas",
   });
 
-  commitCanvas(group.id, (c) => ({
-    ...c,
-    nodes: { ...c.nodes, [id]: autoNodeRect(nth) },
-    roles: plan.cardRole ? { ...(c.roles ?? {}), [id]: plan.cardRole } : c.roles,
-  }));
+  const role = plan.cardRole;
+  if (role) {
+    commitCanvas(group.id, (c) => ({ ...c, roles: { ...(c.roles ?? {}), [id]: role } }));
+  }
 
   try {
     await spawnCard(id, {
@@ -1345,8 +1619,8 @@ async function recruitOnFloor(
   }
   if (plan.launch.briefing) void deliverBriefing(id, plan.launch.briefing);
   return ok(
-    `Recrutado "${plan.name}" na frente "${group.name}" (cwd: ${cwd}). ` +
-      "Conexões não cruzam frentes — fale com ele pelo canvas daquela frente.\n",
+    `Recrutado "${plan.name}" numa aba da frente "${group.name}" (cwd: ${cwd}). ` +
+      "Conexões não cruzam frentes.\n",
   );
 }
 
@@ -2125,9 +2399,10 @@ async function cmdScore(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
     if (!name) return err('uso: yard score apply "Nome"\n');
     try {
       const score = await readScore(name);
-      const r = applyScore(score, ctx.groupId);
+      // The caller's own folder: a board has no project to take one from.
+      const r = applyScore(score, ctx.groupId, { cwd: ctx.caller.cwd });
       return ok(
-        `Partitura "${name}" aplicada neste grupo: ${r.terminals} terminal(is) ` +
+        `Partitura "${name}" aplicada neste quadro: ${r.terminals} terminal(is) ` +
           `e ${r.items} item(ns) de canvas. Os terminais nascem parados — ` +
           "o usuário inicia quando quiser.\n",
       );
@@ -2203,7 +2478,7 @@ const HELP = `yard — ponte entre agentes, notas e o canvas do Yard
   yard portal navigate|snapshot|click|fill|type|key|hover|scroll|resize|ua
   yard portal screenshot|evaluate|html|text|info|logs "Nome"
   yard recruit "Nome" [--agent id] [--role t] [--dir p]   novo agente conectado
-  yard recruit "Nome" --floor "Frente"         novo agente no canvas da frente
+  yard recruit "Nome" --floor "Frente"         novo agente numa aba da frente
   yard recruit "Nome" --replace "Antigo"       troca o processo do cartão
   yard dismiss "Nome"                          encerra e remove um conectado
   yard floor list                              chão e frentes do projeto
@@ -2213,6 +2488,10 @@ const HELP = `yard — ponte entre agentes, notas e o canvas do Yard
   yard floor create … --dry-run                mostra o plano e nao escreve nada
   yard floor create … --json                   o mesmo plano/resultado em JSON
   yard floor land "Nome" [--close] [--keep-losers]
+  yard worker create "Nome" --task "pedido" [--agent x] [--copy-ground]   uma frente, um agente, a tarefa
+  yard worker list [--json] | inspect "Nome" | wait "Nome" [--until …]
+  yard worker send "Nome" "texto" [--queue] | review "Nome"
+  yard worker apply "Nome" [--keep-front] [--close-siblings] | keep | discard | stop
                                                merge no chão; --close encerra a frente
   yard floor compare                           diffstat de cada frente vs o chão
   yard floor fanout "Nome" --prompt "…" [--agents a,b]
@@ -2233,6 +2512,15 @@ const HELP = `yard — ponte entre agentes, notas e o canvas do Yard
   yard flow stage                              briefing da etapa em execução NESTA CLI
   yard flow status ["Fluxo"] | flow cancel "Fluxo"
   yard score save "Nome" [--force] | score list | score apply "Nome"
+  yard canvas list [--json]                    tudo que está no canvas, com posição e tamanho
+  yard canvas move "Nome" X Y | --by DX DY     move um cartão ou item conectado a você
+  yard canvas resize "Nome" W H                redimensiona
+  yard canvas arrange [--layout grid|row|column] ["Nome"...]
+                                               organiza você e os conectados (ou os nomeados)
+  yard canvas align left|hcenter|right|top|vcenter|bottom "A" "B" [...]
+  yard canvas frame "Grupo" ["Membro"...]      moldura nomeada em volta deles
+  yard canvas pin|unpin "Nome"                 fixa/solta no lugar
+  yard canvas focus "Nome" | zoom fit|N%       move a câmera do usuário
   yard notify "mensagem"                       notificação nativa ao usuário
   yard debug                                   diagnóstico da ponte
 

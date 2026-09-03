@@ -90,6 +90,43 @@ function activity(paths: { path: string; kind: "created" | "modified" | "deleted
   };
 }
 
+describe("loadDoc (a document card's way in)", () => {
+  const onDisk = {
+    text: "hello",
+    modifiedAt: 5,
+    crlf: false,
+    bom: false,
+    encoding: "utf-8",
+    binary: false,
+    truncated: false,
+    lossy: false,
+    size: 5,
+    media: null,
+  };
+
+  it("reads the file into the store without opening a tab or the overlay", async () => {
+    fsReadText.mockResolvedValueOnce(onDisk);
+    const id = await useEditor.getState().loadDoc("D:\\other", "src/a.ts");
+    const s = useEditor.getState();
+    const d = s.docs.find((x) => x.id === id)!;
+    expect(d.text).toBe("hello");
+    expect(d.root).toBe("D:\\other");
+    expect(d.groupId).toBeNull();
+    expect(s.activeId).toBeNull();
+    expect(s.open).toBe(false);
+  });
+
+  it("a file already open is reused, buffer and all, not read twice", async () => {
+    fsReadText.mockResolvedValueOnce(onDisk);
+    const first = await useEditor.getState().loadDoc("C:\\proj", "a.ts");
+    useEditor.getState().setText(first, "edited");
+    const again = await useEditor.getState().loadDoc("C:\\proj", "a.ts");
+    expect(again).toBe(first);
+    expect(fsReadText).toHaveBeenCalledTimes(1);
+    expect(useEditor.getState().docs.find((x) => x.id === first)?.text).toBe("edited");
+  });
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   useEditor.setState({

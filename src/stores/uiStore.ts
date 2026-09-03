@@ -138,6 +138,22 @@ export interface Prefs {
   budgetDaily: number;
   /** Language servers in the file editor (completion, diagnostics, definitions). */
   lspEnabled: boolean;
+  /**
+   * On the canvas, a card born with no point of its own (Ctrl+T, a resumed
+   * session) is offered numbered spots around what is already there
+   * (`lib/placement.ts`). Off, it simply lands on the best of them.
+   */
+  placementHints: boolean;
+  /** Cards and items land on the board's grid while dragged or resized; Alt bypasses. */
+  snapGrid: boolean;
+  /** After the camera settles, the card filling most of the screen takes the keyboard. */
+  autoFocusLargest: boolean;
+  /**
+   * The CLIs that have hooks report their turns and permission prompts
+   * themselves (`lib/hookEvents.ts`), on top of the silence detector. Off
+   * leaves the command lines exactly as they were.
+   */
+  agentHooks: boolean;
   /** Sidebar widths, in px (draggable via the splitter). */
   sidebarWidth: number;
   changesWidth: number;
@@ -189,6 +205,12 @@ export const DEFAULT_PREFS: Prefs = {
   budgetDaily: 0,
   // On by default: inert until a server of the catalog is installed.
   lspEnabled: true,
+  placementHints: true,
+  // Both off: the magnet to the neighbours' edges is the default feel, and a
+  // focus that moves on its own is a choice, not a surprise.
+  snapGrid: false,
+  autoFocusLargest: false,
+  agentHooks: true,
   sidebarWidth: 262,
   changesWidth: 340,
   benchWidth: 312,

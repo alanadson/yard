@@ -1,24 +1,23 @@
 /**
- * Where the fronts control is allowed to float — the rule, out of the JSX.
+ * Where the fronts control is allowed to stand: the rule, out of the JSX.
  *
- * A front is a sibling copy of the repository with a canvas of its own, and
- * the canvas is where you move between them. Off the board the button had no
- * surface of its own to sit on: it floated over whatever the panes were
- * drawing, and the bottom-right corner of a pane already belongs to the code
- * editor's footer.
+ * A front is a project's group, and the control switches between the fronts
+ * of the project on screen. It used to float over a project's canvas; a
+ * project's group has no canvas any more (the canvas is the boards,
+ * `lib/surface.ts`), so the control stands in the status bar, beside the
+ * branch chip that reads the same project. A board has no project, hence no
+ * fronts, hence no control.
  */
 
 export interface Placement {
-  /** The group is showing its canvas, not the pane grid. */
-  canvas: boolean;
   /**
-   * A board is a group with no project — each of its cards carries its own
+   * A board is a group with no project: each of its cards carries its own
    * folder, so there is no worktree for the control to switch.
    */
   board: boolean;
 }
 
-/** The one place the button exists: the canvas of a project. */
+/** The one place the button exists: the status bar, under a project's group. */
 export function showsFloorsControl(where: Placement): boolean {
-  return where.canvas && !where.board;
+  return !where.board;
 }

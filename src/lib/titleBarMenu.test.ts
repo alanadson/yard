@@ -93,6 +93,23 @@ describe("titleBarMenu", () => {
    * Configurações now. What the menu still owes is the pair of windows that
    * have no other door of their own.
    */
+  /**
+   * The changes panel and the bench read the active project. On a board
+   * there is no project on screen, so the two entries leave the map with
+   * the doors they mirror: offering them would open a panel about a
+   * project nobody is looking at.
+   */
+  it("on a board the two project panels are off the map", () => {
+    const onBoard = titleBarMenu({ ...isOpen, board: true }, actions());
+    const ids = onBoard
+      .filter((e): e is Extract<MenuEntry, { id: string }> => "id" in e)
+      .map((e) => e.id);
+    expect(ids).not.toContain("changes");
+    expect(ids).not.toContain("bench");
+    expect(ids).toContain("sidebar");
+    expect(ids).toContain("notes");
+  });
+
   it("the shortcuts are here too — it is the application's menu", () => {
     const act = actions();
     const menu = titleBarMenu(isOpen, act);

@@ -11,6 +11,7 @@ import { useEffect } from "react";
 import { jumpToAttention } from "../lib/attention";
 import { toggleBroadcast } from "../lib/broadcastToggle";
 import { closeDocTab } from "../lib/editorActions";
+import { projectPanelsShown } from "../lib/layoutControls";
 import { confirmCloseTerminal } from "../lib/lifecycle";
 import { stepInBar, type TabRef } from "../lib/paneBar";
 import { paneTabs } from "../lib/paneTabs";
@@ -21,11 +22,7 @@ import { useChanges } from "../stores/changesStore";
 import { useEditor } from "../stores/editorStore";
 import { useCosts } from "../stores/costsStore";
 import { useLive } from "../stores/liveStore";
-import {
-  notesCenterVisible,
-  notesOverlayVisible,
-  useNotes,
-} from "../stores/notesStore";
+import { notesCenterVisible, useNotes } from "../stores/notesStore";
 import { reopenLastTab } from "../lib/reopenTab";
 import { useProjects } from "../stores/projectsStore";
 import { useUI } from "../stores/uiStore";
@@ -48,10 +45,9 @@ function fullscreenOpen(): boolean {
     // toggles keep working underneath it.
     useUI.getState().composerOpen ||
     useEditor.getState().open ||
-    // Only the notebook's *overlay* counts. In the central place it is a
-    // first-class view: the panel toggles, the palette and Ctrl+Shift+N
-    // itself must keep working beside (and over) it.
-    notesOverlayVisible() ||
+    // The notebook is not here: in the centre it is a first-class view, and
+    // the panel toggles, the palette and Ctrl+Shift+N itself must keep
+    // working beside (and over) it.
     useChanges.getState().viewer !== null ||
     useLive.getState().phase !== "closed"
   );
@@ -71,6 +67,15 @@ function inTextField(target: EventTarget | null): boolean {
   return !!el.closest(
     'input, textarea, select, [contenteditable="true"], .cm-editor',
   );
+}
+
+/**
+ * The changes panel and the bench read the active project, and a board has
+ * none: while a board is up their shortcuts are swallowed instead of opening
+ * a panel about a project nobody is looking at (`lib/layoutControls.ts`).
+ */
+function projectPanelsOnScreen(): boolean {
+  return projectPanelsShown({ canvasSide: useProjects.getState().canvasSide });
 }
 
 export function useKeybindings() {
@@ -133,7 +138,7 @@ export function useKeybindings() {
       // Ctrl+Shift+B — bench (tasks & prompts), the mirror of the left side
       if (e.shiftKey && e.code === "KeyB") {
         e.preventDefault();
-        useBench.getState().toggle();
+        if (projectPanelsOnScreen()) useBench.getState().toggle();
         return;
       }
 
@@ -149,7 +154,7 @@ export function useKeybindings() {
       // on the tab, it closes: this is a toggle.
       if (e.shiftKey && e.code === "KeyE") {
         e.preventDefault();
-        useBench.getState().openTab("files");
+        if (projectPanelsOnScreen()) useBench.getState().openTab("files");
         return;
       }
 
@@ -159,14 +164,14 @@ export function useKeybindings() {
       // new one.
       if (e.shiftKey && e.code === "KeyR") {
         e.preventDefault();
-        useBench.getState().openTab("scm");
+        if (projectPanelsOnScreen()) useBench.getState().openTab("scm");
         return;
       }
 
       // Ctrl+Shift+D — files/changes panel
       if (e.shiftKey && e.code === "KeyD") {
         e.preventDefault();
-        useChanges.getState().toggle();
+        if (projectPanelsOnScreen()) useChanges.getState().toggle();
         return;
       }
 
@@ -198,9 +203,7 @@ export function useKeybindings() {
       }
 
       // Ctrl+Shift+N — Notes, the markdown notebook, summoned in the
-      // place it lives in (overlay toggle, central toggle, or jump to its
-      // pane tab). As an overlay it is a full surface: `telaCheiaAberta()`
-      // above owns the keys then, and the view's own handler closes it.
+      // place it lives in (central toggle, or jump to its pane tab).
       if (e.shiftKey && e.code === "KeyN") {
         e.preventDefault();
         useNotes.getState().toggleView();

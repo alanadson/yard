@@ -11,23 +11,44 @@
  * It goes blank only when the spot is genuinely taken: the card off-screen,
  * or a full-screen surface up.
  */
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowLeft,
   ArrowRight,
+  Camera,
   Globe,
   Maximize2,
   MoreVertical,
   MousePointerClick,
+  Pencil,
+  Pin,
+  PinOff,
   RadioTower,
   RefreshCw,
   RotateCw,
+  Star,
   Volume2,
   VolumeX,
   X,
 } from "lucide-react";
 
+import { copyText } from "../../lib/clipboard";
+import { isBookmarked } from "../../lib/portalBookmarks";
+import { cardSizeForViewport, PORTAL_VIEWPORTS } from "../../lib/portals";
+import { suggestUrls } from "../../lib/urlHistory";
+import { usePortalWeb } from "../../stores/portalWebStore";
+
 import { ContextMenu, type MenuEntry } from "../ContextMenu";
+import { InlineRename } from "../ContextMenu/InlineRename";
 import { ResizeHandles } from "./ResizeHandles";
 import { isLocalUrl } from "../../lib/portalLive";
 import { useGrabMode } from "../../hooks/useGrabMode";
@@ -141,6 +162,11 @@ interface Props {
     phase: RectPhase,
   ) => void;
   onBounds: (id: string, place: PortalPlace) => void;
+  /** The in-place rename is open on this card (the board owns which one). */
+  renaming: boolean;
+  onRenameStart: (id: string) => void;
+  onRenameEnd: () => void;
+  onRename: (id: string, name: string) => void;
 }
 
 function PortalCardImpl({
@@ -168,6 +194,10 @@ function PortalCardImpl({
   onMenuOpen,
   onRect,
   onBounds,
+  renaming,
+  onRenameStart,
+  onRenameEnd,
+  onRename,
 }: Props) {
   const t = useT();
   const showToast = useUI((s) => s.showToast);
@@ -307,7 +337,27 @@ function PortalCardImpl({
     if (!next) return;
     setUrlDraft(next);
     onPatch(it.id, { url: next });
+    usePortalWeb.getState().visited(next);
     void ipc.portalNavigate(it.id, next).catch((e) => showToast(String(e), "error"));
+  };
+
+  // What every portal shares: the addresses typed before, offered under the
+  // bar, and the starred ones, in the menu.
+  const bookmarks = usePortalWeb((s) => s.bookmarks);
+  const history = usePortalWeb((s) => s.history);
+  const starred = isBookmarked(bookmarks, it.url);
+  const listId = useId();
+  const suggestions = useMemo(() => suggestUrls(history, urlDraft, 8), [history, urlDraft]);
+
+  /** The page as a PNG in the temp folder; the path lands on the clipboard. */
+  const screenshot = () => {
+    void ipc
+      .portalScreenshot(it.id)
+      .then(async (path) => {
+        await copyText(path);
+        showToast(t("Captura salva em {path} (caminho copiado)", { path }));
+      })
+      .catch((e) => showToast(t("Não consegui capturar: {e}", { e: String(e) }), "error"));
   };
 
   const onHeadDown = (e: React.PointerEvent) => {
@@ -318,7 +368,7 @@ function PortalCardImpl({
   };
 
   const startResize = (e: React.PointerEvent, kind: ResizeDir) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || it.pinned) return;
     e.stopPropagation();
     onSelect(it.id);
     sess.current = {
@@ -376,6 +426,40 @@ function PortalCardImpl({
       }),
       { kind: "sep" },
       {
+        id: "size",
+        label: t("Tamanho da página"),
+        icon: <Maximize2 size={13} />,
+        // The card is the viewport: a phone-sized card is a phone-sized page.
+        submenu: [
+          {
+            id: "free",
+            label: t("Livre (o tamanho do cartão)"),
+            checked: !it.viewport,
+            onSelect: () => onPatch(it.id, { viewport: undefined }),
+          },
+          ...PORTAL_VIEWPORTS.map((p) => ({
+            id: p.id,
+            label: `${t(p.label)} ${p.w}×${p.h}`,
+            checked: it.viewport?.w === p.w && it.viewport?.h === p.h,
+            onSelect: () =>
+              onPatch(it.id, { ...cardSizeForViewport(p), viewport: { w: p.w, h: p.h } }),
+          })),
+        ],
+      },
+      {
+        id: "bookmarks",
+        label: t("Favoritos"),
+        icon: <Star size={13} />,
+        submenu: bookmarks.length
+          ? bookmarks.map((b) => ({
+              id: `bm-${b.url}`,
+              label: b.name,
+              onSelect: () => go(b.url),
+            }))
+          : [{ id: "none", label: t("Nenhum favorito ainda"), disabled: true, onSelect: () => {} }],
+      },
+      { kind: "sep" },
+      {
         id: "mute",
         label: it.muted ? t("Ativar som") : t("Silenciar"),
         icon: it.muted ? <Volume2 size={13} /> : <VolumeX size={13} />,
@@ -385,6 +469,21 @@ function PortalCardImpl({
           void ipc.portalSetMuted(it.id, muted).catch(() => {});
         },
       },
+      {
+        id: "rename",
+        label: t("Renomear"),
+        icon: <Pencil size={13} />,
+        shortcut: "F2",
+        onSelect: () => onRenameStart(it.id),
+      },
+      {
+        id: "pin",
+        label: it.pinned ? t("Soltar (voltar a mover)") : t("Fixar no lugar"),
+        icon: it.pinned ? <PinOff size={13} /> : <Pin size={13} />,
+        // `undefined` and not `false`: the JSON never carries a `pinned: false`.
+        onSelect: () => onPatch(it.id, { pinned: it.pinned ? undefined : true }),
+      },
+      { kind: "sep" },
       {
         id: "del",
         label: t("Fechar portal"),
@@ -427,7 +526,26 @@ function PortalCardImpl({
 
       >
         <Globe size={12} />
-        <span className="cv-card-title">{portalName(it)}</span>
+        {renaming ? (
+          <InlineRename
+            value={portalName(it)}
+            onCommit={(next) => {
+              onRename(it.id, next);
+              onRenameEnd();
+            }}
+            onCancel={onRenameEnd}
+          />
+        ) : (
+          <span
+            className="cv-card-title"
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              onRenameStart(it.id);
+            }}
+          >
+            {portalName(it)}
+          </span>
+        )}
         <div className="cv-card-actions">
           <button
             className="icon-btn"
@@ -540,6 +658,25 @@ function PortalCardImpl({
         >
           <MousePointerClick size={12} />
         </button>
+        <button
+          className={`icon-btn ${starred ? "is-active" : ""}`}
+          data-tip={starred ? t("Tirar dos favoritos") : t("Favoritar esta página")}
+          aria-label={starred ? t("Tirar dos favoritos") : t("Favoritar esta página")}
+          aria-pressed={starred}
+          onClick={() =>
+            usePortalWeb.getState().toggleBookmark({ url: it.url, name: portalName(it) })
+          }
+        >
+          <Star size={12} />
+        </button>
+        <button
+          className="icon-btn"
+          data-tip={t("Capturar a tela do portal")}
+          aria-label={t("Capturar a tela do portal")}
+          onClick={screenshot}
+        >
+          <Camera size={12} />
+        </button>
         <form
           className="cv-portal-url"
           onSubmit={(e) => {
@@ -551,10 +688,17 @@ function PortalCardImpl({
             value={urlDraft}
             spellCheck={false}
             aria-label={t("Endereço do portal")}
+            list={listId}
             onChange={(e) => setUrlDraft(e.target.value)}
             onFocus={() => onSelect(it.id)}
             onPointerDown={(e) => e.stopPropagation()}
           />
+          {/* Where the portals have been, as the browser's own suggestion list. */}
+          <datalist id={listId}>
+            {suggestions.map((v) => (
+              <option key={v.url} value={v.url} />
+            ))}
+          </datalist>
         </form>
       </div>
 
@@ -590,12 +734,14 @@ function PortalCardImpl({
         )}
       </div>
 
-      <ResizeHandles
-        outside
-        onDown={startResize}
-        onMove={onResizeMove}
-        onUp={onResizeUp}
-      />
+      {!it.pinned && (
+        <ResizeHandles
+          outside
+          onDown={startResize}
+          onMove={onResizeMove}
+          onUp={onResizeUp}
+        />
+      )}
 
       {menu && (
         <ContextMenu anchor={menu} items={menuItems()} onClose={closeMenu} />

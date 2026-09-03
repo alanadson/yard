@@ -20,7 +20,7 @@ import { ipc, on } from "../lib/ipc";
 import { shouldNotify } from "../lib/notifyAgent";
 import { useChanges } from "../stores/changesStore";
 import { useEditor } from "../stores/editorStore";
-import { notesCenterVisible, notesOverlayVisible } from "../stores/notesStore";
+import { notesCenterVisible } from "../stores/notesStore";
 import { pushOut } from "../lib/notifyOut";
 import { useProjects } from "../stores/projectsStore";
 import { readTail, useTerminals } from "../stores/terminalsStore";
@@ -44,7 +44,7 @@ function isInFront(id: string): boolean {
   // Any surface covering the workspace takes the terminal out of view.
   if (ui.modal || ui.composerOpen || ui.paletteOpen) return false;
   if (useEditor.getState().open || useChanges.getState().viewer) return false;
-  if (notesOverlayVisible() || notesCenterVisible()) return false;
+  if (notesCenterVisible()) return false;
 
   const s = useProjects.getState();
   const row = s.terminal(id);

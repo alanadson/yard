@@ -194,3 +194,72 @@ describe("extractBoards", () => {
     expect(out.groups.find((g) => g.projectId === null)?.name).toBe("Órfão");
   });
 });
+
+/**
+ * The canvas is the boards and nothing else (`lib/surface.ts`). What the
+ * migration owes on top of the extraction above is that no project's group
+ * is left claiming the canvas, and no card is left in a group that can no
+ * longer draw it.
+ */
+describe("extractBoards, with the canvas only on boards", () => {
+  it("a canvas with only CLIs on it, nothing drawn, still becomes a board: a card must not vanish", () => {
+    const out = extractBoards(
+      [project("p1", "yard")],
+      [group("g1", "p1", "Grupo 1", { surface: "canvas" })],
+      [terminal("card", "g1", "canvas"), terminal("tab", "g1", "grid")],
+    );
+
+    expect(out.changed).toBe(true);
+    const board = out.groups.find((g) => g.projectId === null)!;
+    expect(out.terminals.find((t) => t.id === "card")?.groupId).toBe(board.id);
+    expect(out.terminals.find((t) => t.id === "tab")?.groupId).toBe("g1");
+  });
+
+  it("a project's group told to show the canvas, with nothing on it, comes back on its panes", () => {
+    const out = extractBoards(
+      [project("p1", "yard")],
+      [group("g1", "p1", "Grupo 1", { mode: "spotlight", surface: "canvas" })],
+      [terminal("tab", "g1", "grid")],
+    );
+
+    expect(out.changed).toBe(true);
+    expect(out.groups.filter((g) => g.projectId === null)).toEqual([]);
+    const kept = JSON.parse(out.groups.find((g) => g.id === "g1")!.layoutJson);
+    expect(kept.surface).toBe("grid");
+    expect(kept.mode).toBe("spotlight");
+  });
+
+  it("a workspace already in shape is left exactly as it is, with nothing to save", () => {
+    const groups = [
+      group("g1", "p1", "Grupo 1", { mode: "auto", surface: "grid" }),
+      group("board-g1", null, "yard · Grupo 1", { surface: "canvas", canvas: drawnOn }),
+    ];
+    const terminals = [terminal("tab", "g1", "grid"), terminal("card", "board-g1", "canvas")];
+
+    const out = extractBoards([project("p1", "yard")], groups, terminals);
+
+    expect(out.changed).toBe(false);
+    expect(out.groups).toBe(groups);
+    expect(out.terminals).toBe(terminals);
+  });
+
+  /**
+   * A board's id is derived from the group it came from, so a group that
+   * somehow carries a canvas again after its board came out would mint a
+   * twin with the same id, and two rows with one id is a workspace the
+   * database refuses. The group is left alone instead.
+   */
+  it("a group whose board already came out is left alone, so a second pass never mints a twin", () => {
+    const out = extractBoards(
+      [project("p1", "yard")],
+      [
+        group("g1", "p1", "Grupo 1", { surface: "grid", canvas: drawnOn }),
+        group("board-g1", null, "yard · Grupo 1", { surface: "canvas", canvas: drawnOn }),
+      ],
+      [terminal("card", "g1", "canvas")],
+    );
+
+    expect(out.groups.filter((g) => g.id === "board-g1")).toHaveLength(1);
+    expect(out.terminals.find((t) => t.id === "card")?.groupId).toBe("g1");
+  });
+});

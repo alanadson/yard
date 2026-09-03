@@ -222,7 +222,7 @@ to leave the dark. `lib/contrast.ts` carries the measure and the
 - **Interaction veils** (`--bg-hover` white 6.5%, `--bg-active` white 11%): the universal hover/pressed of the neutral chrome.
 - **Hairlines** (`--border-soft` 5%, `--border` 9%, `--border-strong` 18%): borders are always translucent white, as in a dark glass theme — never opaque grey. One point each above what they were: a white veil buys less separation as the surface under it climbs.
 - **The three channels** (`--veil` white, `--well` black, `--shade` black): everything neutral in the app is one of three gestures — a surface *lifted* off its ground, a surface *sunk* into it, or a shadow a surface *throws*. Each is written as `rgb(var(--veil) / 9%)`, channel in the token and alpha at the call site, so the appearance re-values three lines instead of six hundred declarations. A veil on a **chromatic** fill (the inner light of the blue button, the glow of a status dot, a note in the colour its author chose) is not neutral and stays literal white in both appearances.
-- **Floating surfaces** (`--material-panel` the bench 60%, `--material-doc` the editor and diff viewer 94%, `--material-notes` the notebook 86%, `--material-tip` balloons 96%, `--material-sticky` a header content slides under 96%, `--slab` the body of a board node at 92% and of the empty pane at 55%): each of these was a literal in one component sheet before it was a token.
+- **Floating surfaces** (`--material-panel` the bench 60%, `--material-doc` the editor and diff viewer 94%, `--material-tip` balloons 96%, `--material-sticky` a header content slides under 96%, `--slab` the body of a board node at 92% and of the empty pane at 55%): each of these was a literal in one component sheet before it was a token.
 - **Content wells** (`--well-code` and `--well-stage`, both #000000): where the app stops being chrome and shows code, a terminal or a picture. In the dark they *are* the ground — black has no step below it — so the sink that used to separate a well from its floor is gone and the frame pays for it instead: the pane draws a border and a hairline around whatever holds one. They stay two tokens because on paper they differ (#fafafc and #eef0f5).
 - **Text** (`--text` #e2e2e2, `--text-dim` #a6a6a6, `--text-bright` #f7f7f7): all ≥ 4.5:1 over every surface of the ladder — and the one that decides it is the highest, the tooltip — at L\* 24 when the ladder was opened, where the dim ink measured 3.97:1 and had to move up with it, and at L\* 19 now that the ladder has dropped, where it reads 5.58:1. `--text-bright` marks what is active/focused; `--text-dim` is the resting default for icons and metadata.
 
@@ -539,13 +539,21 @@ In a narrow window the agent names go first (≤1100px) and the meters after
 
 The primitive that replaces the native `title` (the Windows white box = foreign
 material): a dark balloon rgb(46 46 52 / 96%), radius 8, hairline + shadow,
-11px caption, appearing after a 500ms pause (transition-delay) below the
-control. Variants by attribute: `data-tip-at="left|right"` anchors to the
-control's side near the window edges; `data-tip-side="top"` goes up (controls
-in the footer); `data-tip-side="right"` comes out sideways (the canvas's
-vertical palette); `data-tip-wrap` wraps long texts at max. 240px. `aria-label`
-is still what speaks to the screen reader — `data-tip` is only the visual.
-Replaced elements (`<select>`) have no `::after`: the balloon goes on a wrapper.
+11px caption, appearing after a 500ms pause next to the control. It is **one
+element**, `.tip-layer`, fixed in `<body>` and placed by `lib/tipLayer.ts`
+from the control's attributes (`lib/tip.ts`, tested): no scrollport clips it
+and no panel covers it; both happened while it was a `::after` of the control
+(the sidebar tree cut "Abrir frente…" at its edge; the bench covered the title
+bar's doors). Variants by attribute: `data-tip-at="left|right"` lines the
+balloon up with the control's side; `data-tip-side="top|right|left"` picks the
+side (footer controls go up, the canvas's vertical palette goes sideways);
+`data-tip-wrap` narrows long texts to 240px (the default cap is 420px, and a
+newline in the text is a line break). Whatever is asked, the balloon flips to
+the opposite side when it would leave the window and slides along the edge to
+stay inside. Open, it publishes its rectangle to `occludersStore` like a menu
+does, so a portal's native page under it cuts a hole instead of painting over
+it (the browser pane's toolbar hints). `aria-label` is still what speaks to the screen reader;
+`data-tip` is only the visual.
 
 ### Buttons
 
@@ -586,10 +594,11 @@ glance, for something learnt once, so it stays in the balloon, where every
 other door in the app keeps it. Three of them wear the
 full row, at the top, above the tree, because each is a destination:
 **Busca** (`Ctrl+P`), **Canvas** and **Anotações** (`Ctrl+Shift+N`). Canvas is
-the group's other surface, and it used to be a button in the title bar next to
-the pane switch, where it read as a fourth shape of the grid it is not; as a
-row it is a toggle, so the way there is also the way back, and the pane switch
-leaves the bar while the board is up (`lib/layoutControls.ts`).
+the boards, and it used to be a button in the title bar next to the pane
+switch, where it read as a fourth shape of the grid it is not; as a row it is
+a toggle, so the way there (the board visited last) is also the way back, and
+the pane switch leaves the bar while the board is up, together with the two
+project doors on the right (`lib/layoutControls.ts`).
 **Configurações** is the same door in its smallest form: an icon alone
 (`.hud-settings`, 28px) in the corner of the resource footer, on the line of
 the numbers, costing the bar no extra height, because it is opened once a week
@@ -609,9 +618,9 @@ the slot the user drags is all panel (which is why `BENCH_MIN` went back from
 Inside it only two shapes apply: a **capsule** for everything that gets pressed
 and a **grouped card** (radius 18, white 6%, hairline) for everything that is a
 list. The card's rows are divided by hairline, not by space — and the first and
-the last carry the card's radius, because the panel cannot use
-`overflow: hidden` (it would eat the `[data-tip]` balloons, which are the
-control's own `::after`).
+the last carry the card's radius themselves, since the list has no
+`overflow: hidden` of its own (it used to be forbidden by the `[data-tip]`
+balloons, then a `::after` of each control; the balloon lives in `<body>` now).
 
 The header names the **open tab**, not the panel ("Tarefas" (Tasks), not
 "Bancada" (Bench)), with a context line below — the plural and urgency rule

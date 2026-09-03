@@ -3,10 +3,10 @@
  *
  * A floor is a sibling group of the ground with its own git worktree
  * (`.yard/floors/<slug>`) and an isolated cwd. It opens on its panes, like
- * any other group — the canvas is its other surface, entered on purpose and
- * never by creating a front (`lib/groundClone.ts`). The button
- * sits in the bottom-right corner of the workspace (next to the zoom control
- * in canvas mode); the overview lists ground + floors with a branch badge and
+ * any other project's group, and it has no canvas: the canvas is the boards
+ * (`lib/surface.ts`, `lib/groundClone.ts`). The button stands in the status
+ * bar, beside the branch chip (`place.ts`); the overview lists ground +
+ * floors with a branch badge and
  * allows landing (merge onto the ground), comparing floors, fan-out of one
  * prompt across N agents, unloading (suspending the PTYs) or closing.
  *
@@ -34,13 +34,21 @@ import { floorRowMenu } from "../../lib/floorMenu";
 import { liveIdsOf } from "../../lib/floorClose";
 import { groundBranchOf } from "../../lib/destination";
 import { GROUND_FLOOR, floorHookEnv, groupLabel, isIsolatedFloor, type FloorMeta } from "../../lib/floors";
+import { frontColor } from "../../lib/floorColor";
 import { publishBadge, publishStateOf } from "../../lib/floorSync";
 import { useWorktrees } from "../../stores/worktreesStore";
-import { ipc, type GroupRow, type ProjectRow, type ScmBranch } from "../../lib/ipc";
+import {
+  ipc,
+  type GroupRow,
+  type ProjectRow,
+  type PullRequest,
+  type ScmBranch,
+} from "../../lib/ipc";
 import { parseLayout, useProjects } from "../../stores/projectsStore";
 import { isLive, useTerminals } from "../../stores/terminalsStore";
 import { useUI } from "../../stores/uiStore";
 import { runFloorHooks } from "../../lib/floorHooks";
+import { useOccluder } from "../../hooks/useOccluder";
 import { useT } from "../../hooks/useT";
 
 function hookEnvFor(
@@ -74,6 +82,9 @@ export function FloorsControl({ groupId }: { groupId: string }) {
   const rootRef = useRef<HTMLDivElement>(null);
   /** Where focus goes back to when the popover closes with Esc. */
   const buttonRef = useRef<HTMLButtonElement>(null);
+  // The button floats over the board like the zoom control: a portal card
+  // under it would paint the site over the button and take its clicks.
+  useOccluder("floors-ctl", rootRef);
 
   const project = useProjects((s) => s.projectOfGroup(groupId));
   const floorCount = useProjects((s) =>
@@ -134,6 +145,11 @@ function FloorsPopover({
   onClose: () => void;
 }) {
   const t = useT();
+  // Absolutely positioned above the button, so the control's rectangle does
+  // not include it: the list publishes its own, or a portal card underneath
+  // shows the site where the fronts should be.
+  const popRef = useRef<HTMLDivElement>(null);
+  useOccluder("floors-pop", popRef);
   const groups = useProjects((s) => s.groups);
   const terminals = useProjects((s) => s.terminals);
   const runtimes = useTerminals((s) => s.byId);
@@ -175,6 +191,65 @@ function FloorsPopover({
   const ofProject = groups
     .filter((g) => g.projectId === project.id)
     .sort((a, b) => a.sort - b.sort);
+
+  /**
+   * The pull request of each isolated front, through `gh` (`forge.rs`): the
+   * outside half of a front's life, on the row where its inside half is.
+   * Silent when `gh` is missing or the branch has none.
+   */
+  const [prs, setPrs] = useState<Record<string, PullRequest | null>>({});
+  useEffect(() => {
+    let alive = true;
+    const branches = ofProject
+      .map((g) => parseLayout(g.layoutJson).floor)
+      .filter((f): f is FloorMeta => !!f && f.kind === "isolated" && !!f.branch)
+      .map((f) => f.branch!);
+    if (branches.length === 0) return;
+    void Promise.all(
+      branches.map((b) =>
+        ipc
+          .forgePr(project.path, b)
+          .then((pr) => [b, pr] as const)
+          .catch(() => [b, null] as const),
+      ),
+    ).then((pairs) => {
+      if (alive) setPrs(Object.fromEntries(pairs));
+    });
+    return () => {
+      alive = false;
+    };
+    // The branch list only changes with the group list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, project.path]);
+
+  /** The floor's cards on a board wear this colour (`lib/floorColor.ts`). */
+  const setFloorColor = (g: GroupRow, floor: FloorMeta, color: string | null) => {
+    useProjects
+      .getState()
+      .updateLayout(g.id, { floor: color ? { ...floor, color } : { ...floor, color: undefined } });
+  };
+
+  /**
+   * Merges the ground's branch into the front's worktree: the half of the
+   * landing that costs nothing to do early, and everything to do late.
+   */
+  const updateFromGround = async (g: GroupRow, floor: FloorMeta) => {
+    if (!floor.worktreePath || !groundBranch) return;
+    try {
+      const r = await ipc.scmMerge(floor.worktreePath, groundBranch, false);
+      showToast(
+        r.conflicted
+          ? t('Conflito ao trazer {branch} para "{name}": resolva no Controle desta frente.', {
+              branch: groundBranch,
+              name: g.name,
+            })
+          : t('"{name}" atualizada a partir de {branch}.', { name: g.name, branch: groundBranch }),
+        r.conflicted ? "error" : "info",
+      );
+    } catch (e) {
+      showToast(t("Não consegui atualizar a frente: {e}", { e: String(e) }), "error");
+    }
+  };
 
   /**
    * Which row is mid-operation. "Abrir frente" already had this; the three row
@@ -238,7 +313,7 @@ function FloorsPopover({
     // `role="group"`, not `role="menu"`: the rows carry their own action
     // buttons, and a menu whose items contain buttons is a broken menu — the
     // shape here is a list of choices, which is what this says.
-    <div className="floors-pop" role="group" aria-label={t("Frentes do projeto")}>
+    <div ref={popRef} className="floors-pop" role="group" aria-label={t("Frentes do projeto")}>
       <div className="floors-pop-head">
         <span>{t("Frentes — {name}", { name: project.name })}</span>
       </div>
@@ -282,6 +357,8 @@ function FloorsPopover({
                             floor,
                             liveCount: aliveCount,
                             busy: occupied !== null,
+                            groundBranch: groundBranch ?? undefined,
+                            color: floor?.color,
                           },
                           {
                             goTo: () => {
@@ -291,6 +368,11 @@ function FloorsPopover({
                             land: () => {
                               onClose();
                               openModal("land-floor", { project, group: g });
+                            },
+                            updateFromGround: () =>
+                              void withLock(g, () => (floor ? updateFromGround(g, floor) : Promise.resolve()))(),
+                            setColor: (c) => {
+                              if (floor) setFloorColor(g, floor, c);
                             },
                             runHooks: () => void withLock(g, () => runHooks(g))(),
                             unload: () => void withLock(g, () => unload(g))(),
@@ -319,6 +401,15 @@ function FloorsPopover({
                         onClose();
                       }}
                     >
+                      {floor && (
+                        // The colour its cards wear on a board: the same one
+                        // the chip on the card paints with.
+                        <span
+                          className="floors-color"
+                          style={{ background: frontColor({ id: g.id, color: floor.color }) }}
+                          aria-hidden="true"
+                        />
+                      )}
                       <span className="floors-name" data-tip={label}>
                         {label}
                       </span>
@@ -327,6 +418,26 @@ function FloorsPopover({
                         <span className="floors-badge floors-badge--branch" data-tip-wrap="" data-tip={floor.worktreePath}>
                           <GitBranch size={10} aria-hidden="true" />
                           {floor.branch}
+                        </span>
+                      )}
+                      {floor?.kind === "isolated" && floor.branch && prs[floor.branch] && (
+                        <span
+                          className={`floors-badge floors-badge--pr is-${prs[floor.branch]!.state.toLowerCase()}`}
+                          data-tip-wrap=""
+                          data-tip={t("PR #{n}: {title} · clique para copiar o link", {
+                            n: prs[floor.branch]!.number,
+                            title: prs[floor.branch]!.title,
+                          })}
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void copyText(prs[floor.branch!]!.url).then((ok) =>
+                              showToast(ok ? t("Link do PR copiado.") : t("Não consegui copiar."), ok ? "info" : "error"),
+                            );
+                          }}
+                        >
+                          {prs[floor.branch]!.draft ? t("rascunho") : ""}#{prs[floor.branch]!.number}
                         </span>
                       )}
                       {floor?.kind === "plain" && (

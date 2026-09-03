@@ -92,8 +92,8 @@ export default {
 
   // stores/notesStore
   "Abra um grupo antes de pôr as anotações numa aba.": "Open a group before docking the notes in a tab.",
-  "Este grupo está mostrando o canvas, que não tem barra de abas — volte para os painéis ou use a área central.":
-    "This group is showing the canvas, which has no tab bar — go back to the panes or use the central area.",
+  "Um quadro não tem barra de abas: use a área central, ou encaixe o caderno num painel de um grupo.":
+    "A board has no tab bar: use the central area, or dock the notebook in a group's pane.",
   "Novo caderno": "New notebook",
 
   // stores/projectsStore

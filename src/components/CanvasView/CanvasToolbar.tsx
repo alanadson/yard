@@ -151,6 +151,8 @@ interface Props {
   onColor: (c: string) => void;
   size: StrokeSize;
   onSize: (s: StrokeSize) => void;
+  /** The key a tool answers to, as the tooltip prints it (`""` = none). */
+  keyFor: (tool: Tool) => string;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -164,11 +166,17 @@ export function CanvasToolbar({
   onColor,
   size,
   onSize,
+  keyFor,
   canUndo,
   canRedo,
   onUndo,
   onRedo,
 }: Props) {
+  /** `(V)` after a label, or nothing when the tool has no key any more. */
+  const keyTag = (id: Tool) => {
+    const k = keyFor(id);
+    return k ? ` (${k})` : "";
+  };
   const t = useT();
   const [open, setOpen] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -252,7 +260,7 @@ export function CanvasToolbar({
               className={`icon-btn cv-tool-btn ${isHere ? "is-active" : ""}`}
               data-tip-side="right"
               data-tip-wrap={face.hint ? "" : undefined}
-              data-tip={`${many ? `${t(family.label)} — ` : ""}${t(face.label)} (${face.key})${
+              data-tip={`${many ? `${t(family.label)} — ` : ""}${t(face.label)}${keyTag(face.id)}${
                 face.hint ? `\n${t(face.hint)}` : ""
               }`}
               aria-label={t(family.label)}
@@ -272,7 +280,7 @@ export function CanvasToolbar({
                     key={td.id}
                     className={`icon-btn ${tool === td.id ? "is-active" : ""}`}
                     data-tip-wrap={td.hint ? "" : undefined}
-                    data-tip={`${t(td.label)} (${td.key})${td.hint ? `\n${t(td.hint)}` : ""}`}
+                    data-tip={`${t(td.label)}${keyTag(td.id)}${td.hint ? `\n${t(td.hint)}` : ""}`}
                     aria-label={t(td.label)}
                     aria-pressed={tool === td.id}
                     onClick={() => pickTool(td.id)}

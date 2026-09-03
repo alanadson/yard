@@ -19,6 +19,8 @@
 import { memo, useCallback, useEffect, useState } from "react";
 import { FileQuestion, PenSquare } from "lucide-react";
 
+import { InlineRename } from "../ContextMenu/InlineRename";
+
 import { ResizeHandles } from "./ResizeHandles";
 import { FileGlyph } from "../FileGlyph";
 import { ipc } from "../../lib/ipc";
@@ -45,6 +47,11 @@ interface Props {
   onResizeStart: (e: React.PointerEvent, it: MediaItem, dir: ResizeDir) => void;
   onResizeMove: (e: React.PointerEvent) => void;
   onResizeEnd: (e: React.PointerEvent) => void;
+  /** The in-place rename is open on this card (the board owns which one). */
+  renaming: boolean;
+  onRenameStart: (id: string) => void;
+  onRenameEnd: () => void;
+  onRename: (id: string, name: string) => void;
 }
 
 interface FileFacts {
@@ -72,6 +79,10 @@ function MediaCardImpl({
   onResizeStart,
   onResizeMove,
   onResizeEnd,
+  renaming,
+  onRenameStart,
+  onRenameEnd,
+  onRename,
 }: Props) {
   const t = useT();
   const root = it.root || projectRoot;
@@ -140,9 +151,27 @@ function MediaCardImpl({
         onPointerUp={onItemUp}
       >
         <FileGlyph name={name} size={13} />
-        <span className="cv-media-name" title={it.path}>
-          {name}
-        </span>
+        {renaming ? (
+          <InlineRename
+            value={name}
+            onCommit={(next) => {
+              onRename(it.id, next);
+              onRenameEnd();
+            }}
+            onCancel={onRenameEnd}
+          />
+        ) : (
+          <span
+            className="cv-media-name"
+            title={it.path}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              onRenameStart(it.id);
+            }}
+          >
+            {name}
+          </span>
+        )}
         {facts && !facts.error && facts.size > 0 && (
           <span className="cv-media-size">{fileSize(facts.size)}</span>
         )}
@@ -230,11 +259,13 @@ function MediaCardImpl({
         )}
       </div>
 
-      <ResizeHandles
-        onDown={(e, dir) => onResizeStart(e, it, dir)}
-        onMove={onResizeMove}
-        onUp={onResizeEnd}
-      />
+      {!it.pinned && (
+        <ResizeHandles
+          onDown={(e, dir) => onResizeStart(e, it, dir)}
+          onMove={onResizeMove}
+          onUp={onResizeEnd}
+        />
+      )}
     </div>
   );
 }

@@ -26,12 +26,16 @@ import {
   type AgentDefaults,
   type Launch,
 } from "../lib/agentDefaults";
+import { ipc } from "../lib/ipc";
 import { persistJsonPref, readPrefs, type PrefsSnapshot } from "../lib/prefs";
+import { useUI } from "./uiStore";
 
 export const KV_AGENT_DEFAULTS = "agents.defaults";
 
 interface AgentDefaultsState {
   defaults: AgentDefaults;
+  /** `<data>\bin\claude-hooks.json`, once the backend answered; `null` before. */
+  hooksFile: string | null;
   load: (prefs?: PrefsSnapshot) => Promise<void>;
   /** Changes part of one agent's config. */
   setConfig: (id: string, patch: Partial<AgentConfig>) => void;
@@ -50,6 +54,7 @@ interface AgentDefaultsState {
 
 export const useAgentDefaults = create<AgentDefaultsState>((set, get) => ({
   defaults: {},
+  hooksFile: null,
 
   load: async (prefs) => {
     try {
@@ -57,6 +62,14 @@ export const useAgentDefaults = create<AgentDefaultsState>((set, get) => ({
       set({ defaults: parseAgentDefaults(raw[KV_AGENT_DEFAULTS]) });
     } catch (e) {
       console.warn("[yard] não consegui ler os padrões dos agentes", e);
+    }
+    // Where Claude Code's hooks file is: asked once, kept for every launch.
+    // Failing (a test, an older backend) only means no hooks on the line.
+    try {
+      const path = await ipc.bridgeHooksFile();
+      if (path) set({ hooksFile: path });
+    } catch {
+      set({ hooksFile: null });
     }
   },
 
@@ -72,7 +85,11 @@ export const useAgentDefaults = create<AgentDefaultsState>((set, get) => ({
 
   argvOf: (id) => defaultArgvOf(get().defaults, id),
   envOf: (id) => cacheEnvOf(get().defaults, id),
-  launchOf: (id, launch) => launchFor(get().defaults, id, launch),
+  launchOf: (id, launch) =>
+    launchFor(get().defaults, id, launch, {
+      enabled: useUI.getState().prefs.agentHooks,
+      claudeSettings: get().hooksFile,
+    }),
 }));
 
 /** Read-only helper for the callers that only need one field. */

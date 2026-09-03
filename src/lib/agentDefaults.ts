@@ -452,10 +452,48 @@ export function sshLaunch(input: {
  * with `--dangerously-skip-permissions` sitting in Settings, and nothing on
  * screen connected the two. A caller cannot forget a step that does not exist.
  */
+/**
+ * Whether the CLIs that have hooks are asked to report through them
+ * (`lib/hookEvents.ts`), and where the settings file Claude Code reads is.
+ */
+export interface HooksLaunch {
+  enabled: boolean;
+  /** `<data>\bin\claude-hooks.json`, or `null` before the backend said. */
+  claudeSettings: string | null;
+}
+
+/** The notify program Codex is told about: the shim, told which CLI speaks. */
+export const CODEX_NOTIFY_ARG = 'notify=["yard","hook","codex"]';
+
+/**
+ * The hook arguments of one CLI, or none: only what the CLI documents
+ * (Claude Code's `--settings`, Codex's `-c notify=…`), only on this
+ * machine (a Windows path means nothing inside WSL or over SSH), and never
+ * doubled when the user already spelled the flag on the fixed line.
+ */
+function hookArgv(
+  agentId: string | null | undefined,
+  args: readonly string[],
+  where: string,
+  hooks: HooksLaunch | undefined,
+): string[] {
+  if (!hooks?.enabled || where === "wsl" || where === "ssh") return [];
+  if (agentId === "claude") {
+    if (!hooks.claudeSettings || args.includes("--settings")) return [];
+    return ["--settings", hooks.claudeSettings];
+  }
+  if (agentId === "codex") {
+    if (args.some((a) => a.startsWith("notify="))) return [];
+    return ["-c", CODEX_NOTIFY_ARG];
+  }
+  return [];
+}
+
 export function launchFor(
   all: AgentDefaults,
   agentId: string | null | undefined,
   launch: Launch & { cwd: string },
+  hooks?: HooksLaunch,
 ): Launch {
   const config = configOf(all, agentId);
   // The fixed line first, then the cache flags. Both join here, at the single
@@ -466,6 +504,7 @@ export function launchFor(
     if (token.startsWith("-") && args.includes(token)) break;
     args.push(token);
   }
+  args.push(...hookArgv(agentId, args, config.where, hooks));
   if (config.where === "wsl") {
     return wslLaunch({
       program: launch.program,

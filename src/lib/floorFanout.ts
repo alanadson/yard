@@ -41,6 +41,17 @@ export interface FanoutInput {
   prompt: string;
   agents: FanoutAgent[];
   copyGround?: boolean;
+  /**
+   * Name the front exactly `name` instead of `name · agent`: what a single
+   * worker made from the CLI wants, since the caller addresses it by the name
+   * it gave. A fleet keeps the suffix, or five fronts would be five "Login".
+   */
+  exactName?: boolean;
+}
+
+/** The name a task's front is born with (`uniqueFloorName` still applies). */
+export function floorNameFor(input: { name: string; agentName: string; exact?: boolean }): string {
+  return input.exact ? input.name : `${input.name} · ${input.agentName}`;
 }
 
 export interface FanoutFloor {
@@ -87,7 +98,7 @@ export async function fanOutTask(input: FanoutInput): Promise<FanoutResult> {
     const s = useProjects.getState();
     const floorName = uniqueFloorName(
       s.groupsOf(input.projectId),
-      `${name} · ${agent.name}`,
+      floorNameFor({ name, agentName: agent.name, exact: input.exactName }),
     );
     let created;
     try {
@@ -132,11 +143,9 @@ export async function fanOutTask(input: FanoutInput): Promise<FanoutResult> {
       program: launch.program,
       args: launch.args,
       cwd,
-      // A pane, always. It used to follow whatever the floor was showing, and
-      // the ground clone used to leave a fresh floor showing the canvas — so
-      // a fan-out of five dealt five boards with one card each. The canvas is
-      // somewhere you go, never somewhere a task drops you.
-      surface: "grid",
+      // A pane, always: a front is a project's group, and a project's group
+      // draws tabs and nothing else (the canvas is the boards). A fan-out of
+      // five once dealt five boards with one card each; it cannot any more.
     });
     try {
       await startTerminalProcess(terminalId, {

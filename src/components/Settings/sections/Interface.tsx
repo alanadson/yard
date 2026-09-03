@@ -102,6 +102,31 @@ export function SecInterface({ fontes: fontList }: { fontes: Fonts }) {
         )}
       </p>
 
+      <GroupTitle>{t("Canvas")}</GroupTitle>
+      <Card>
+        <SwitchRow
+          pref="placementHints"
+          label={t("Sugerir onde o cartão novo entra")}
+          desc={t(
+            "Ao nascer no canvas sem um ponto escolhido (Ctrl+T, sessão retomada), o cartão cai na melhor vaga e as outras aparecem numeradas: 2 a 6 trocam de vaga, F coloca onde você clicar, Esc deixa onde caiu",
+          )}
+        />
+        <SwitchRow
+          pref="snapGrid"
+          label={t("Encaixar na grade")}
+          desc={t(
+            "Ao arrastar ou redimensionar, o cartão cai nas linhas da grade do fundo (26 px). O ímã às bordas dos vizinhos continua; Alt segurado dispensa a grade naquele gesto",
+          )}
+        />
+        <SwitchRow
+          pref="autoFocusLargest"
+          label={t("Focar o cartão que ocupa a tela")}
+          desc={t(
+            "Quando a câmera para, a CLI que preenche a maior parte da tela recebe o teclado sem um clique. Desligado por padrão: um foco que anda sozinho é uma escolha, não uma surpresa",
+          )}
+        />
+      </Card>
+
       <GroupTitle>{t("Barra de título")}</GroupTitle>
       <Card>
         <SwitchRow

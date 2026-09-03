@@ -9,9 +9,9 @@
  * - the notebook only docks in one place at a time, so "Anotações aqui" is
  *   disabled in the pane where it already is;
  * - the layout mode in use comes checked — the menu is also a readout;
- * - the canvas is **not** a fourth layout mode. It is the group's other
- *   surface, with its own entry, and choosing it must not disturb the
- *   Grade/Holofote the user pinned for the panes.
+ * - the canvas is **not** here at all. It is the boards, a place of their
+ *   own reached from the sidebar, and a project's pane has no canvas to
+ *   offer: an entry for it would flip nothing and mislead everyone.
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -24,7 +24,6 @@ function actions(): PaneMenuActions {
     newBrowser: vi.fn(),
     dockNotes: vi.fn(),
     setMode: vi.fn(),
-    showSurface: vi.fn(),
   };
 }
 
@@ -37,7 +36,7 @@ function findItem(entries: MenuEntry[], id: string) {
 const ids = (entries: MenuEntry[]) =>
   entries.filter((e): e is Extract<MenuEntry, { id: string }> => "id" in e).map((e) => e.id);
 
-const onGrid = { mode: "auto", surface: "grid", notesHere: false } as const;
+const onGrid = { mode: "auto", notesHere: false } as const;
 
 describe("paneMenu", () => {
   it("open a CLI here is the first entry, with the shortcut in view", () => {
@@ -76,25 +75,12 @@ describe("paneMenu", () => {
   });
 
   /**
-   * The regression this locks down: `mode` used to hold `"canvas"` as a
-   * fourth value, so going to the board threw away the Holofote the user had
-   * pinned — and coming back landed them on the automatic grid.
+   * The contract that changed: the menu used to carry a "Canvas" entry that
+   * turned the group to its other surface. A project's group has no other
+   * surface now (the canvas is the boards), so the entry is gone, not
+   * disabled: a pane cannot become a board.
    */
-  it("the canvas has its own entry, and asking for it says nothing about the mode", () => {
-    const act = actions();
-    const menu = paneMenu({ ...onGrid, mode: "spotlight" }, act);
-    const quadro = findItem(menu, "quadro");
-    expect(quadro?.checked).toBe(false);
-    quadro?.onSelect?.();
-    expect(act.showSurface).toHaveBeenCalledWith("canvas");
-    expect(act.setMode).not.toHaveBeenCalled();
-  });
-
-  it("with the board up, its entry comes checked and takes the group back to the panes", () => {
-    const act = actions();
-    const quadro = findItem(paneMenu({ ...onGrid, surface: "canvas" }, act), "quadro");
-    expect(quadro?.checked).toBe(true);
-    quadro?.onSelect?.();
-    expect(act.showSurface).toHaveBeenCalledWith("grid");
+  it("offers no way onto the canvas: a project's pane has no board behind it", () => {
+    expect(ids(paneMenu(onGrid, actions()))).toEqual(["cli", "browser", "notas", "modo"]);
   });
 });

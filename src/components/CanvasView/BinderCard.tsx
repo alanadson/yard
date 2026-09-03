@@ -15,6 +15,8 @@
 import { memo, useCallback } from "react";
 import { FilePlus2, X } from "lucide-react";
 
+import { InlineRename } from "../ContextMenu/InlineRename";
+
 import { NoteBody } from "./NoteBody";
 import { ResizeHandles } from "./ResizeHandles";
 import { BINDER_CHROME, binderTabs, type BinderItem } from "../../lib/binder";
@@ -51,6 +53,11 @@ interface Props {
   onResizeStart: (e: React.PointerEvent, it: BinderItem, dir: ResizeDir) => void;
   onResizeMove: (e: React.PointerEvent) => void;
   onResizeEnd: (e: React.PointerEvent) => void;
+  /** The in-place rename is open on this card (the board owns which one). */
+  renaming: boolean;
+  onRenameStart: (id: string) => void;
+  onRenameEnd: () => void;
+  onRename: (id: string, name: string) => void;
 }
 
 function BinderCardImpl({
@@ -77,6 +84,10 @@ function BinderCardImpl({
   onEndEdit,
   onToggleTask,
   onOpenLink,
+  renaming,
+  onRenameStart,
+  onRenameEnd,
+  onRename,
   onResizeStart,
   onResizeMove,
   onResizeEnd,
@@ -111,9 +122,26 @@ function BinderCardImpl({
         onPointerMove={onItemMove}
         onPointerUp={onItemUp}
       >
-        <span className="cv-binder-title">
-          {it.name || (showing ? noteName(showing) : t("Fichário"))}
-        </span>
+        {renaming ? (
+          <InlineRename
+            value={it.name || (showing ? noteName(showing) : t("Fichário"))}
+            onCommit={(next) => {
+              onRename(it.id, next);
+              onRenameEnd();
+            }}
+            onCancel={onRenameEnd}
+          />
+        ) : (
+          <span
+            className="cv-binder-title"
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              onRenameStart(it.id);
+            }}
+          >
+            {it.name || (showing ? noteName(showing) : t("Fichário"))}
+          </span>
+        )}
         <span className="cv-binder-count">
           {tabs.length ? `${at + 1}/${tabs.length}` : t("vazio")}
         </span>
@@ -216,11 +244,13 @@ function BinderCardImpl({
         ))}
       </div>
 
-      <ResizeHandles
-        onDown={(e, dir) => onResizeStart(e, it, dir)}
-        onMove={onResizeMove}
-        onUp={onResizeEnd}
-      />
+      {!it.pinned && (
+        <ResizeHandles
+          onDown={(e, dir) => onResizeStart(e, it, dir)}
+          onMove={onResizeMove}
+          onUp={onResizeEnd}
+        />
+      )}
     </div>
   );
 }

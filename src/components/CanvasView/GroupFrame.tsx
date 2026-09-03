@@ -156,7 +156,7 @@ function GroupFrameImpl({
           grabbed by its band and resized by its grips. */}
       <div className="cv-group-ring" aria-hidden="true" />
 
-      {selected && (
+      {selected && !it.pinned && (
         <ResizeHandles
           onDown={(e, dir) => onResizeStart(e, it, dir)}
           onMove={onResizeMove}

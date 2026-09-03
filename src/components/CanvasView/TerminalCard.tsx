@@ -22,17 +22,25 @@ import {
 import {
   Activity,
   Bot,
+  BringToFront,
+  ClipboardCopy,
   ClipboardPaste,
   Clock,
   Eraser,
   FileText,
+  FolderOpen,
   Globe,
   ListPlus,
+  Maximize,
   Maximize2,
   MessageSquarePlus,
+  Minimize,
   MoreVertical,
   PauseCircle,
+  Pin,
+  PinOff,
   Play,
+  SendToBack,
   Type,
   Workflow,
 } from "lucide-react";
@@ -44,6 +52,8 @@ import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
 import { InlineRename } from "../ContextMenu/InlineRename";
 import { ResizeHandles } from "./ResizeHandles";
 import { ipc, type TerminalRow } from "../../lib/ipc";
+import { copyText } from "../../lib/clipboard";
+import { hasDragPaths, readDragPaths, shellQuote } from "../../lib/canvasDrop";
 import { isConnected } from "../../lib/canvasOps";
 import { flowsOf } from "../../lib/flow";
 import { confirmClearTerminal } from "../../lib/lifecycle";
@@ -75,7 +85,7 @@ import {
   type ResizeDir,
 } from "../../lib/canvas";
 import { useT } from "../../hooks/useT";
-import { t } from "../../lib/i18n";
+import { hudKind, hudLabel } from "./hud";
 
 const XTermView = lazy(() => import("../XTermView"));
 
@@ -116,6 +126,36 @@ interface Props {
   onFocusZoom: (id: string) => void;
   registerHandle: (id: string, h: XTermHandle | null) => void;
   onMenuOpen?: (open: boolean) => void;
+  /** Paint order among cards ("Trazer para a frente" / "Enviar para trás"). */
+  onOrder: (id: string, dir: "front" | "back") => void;
+  /** Fixes the card in place, or frees it. */
+  onPin: (id: string, pinned: boolean) => void;
+  /** Fills the visible board, or goes back to the rectangle it had. */
+  onMaximize: (id: string) => void;
+  /** The in-place rename is open on this card (the board owns which one). */
+  renaming: boolean;
+  onRenameStart: (id: string) => void;
+  onRenameEnd: () => void;
+  /**
+   * Inside the viewport (plus a screen of margin), per `lib/culling.ts`. Off
+   * screen the terminal keeps its process and coalesces its output slowly
+   * instead of repainting for nobody.
+   */
+  visible: boolean;
+  /**
+   * How much bigger than its font the terminal draws, past 100% zoom
+   * (`lib/renderScale.ts`); 1 leaves everything exactly as it was.
+   */
+  renderScale: number;
+  /**
+   * The front this card runs in, when that is worth a badge
+   * (`lib/floorColor.ts`): always on a board, and on a project canvas only
+   * for a card that lives in another front than the group's.
+   */
+  front?: { id: string; name: string; color: string };
+  /** The lens: `on` = this front is highlighted, `off` = another one is. */
+  frontFocus: "on" | "off" | null;
+  onFocusFront: (id: string | null) => void;
 }
 
 /**
@@ -146,23 +186,6 @@ const FLOW_STATUS_LABEL: Record<FlowStageStatus, string> = {
   error: "a etapa falhou",
 };
 
-function hudKind(rt: { state: string; blocked?: boolean; finished?: boolean } | undefined): string {
-  if (rt?.blocked) return "blocked";
-  if (rt?.finished) return "ready";
-  if (rt?.state === "running" || rt?.state === "starting") return "work";
-  if (rt?.state === "error") return "error";
-  return "idle";
-}
-
-function hudLabel(rt: { state: string; blocked?: boolean; finished?: boolean } | undefined): string {
-  if (rt?.blocked) return t("Travado — precisa de você");
-  if (rt?.finished) return t("Pronto");
-  if (rt?.state === "starting") return t("Iniciando");
-  if (rt?.state === "running") return t("Trabalhando");
-  if (rt?.state === "error") return t("Erro");
-  if (rt?.state === "exited") return t("Encerrado");
-  return t("Parado");
-}
 
 function TerminalCardImpl({
   term,
@@ -181,6 +204,17 @@ function TerminalCardImpl({
   onFocusZoom,
   registerHandle,
   onMenuOpen,
+  onOrder,
+  onPin,
+  onMaximize,
+  renaming,
+  onRenameStart,
+  onRenameEnd,
+  visible,
+  renderScale,
+  front,
+  frontFocus,
+  onFocusFront,
 }: Props) {
   const t = useT();
   const rt = useTerminals((s) => s.byId[term.id]);
@@ -204,7 +238,6 @@ function TerminalCardImpl({
   const handleRef = useRef<XTermHandle | null>(null);
   const [menu, setMenu] = useState<MenuAnchor | null>(null);
   const [portalMenu, setPortalMenu] = useState<MenuAnchor | null>(null);
-  const [renaming, setRenaming] = useState(false);
 
   /**
    * Addresses announced in this group — a dev server one click from a portal.
@@ -276,6 +309,8 @@ function TerminalCardImpl({
     // the drag when the click was only meant to add this card to a group.
     if (!onPick(term.id, e)) return;
     focusTerminal(term.id, term.slot);
+    // Pinned: the press selects and focuses, and that is all it does.
+    if (rect.pinned) return;
     sess.current = {
       kind,
       pointerId: e.pointerId,
@@ -421,6 +456,47 @@ function TerminalCardImpl({
       onSelect: () => onFocusZoom(term.id),
     },
     {
+      id: "max",
+      label: rect.restore ? t("Restaurar o tamanho") : t("Maximizar no canvas"),
+      icon: rect.restore ? <Minimize size={13} /> : <Maximize size={13} />,
+      onSelect: () => onMaximize(term.id),
+    },
+    {
+      id: "pin",
+      label: rect.pinned ? t("Soltar (voltar a mover)") : t("Fixar no lugar"),
+      icon: rect.pinned ? <PinOff size={13} /> : <Pin size={13} />,
+      onSelect: () => onPin(term.id, !rect.pinned),
+    },
+    {
+      id: "front",
+      label: t("Trazer para a frente"),
+      icon: <BringToFront size={13} />,
+      onSelect: () => onOrder(term.id, "front"),
+    },
+    {
+      id: "back",
+      label: t("Enviar para trás"),
+      icon: <SendToBack size={13} />,
+      onSelect: () => onOrder(term.id, "back"),
+    },
+    { kind: "sep" },
+    {
+      id: "copycwd",
+      label: t("Copiar a pasta de trabalho"),
+      icon: <ClipboardCopy size={13} />,
+      onSelect: () => void copyText(term.cwd),
+    },
+    {
+      id: "reveal",
+      label: t("Mostrar na pasta"),
+      icon: <FolderOpen size={13} />,
+      onSelect: () =>
+        void ipc
+          .revealPath(term.cwd)
+          .catch((e) => useUI.getState().showToast(String(e), "error")),
+    },
+    { kind: "sep" },
+    {
       id: "paste",
       label: t("Colar no terminal"),
       icon: <ClipboardPaste size={13} />,
@@ -444,7 +520,7 @@ function TerminalCardImpl({
       id: term.id,
       running,
       run: act,
-      onRename: () => setRenaming(true),
+      onRename: () => onRenameStart(term.id),
     }),
   ];
 
@@ -455,11 +531,31 @@ function TerminalCardImpl({
         selected ? "is-selected" : ""
       } ${connectRole ? `is-connect-${connectRole}` : ""} ${
         flowMark ? `is-flow-${flowMark.status}` : ""
-      }`}
+      } ${rect.pinned ? "is-pinned" : ""} ${rect.restore ? "is-max" : ""} ${
+        // The rim says from across the board what the badge says up close.
+        rt?.blocked ? (rt.permission ? "is-blocked is-permission" : "is-blocked") : rt?.finished ? "is-finished" : ""
+      } ${frontFocus === "off" ? "is-dim" : frontFocus === "on" ? "is-front-focus" : ""}`}
+      data-id={term.id}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
         setMenu({ x: e.clientX, y: e.clientY });
+      }}
+      // A file dragged from the tree and dropped on the terminal is its path,
+      // typed at the prompt, quoted when it has to be. The board's own drop
+      // (a card) must not fire as well, hence the stop.
+      onDragOver={(e) => {
+        if (!hasDragPaths(e.dataTransfer)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDrop={(e) => {
+        const entries = readDragPaths(e.dataTransfer);
+        if (entries.length === 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        handleRef.current?.typeText(`${entries.map((p) => shellQuote(p.path)).join(" ")} `);
       }}
       style={{
         left: rect.x,
@@ -467,10 +563,14 @@ function TerminalCardImpl({
         width: rect.w,
         height: rect.h,
         // Inline would override the classes' focus/connect highlight; the
-        // custom color only paints the frame when no highlight is active.
+        // custom color only paints the frame when no highlight is active. A
+        // card's own colour wins over its front's.
         ...(rect.color && !focused && !connectRole
           ? { borderColor: `color-mix(in srgb, ${rect.color} 45%, var(--border))` }
-          : {}),
+          : front && !focused && !connectRole
+            ? { borderColor: `color-mix(in srgb, ${front.color} 55%, var(--border))` }
+            : {}),
+        ...(frontFocus === "on" ? ({ "--cv-front": front?.color } as React.CSSProperties) : {}),
       }}
     >
       <div
@@ -496,20 +596,55 @@ function TerminalCardImpl({
             value={label}
             onCommit={(next) => {
               updateTerminal(term.id, { title: next });
-              setRenaming(false);
+              onRenameEnd();
             }}
-            onCancel={() => setRenaming(false)}
+            onCancel={onRenameEnd}
           />
         ) : (
           <span
             className="cv-card-title"
             onDoubleClick={(e) => {
               e.stopPropagation();
-              setRenaming(true);
+              onRenameStart(term.id);
             }}
           >
             {label}
           </span>
+        )}
+        {rect.pinned && (
+          <span
+            className="cv-card-pin"
+            role="img"
+            aria-label={t("Fixado no lugar")}
+            data-tip={t("Fixado no lugar")}
+          >
+            <Pin size={10} />
+          </span>
+        )}
+        {front && (
+          // The front this card runs in. Clicking it is the lens: every card
+          // of another front steps back, so a board with three worktrees
+          // reads one worktree at a time.
+          <button
+            className={`cv-card-front ${frontFocus === "on" ? "is-active" : ""}`}
+            style={{ background: front.color }}
+            data-tip-wrap=""
+            data-tip={
+              frontFocus === "on"
+                ? t("Frente: {name} · clique para tirar o destaque", { name: front.name })
+                : t("Frente: {name} · clique para destacar as CLIs desta frente", {
+                    name: front.name,
+                  })
+            }
+            aria-pressed={frontFocus === "on"}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onFocusFront(frontFocus === "on" ? null : front.id);
+            }}
+          >
+            {front.name}
+          </button>
         )}
         {role && (
           <span
@@ -576,9 +711,9 @@ function TerminalCardImpl({
           <span
             className="badge-blocked"
             data-tip-wrap=""
-            data-tip={rt.blockedAsk ?? t("Esperando uma resposta sua")}
+            data-tip={rt.blockedAsk ?? (rt.permission ? t("Pedindo permissão") : t("Esperando uma resposta sua"))}
             role="img"
-            aria-label={rt.blockedAsk ?? t("Esperando uma resposta sua")}
+            aria-label={rt.blockedAsk ?? (rt.permission ? t("Pedindo permissão") : t("Esperando uma resposta sua"))}
           />
         ) : rt?.finished ? (
           <span
@@ -635,6 +770,14 @@ function TerminalCardImpl({
               <Activity size={13} />
             </button>
           )}
+          <button
+            className="icon-btn"
+            data-tip={rect.restore ? t("Restaurar o tamanho") : t("Maximizar no canvas")}
+            aria-label={rect.restore ? t("Restaurar o tamanho") : t("Maximizar no canvas")}
+            onClick={() => onMaximize(term.id)}
+          >
+            {rect.restore ? <Minimize size={13} /> : <Maximize size={13} />}
+          </button>
           <button
             className="icon-btn"
             data-tip={t("Compositor de prompts (Ctrl+Enter)")}
@@ -710,31 +853,49 @@ function TerminalCardImpl({
             )
           }
         />
-        <Suspense fallback={<div className="xterm-host" aria-hidden />}>
-          <XTermView
-            ref={setXtermRef}
-            id={term.id}
-            program={term.program}
-            args={term.args}
-            cwd={term.cwd}
-            kind={term.kind}
-            title={term.title || term.program}
-            autoStart={term.alive}
-            visible
-            fontSize={rect.fontSize}
-            onFocus={() => focusTerminal(term.id, term.slot)}
-            // The terminal stops the right click before xterm sees it, so the
-            // card's own `onContextMenu` never fires over the body.
-            onContextMenu={(e) => setMenu({ x: e.clientX, y: e.clientY })}
-          />
-        </Suspense>
+        <div
+          className="cv-card-scale"
+          style={
+            renderScale > 1
+              ? {
+                  flex: "none",
+                  width: `${renderScale * 100}%`,
+                  height: `${renderScale * 100}%`,
+                  transform: `scale(${1 / renderScale})`,
+                }
+              : undefined
+          }
+        >
+          <Suspense fallback={<div className="xterm-host" aria-hidden />}>
+            <XTermView
+              ref={setXtermRef}
+              id={term.id}
+              program={term.program}
+              args={term.args}
+              cwd={term.cwd}
+              kind={term.kind}
+              title={term.title || term.program}
+              autoStart={term.alive}
+              visible={visible}
+              // Past 100% the glyphs are drawn `renderScale` times bigger and
+              // the wrapper above shrinks them back: crisp, same columns.
+              fontSize={renderScale > 1 ? Math.round(fontPx * renderScale) : rect.fontSize}
+              onFocus={() => focusTerminal(term.id, term.slot)}
+              // The terminal stops the right click before xterm sees it, so the
+              // card's own `onContextMenu` never fires over the body.
+              onContextMenu={(e) => setMenu({ x: e.clientX, y: e.clientY })}
+            />
+          </Suspense>
+        </div>
       </div>
 
-      <ResizeHandles
-        onDown={(e, dir) => startSession(e, dir)}
-        onMove={moveSession}
-        onUp={endSession}
-      />
+      {!rect.pinned && (
+        <ResizeHandles
+          onDown={(e, dir) => startSession(e, dir)}
+          onMove={moveSession}
+          onUp={endSession}
+        />
+      )}
 
       {menu && (
         <ContextMenu anchor={menu} items={menuItems()} onClose={() => setMenu(null)} />

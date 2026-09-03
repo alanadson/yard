@@ -10,13 +10,21 @@
  */
 import {
   CANVAS_EXTERNAL_WRITE,
+  EMPTY_CANVAS,
   NODE_DEFAULT_H,
   NODE_DEFAULT_W,
   type CanvasData,
 } from "./canvas";
 import { placedCorners } from "./canvasOps";
-import { dropPointFor, unstack, type DropPoint } from "./dropPoint";
+import { cameraFor, dropAt, unstack, type DropPoint } from "./dropPoint";
+import {
+  boardBoxes,
+  PLACEMENT_HINTS_EVENT,
+  placementCandidates,
+  type PlacementHints,
+} from "./placement";
 import { useProjects } from "../stores/projectsStore";
+import { useUI } from "../stores/uiStore";
 
 /**
  * Applies a canvas change that did not come from the user and notifies the
@@ -42,6 +50,12 @@ export function commitCanvasExternal(
  * the canvas is asked where the mouse is. Nobody to ask — the group is
  * showing panes, or it is not the one on screen — and the grid keeps the job.
  *
+ * With a camera and no explicit point, the spot comes from the guided
+ * placement (`lib/placement.ts`): the nearest empty pocket one gap away from
+ * whatever is already there, with the runners-up handed to the canvas so a
+ * keystroke can move the card to any of them. The cascade `unstack` is the
+ * fallback for a board where nothing fits.
+ *
  * This used to be a plain `updateCanvas`, on the reasoning that the user is
  * creating something and blanking their undo history over it would be a
  * strange price. The price of *not* doing it turned out to be worse: undo
@@ -59,13 +73,33 @@ export function placeCard(
   at?: DropPoint | null,
 ) {
   const size = { w: NODE_DEFAULT_W, h: NODE_DEFAULT_H };
-  const spot = at ?? dropPointFor(groupId, size);
-  if (!spot) return;
+  if (at) {
+    commitCanvasExternal(groupId, (c) => ({
+      ...c,
+      nodes: { ...c.nodes, [terminalId]: { ...unstack(at, placedCorners(c)), ...size } },
+    }));
+    return;
+  }
+  const cam = cameraFor(groupId);
+  if (!cam) return;
+  const current = useProjects.getState().layoutOf(groupId).canvas ?? EMPTY_CANVAS;
+  const anchor = cam.cursor ?? {
+    x: cam.view.x + cam.view.w / 2,
+    y: cam.view.y + cam.view.h / 2,
+  };
+  const spots = placementCandidates({
+    area: cam.view,
+    obstacles: boardBoxes(current),
+    size,
+    anchor,
+  });
+  const spot = spots[0] ?? unstack(dropAt(cam, size), placedCorners(current));
   commitCanvasExternal(groupId, (c) => ({
     ...c,
-    nodes: {
-      ...c.nodes,
-      [terminalId]: { ...unstack(spot, placedCorners(c)), ...size },
-    },
+    nodes: { ...c.nodes, [terminalId]: { x: spot.x, y: spot.y, ...size } },
   }));
+  if (spots.length > 1 && useUI.getState().prefs.placementHints) {
+    const detail: PlacementHints = { groupId, id: terminalId, spots };
+    window.dispatchEvent(new CustomEvent(PLACEMENT_HINTS_EVENT, { detail }));
+  }
 }

@@ -1505,6 +1505,8 @@ export const ipc = {
   /** Loopback port + session token of the bridge, for the SSH launch. */
   bridgeRemote: () =>
     invoke<{ port: number | null; token: string }>("bridge_remote"),
+  /** The settings file Claude Code is launched with, beside the shims (bridge.rs). */
+  bridgeHooksFile: () => invoke<string>("bridge_hooks_file"),
   // one POST to the address in Configurações (webhook.rs)
   webhookPost: (url: string, body: string) =>
     invoke<void>("webhook_post", { url, body }),

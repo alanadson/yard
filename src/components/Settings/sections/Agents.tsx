@@ -533,6 +533,17 @@ export function SecAgents() {
         )}
       </p>
 
+      <GroupTitle>{t("O que a CLI conta sozinha")}</GroupTitle>
+      <Card>
+        <SwitchRow
+          pref="agentHooks"
+          label={t("Ler os hooks das CLIs que têm")}
+          desc={t(
+            "Claude Code recebe um arquivo de configuração na linha de comando (nada é escrito na sua pasta pessoal) e o Codex um programa de aviso: o turno começou, terminou, uma permissão está sendo pedida. O detector de silêncio continua para as CLIs sem hook. Vale a partir da próxima abertura da CLI; não atravessa WSL nem SSH",
+          )}
+        />
+      </Card>
+
       <GroupTitle>{t("Notificações")}</GroupTitle>
       <Card>
         <SwitchRow

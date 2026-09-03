@@ -364,6 +364,11 @@ describe("moveTerminal", () => {
  * CLI showed up on **both** surfaces, and choosing Canvas erased the
  * Grade/Holofote the user had pinned — because `mode` was the same field.
  */
+/**
+ * The canvas is the boards and nothing else (`lib/surface.ts`): a board
+ * shows the canvas, a project's group shows its panes, and a CLI is drawn by
+ * the surface of its group. None of it is a choice the store accepts.
+ */
 describe("surfaces", () => {
   beforeEach(() => {
     saveWorkspace.mockReset();
@@ -378,21 +383,23 @@ describe("surfaces", () => {
       activeProjectId: null,
       activeGroupId: null,
       groupBeforeBoard: null,
+      lastBoardId: null,
+      canvasSide: false,
     });
   });
 
   const build = () => {
     const p = useProjects.getState().addProject("P", "C:/Workspace/sf")!;
     const g = useProjects.getState().addGroup(p, "G");
-    const make = (title: string, surface?: "grid" | "canvas") =>
+    const b = useProjects.getState().addBoard("Quadro");
+    const make = (groupId: string, title: string) =>
       useProjects.getState().addTerminal({
-        groupId: g,
+        groupId,
         program: "pwsh",
         cwd: "C:/Workspace/sf",
         title,
-        surface,
       });
-    return { p, g, make };
+    return { p, g, b, make };
   };
 
   it("a new group opens on the grid, in automatic mode", () => {
@@ -402,108 +409,60 @@ describe("surfaces", () => {
     expect(layout.mode).toBe("auto");
   });
 
-  it("showing the canvas keeps the grid the user had pinned", () => {
+  /**
+   * The contract that changed: a project's group used to have the canvas as
+   * its other surface, and this write turned it there. The canvas is the
+   * boards now, so the write is refused and the grid the user pinned stays.
+   */
+  it("a project's group cannot be turned to the canvas: the canvas is the boards", () => {
     const { g } = build();
     useProjects.getState().updateLayout(g, { mode: "spotlight", panelCount: 3 });
 
     useProjects.getState().updateLayout(g, { surface: "canvas" });
 
     const layout = useProjects.getState().layoutOf(g);
-    expect(layout.surface).toBe("canvas");
+    expect(layout.surface).toBe("grid");
     expect(layout.mode).toBe("spotlight");
     expect(layout.panelCount).toBe(3);
   });
 
-  it("a workspace saved with the old four-valued mode still opens on the canvas", () => {
-    const p = useProjects.getState().addProject("P", "C:/Workspace/old")!;
-    const g = useProjects.getState().addGroup(p, "G");
-    useProjects.setState((s) => ({
-      groups: s.groups.map((x) =>
-        x.id === g
-          ? { ...x, layoutJson: JSON.stringify({ mode: "canvas", panelCount: 2 }) }
-          : x,
-      ),
-    }));
+  it("a CLI is born a tab in a project's group and a card on a board, and nobody asks", () => {
+    const { g, b, make } = build();
+    const tab = make(g, "pane");
+    const card = make(b, "card");
 
-    const layout = useProjects.getState().layoutOf(g);
-    expect(layout.surface).toBe("canvas");
-    expect(layout.mode).toBe("auto");
-  });
-
-  it("a CLI is born on the grid unless it is asked for on the canvas", () => {
-    const { make } = build();
-    const onGrid = make("pane");
-    const onBoard = make("card", "canvas");
-
-    expect(useProjects.getState().terminal(onGrid)?.surface).toBe("grid");
-    expect(useProjects.getState().terminal(onBoard)?.surface).toBe("canvas");
+    expect(useProjects.getState().terminal(tab)?.surface).toBe("grid");
+    expect(useProjects.getState().terminal(card)?.surface).toBe("canvas");
   });
 
   /** The whole point: neither surface ever draws the other one's CLIs. */
   it("each surface only lists its own terminals", () => {
-    const { g, make } = build();
-    const onGrid = make("pane");
-    const onBoard = make("card", "canvas");
+    const { g, b, make } = build();
+    const tab = make(g, "pane");
+    const card = make(b, "card");
 
-    expect(useProjects.getState().terminalsOn(g, "grid").map((t) => t.id)).toEqual([
-      onGrid,
-    ]);
-    expect(useProjects.getState().terminalsOn(g, "canvas").map((t) => t.id)).toEqual([
-      onBoard,
-    ]);
-    // `terminalsOf` stays the whole group — closing it has to take both.
-    expect(useProjects.getState().terminalsOf(g)).toHaveLength(2);
+    expect(useProjects.getState().terminalsOn(g, "grid").map((t) => t.id)).toEqual([tab]);
+    expect(useProjects.getState().terminalsOn(g, "canvas")).toEqual([]);
+    expect(useProjects.getState().terminalsOn(b, "canvas").map((t) => t.id)).toEqual([card]);
+    expect(useProjects.getState().terminalsOn(b, "grid")).toEqual([]);
   });
 
-  it("dropping a tab onto a pane never drags it off the canvas", () => {
-    const { g, make } = build();
-    const onBoard = make("card", "canvas");
+  it("dropping a card onto a pane never drags it off the board", () => {
+    const { b, make } = build();
+    const card = make(b, "card");
 
-    useProjects.getState().moveTerminal(onBoard, 1);
+    useProjects.getState().moveTerminal(card, 1);
 
-    expect(useProjects.getState().terminal(onBoard)?.surface).toBe("canvas");
-    expect(useProjects.getState().terminalsOn(g, "grid")).toHaveLength(0);
-  });
-
-  /**
-   * `slot` means "pane" and only the grid has panes, so a card sitting on the
-   * default slot 0 used to count as a sibling of the tabs in pane 0 — and the
-   * tree's "move up" swapped a tab's place with a card's.
-   */
-  it("reordering tabs never swaps places with a card", () => {
-    const { g, make } = build();
-    const first = make("primeira");
-    const card = make("cartao", "canvas");
-    const second = make("segunda");
-
-    useProjects.getState().moveTerminalBy(second, -1);
-
-    expect(useProjects.getState().terminalsOn(g, "grid").map((t) => t.id)).toEqual([
-      second,
-      first,
-    ]);
-    expect(useProjects.getState().terminalsOn(g, "canvas").map((t) => t.id)).toEqual([
-      card,
-    ]);
-  });
-
-  it("closing a tab hands the pane to the next tab, never to a card", () => {
-    const { g, make } = build();
-    const closing = make("fechando");
-    make("cartao", "canvas");
-    const next = make("proxima");
-    expect(useProjects.getState().layoutOf(g).activeBySlot[0]).toBe(next);
-    useProjects.getState().setActiveTab(g, 0, closing);
-
-    useProjects.getState().removeTerminal(closing);
-
-    expect(useProjects.getState().layoutOf(g).activeBySlot[0]).toBe(next);
+    expect(useProjects.getState().terminal(card)?.surface).toBe("canvas");
+    expect(useProjects.getState().terminalsOn(b, "grid")).toHaveLength(0);
   });
 
   /**
    * The migration of everything that predates the split: a terminal with no
    * surface goes to the one its group was showing, so nothing moves on screen
-   * the first time the app opens after the change.
+   * the first time the app opens after the change. The group that was showing
+   * the canvas then comes out as a board, with its cards, because a project's
+   * group cannot draw them any more.
    */
   it("on load, terminals with no surface land on the one their group was showing", async () => {
     loadWorkspace.mockResolvedValue({
@@ -550,11 +509,17 @@ describe("surfaces", () => {
 
     await useProjects.getState().load();
 
-    const surfaceOf = (id: string) => useProjects.getState().terminal(id)?.surface;
+    const s = useProjects.getState();
+    const surfaceOf = (id: string) => s.terminal(id)?.surface;
     expect(surfaceOf("old-card")).toBe("canvas");
     expect(surfaceOf("old-tab")).toBe("grid");
     // A terminal that already carries a surface is never re-stamped.
     expect(surfaceOf("already")).toBe("grid");
+    // The card now lives on a board; the tab stayed in its group, which is
+    // back on its panes.
+    expect(s.isBoard(s.terminal("old-card")!.groupId)).toBe(true);
+    expect(s.terminal("already")?.groupId).toBe("board");
+    expect(s.layoutOf("board").surface).toBe("grid");
     // The stamp has to reach the disk, or it is redone on every boot.
     expect(saveWorkspace).toHaveBeenCalled();
   });
@@ -580,6 +545,8 @@ describe("boards", () => {
       activeProjectId: null,
       activeGroupId: null,
       groupBeforeBoard: null,
+      lastBoardId: null,
+      canvasSide: false,
     });
   });
 
@@ -751,6 +718,69 @@ describe("boards", () => {
     expect(useProjects.getState().groupBeforeBoard).toBe(g);
   });
 
+  /**
+   * The sidebar's Canvas row leads to a board, and the one worth leading to
+   * is the one the user stood on last: two boards, a trip to the second and
+   * back to the panes, and the row has to open the second again, not the
+   * first in the bar.
+   */
+  it("remembers the board visited last this session", () => {
+    const p = useProjects.getState().addProject("P", "C:/Workspace/b7")!;
+    const g = useProjects.getState().groupsOf(p)[0].id;
+    const first = useProjects.getState().addBoard("Um");
+    const second = useProjects.getState().addBoard("Dois");
+    expect(useProjects.getState().lastBoardId).toBe(second);
+
+    useProjects.getState().setActiveGroup(first);
+    useProjects.getState().setActiveGroup(g);
+
+    expect(useProjects.getState().lastBoardId).toBe(first);
+    expect(useProjects.getState().activeGroupId).toBe(g);
+  });
+
+  /**
+   * The canvas is a side of the app, not a property of whichever group is
+   * active: with the last board deleted there is no board to show, but the
+   * user is still on the canvas side, and the bar must keep offering boards
+   * instead of falling back to the projects tree.
+   */
+  it("deleting the last board keeps the user on the canvas side, with no board to show", () => {
+    useProjects.getState().addProject("P", "C:/Workspace/b8");
+    const b = useProjects.getState().addBoard("Único");
+    expect(useProjects.getState().canvasSide).toBe(true);
+
+    useProjects.getState().removeGroup(b);
+
+    expect(useProjects.getState().activeGroupId).toBeNull();
+    expect(useProjects.getState().canvasSide).toBe(true);
+  });
+
+  it("the side follows the group: a board turns it on, a project's group turns it off", () => {
+    const p = useProjects.getState().addProject("P", "C:/Workspace/b9")!;
+    const g = useProjects.getState().groupsOf(p)[0].id;
+    expect(useProjects.getState().canvasSide).toBe(false);
+
+    const b = useProjects.getState().addBoard("Quadro");
+    expect(useProjects.getState().canvasSide).toBe(true);
+
+    useProjects.getState().setActiveGroup(g);
+    expect(useProjects.getState().canvasSide).toBe(false);
+
+    useProjects.getState().setActiveGroup(b);
+    useProjects.getState().setActiveProject(p);
+    expect(useProjects.getState().canvasSide).toBe(false);
+  });
+
+  it("leaving the empty canvas side lands on the project, or on the panes' empty state", () => {
+    const b = useProjects.getState().addBoard("Único");
+    useProjects.getState().removeGroup(b);
+
+    useProjects.getState().leaveBoard();
+
+    expect(useProjects.getState().activeGroupId).toBeNull();
+    expect(useProjects.getState().canvasSide).toBe(false);
+  });
+
   it("with nowhere to go back to, leaving a board falls to the project's first group", () => {
     const p = useProjects.getState().addProject("P", "C:/Workspace/b6")!;
     const g = useProjects.getState().groupsOf(p)[0].id;
@@ -786,13 +816,11 @@ describe("boards", () => {
       groupId: b,
       program: "pwsh",
       cwd: "C:/Workspace/Code/yard",
-      surface: "canvas",
     });
     const fromOther = useProjects.getState().addTerminal({
       groupId: b,
       program: "pwsh",
       cwd: "C:/Workspace/Code/interagia",
-      surface: "canvas",
     });
 
     expect(useProjects.getState().terminal(fromYard)?.cwd).toBe("C:/Workspace/Code/yard");

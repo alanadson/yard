@@ -20,6 +20,7 @@ import {
   type TreeMode,
 } from "./treeNode";
 import { MEDIA_MIN_H, MEDIA_MIN_W, MEDIA_NAME_MAX } from "./mediaNode";
+import { DOC_MIN_H, DOC_MIN_W, DOC_NAME_MAX } from "./docNode";
 import {
   GROUP_DEFAULT_NAME,
   GROUP_HEAD,
@@ -54,6 +55,15 @@ export interface CanvasNode {
    * is a 200-column wall of unreadable text.
    */
   fontSize?: number;
+  /**
+   * Paint order among cards: a higher `z` paints later, on top. Absent means
+   * 0, so a board saved before the field existed keeps its old order.
+   */
+  z?: number;
+  /** Fixed in place: no drag, no resize and no arrangement moves it. */
+  pinned?: boolean;
+  /** The rectangle a maximized card goes back to. Absent = not maximized. */
+  restore?: Box;
 }
 
 export type StrokeSize = "s" | "m" | "l";
@@ -64,6 +74,8 @@ export const STROKE_PX: Record<StrokeSize, number> = { s: 2, m: 3.5, l: 6 };
 interface ItemBase {
   id: string;
   color: string;
+  /** Fixed in place: no drag, no resize and no arrangement moves it. */
+  pinned?: boolean;
 }
 
 export type CanvasItem =
@@ -235,6 +247,23 @@ export type CanvasItem =
       /** What the band at the top says. Never blank — see `sanitizeItem`. */
       name: string;
     })
+  | (ItemBase & {
+      type: "doc";
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      /**
+       * Path of the file, `/` separated, relative to `root` (or to the
+       * group's project when `root` is absent). The text is never here: the
+       * editor store owns the buffer, and the card is a window onto it.
+       */
+      path: string;
+      /** Folder the path hangs off. Absent = the project's own root. */
+      root?: string;
+      /** Pinned name. Without it, the file's own name. */
+      name?: string;
+    })
   | (ItemBase & { type: "connection"; from: string; to: string });
 
 export type PortalStorage = "instance" | "workspace" | "global";
@@ -376,11 +405,28 @@ export interface RolePreset {
   color?: string;
 }
 
+/** How the board's ground is painted. Every field is optional: absent = the default look. */
+export interface CanvasBackground {
+  /** The grid drawn under everything. Absent = dots. */
+  grid?: "dots" | "lines" | "none";
+  /** A flat colour for the ground (`#rrggbb`). */
+  color?: string;
+  /** Absolute path of a picture fixed to the viewport, behind the grid. */
+  image?: string;
+  /** How much of the picture shows, 0.05 to 1. Absent = 0.3. */
+  opacity?: number;
+}
+
+export const BACKGROUND_GRIDS = ["dots", "lines", "none"] as const;
+export const BACKGROUND_OPACITY_DEFAULT = 0.3;
+
 export interface CanvasData {
   viewport: CanvasViewport;
   /** terminalId -> rectangle. A terminal with no entry gets an automatic position. */
   nodes: Record<string, CanvasNode>;
   items: CanvasItem[];
+  /** The ground's look. Dropped when every field is the default. */
+  background?: CanvasBackground;
   /** terminalId -> assigned role. Dropped when empty. */
   roles?: Record<string, CardRole>;
   /** Scheduled prompts of this group. Dropped when empty. */
@@ -699,6 +745,9 @@ export function normalizeCanvas(raw: unknown): CanvasData | undefined {
           ...(typeof n.fontSize === "number" && Number.isFinite(n.fontSize)
             ? { fontSize: clamp(Math.round(n.fontSize), NODE_FONT_MIN, NODE_FONT_MAX) }
             : {}),
+          ...(typeof n.z === "number" && Number.isFinite(n.z) ? { z: Math.round(n.z) } : {}),
+          ...(n.pinned === true ? { pinned: true } : {}),
+          ...(isBox(n.restore) ? { restore: { ...n.restore } } : {}),
         };
       }
     }
@@ -706,7 +755,7 @@ export function normalizeCanvas(raw: unknown): CanvasData | undefined {
 
   const items = pruneBinders(
     Array.isArray(r.items)
-      ? (r.items as CanvasItem[]).filter(isValidItem).map(sanitizeItem)
+      ? (r.items as CanvasItem[]).filter(isValidItem).map(sanitizeItem).map(sanitizePinned)
       : [],
   );
 
@@ -723,7 +772,45 @@ export function normalizeCanvas(raw: unknown): CanvasData | undefined {
   }
   const presets = normalizePresets(r.rolePresets);
   if (presets) data.rolePresets = presets;
+  const background = normalizeBackground(r.background);
+  if (background) data.background = background;
   return data;
+}
+
+/**
+ * The background field by field: a crooked grid name, a colour that is not a
+ * hex, an opacity out of range are each dropped or clamped on their own, and
+ * a background with nothing valid left is no background at all.
+ */
+export function normalizeBackground(raw: unknown): CanvasBackground | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Partial<CanvasBackground>;
+  const out: CanvasBackground = {};
+  if ((BACKGROUND_GRIDS as readonly string[]).includes(r.grid as string)) out.grid = r.grid;
+  if (typeof r.color === "string" && /^#[0-9a-f]{6}$/i.test(r.color.trim())) {
+    out.color = r.color.trim();
+  }
+  if (typeof r.image === "string" && r.image.trim()) out.image = r.image.trim();
+  if (typeof r.opacity === "number" && Number.isFinite(r.opacity)) {
+    out.opacity = clamp(r.opacity, 0.05, 1);
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * The canvas with part of its background changed. `undefined` in the patch
+ * removes that field; a background left with nothing in it is dropped, so
+ * "back to the default" never persists as an empty object.
+ */
+export function withBackground(
+  c: CanvasData,
+  patch: Partial<Record<keyof CanvasBackground, CanvasBackground[keyof CanvasBackground] | undefined>>,
+): CanvasData {
+  const merged: Record<string, unknown> = { ...(c.background ?? {}), ...patch };
+  for (const key of Object.keys(merged)) if (merged[key] === undefined) delete merged[key];
+  const background = normalizeBackground(merged);
+  const { background: _old, ...rest } = c;
+  return background ? { ...rest, background } : rest;
 }
 
 /**
@@ -748,6 +835,21 @@ function pruneBinders(items: CanvasItem[]): CanvasItem[] {
       active: kept.length ? Math.min(it.active ?? 0, kept.length - 1) : undefined,
     };
   });
+}
+
+/** A finite rectangle, the shape `restore` has to have to be believed. */
+function isBox(raw: unknown): raw is Box {
+  if (!raw || typeof raw !== "object") return false;
+  const b = raw as Partial<Box>;
+  return [b.x, b.y, b.w, b.h].every((v) => typeof v === "number" && Number.isFinite(v));
+}
+
+/** `pinned` is `true` or absent; anything else written there is junk. */
+function sanitizePinned(it: CanvasItem): CanvasItem {
+  if (it.pinned === true) return it;
+  if (!("pinned" in it)) return it;
+  const { pinned: _junk, ...rest } = it;
+  return rest as CanvasItem;
 }
 
 /** Drops junk on optional fields so a crooked save cannot poison the type. */
@@ -828,6 +930,20 @@ function sanitizeItem(it: CanvasItem): CanvasItem {
         : { root: undefined }),
       ...(typeof it.name === "string" && it.name.trim()
         ? { name: it.name.trim().slice(0, MEDIA_NAME_MAX) }
+        : { name: undefined }),
+    };
+  }
+  if (it.type === "doc") {
+    return {
+      ...it,
+      w: Math.max(DOC_MIN_W, it.w),
+      h: Math.max(DOC_MIN_H, it.h),
+      path: it.path.trim().replace(/\\/g, "/"),
+      ...(typeof it.root === "string" && it.root.trim()
+        ? { root: it.root.trim().replace(/\\/g, "/") }
+        : { root: undefined }),
+      ...(typeof it.name === "string" && it.name.trim()
+        ? { name: it.name.trim().slice(0, DOC_NAME_MAX) }
         : { name: undefined }),
     };
   }
@@ -965,6 +1081,7 @@ function isValidItem(it: CanvasItem): boolean {
     case "binder":
       return [it.x, it.y, it.w, it.h].every(Number.isFinite) && Array.isArray(it.notes);
     case "media":
+    case "doc":
       return (
         [it.x, it.y, it.w, it.h].every(Number.isFinite) &&
         typeof it.path === "string" &&
@@ -1180,6 +1297,7 @@ export function itemBounds(
     case "portal":
     case "flow":
     case "media":
+    case "doc":
     case "binder":
     case "tree":
     case "group":
@@ -1270,6 +1388,7 @@ export function hitItem(
     case "portal":
     case "flow":
     case "media":
+    case "doc":
     case "binder":
     case "tree":
       return (
@@ -1328,6 +1447,7 @@ export function hitItem(
 export function sameItem(a: CanvasItem, b: CanvasItem): boolean {
   if (a === b) return true;
   if (a.type !== b.type || a.id !== b.id || a.color !== b.color) return false;
+  if (a.pinned !== b.pinned) return false;
   switch (a.type) {
     case "stroke": {
       const o = b as typeof a;
@@ -1440,7 +1560,8 @@ export function sameItem(a: CanvasItem, b: CanvasItem): boolean {
         a.notes.every((n, i) => n === o.notes[i])
       );
     }
-    case "media": {
+    case "media":
+    case "doc": {
       const o = b as typeof a;
       return (
         a.x === o.x &&
@@ -1506,7 +1627,13 @@ export function reconcileNodes(
       o.w === n.w &&
       o.h === n.h &&
       o.color === n.color &&
-      o.fontSize === n.fontSize
+      o.fontSize === n.fontSize &&
+      o.z === n.z &&
+      o.pinned === n.pinned &&
+      o.restore?.x === n.restore?.x &&
+      o.restore?.y === n.restore?.y &&
+      o.restore?.w === n.restore?.w &&
+      o.restore?.h === n.restore?.h
     ) {
       out[k] = o;
     } else {
@@ -1534,6 +1661,7 @@ export function translateItem(it: CanvasItem, dx: number, dy: number): CanvasIte
     case "portal":
     case "flow":
     case "media":
+    case "doc":
     case "binder":
     case "tree":
     case "group":

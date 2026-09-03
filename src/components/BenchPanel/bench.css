@@ -24,10 +24,10 @@
 /* The material itself: thicker and blurrier than the side panels' vibrancy,
    because it is over live terminals rather than over the static ground.
 
-   Deliberately *not* `overflow: hidden` — the panel is driven by `data-tip`
-   balloons, which are `::after` boxes on the controls themselves and would be
-   clipped away by it. Children round their own corners instead (see the tab
-   strip, the body and `.task-list`). */
+   No `overflow: hidden`: the children round their own corners instead (see
+   the tab strip, the body and `.task-list`). Until 2026-09 that was forced by
+   the `data-tip` balloons, then `::after` boxes on the controls themselves
+   that the clip would have eaten; the balloon is fixed in `<body>` now. */
 .bench-glass {
   flex: 1;
   min-height: 0;
@@ -174,10 +174,9 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  /* Explicit, and not the `auto` that `overflow-y` alone would compute: the
-     `data-tip` balloons are absolute boxes wider than the column, so the
-     scrollport counted them as content and grew a horizontal scrollbar that
-     scrolled nothing. They are clipped by the scrollport either way. */
+  /* Explicit, and not the `auto` that `overflow-y` alone would compute: a
+     row wider than the column (a path that refuses to break) would grow a
+     horizontal scrollbar that scrolls nothing worth reaching. */
   overflow-x: hidden;
   padding: 10px 8px 12px;
 }
@@ -482,8 +481,8 @@
 
 /* The list is one inset card, grouped-list style: the rows share a
    surface and are told apart by hairlines, instead of each floating alone on
-   the glass. No `overflow: hidden` — it would clip the rows' `data-tip`
-   balloons — so the first and last child round themselves, below. */
+   the glass. No `overflow: hidden`, so the first and last child round
+   themselves, below. */
 .task-list {
   list-style: none;
   margin: 0 14px;

@@ -165,11 +165,13 @@ function FlowCardImpl({
               : t("{n} CLI(s) conectada(s) — mande a tarefa lá", { n: wired })}
       </div>
 
-      <ResizeHandles
-        onDown={(e, dir) => onResizeStart(e, it, dir)}
-        onMove={onResizeMove}
-        onUp={onResizeEnd}
-      />
+      {!it.pinned && (
+        <ResizeHandles
+          onDown={(e, dir) => onResizeStart(e, it, dir)}
+          onMove={onResizeMove}
+          onUp={onResizeEnd}
+        />
+      )}
     </div>
   );
 }

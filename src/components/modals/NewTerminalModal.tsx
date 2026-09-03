@@ -16,6 +16,11 @@
  * answer with nobody to ask: the tab is born in the pane that asked for it,
  * and in the project's own folder.
  *
+ * On a **board** the folder is the one question that has no answer to infer:
+ * a board belongs to no project (the canvas is the boards, `lib/surface.ts`),
+ * so the dialog asks for a folder, offers the last card's, and never a
+ * project.
+ *
  * The grid is "what this tab can be", not "which CLI": the embedded browser
  * and the notebook live here too, and whatever other kinds of tab the pane
  * learns later should land in this same grid instead of growing dialogs of
@@ -26,9 +31,13 @@
  * empty group behind on each failed attempt.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { homeDir } from "@tauri-apps/api/path";
+import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import {
   Bot,
+  FolderOpen,
   FolderPlus,
+  Frame,
   Globe,
   NotebookPen,
   RefreshCw,
@@ -41,6 +50,7 @@ import { Select } from "../Select";
 import { BrandIcon } from "../BrandIcon";
 import { useT } from "../../hooks/useT";
 import { defaultRoleOf, pickableAgents, titleFor } from "../../lib/agentDefaults";
+import { suggestBoardFolder } from "../../lib/boardFolder";
 import { brandById } from "../../lib/brands";
 import { commitCanvasExternal, placeCard } from "../../lib/canvasWrite";
 import {
@@ -52,8 +62,6 @@ import {
   NEW_FRONT,
 } from "../../lib/destination";
 import { createFloor } from "../../lib/floorCreate";
-import { show } from "../../lib/navigate";
-import type { Surface } from "../../lib/surface";
 import { ipc, type AgentInfo, type ShellOption } from "../../lib/ipc";
 import { deliverBriefing } from "../../lib/roleBrief";
 import { roleLaunch } from "../../lib/roles";
@@ -134,6 +142,8 @@ export function NewTerminalModal() {
   const activeProjectId = useProjects((s) => s.activeProjectId);
   const addTerminal = useProjects((s) => s.addTerminal);
   const addGroup = useProjects((s) => s.addGroup);
+  const addBoard = useProjects((s) => s.addBoard);
+  const canvasSide = useProjects((s) => s.canvasSide);
   const projectOfGroup = useProjects((s) => s.projectOfGroup);
   const agentDefaults = useAgentDefaults((s) => s.defaults);
 
@@ -155,20 +165,58 @@ export function NewTerminalModal() {
   const group = groupId ? groups.find((g) => g.id === groupId) : undefined;
   /**
    * A board belongs to no project, and that is the point of it: the folder the
-   * CLI runs in becomes a **choice** instead of something to infer. Everywhere
-   * else the dialog stopped asking, because it always had the right answer.
+   * CLI runs in is a **question** instead of something to infer, and the
+   * answer is never a project. Everywhere else the dialog stopped asking,
+   * because it always had the right answer.
    */
   const onBoard = group?.projectId === null;
-  const [picked, setPicked] = useState<string | null>(null);
+  /**
+   * The canvas side with no board to be born on (the last one was deleted):
+   * a CLI here is a card, and a card needs a board first. The dialog asks
+   * for one instead of quietly opening the CLI in a project, which would
+   * carry the user off the canvas side.
+   */
+  const needsBoard = canvasSide && !group;
   /**
    * `projects[0]` used to be the fallback, which could open the terminal in a
-   * project nobody was in.
+   * project nobody was in. On a board there is no project at all.
    */
   const targetProject = onBoard
-    ? (projects.find((p) => p.id === (picked ?? activeProjectId)) ?? projects[0])
+    ? undefined
     : ((group ? projectOfGroup(group.id) : undefined) ??
       projects.find((p) => p.id === activeProjectId) ??
       projects[0]);
+  /**
+   * The folder of a board card: offered from the board's last card, else the
+   * home folder (`lib/boardFolder.ts`), then typed or picked from the disk.
+   * The offer only fills an empty field, so what the user typed survives it.
+   */
+  const [boardFolder, setBoardFolder] = useState("");
+  useEffect(() => {
+    if (!onBoard || !groupId) return;
+    const known = suggestBoardFolder(useProjects.getState().terminalsOf(groupId), "");
+    if (known) {
+      setBoardFolder((current) => current || known);
+      return;
+    }
+    let alive = true;
+    void homeDir()
+      .then((home) => {
+        if (alive) setBoardFolder((current) => current || home);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [onBoard, groupId]);
+  const pickFolder = async () => {
+    const chosen = await openFolderDialog({
+      directory: true,
+      multiple: false,
+      defaultPath: boardFolder || undefined,
+    });
+    if (typeof chosen === "string") setBoardFolder(chosen);
+  };
 
   /**
    * Where inside the project the tab runs: the ground (the project's own root,
@@ -287,15 +335,14 @@ export function NewTerminalModal() {
    * showing what was created is the worst possible answer to a click.
    */
   /**
-   * Puts the screen where the new thing landed. The surface matters as much
-   * as the group: a tab created while the board is up would otherwise be born
-   * behind it, and a card created from a pane would be born behind the panes.
+   * Puts the screen where the new thing landed: a tab in its group, a card
+   * on its board. The group says which (the canvas is the boards), so this is
+   * only ever a change of group.
    */
-  const goToTarget = (targetId: string, surface: Surface) => {
+  const goToTarget = (targetId: string) => {
     if (useProjects.getState().activeGroupId !== targetId) {
       useProjects.getState().setActiveGroup(targetId);
     }
-    show(targetId, surface);
   };
 
   /**
@@ -313,6 +360,10 @@ export function NewTerminalModal() {
 
   const createIt = async (recipient: Choice) => {
     if (busy || !recipient.available) return;
+    if (needsBoard) {
+      showToast(t("Crie um quadro primeiro: no canvas, a CLI é um cartão de um quadro."), "error");
+      return;
+    }
     // "Nova frente…" is a door, not a destination: it hands the click to the
     // dialog that knows about branches and worktrees.
     if (destValue === NEW_FRONT && targetProject) {
@@ -320,43 +371,30 @@ export function NewTerminalModal() {
       openModal("new-floor", { projectId: targetProject.id });
       return;
     }
-    // The notebook needs no project (it is global) — the other tiles do, and
-    // for them the way forward is the other dialog, which answers the click
-    // instead of scolding it.
-    if (!targetProject && recipient.kind !== "notes") {
+    // The notebook needs no project (it is global) and a board has none by
+    // definition; the other tiles, inside a project, do, and for them the way
+    // forward is the other dialog, which answers the click instead of
+    // scolding it.
+    if (!onBoard && !targetProject && recipient.kind !== "notes") {
       openModal("new-project");
       return;
     }
 
     // The notebook is not created — it already exists, globally. This tile
     // only *docks* it: the tab lands in the chosen pane, moving from wherever
-    // it was. A canvas-mode group has no tab bar to receive it.
+    // it was. A board has no tab bar to receive it, so there the notebook
+    // takes the centre instead, which is its other place.
     if (recipient.kind === "notes") {
-      const projectsState = useProjects.getState();
-      if (!targetProject) {
-        useNotes.getState().setPlaceKind("overlay");
-        useNotes.getState().openView();
+      if (onBoard || !targetProject) {
+        useNotes.getState().placeCenter();
         closeModal();
-        return;
-      }
-      if (group && projectsState.layoutOf(group.id).surface === "canvas") {
-        showToast(
-          onBoard
-            ? t(
-                "Um quadro não tem barra de abas — encaixe o caderno num painel de um grupo, ou use o caderno em tela.",
-              )
-            : t(
-                "Esse grupo está mostrando o canvas, que não tem barra de abas — volte para os painéis antes de encaixar o caderno.",
-              ),
-          "error",
-        );
         return;
       }
       const target = groupFor();
       useNotes
         .getState()
         .dockTo(target, (target === payload?.groupId ? payload?.slot : undefined) ?? 0);
-      goToTarget(target, "grid");
+      goToTarget(target);
       closeModal();
       return;
     }
@@ -386,20 +424,23 @@ export function NewTerminalModal() {
       });
       // A browser tab is a tab: it belongs to a pane, not to the board (the
       // board's browser is a portal, which is another thing entirely).
-      goToTarget(target, "grid");
+      goToTarget(target);
       closeModal();
       return;
     }
 
-    // The chosen destination's own folder: the front's worktree when a front
-    // is chosen, the project's root otherwise.
-    const folder = cwdFor(dest, targetProject!.path).trim();
+    // On a board, the folder the user gave; inside a project, the chosen
+    // destination's own folder: the front's worktree when a front is chosen,
+    // the project's root otherwise.
+    const folder = (onBoard ? boardFolder : cwdFor(dest, targetProject!.path)).trim();
     if (!folder) {
       showToast(
-        t(
-          'O projeto "{name}" não tem pasta cadastrada — informe o caminho nas configurações do projeto.',
-          { name: targetProject!.name },
-        ),
+        onBoard
+          ? t("Informe a pasta em que a CLI vai rodar.")
+          : t(
+              'O projeto "{name}" não tem pasta cadastrada — informe o caminho nas configurações do projeto.',
+              { name: targetProject!.name },
+            ),
         "error",
       );
       return;
@@ -412,7 +453,9 @@ export function NewTerminalModal() {
       // project while the UI kept showing the path that was configured.
       if (!(await ipc.isDirectory(folder))) {
         showToast(
-          t('A pasta "{folder}" não existe — confira o caminho do projeto.', { folder }),
+          onBoard
+            ? t('A pasta "{folder}" não existe.', { folder })
+            : t('A pasta "{folder}" não existe — confira o caminho do projeto.', { folder }),
           "error",
         );
         return;
@@ -448,11 +491,10 @@ export function NewTerminalModal() {
         args: launch.args,
         cwd: folder,
       });
-      // Born on the surface the target group is showing — and only there.
-      // The board and the panes stopped sharing their CLIs, so this is the
-      // one decision that says which of the two will ever draw this one.
-      const surface: Surface =
-        useProjects.getState().layoutOf(target).surface === "canvas" ? "canvas" : "grid";
+      // Born on the surface of the target group, which the store decides: a
+      // card on a board, a tab in a project's group. Read back here only to
+      // know whether there is a card to place.
+      const surface = useProjects.getState().layoutOf(target).surface;
       const id = addTerminal({
         groupId: target,
         // Only honors the requested slot when the CLI is born in the same group
@@ -464,7 +506,6 @@ export function NewTerminalModal() {
         kind: recipient.kind,
         title,
         agentId,
-        surface,
       });
       // The point travels in the payload only when the canvas context menu
       // opened this: the menu sits *inside* the canvas, so walking down to
@@ -497,7 +538,7 @@ export function NewTerminalModal() {
       // Waits for the CLI to be up and quiet on its own; the dialog must not
       // hang around for the seconds an agent takes to paint its banner.
       if (launch.briefing) void deliverBriefing(id, launch.briefing);
-      goToTarget(target, surface);
+      goToTarget(target);
       closeModal();
     } catch (e) {
       showToast(t("Não consegui abrir: {e}", { e: String(e) }), "error");
@@ -564,7 +605,15 @@ export function NewTerminalModal() {
         </div>
       }
     >
-      {projects.length === 0 && (
+      {needsBoard && (
+        <div className="hint new-term-noproject">
+          <span>{t("No canvas, a CLI é um cartão de um quadro, e não há nenhum quadro ainda.")}</span>
+          <button className="btn btn--sm" onClick={() => addBoard("")}>
+            <Frame size={12} /> {t("Novo quadro")}
+          </button>
+        </div>
+      )}
+      {!canvasSide && projects.length === 0 && (
         <div className="hint new-term-noproject">
           <span>
             {t("Tudo aqui nasce dentro de um projeto (uma pasta do disco) — e ainda não há nenhum.")}
@@ -580,34 +629,38 @@ export function NewTerminalModal() {
             asking everything else, so it owes this answer, and since a project
             grows branches and worktrees instead of folders, the answer is no
             longer inferable from the pane that asked. */}
-        {targetProject ? (
+        {onBoard ? (
+          /* A board belongs to no project: the folder is typed or picked, and
+             that is what lets one board hold cards from three folders at
+             once, none of them a project. */
           <span className="new-term-where">
             {t("Abrir em")}
-            {/* On a board the project is not inferable either, and that is what
-                lets one board hold cards from three projects at once. */}
-            {onBoard && projects.length > 0 && (
-              <Select
-                value={targetProject.id}
-                label={t("Projeto da CLI")}
-                tip={t("Em qual projeto esta CLI vai rodar")}
-                options={projects.map((p) => ({ value: p.id, label: p.name }))}
-                onChange={(v) => {
-                  setPicked(v);
-                  setDestPicked(null);
-                }}
-              />
-            )}
+            <input
+              className="new-term-folder"
+              value={boardFolder}
+              placeholder={t("pasta em que a CLI vai rodar")}
+              aria-label={t("Pasta da CLI")}
+              spellCheck={false}
+              onChange={(e) => setBoardFolder(e.target.value)}
+            />
+            <button
+              className="btn btn--sm"
+              data-tip={t("Escolher uma pasta do disco")}
+              onClick={() => void pickFolder()}
+            >
+              <FolderOpen size={12} aria-hidden="true" /> {t("Escolher…")}
+            </button>
+          </span>
+        ) : targetProject ? (
+          <span className="new-term-where">
+            {t("Abrir em")}
             <Select
               value={destValue}
               label={t("Branch ou worktree")}
               // Only reachable with every group of the project deleted: the
               // ground is gone and there is nothing to be born beside yet.
               placeholder={t("Escolha onde")}
-              tip={
-                onBoard
-                  ? t("Em qual branch ou worktree deste projeto a CLI vai rodar")
-                  : t("Onde a CLI vai rodar: o chão do projeto, na branch dele, ou uma frente")
-              }
+              tip={t("Onde a CLI vai rodar: o chão do projeto, na branch dele, ou uma frente")}
               options={destinations.map((d) => ({
                 value: d.value,
                 label: d.label,
