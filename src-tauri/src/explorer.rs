@@ -172,6 +172,24 @@ pub fn path_allowed(path: &Path) -> bool {
 /// Joins `rel` (relative, with `/` or `\`) to the root, refusing anything that
 /// tries to escape it. `""` and `"."` mean the root itself.
 pub fn resolve(root: &Path, rel: &str) -> Result<PathBuf, String> {
+    resolve_within(root, rel, false)
+}
+
+/// `resolve`, except that a link as the **last** component is the item itself
+/// rather than a way through to its target.
+///
+/// Only deletion may ask for this. `resolve` has to keep canonicalizing, or
+/// reading `atalho.txt` would hand back whatever the link points at outside the
+/// project; deleting is the one verb that acts on the link and never follows
+/// it, which is what `delete_entry` already does with `symlink_metadata`.
+/// Without this it never got that far: the guard resolved the link to its
+/// target, saw a path outside the root and refused, so a folder link inside a
+/// project could not be deleted at all.
+fn resolve_for_delete(root: &Path, rel: &str) -> Result<PathBuf, String> {
+    resolve_within(root, rel, true)
+}
+
+fn resolve_within(root: &Path, rel: &str, final_link_ok: bool) -> Result<PathBuf, String> {
     if !root.is_absolute() {
         return Err("raiz do projeto inválida".into());
     }
@@ -198,6 +216,29 @@ pub fn resolve(root: &Path, rel: &str) -> Result<PathBuf, String> {
     let root_real = root
         .canonicalize()
         .map_err(|e| format!("não consegui validar a raiz do projeto: {e}"))?;
+
+    // A link in the last position is the target of the operation, so what has
+    // to sit inside the project is the folder holding it, never the place it
+    // points at. A link anywhere earlier is a way through and stays refused by
+    // the anchor walk below: the parent is canonicalized here too, so
+    // `<junction>/atalho` still lands outside and still fails.
+    if final_link_ok {
+        if let Ok(meta) = std::fs::symlink_metadata(&out) {
+            if meta.file_type().is_symlink() {
+                let parent = out
+                    .parent()
+                    .ok_or_else(|| "caminho fora da pasta do projeto".to_string())?;
+                let parent_real = parent
+                    .canonicalize()
+                    .map_err(|e| format!("não consegui validar o caminho: {e}"))?;
+                if !parent_real.starts_with(&root_real) {
+                    return Err("caminho fora da pasta do projeto".into());
+                }
+                return Ok(out);
+            }
+        }
+    }
+
     let mut anchor = out.as_path();
     while !anchor.exists() {
         anchor = anchor
@@ -658,7 +699,7 @@ fn same_path(a: &Path, b: &Path) -> bool {
 }
 
 pub fn delete_entry(root: &Path, rel: &str) -> Result<(), String> {
-    let path = resolve(root, rel)?;
+    let path = resolve_for_delete(root, rel)?;
     // Deleting the project root through an empty `rel` would be catastrophic.
     if path == root {
         return Err("não dá para apagar a raiz do projeto".into());
@@ -1213,6 +1254,55 @@ mod tests {
         dir.canonicalize().expect("canonicalize")
     }
 
+    /// A directory link the test process is always allowed to create.
+    ///
+    /// `symlink_dir` needs Developer Mode or elevation on Windows, and the
+    /// tests here used to just `return` when it was denied. That is how
+    /// `delete_entry` stayed broken for every folder link while this file
+    /// reported green on the machine that wrote it. A junction needs no
+    /// privilege, so the assertions below actually run.
+    fn link_dir(target: &Path, link: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+        #[cfg(windows)]
+        {
+            std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        }
+    }
+
+    /// The regression CI caught and this machine could not: `resolve`
+    /// canonicalizes the path it is handed, and for a link that lands on the
+    /// target — outside the root — so `delete_entry` refused every folder link
+    /// inside a project with "caminho fora da pasta do projeto". The link is
+    /// the item being deleted, not a way through to somewhere else.
+    #[test]
+    fn deletes_a_folder_junction_without_touching_the_target() {
+        let root = temp_root("junc-del-root");
+        let outside = temp_root("junc-del-alvo");
+        std::fs::write(outside.join("importante.txt"), "nao me apague").unwrap();
+
+        let link = root.join("atalho");
+        assert!(link_dir(&outside, &link), "a junction needs no privilege");
+
+        delete_entry(&root, "atalho").unwrap();
+        assert!(!link.exists(), "the link should be gone");
+        assert!(
+            outside.join("importante.txt").is_file(),
+            "deleting the link must not take the target with it"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
     #[test]
     fn refuses_to_leave_the_root() {
         let root = temp_root("cerca");
@@ -1233,16 +1323,9 @@ mod tests {
         let root = temp_root("link-root");
         let outside = temp_root("link-outside");
         let link = root.join("atalho");
-        #[cfg(unix)]
-        let linked = std::os::unix::fs::symlink(&outside, &link);
-        #[cfg(windows)]
-        let linked = std::os::windows::fs::symlink_dir(&outside, &link);
-        if linked.is_err() {
-            // Windows without Developer Mode can deny symlinks to the test process.
-            let _ = std::fs::remove_dir_all(&root);
-            let _ = std::fs::remove_dir_all(&outside);
-            return;
-        }
+        // A junction, not `symlink_dir`: this assertion is the one that must
+        // never go quiet, and elevation is not always there to create a symlink.
+        assert!(link_dir(&outside, &link), "a junction needs no privilege");
 
         assert!(resolve(&root, "atalho/nova/pasta/arquivo.txt").is_err());
         let _ = std::fs::remove_file(&link);
