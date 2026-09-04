@@ -52,22 +52,55 @@ each suite covers are in [features.md](./features.md#tests).
 ## Launcher and environment variables
 
 `npm run app` opens Yard freshly rebuilt from the code currently in the
-repository. The launcher ([`scripts/yard.ps1`](../scripts/yard.ps1)) stamps a
-hash of the sources into `src-tauri/target`: if nothing changed, it just starts
-the executable; if something did, it runs the front-end build and recompiles the
-binary before opening.
+repository. The launcher ([`scripts/yard.ps1`](../scripts/yard.ps1)) stamps two
+hashes into `src-tauri/target` — one for the front end, one for the binary — and
+rebuilds only the half that moved. A change under `src-tauri/src` no longer pays
+for `tsc + vite`, and a change under `src/` does not recompile Rust beyond the
+relink cargo works out on its own.
 
 ```powershell
-npm run app                # rebuilds if needed and opens
+npm run app                # rebuilds what changed and opens
 npm run app:shortcut       # creates the shortcuts on the Desktop and in the Start Menu
-npm run app:installer      # NSIS installer (full release build)
-npm run app:release        # same as app, with the full release profile (LTO)
+npm run app:installer      # NSIS installer
 ```
 
-The build uses the `release-fast` profile (release without LTO): the binary is a
-few MB larger and rebuilds drop from minutes to seconds. While the app is open,
-Windows keeps the `.exe` locked — in that case the launcher doesn't rebuild; it
-just brings the existing window to the front.
+There is a single `release` profile, shared by the launcher and by the
+installer. It used to be `lto = true` + `codegen-units = 1` + `opt-level = "s"`,
+which spent **5m 07s** relinking after one changed line, with a second
+`release-fast` profile next to it to escape that — and a second profile means
+cargo compiles and keeps all ~600 dependencies twice (2.4 GB, plus a full
+rebuild every time you move between the two). Measured on a 16-core machine,
+rebuilding after one changed line with every dependency already compiled:
+
+| `[profile.release]` | rebuild |
+| --- | --- |
+| `lto = true`, `codegen-units = 1`, `opt-level = "s"` | 5m 07s |
+| `lto = "thin"`, `codegen-units = 16`, `opt-level = 2` | 2m 01s |
+| `lto = false`, `codegen-units = 16`, `opt-level = 2`, `incremental` | **35 s** |
+
+Nearly the whole bill was one step: LTO over the 611-crate graph, on every
+link. It buys something in what ships and nothing on a machine that rebuilds
+twenty times an hour, so `release.yml` puts it back with
+`CARGO_PROFILE_RELEASE_LTO=thin` and the local profile leaves it off. The local
+binary is ~27 MB instead of ~22 MB; the released one is unchanged.
+
+Everything else the launcher does follows from the same idea — don't pay for
+what didn't move. Nothing changed at all: **0.5 s**. Only `src-tauri/` changed:
+**11 s**, `tsc + vite` skipped. Only `src/` changed: the front end is rebuilt
+(**22 s**, down from 29 s — `build.reportCompressedSize` was costing seconds to
+print a gzip figure a local app never pays) and cargo relinks by itself, because
+the assets `generate_context!` embeds come back as `include_bytes!` of the 1780
+real files in `dist/` and rustc records every one of them.
+
+While the app is open, Windows keeps the `.exe` locked — in that case the
+launcher doesn't rebuild; it just brings the existing window to the front.
+
+If builds still feel slow, the usual culprit on Windows is Defender scanning
+every artifact cargo writes. From an **administrator** PowerShell:
+
+```powershell
+Add-MpPreference -ExclusionPath "C:\Workspace\Code\yard\src-tauri\target"
+```
 
 | Variable        | What for |
 | --------------- | -------- |
@@ -119,6 +152,22 @@ Without them `bundle.createUpdaterArtifacts` makes the build fail on purpose
 — an unsigned installer can never become an update. Losing the private key
 means every installed copy stops seeing updates: regenerate, ship one last
 manually-installed release with the new public key, then continue.
+
+**Building the installer on your own machine.** `npm run app:installer` goes
+through [`scripts/installer.mjs`](../scripts/installer.mjs), which decides
+before starting the compiler instead of after:
+
+| What it finds | What it does |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` in the environment | signs, exactly as CI does |
+| `%YARD_UPDATER_KEY%`, `.tauri\yard-updater.key` in the repo (gitignored), or `%USERPROFILE%\.tauri\yard-updater.key` | reads the key and signs |
+| nothing | builds **without** updater artifacts and says so |
+
+The last row is the point. Running `tauri build` straight with no key spends
+the whole build and then dies on the last line with *"A public key has been
+found, but no private key"*, leaving no installer at all. The password is
+always passed, empty if it has none — with the variable absent minisign asks
+for one on stdin and a scripted build hangs there.
 
 The app checks half a minute after boot and every six hours after that
 (`autoCheckUpdates`, off in Configurações → Dados e backup), keeps the last
