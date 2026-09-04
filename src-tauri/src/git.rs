@@ -2070,9 +2070,18 @@ pub fn worktree_preflight(
         (Vec::new(), HashMap::new())
     };
 
+    // Git prints the path it resolved; the project path arrives as the user
+    // picked it. A junction, or the 8.3 short name Windows keeps for a folder
+    // whose name runs past eight characters, spells one folder two ways, and
+    // comparing the text alone missed: the plan came back with no ground
+    // branch and no branch on any item. Canonicalize both, and fall back to
+    // the text only for a path that is no longer on disk.
     let same = |a: &str, b: &Path| -> bool {
         let norm = |s: &str| s.replace('\\', "/").trim_end_matches('/').to_lowercase();
-        norm(a) == norm(&b.to_string_lossy())
+        match (Path::new(a).canonicalize().ok(), b.canonicalize().ok()) {
+            (Some(x), Some(y)) => x == y,
+            _ => norm(a) == norm(&b.to_string_lossy()),
+        }
     };
     let ground_branch = worktrees
         .iter()
@@ -2706,6 +2715,81 @@ worktree C:/solto\nHEAD 123\ndetached\n";
         assert!(!local_branches(&root).contains(&branch2));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A directory link the test process is always allowed to create: on
+    /// Windows a junction needs no elevation, while `symlink_dir` does.
+    fn link_dir(target: &std::path::Path, link: &std::path::Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+        #[cfg(windows)]
+        {
+            std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        }
+    }
+
+    /// The regression CI caught and this machine could not: `ground_branch` is
+    /// found by comparing the path `git worktree list` prints against the
+    /// project path, as text. Git prints the path it resolved, so any alias
+    /// makes the compare miss and the plan comes back with no ground branch
+    /// and no branch on any item. On the CI runner the alias is TEMP itself,
+    /// handed out as the 8.3 short name of a user folder longer than eight
+    /// characters; here a junction reproduces it without privileges.
+    #[test]
+    fn the_ground_branch_is_found_through_a_path_alias() {
+        let real = std::env::temp_dir().join(format!(
+            "yard-alias-real-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let alias = std::env::temp_dir().join(format!(
+            "yard-alias-link-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&alias);
+        let _ = std::fs::remove_dir_all(&real);
+        std::fs::create_dir_all(&real).unwrap();
+        if !init_repo(&real) {
+            let _ = std::fs::remove_dir_all(&real);
+            return;
+        }
+        std::fs::write(real.join("a.txt"), "oi").unwrap();
+        if !commit_all(&real, "inicial") {
+            let _ = std::fs::remove_dir_all(&real);
+            return;
+        }
+        if !link_dir(&real, &alias) {
+            let _ = std::fs::remove_dir_all(&real);
+            return;
+        }
+
+        let plan = worktree_preflight(
+            &alias,
+            &[PreflightItem {
+                id: "row-1".into(),
+                kind: "new_branch".into(),
+                name: "Correcao do Login".into(),
+                branch: None,
+                worktree_name: None,
+                base_ref: None,
+                worktree_path: None,
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(plan.ground_branch.as_deref(), Some("main"));
+
+        let _ = std::fs::remove_dir(&alias);
+        let _ = std::fs::remove_dir_all(&real);
     }
 
     fn init_repo(root: &std::path::Path) -> bool {
