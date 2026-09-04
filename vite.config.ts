@@ -8,6 +8,19 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react()],
 
+  build: {
+    // The only browser this bundle ever runs in is WebView2, which is evergreen
+    // Chromium. Downleveling for anything older is work thrown away.
+    target: "chrome120",
+    // The gzip column next to every chunk costs several seconds on a bundle
+    // this size — and the app loads from disk, where it means nothing.
+    reportCompressedSize: false,
+    // Same reason the gzip figure is off: mermaid, cytoscape, katex and the
+    // language grammars are lazy chunks read from the local disk in a few
+    // milliseconds. The 500 kB default is a network budget we do not pay.
+    chunkSizeWarningLimit: 1500,
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

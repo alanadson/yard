@@ -4,17 +4,13 @@
 
 .DESCRIPTION
   Stamps a hash of the sources into src-tauri/target. If nothing changed since
-  last time, it just launches the executable (~1 s). If it did, it runs the
-  front-end build, recompiles the binary on the `release-fast` profile and then
-  launches. This is the everyday shortcut: no installation involved, the .exe is
-  the repository's own.
-
-.PARAMETER Release
-  Compiles on the full `release` profile (LTO, strip). Much slower; use it when
-  measuring performance or packaging.
+  last time, it just launches the executable (~1 s). If it did, it rebuilds only
+  the half that changed — the front end, the binary, or both — and launches.
+  This is the everyday shortcut: no installation involved, the .exe is the
+  repository's own.
 
 .PARAMETER Installer
-  Builds the NSIS installer (`npm run tauri build`) and exits without opening
+  Builds the NSIS installer (scripts/installer.mjs) and exits without opening
   the app.
 
 .PARAMETER Force
@@ -31,7 +27,6 @@
 #>
 [CmdletBinding()]
 param(
-  [switch]$Release,
   [switch]$Installer,
   [switch]$Force,
   [switch]$NoLaunch,
@@ -65,19 +60,10 @@ function New-YardShortcut([string]$lnkPath) {
   Write-Note $lnkPath
 }
 
-# Hash of everything that goes into the binary. `dist/` is deliberately out: it
-# is vite's output and its mtime changes on every build, which would keep the
+# Hash of a set of sources. `dist/` is deliberately out of every set: it is
+# vite's output and its mtime changes on every build, which would keep the
 # stamp from ever matching.
-function Get-SourceFingerprint {
-  $dirs = @('src', 'src-tauri\src', 'src-tauri\capabilities', 'src-tauri\icons', 'public')
-  $loose = @(
-    'index.html', 'package.json', 'package-lock.json', 'vite.config.ts',
-    'tsconfig.json', 'tsconfig.node.json', 'src-tauri\Cargo.toml',
-    'src-tauri\Cargo.lock', 'src-tauri\tauri.conf.json', 'src-tauri\build.rs',
-    # the launcher itself goes into the hash: changing the build flags invalidates the stamp
-    'scripts\yard.ps1'
-  )
-
+function Get-Fingerprint([string[]]$dirs, [string[]]$loose) {
   $files = @()
   foreach ($dir in $dirs) {
     $full = Join-Path $root $dir
@@ -100,6 +86,20 @@ function Get-SourceFingerprint {
   return ([System.BitConverter]::ToString($bytes)).Replace('-', '')
 }
 
+# Two sets, two stamps. They go stale for different reasons, and a change under
+# `src-tauri\src` has no business paying for a front-end build it cannot have
+# affected. The launcher itself is in both: it is where the build flags live.
+$frontendDirs = @('src', 'public')
+$frontendLoose = @(
+  'index.html', 'package.json', 'package-lock.json', 'vite.config.ts',
+  'tsconfig.json', 'tsconfig.node.json', 'scripts\yard.ps1'
+)
+$rustDirs = @('src-tauri\src', 'src-tauri\capabilities', 'src-tauri\icons')
+$rustLoose = @(
+  'src-tauri\Cargo.toml', 'src-tauri\Cargo.lock', 'src-tauri\tauri.conf.json',
+  'src-tauri\build.rs', 'scripts\yard.ps1'
+)
+
 if ($Shortcut) {
   Write-Step 'Creating shortcuts'
   New-YardShortcut (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Yard.lnk')
@@ -111,7 +111,12 @@ if ($Installer) {
   Write-Step 'NSIS installer (full release build, a few minutes)'
   Push-Location $root
   try {
-    Invoke-Step 'tauri build' { & npm run tauri build }
+    # scripts/installer.mjs looks for the updater's minisign key *before*
+    # compiling: with it the artifacts are signed as in CI, without it they are
+    # dropped. Calling `tauri build` straight would spend the whole build only
+    # to refuse on the last line ("a public key has been found, but no private
+    # key").
+    Invoke-Step 'tauri build' { & node scripts/installer.mjs }
   } finally {
     Pop-Location
   }
@@ -121,10 +126,14 @@ if ($Installer) {
   exit 0
 }
 
-$profileName = 'release-fast'
-if ($Release) { $profileName = 'release' }
-$exe = Join-Path $root "src-tauri\target\$profileName\yard.exe"
-$stampFile = Join-Path $root "src-tauri\target\.yard-launcher-$profileName"
+# One profile, on purpose. A second one (the old `release-fast`) meant cargo
+# kept two full copies of ~600 compiled dependencies — 2.4 GB and a ten-minute
+# rebuild every time you moved between the launcher and the installer. The
+# `release` profile in Cargo.toml is tuned to be quick enough that the launcher
+# can use it too.
+$exe = Join-Path $root 'src-tauri\target\release\yard.exe'
+$frontendStamp = Join-Path $root 'src-tauri\target\.yard-launcher-frontend'
+$rustStamp = Join-Path $root 'src-tauri\target\.yard-launcher-rust'
 
 # Windows locks the .exe while the app is running: here we just lean on Tauri's
 # single-instance lock, which brings the existing window to the front.
@@ -135,28 +144,41 @@ if ($running) {
   exit 0
 }
 
-$fingerprint = Get-SourceFingerprint
-$stamped = ''
-if (Test-Path $stampFile) { $stamped = (Get-Content $stampFile -Raw).Trim() }
-$stale = $Force -or -not (Test-Path $exe) -or ($stamped -ne $fingerprint)
+function Test-Stale([string]$stampFile, [string]$fingerprint) {
+  if ($Force) { return $true }
+  if (-not (Test-Path $stampFile)) { return $true }
+  return ((Get-Content $stampFile -Raw).Trim() -ne $fingerprint)
+}
 
-if ($stale) {
+$frontendPrint = Get-Fingerprint $frontendDirs $frontendLoose
+$rustPrint = Get-Fingerprint $rustDirs $rustLoose
+$noExe = -not (Test-Path $exe)
+$frontendStale = $noExe -or -not (Test-Path (Join-Path $root 'dist\index.html')) -or (Test-Stale $frontendStamp $frontendPrint)
+$rustStale = $noExe -or (Test-Stale $rustStamp $rustPrint)
+
+if ($frontendStale -or $rustStale) {
   $started = Get-Date
   Push-Location $root
   try {
-    Invoke-Step 'Front-end build (tsc + vite)' { & npm run build }
+    if ($frontendStale) {
+      Invoke-Step 'Front-end build (tsc + vite)' { & npm run build }
+      Set-Content -Path $frontendStamp -Value $frontendPrint -Encoding utf8
+    } else {
+      Write-Note 'Front end unchanged — skipping tsc + vite.'
+    }
+    # Always compiled, even when only the front end moved: cargo decides. The
+    # assets `generate_context!` embeds come back as `include_bytes!` of the
+    # real files in `dist/`, so rustc's dep-info relinks the binary by itself
+    # and this call costs a second when there is nothing to do.
+    #
     # `tauri/custom-protocol` is what separates production from dev in Tauri 2:
     # without it, tauri's build.rs turns on the `dev` cfg and the window goes
     # looking for devUrl (localhost:1420) instead of the embedded dist. The CLI
     # passes the feature behind the scenes; a raw `cargo build` does not.
-    Invoke-Step "Compiling the binary ($profileName)" {
-      if ($Release) {
-        & cargo build --release --features tauri/custom-protocol --manifest-path src-tauri\Cargo.toml
-      } else {
-        & cargo build --profile release-fast --features tauri/custom-protocol --manifest-path src-tauri\Cargo.toml
-      }
+    Invoke-Step 'Compiling the binary (release)' {
+      & cargo build --release --features tauri/custom-protocol --manifest-path src-tauri\Cargo.toml
     }
-    Set-Content -Path $stampFile -Value $fingerprint -Encoding utf8
+    Set-Content -Path $rustStamp -Value $rustPrint -Encoding utf8
     $secs = [int]((Get-Date) - $started).TotalSeconds
     Write-Step "Build updated in ${secs}s"
   } catch {

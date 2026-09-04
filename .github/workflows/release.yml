@@ -63,6 +63,13 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `[profile.release]` in Cargo.toml has cross-crate LTO off and
+          # incremental on: that profile is what a developer rebuilds twenty
+          # times an hour, and LTO over 611 crates cost minutes of every one of
+          # them. What ships is built once, by a machine, so here the trade goes
+          # the other way.
+          CARGO_PROFILE_RELEASE_LTO: thin
+          CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
           # The updater's minisign key (`npx tauri signer generate`). Without
           # it `createUpdaterArtifacts` fails the build on purpose: an
           # unsigned installer can never become an update.

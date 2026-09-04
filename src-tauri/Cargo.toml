@@ -85,22 +85,31 @@ tauri-plugin-single-instance = "2"
 # a panic in a command becomes Err instead of taking the app down during HMR
 panic = "unwind"
 
+# One release profile, used by the launcher (scripts/yard.ps1) and by the
+# installer alike. There used to be a second, `release-fast`, for the everyday
+# rebuild — but a second profile is a second `target/` tree: ~600 dependencies
+# compiled and kept twice, 2.4 GB of disk, and a full rebuild every time you
+# moved from `npm run app` to `npm run app:installer`.
+#
+# So `release` itself was made quick instead. Measured on this machine (16
+# cores), rebuilding after one changed line with every dependency compiled:
+#
+#   lto = true,   codegen-units = 1,  opt-level = "s"   5m 07s
+#   lto = "thin", codegen-units = 16, opt-level = 2     2m 01s
+#   lto = false,  codegen-units = 16, opt-level = 2       35s   <- this profile
+#
+# Nearly all of the old cost was one step: LTO over the whole 611-crate graph
+# on every link. Cross-crate LTO is worth having in what ships and worth
+# nothing on a machine where you rebuild twenty times an hour — so the release
+# workflow turns it back on with `CARGO_PROFILE_RELEASE_LTO=thin` (see
+# .github/workflows/release.yml), and here it stays off. The binary a developer
+# runs is ~27 MB instead of ~22 MB; the one that ships is unaffected.
 [profile.release]
 panic = "abort"
-lto = true
-codegen-units = 1
-opt-level = "s"
-strip = true
-
-# Launcher profile (scripts/yard.ps1). The same release build, only without LTO
-# and without codegen-units=1: the binary is a few MB larger, and recompiling
-# after touching the front end drops from minutes to seconds — which is what
-# counts when you rebuild on every app launch. The installer still comes from
-# `release`.
-[profile.release-fast]
-inherits = "release"
 lto = false
 codegen-units = 16
 opt-level = 2
-strip = false
+strip = true
+# The one thing the local loop really wants: only the parts of `yard` that
+# actually changed get codegen'd again.
 incremental = true
