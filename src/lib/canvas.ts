@@ -29,6 +29,8 @@ import {
   GROUP_NAME_MAX,
 } from "./canvasGroups";
 import { t } from "./i18n";
+import { circuitPoints } from "./circuit";
+import { canDock } from "./canvasDock";
 
 export interface CanvasViewport {
   x: number;
@@ -38,6 +40,9 @@ export interface CanvasViewport {
 
 /** Rectangle of a terminal on the canvas, in world coordinates. */
 export interface CanvasNode {
+  dock?: "left" | "right";
+  /** Conceals output on the board while the process continues running. */
+  contentHidden?: boolean;
   x: number;
   y: number;
   w: number;
@@ -72,8 +77,11 @@ export type StrokeSize = "s" | "m" | "l";
 export const STROKE_PX: Record<StrokeSize, number> = { s: 2, m: 3.5, l: 6 };
 
 interface ItemBase {
+  dock?: "left" | "right";
   id: string;
   color: string;
+  /** Original geometry for reversible canvas enlargement. */
+  restore?: Box;
   /** Fixed in place: no drag, no resize and no arrangement moves it. */
   pinned?: boolean;
 }
@@ -101,6 +109,7 @@ export type CanvasItem =
   | (ItemBase & { type: "text"; x: number; y: number; text: string; fontSize: number })
   | (ItemBase & {
       type: "note";
+      contentHidden?: boolean;
       x: number;
       y: number;
       w: number;
@@ -132,6 +141,8 @@ export type CanvasItem =
     })
   | (ItemBase & {
       type: "portal";
+      /** A physical Android target or emulator exposed by ADB. */
+      deviceSerial?: string;
       x: number;
       y: number;
       w: number;
@@ -216,6 +227,8 @@ export type CanvasItem =
       notes: string[];
       /** Index of the visible tab. Pruned back into range on load. */
       active?: number;
+      /** Apply the chosen binder color to notes filed later. */
+      colorNotes?: boolean;
     })
   | (ItemBase & {
       type: "media";
@@ -264,7 +277,7 @@ export type CanvasItem =
       /** Pinned name. Without it, the file's own name. */
       name?: string;
     })
-  | (ItemBase & { type: "connection"; from: string; to: string });
+  | (ItemBase & { type: "connection"; from: string; to: string; style?: "rope" | "circuit"; clamp?: { id: string; x: number; y: number } });
 
 export type PortalStorage = "instance" | "workspace" | "global";
 
@@ -717,6 +730,44 @@ export function resizeRect(
 export function normalizeCanvas(raw: unknown): CanvasData | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Partial<CanvasData>;
+  return canvasAround(
+    r,
+    Array.isArray(r.items) ? (r.items as CanvasItem[]).filter(isValidItem).map(cleanItem) : [],
+  );
+}
+
+/**
+ * `normalizeCanvas` for a value straight out of `JSON.parse`, which is how
+ * `parseLayout` reads a board. The answer is the same; on the way it notes
+ * which items the load kept exactly as parsed, so `canonicalCanvas` can vouch
+ * for them on the next commit with a scan instead of a second JSON trip.
+ * That note is a claim about where the objects came from, so hand it nothing
+ * but a fresh `JSON.parse` result; anything else goes to `normalizeCanvas`.
+ */
+export function normalizeParsedCanvas(parsed: unknown): CanvasData | undefined {
+  if (!parsed || typeof parsed !== "object") return undefined;
+  const r = parsed as Partial<CanvasData>;
+  const items: CanvasItem[] = [];
+  if (Array.isArray(r.items)) {
+    for (const it of r.items as CanvasItem[]) {
+      if (!isValidItem(it)) continue;
+      const clean = cleanItem(it);
+      if (clean === it) keptAsParsed.add(it);
+      items.push(clean);
+    }
+  }
+  return canvasAround(r, items);
+}
+
+/**
+ * Everything a load does around the per-item pass: the camera, the cards, the
+ * cross-item rule on binders and the group-level lists. `cleaned` arrives
+ * already through `isValidItem` and `cleanItem`.
+ *
+ * It must not read `r.items`: `canonicalCanvas` hands it the rest of a board
+ * without them, with the items it vetted one by one.
+ */
+function canvasAround(r: Partial<CanvasData>, cleaned: CanvasItem[]): CanvasData {
   const vp = r.viewport;
   const viewport: CanvasViewport =
     vp &&
@@ -747,17 +798,15 @@ export function normalizeCanvas(raw: unknown): CanvasData | undefined {
             : {}),
           ...(typeof n.z === "number" && Number.isFinite(n.z) ? { z: Math.round(n.z) } : {}),
           ...(n.pinned === true ? { pinned: true } : {}),
+          ...(n.contentHidden === true ? { contentHidden: true } : {}),
+          ...(n.dock === "left" || n.dock === "right" ? { dock: n.dock } : {}),
           ...(isBox(n.restore) ? { restore: { ...n.restore } } : {}),
         };
       }
     }
   }
 
-  const items = pruneBinders(
-    Array.isArray(r.items)
-      ? (r.items as CanvasItem[]).filter(isValidItem).map(sanitizeItem).map(sanitizePinned)
-      : [],
-  );
+  const items = pruneBinders(cleaned);
 
   const data: CanvasData = { viewport, nodes, items };
   const roles = normalizeRoles(r.roles);
@@ -775,6 +824,147 @@ export function normalizeCanvas(raw: unknown): CanvasData | undefined {
   const background = normalizeBackground(r.background);
   if (background) data.background = background;
   return data;
+}
+
+/** The per-item pass of a load, for an item `isValidItem` accepted. */
+function cleanItem(it: CanvasItem): CanvasItem {
+  return sanitizeDock(sanitizeRestore(sanitizePinned(sanitizeItem(it))));
+}
+
+/**
+ * Items already checked to be exactly what a load of their own JSON gives
+ * back. Only `canonicalCanvas` adds to it, after the check; weak, so an item
+ * that leaves the board leaves the set.
+ *
+ * Sound because nobody edits a canvas item in place (every writer spreads a
+ * new object, the same promise the layout parse cache relies on), and because
+ * `cleanItem` is a pure function of the item: the one input it has besides
+ * the item, the language of an unnamed group's default, never reaches an item
+ * that passed the check.
+ */
+const loadShaped = new WeakSet<object>();
+
+/**
+ * Items a load kept as `JSON.parse` returned them (`cleanItem` handed back the
+ * very object). Filled only by `normalizeParsedCanvas`.
+ */
+const keptAsParsed = new WeakSet<object>();
+
+/**
+ * What `normalizeCanvas(JSON.parse(JSON.stringify(raw)))` would give, for a
+ * board still in memory, reusing every item that is already in that form.
+ *
+ * A commit writes the whole board as JSON, and the read that follows used to
+ * parse all of it back: a new object for every item, and the view comparing
+ * every stroke point to find the old identities again. The store seeds its
+ * parse cache with this instead. An item is reused only once it is known to be
+ * exactly what the load returns (same keys, same order, leaves equal under
+ * `Object.is`); one that is not comes back the way the load would make it.
+ *
+ * `undefined` means "ask the parser": a board that is not plain data, one the
+ * load would throw on, or one holding a group the load would still change. A
+ * group is the one item whose load can depend on something besides itself:
+ * an unnamed one is named with a `t()` string, so the answer depends on the
+ * language when the read happens, and answering at commit time could
+ * disagree. Rather than tell that case from a mere trim, any change to a
+ * group is left to the parser.
+ */
+export function canonicalCanvas(raw: unknown): CanvasData | undefined {
+  if (!isPlainData(raw)) return undefined;
+  try {
+    const { items: list, ...rest } = raw as Partial<CanvasData>;
+    const items: CanvasItem[] = [];
+    for (const it of Array.isArray(list) ? (list as unknown[]) : []) {
+      if (typeof it === "object" && it !== null) {
+        if (loadShaped.has(it)) {
+          items.push(it as CanvasItem);
+          continue;
+        }
+        // Parsed data is plain objects, arrays, strings, booleans, null and
+        // numbers, and JSON writes all of it back unchanged but for two
+        // numbers: `-0` and the `Infinity` an overflowing literal parses to.
+        // Without those, JSON gives this very shape back, and `cleanItem`,
+        // which already handed it back untouched once, does so again: a scan
+        // stands in for the round trip below.
+        if (keptAsParsed.has(it) && writesBackTheSame(it)) {
+          loadShaped.add(it);
+          items.push(it as CanvasItem);
+          continue;
+        }
+        if (!isPlainData(it)) return undefined;
+      }
+      // Wrapped in an array so `undefined` and functions become `null`, as
+      // they do as elements of the persisted list.
+      const loaded = JSON.parse(JSON.stringify([it]))[0] as CanvasItem;
+      if (!isValidItem(loaded)) continue;
+      const clean = cleanItem(loaded);
+      if (sameAsLoaded(it, clean)) {
+        loadShaped.add(it as object);
+        items.push(it as CanvasItem);
+      } else if (clean.type === "group") {
+        return undefined;
+      } else {
+        items.push(clean);
+      }
+    }
+    return canvasAround(JSON.parse(JSON.stringify(rest)), items);
+  } catch {
+    return undefined;
+  }
+}
+
+/** No `-0` and no `Infinity` anywhere in a value that came out of `JSON.parse`. */
+function writesBackTheSame(v: unknown): boolean {
+  if (typeof v === "number") return Number.isFinite(v) && !Object.is(v, -0);
+  if (typeof v !== "object" || v === null) return true;
+  if (Array.isArray(v)) {
+    for (let i = 0; i < v.length; i++) if (!writesBackTheSame(v[i])) return false;
+    return true;
+  }
+  for (const k in v) if (!writesBackTheSame((v as Record<string, unknown>)[k])) return false;
+  return true;
+}
+
+/** A plain object with no `toJSON` of its own: what JSON writes field by field. */
+function isPlainData(v: unknown): v is Record<string, unknown> {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    Object.getPrototypeOf(v) === Object.prototype &&
+    !("toJSON" in v)
+  );
+}
+
+/**
+ * Whether `a` cannot be told apart from `b`, a value fresh out of a load:
+ * plain objects and arrays only, the same own keys in the same order, no
+ * holes, and leaves equal under `Object.is`. That last one is the point:
+ * JSON writes `-0` as `0` and `NaN` as `null`, so neither passes for what a
+ * load gives back.
+ */
+function sameAsLoaded(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || Object.getPrototypeOf(a) !== Array.prototype) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!(i in a) || !sameAsLoaded(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  if (Array.isArray(b) || Object.getPrototypeOf(a) !== Object.prototype) return false;
+  const ka = Reflect.ownKeys(a);
+  const kb = Reflect.ownKeys(b);
+  if (ka.length !== kb.length) return false;
+  for (let i = 0; i < ka.length; i++) {
+    const k = ka[i];
+    if (k !== kb[i]) return false;
+    if (!sameAsLoaded((a as Record<PropertyKey, unknown>)[k], (b as Record<PropertyKey, unknown>)[k])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -844,6 +1034,20 @@ function isBox(raw: unknown): raw is Box {
   return [b.x, b.y, b.w, b.h].every((v) => typeof v === "number" && Number.isFinite(v));
 }
 
+function sanitizeRestore(it: CanvasItem): CanvasItem {
+  if (!("restore" in it)) return it;
+  const { restore, ...rest } = it;
+  return "w" in it && isBox(restore) && restore.w > 0 && restore.h > 0
+    ? { ...rest, restore: { x: restore.x, y: restore.y, w: restore.w, h: restore.h } }
+    : rest;
+}
+
+function sanitizeDock(it: CanvasItem): CanvasItem {
+  if (!it.dock || (canDock(it) && (it.dock === "left" || it.dock === "right"))) return it;
+  const { dock: _invalid, ...rest } = it;
+  return rest;
+}
+
 /** `pinned` is `true` or absent; anything else written there is junk. */
 function sanitizePinned(it: CanvasItem): CanvasItem {
   if (it.pinned === true) return it;
@@ -854,6 +1058,12 @@ function sanitizePinned(it: CanvasItem): CanvasItem {
 
 /** Drops junk on optional fields so a crooked save cannot poison the type. */
 function sanitizeItem(it: CanvasItem): CanvasItem {
+  if (it.type === "connection" && it.clamp !== undefined) {
+    const anchor = it.clamp;
+    if (anchor && typeof anchor.id === "string" && anchor.id.trim() && Number.isFinite(anchor.x) && Number.isFinite(anchor.y)) return it;
+    const { clamp: _invalid, ...wire } = it;
+    return wire;
+  }
   if (it.type === "text") {
     // Required field, so a crooked one cannot be dropped — it falls back.
     // `textBox` divides by it, and a NaN here would take hit-testing and the
@@ -914,6 +1124,7 @@ function sanitizeItem(it: CanvasItem): CanvasItem {
       w: Math.max(BINDER_MIN_W, it.w),
       h: Math.max(BINDER_MIN_H, it.h),
       notes: it.notes.filter((n): n is string => typeof n === "string" && !!n),
+      colorNotes: it.colorNotes === true ? true : undefined,
       ...(typeof it.name === "string" && it.name.trim()
         ? { name: it.name.trim().slice(0, BINDER_NAME_MAX) }
         : { name: undefined }),
@@ -950,6 +1161,8 @@ function sanitizeItem(it: CanvasItem): CanvasItem {
   if (it.type === "group") {
     // A frame with no name is a rectangle nobody can tell from a drawn one,
     // and the band would render as an empty bar. It always says something.
+    // (The only language-dependent output of a load: `canonicalCanvas`
+    // leaves boards with such a group to the parser. Keep any new one here.)
     const name = (it.name || "").trim().slice(0, GROUP_NAME_MAX);
     return {
       ...it,
@@ -959,6 +1172,7 @@ function sanitizeItem(it: CanvasItem): CanvasItem {
     };
   }
   if (it.type !== "portal") return it;
+  const deviceSerial = typeof it.deviceSerial === "string" ? it.deviceSerial.trim() : "";
   const storage =
     it.storage === "workspace" || it.storage === "global" || it.storage === "instance"
       ? it.storage
@@ -976,6 +1190,7 @@ function sanitizeItem(it: CanvasItem): CanvasItem {
     w: Math.max(PORTAL_MIN_W, it.w),
     h: Math.max(PORTAL_MIN_H, it.h),
     url: it.url.trim(),
+    deviceSerial: deviceSerial && !deviceSerial.startsWith("-") && !/[\s\x00-\x1f]/.test(deviceSerial) ? deviceSerial : undefined,
     ...(typeof it.name === "string" && it.name.trim() ? { name: it.name.trim() } : { name: undefined }),
     ...(typeof it.engine === "string" && it.engine.trim()
       ? { engine: it.engine.trim() }
@@ -1153,6 +1368,12 @@ export interface ConnectionGeom {
   cubic: [number, number, number, number, number, number, number, number];
 }
 
+export function connectionGeometries(a: CanvasNode, b: CanvasNode, via?: { x: number; y: number }): ConnectionGeom[] {
+  if (!via) return [connectionGeometry(a, b)];
+  const anchor = { ...via, w: 0, h: 0 };
+  return [connectionGeometry(a, anchor), connectionGeometry(anchor, b)];
+}
+
 /**
  * Exponent of the exit-tangent axis blend. The higher it is, the sooner the
  * curve "sticks" to pure horizontal/vertical — 4 keeps the orthogonal look of
@@ -1199,6 +1420,7 @@ function exitTangent(r: CanvasNode, dx: number, dy: number): Vec {
 
 /** Distance from the center to the rectangle border along unit direction `t`. */
 function borderDistance(r: CanvasNode, t: Vec): number {
+  if (r.w === 0 && r.h === 0) return 0;
   const hw = Math.max(r.w, 1) / 2;
   const hh = Math.max(r.h, 1) / 2;
   const tx = Math.abs(t.x) < 1e-6 ? Infinity : hw / Math.abs(t.x);
@@ -1316,17 +1538,65 @@ export function itemBounds(
       const a = nodeOf(it.from);
       const b = nodeOf(it.to);
       if (!a || !b) return null;
-      const g = connectionGeometry(a, b);
-      const [sx, sy, c1x, c1y, c2x, c2y, ex, ey] = g.cubic;
+      if (it.style === "circuit") {
+        const points = circuitPoints(a, b, it.clamp);
+        const xs = points.map((point) => point.x), ys = points.map((point) => point.y);
+        return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+      }
+      const values = connectionGeometries(a, b, it.clamp).flatMap((geometry) => geometry.cubic);
+      const xs = values.filter((_, index) => index % 2 === 0), ys = values.filter((_, index) => index % 2 === 1);
       return {
-        x: Math.min(sx, ex, c1x, c2x),
-        y: Math.min(sy, ey, c1y, c2y),
-        w: Math.abs(Math.max(sx, ex, c1x, c2x) - Math.min(sx, ex, c1x, c2x)),
-        h: Math.abs(Math.max(sy, ey, c1y, c2y) - Math.min(sy, ey, c1y, c2y)),
+        x: Math.min(...xs), y: Math.min(...ys),
+        w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys),
       };
     }
   }
 }
+
+/** A stroke's bounding box, with the number of coordinates it was measured over. */
+interface StrokeExtent {
+  n: number;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+/**
+ * The bounding box of each stroke, for `hitItem` to reject far points without
+ * walking the segments. Keyed by the points array, so a recoloured copy that
+ * kept it shares the entry. A committed stroke's points are never rewritten in
+ * place (everyone treats the parsed canvas as immutable), but the pen's draft
+ * does grow by `push`: the length it was measured at is kept, and a box taken
+ * before the array grew is measured again instead of trusted.
+ */
+const strokeExtents = new WeakMap<readonly number[], StrokeExtent>();
+
+function strokeExtent(points: readonly number[]): StrokeExtent {
+  const known = strokeExtents.get(points);
+  if (known && known.n === points.length) return known;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i + 1 < points.length; i += 2) {
+    minX = Math.min(minX, points[i]);
+    maxX = Math.max(maxX, points[i]);
+    minY = Math.min(minY, points[i + 1]);
+    maxY = Math.max(maxY, points[i + 1]);
+  }
+  const extent = { n: points.length, minX, minY, maxX, maxY };
+  strokeExtents.set(points, extent);
+  return extent;
+}
+
+/**
+ * Extra margin, in world px, around the box that rejects a point early. The
+ * segment test's arithmetic (a clamped projection, then `hypot`) can land a
+ * hair outside the exact band; one unit of slack can only send a few more
+ * points on to that test, never turn a hit into a miss.
+ */
+const REJECT_SLACK = 1;
 
 /**
  * Does the point (in world) hit the item? `tol` should already come divided
@@ -1342,6 +1612,15 @@ export function hitItem(
   switch (it.type) {
     case "stroke": {
       const t = tol + STROKE_PX[it.size];
+      // Far from the whole stroke is far from every segment of it: one box
+      // test instead of a walk over hundreds of them. The eraser asks this of
+      // every stroke on the board for every pointer sample. A NaN anywhere
+      // fails every comparison here and falls through to the walk, as before.
+      const e = strokeExtent(it.points);
+      const pad = t + REJECT_SLACK;
+      if (wx < e.minX - pad || wx > e.maxX + pad || wy < e.minY - pad || wy > e.maxY + pad) {
+        return false;
+      }
       for (let i = 0; i + 3 < it.points.length; i += 2) {
         if (
           distToSegment(
@@ -1421,12 +1700,21 @@ export function hitItem(
       const a = nodeOf(it.from);
       const b = nodeOf(it.to);
       if (!a || !b) return false;
-      const [sx, sy, c1x, c1y, c2x, c2y, ex, ey] = connectionGeometry(a, b).cubic;
+      if (it.style === "circuit") {
+        const points = circuitPoints(a, b, it.clamp);
+        return points.slice(1).some((end, index) => {
+          const start = points[index];
+          return distToSegment(wx, wy, start.x, start.y, end.x, end.y) <= tol + 4;
+        });
+      }
+      for (const geometry of connectionGeometries(a, b, it.clamp)) {
+      const [sx, sy, c1x, c1y, c2x, c2y, ex, ey] = geometry.cubic;
       for (let i = 0; i <= 24; i++) {
         const t = i / 24;
         const px = cubicAt(t, sx, c1x, c2x, ex);
         const py = cubicAt(t, sy, c1y, c2y, ey);
         if (Math.hypot(wx - px, wy - py) <= tol + 4) return true;
+      }
       }
       return false;
     }
@@ -1447,7 +1735,10 @@ export function hitItem(
 export function sameItem(a: CanvasItem, b: CanvasItem): boolean {
   if (a === b) return true;
   if (a.type !== b.type || a.id !== b.id || a.color !== b.color) return false;
-  if (a.pinned !== b.pinned) return false;
+  if (a.pinned !== b.pinned || a.dock !== b.dock) return false;
+  if (a.type === "note" && b.type === "note" && a.contentHidden !== b.contentHidden) return false;
+  if (a.restore?.x !== b.restore?.x || a.restore?.y !== b.restore?.y ||
+      a.restore?.w !== b.restore?.w || a.restore?.h !== b.restore?.h) return false;
   switch (a.type) {
     case "stroke": {
       const o = b as typeof a;
@@ -1514,6 +1805,7 @@ export function sameItem(a: CanvasItem, b: CanvasItem): boolean {
         a.storage === o.storage &&
         a.viewport?.w === o.viewport?.w &&
         a.viewport?.h === o.viewport?.h
+        && a.deviceSerial === o.deviceSerial
       );
     }
     case "flow": {
@@ -1556,6 +1848,7 @@ export function sameItem(a: CanvasItem, b: CanvasItem): boolean {
         a.h === o.h &&
         a.name === o.name &&
         a.active === o.active &&
+        a.colorNotes === o.colorNotes &&
         a.notes.length === o.notes.length &&
         a.notes.every((n, i) => n === o.notes[i])
       );
@@ -1581,7 +1874,7 @@ export function sameItem(a: CanvasItem, b: CanvasItem): boolean {
     }
     case "connection": {
       const o = b as typeof a;
-      return a.from === o.from && a.to === o.to;
+      return a.from === o.from && a.to === o.to && a.style === o.style && a.clamp?.id === o.clamp?.id && a.clamp?.x === o.clamp?.x && a.clamp?.y === o.clamp?.y;
     }
   }
 }
@@ -1628,6 +1921,8 @@ export function reconcileNodes(
       o.h === n.h &&
       o.color === n.color &&
       o.fontSize === n.fontSize &&
+      o.contentHidden === n.contentHidden &&
+      o.dock === n.dock &&
       o.z === n.z &&
       o.pinned === n.pinned &&
       o.restore?.x === n.restore?.x &&
@@ -1635,6 +1930,32 @@ export function reconcileNodes(
       o.restore?.w === n.restore?.w &&
       o.restore?.h === n.restore?.h
     ) {
+      out[k] = o;
+    } else {
+      out[k] = n;
+      reusedAll = false;
+    }
+  }
+  return reusedAll ? prev : out;
+}
+
+/**
+ * Same for the roles: a role reaches its memoized terminal card as an object,
+ * and `normalizeRoles` builds fresh ones on every re-parse. `name` and `text`
+ * are the whole of a role, so they are all there is to compare.
+ */
+export function reconcileRoles(
+  prev: Record<string, CardRole> | undefined,
+  next: Record<string, CardRole> | undefined,
+): Record<string, CardRole> | undefined {
+  if (!next || !prev) return next;
+  const keys = Object.keys(next);
+  let reusedAll = keys.length === Object.keys(prev).length;
+  const out: Record<string, CardRole> = {};
+  for (const k of keys) {
+    const o = prev[k];
+    const n = next[k];
+    if (o && o.name === n.name && o.text === n.text) {
       out[k] = o;
     } else {
       out[k] = n;

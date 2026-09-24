@@ -23,8 +23,10 @@ import {
   releaseNotes,
   removeFromBinder,
   reorderTab,
+  colorBinder,
+  tabDropIndex,
 } from "./binder";
-import { EMPTY_CANVAS, type CanvasData, type CanvasItem } from "./canvas";
+import { EMPTY_CANVAS, normalizeCanvas, type CanvasData, type CanvasItem } from "./canvas";
 
 function note(id: string, text = id): CanvasItem {
   return { id, type: "note", x: 0, y: 0, w: 200, h: 140, text, color: "#fff" };
@@ -45,6 +47,30 @@ function binder(id: string, notes: string[], active?: number): CanvasItem {
 }
 
 const canvas = (...items: CanvasItem[]): CanvasData => ({ ...EMPTY_CANVAS, items });
+
+it("reorders tabs from a pointer drop while keeping the same note visible", () => {
+  const bounds = [{ x: 10, y: 100, w: 90, h: 24 }, { x: 105, y: 100, w: 90, h: 24 }];
+  const start = { x: 40, y: 112 };
+  const to = tabDropIndex(start, { x: 140, y: 112 }, bounds);
+  expect(to).toBe(1);
+  const result = reorderTab(canvas(binder("book", ["a", "b"], 0), note("a"), note("b")), "book", 0, to!);
+  expect(result.items[0]).toMatchObject({ notes: ["b", "a"], active: 1 });
+  expect(tabDropIndex(start, { x: 41, y: 112 }, bounds)).toBeNull();
+  expect(tabDropIndex(start, { x: 140, y: 200 }, bounds)).toBeNull();
+});
+
+it("applies a binder color to its current notes without changing loose notes", () => {
+  const source = canvas(binder("book", ["filed"]), note("filed"), note("loose"));
+  const result = colorBinder(source, "book", "#fecc88");
+  expect(result.items.map((item) => item.color)).toEqual(["#fecc88", "#fecc88", "#fff"]);
+});
+
+it("newly filed notes inherit an explicitly chosen binder color after reload", () => {
+  const source = canvas(binder("book", []), note("new"));
+  const saved = normalizeCanvas(colorBinder(source, "book", "#fecc88"))!;
+  const result = fileIntoBinder(saved, "book", "new");
+  expect(result.items.find((item) => item.id === "new")?.color).toBe("#fecc88");
+});
 
 describe("filedNoteIds", () => {
   it("lists the notes a binder is showing", () => {
@@ -109,13 +135,14 @@ describe("fileIntoBinder", () => {
     expect((out.items[1] as { notes: string[] }).notes).toEqual(["n1"]);
   });
 
-  it("shows the note it just filed", () => {
+  it("shows the newest filed note in the first tab", () => {
     // Filing something and not seeing it is the surest way to think it was
     // lost. The new tab is the one on screen.
     const c = canvas(note("n1"), note("n2"), binder("b1", ["n1"]));
     const out = fileIntoBinder(c, "b1", "n2");
-    const b = out.items.find((i) => i.id === "b1") as { active?: number };
-    expect(b.active).toBe(1);
+    const b = out.items.find((i) => i.id === "b1") as { active?: number; notes: string[] };
+    expect(b.notes).toEqual(["n2", "n1"]);
+    expect(b.active).toBe(0);
   });
 
   it("takes the note out of the binder that had it", () => {

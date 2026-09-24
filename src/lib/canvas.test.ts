@@ -6,8 +6,11 @@
 import { describe, expect, it } from "vitest";
 
 import { GROUP_DEFAULT_NAME, GROUP_HEAD } from "./canvasGroups";
+import { setActiveLang } from "./i18n";
 import {
+  canonicalCanvas,
   connectionGeometry,
+  normalizeParsedCanvas,
   hitItem,
   itemBounds,
   translateItem,
@@ -17,6 +20,7 @@ import {
   NOTE_FONT_MAX,
   reconcileItems,
   reconcileNodes,
+  reconcileRoles,
   resizeRect,
   routineDue,
   routineNextAt,
@@ -29,6 +33,42 @@ import {
 } from "./canvas";
 
 const MIN = 60_000;
+
+it.each(["rope", "circuit"] as const)("selects a %s cable at its clamp outside the direct route", (style) => {
+  const nodes = { a: { x: 0, y: 0, w: 100, h: 100 }, b: { x: 400, y: 0, w: 100, h: 100 } };
+  const wire: CanvasItem = { id: "wire", type: "connection", from: "a", to: "b", color: "#fff", style, clamp: { id: "bundle", x: 250, y: 300 } };
+  const nodeOf = (id: string) => nodes[id as keyof typeof nodes];
+  expect(hitItem(wire, 250, 300, 1, nodeOf)).toBe(true);
+  const bounds = itemBounds(wire, nodeOf)!;
+  expect(bounds.y + bounds.h).toBeGreaterThanOrEqual(300);
+});
+
+it("bounds a vertical circuit by its actual top and bottom ports", () => {
+  const nodes = { a: { x: 0, y: 0, w: 100, h: 100 }, b: { x: 80, y: 400, w: 100, h: 100 } };
+  const wire: CanvasItem = { id: "wire", type: "connection", from: "a", to: "b", color: "#fff", style: "circuit" };
+  expect(itemBounds(wire, (id) => nodes[id as keyof typeof nodes])).toEqual({ x: 50, y: 100, w: 80, h: 300 });
+});
+
+it("restores the selected Android device and reconciles a changed target", () => {
+  const old = { id: "phone", type: "portal" as const, x: 0, y: 0, w: 390, h: 844, url: "about:blank", color: "#fff", deviceSerial: "phone-1" };
+  const saved = normalizeCanvas({ nodes: {}, items: [{ ...old, deviceSerial: " emulator-5554 " }] })!;
+  expect(saved.items[0]).toMatchObject({ deviceSerial: "emulator-5554" });
+  expect(reconcileItems([old], saved.items)[0]).toMatchObject({ deviceSerial: "emulator-5554" });
+});
+
+it("keeps a changed wire style when reconciling an autosaved canvas", () => {
+  const wire: CanvasItem = { id: "wire", type: "connection", from: "a", to: "b", color: "#fff" };
+  const changed = { ...wire, style: "circuit" as const };
+  expect(reconcileItems([wire], [changed])).toEqual([changed]);
+});
+
+it("selects a circuit wire along its straight segment instead of the old curve", () => {
+  const nodes = { a: { x: 0, y: 0, w: 100, h: 100 }, b: { x: 400, y: 100, w: 100, h: 100 } };
+  const wire: CanvasItem = { id: "wire", type: "connection", from: "a", to: "b", color: "#fff", style: "circuit" };
+  const nodeOf = (id: string) => nodes[id as keyof typeof nodes];
+  expect(hitItem(wire, 250, 70, 1, nodeOf)).toBe(true);
+  expect(hitItem(wire, 170, 70, 1, nodeOf)).toBe(false);
+});
 
 function routine(patch: Partial<RoutineDef> = {}): RoutineDef {
   return {
@@ -331,6 +371,55 @@ describe("reconcileNodes", () => {
     expect(out).not.toBe(prev);
     expect(Object.keys(out)).toEqual(["t1"]);
     expect(out.t1).toBe(prev.t1);
+  });
+});
+
+/**
+ * A card's role reaches its memoized terminal card as an object, and every
+ * layout write re-parses the canvas into fresh role objects. Without this,
+ * a pan settling or a note being typed re-renders every card with a role.
+ */
+describe("reconcileRoles", () => {
+  it("returns the same map when a re-parse brings the same roles", () => {
+    const prev = { t1: { name: "revisora" }, t2: { name: "R", text: "faça x" } };
+    const next = { t1: { name: "revisora" }, t2: { name: "R", text: "faça x" } };
+    expect(reconcileRoles(prev, next)).toBe(prev);
+  });
+
+  it("keeps the untouched roles and hands over the one whose text changed", () => {
+    const prev = { t1: { name: "revisora" }, t2: { name: "R", text: "faça x" } };
+    const next = { t1: { name: "revisora" }, t2: { name: "R", text: "faça y" } };
+    const out = reconcileRoles(prev, next);
+    expect(out).not.toBe(prev);
+    expect(out?.t1).toBe(prev.t1);
+    expect(out?.t2).toBe(next.t2);
+  });
+
+  it("hands over a role whose name changed", () => {
+    const prev = { t1: { name: "revisora" } };
+    const next = { t1: { name: "autora" } };
+    expect(reconcileRoles(prev, next)?.t1).toBe(next.t1);
+  });
+
+  it("does not take a one-line role for the same role once it gains instructions", () => {
+    const prev = { t1: { name: "R" } };
+    const next = { t1: { name: "R", text: "faça x" } };
+    expect(reconcileRoles(prev, next)?.t1).toBe(next.t1);
+  });
+
+  it("a removed role invalidates reuse of the whole map", () => {
+    const prev = { t1: { name: "revisora" }, t2: { name: "R" } };
+    const next = { t1: { name: "revisora" } };
+    const out = reconcileRoles(prev, next);
+    expect(out).not.toBe(prev);
+    expect(Object.keys(out ?? {})).toEqual(["t1"]);
+    expect(out?.t1).toBe(prev.t1);
+  });
+
+  it("no roles left is no roles, whatever there was before", () => {
+    expect(reconcileRoles({ t1: { name: "revisora" } }, undefined)).toBeUndefined();
+    const next = { t1: { name: "revisora" } };
+    expect(reconcileRoles(undefined, next)).toBe(next);
   });
 });
 
@@ -815,5 +904,308 @@ describe("card chrome fields", () => {
     expect(reconcileNodes(prev, { a: { x: 0, y: 0, w: 640, h: 400, pinned: true } }).a).not.toBe(prev.a);
     const note = { id: "n", type: "note" as const, x: 0, y: 0, w: 1, h: 1, text: "", color: "#fff" };
     expect(reconcileItems([note], [{ ...note, pinned: true }])[0]).not.toBe(note);
+  });
+});
+
+/**
+ * `canonicalCanvas` lets a commit skip re-reading the board it just wrote:
+ * the store seeds its parse cache with it, so an item nobody touched comes
+ * back as the same object and the view's reconciliation stops at `a === b`.
+ * That is only safe if it is indistinguishable from the load it replaces, so
+ * every test here compares it with `normalizeCanvas` over the JSON, including
+ * key order and the fields a load writes as `undefined`.
+ */
+describe("canonicalCanvas", () => {
+  /** A load of what `canvas` would persist as. */
+  const load = (canvas: unknown) => normalizeCanvas(JSON.parse(JSON.stringify(canvas)));
+
+  /** Every key in visiting order: `toStrictEqual` does not look at the order. */
+  const shape = (v: unknown, path = "$"): string[] => {
+    if (Array.isArray(v)) return [path, ...v.flatMap((x, i) => shape(x, `${path}[${i}]`))];
+    if (v && typeof v === "object") {
+      return Object.entries(v).flatMap(([k, x]) => [`${path}.${k}`, ...shape(x, `${path}.${k}`)]);
+    }
+    return [];
+  };
+
+  /** A board as a writer might hand it over: every kind of item, plus junk a load cleans. */
+  const messy = (): Record<string, unknown> => ({
+    viewport: { x: -0, y: 12.5, zoom: 99 },
+    nodes: {
+      t1: { x: 0, y: 0, w: 10, h: 10, pinned: false, z: 1.4, fontSize: 99 },
+      t2: { x: 5, y: 5, w: 700, h: 500, dock: "left", restore: { x: 1, y: 2, w: 3, h: 4 } },
+      bad: { x: "1", y: 0, w: 1, h: 1 },
+    },
+    items: [
+      { id: "s1", type: "stroke", color: "#fff", size: "m", points: [-0, 0, 10, NaN, 20, 5] },
+      { id: "s2", type: "stroke", color: "#fff", size: "m", points: [1, 2] },
+      { id: "r1", type: "rect", color: "#fff", x: 0, y: 0, w: 10, h: 10, size: "s", seed: 3, pinned: false },
+      { id: "l1", type: "arrow", color: "#fff", x1: 0, y1: 0, x2: 5, y2: 5, size: "l", seed: 1, dock: "left" },
+      { id: "x1", type: "text", color: "#fff", x: 0, y: 0, text: "oi", fontSize: NaN },
+      { id: "n1", type: "note", color: "#fff", x: 0, y: 0, w: 200, h: 150, text: "a" },
+      {
+        id: "n2", type: "note", color: "#fff", x: 0, y: 0, w: 200, h: 150, text: "b",
+        fontSize: 100, restore: { x: 0, y: 0, w: -5, h: 10 }, dock: "right",
+      },
+      {
+        id: "p1", type: "portal", color: "#fff", x: 0, y: 0, w: 10, h: 10, url: " https://x.dev ",
+        storage: "bogus", viewport: { w: -1, h: 2 }, muted: 0, name: "  ", deviceSerial: " -evil ",
+      },
+      {
+        id: "f1", type: "flow", color: "#fff", x: 0, y: 0, w: 10, h: 10,
+        name: `${"a".repeat(47)} b`, stages: [{ prompt: "p", label: " QA " }, null], trigger: true,
+      },
+      {
+        id: "tr", type: "tree", color: "#fff", x: 0, y: 0, w: 10, h: 10, path: " / src",
+        mode: "bogus", expanded: ["", "src"], root: " C:\w ",
+      },
+      {
+        id: "b1", type: "binder", color: "#fff", x: 0, y: 0, w: 10, h: 10,
+        notes: ["n1", "gone", 7], active: 5, colorNotes: "yes",
+      },
+      { id: "m1", type: "media", color: "#fff", x: 0, y: 0, w: 10, h: 10, path: " a\b.png " },
+      { id: "d1", type: "doc", color: "#fff", x: 0, y: 0, w: 10, h: 10, path: "README.md", root: "C:\w", name: " Leia " },
+      { id: "g1", type: "group", color: "#fff", x: 0, y: 0, w: 400, h: 300, name: "Frente" },
+      { id: "c1", type: "connection", color: "#fff", from: "t1", to: "n1", clamp: { id: "", x: 0, y: 0 } },
+      {
+        id: "u1", type: "rect", color: "#fff", x: 1, y: 1, w: 1, h: 1, size: "s", seed: 1,
+        restore: undefined, extra: { keep: true },
+      },
+      null,
+      undefined,
+      { id: "zz", type: "hologram" },
+    ],
+    roles: { t1: "revisora", t2: { name: " Dev ", text: " Dev " } },
+    routines: [{ id: "r", terminalId: "t1", text: "x", everyMin: 5, enabled: true, createdAt: 1 }, { id: 3 }],
+    triggers: [
+      { id: "tg", sourceId: "*", event: "finished", action: { kind: "notify", text: "ok" }, enabled: true, createdAt: 1 },
+    ],
+    rolePresets: { qa: "Revise", " ": "x" },
+    background: { grid: "lines", color: "red", opacity: 7 },
+    unknown: 1,
+  });
+
+  it("gives back exactly what a load of its JSON gives, junk and all", () => {
+    const canvas = messy();
+    const out = canonicalCanvas(canvas);
+    const fresh = load(canvas);
+    expect(out).toStrictEqual(fresh);
+    expect(shape(out)).toEqual(shape(fresh));
+  });
+
+  it("a parse through normalizeParsedCanvas gives what normalizeCanvas gives", () => {
+    const text = JSON.stringify(messy());
+    const parsed = normalizeParsedCanvas(JSON.parse(text));
+    expect(parsed).toStrictEqual(normalizeCanvas(JSON.parse(text)));
+    expect(shape(parsed)).toEqual(shape(normalizeCanvas(JSON.parse(text))));
+  });
+
+  it("reuses the items already in the form a load gives them", () => {
+    const loaded = load(messy())!;
+    const moved = { ...loaded, viewport: { x: 40, y: -3, zoom: 1.5 } };
+    const out = canonicalCanvas(moved)!;
+    const byId = (id: string) => out.items.find((i) => i.id === id);
+    for (const id of ["s1", "r1", "x1", "n1", "n2", "c1"]) {
+      expect(byId(id)).toBe(loaded.items.find((i) => i.id === id));
+    }
+    expect(out).toStrictEqual(load(moved));
+  });
+
+  it("does not reuse a loaded item that a second load would still change", () => {
+    // Trimming before slicing leaves a trailing space at the cut, and the next
+    // load trims it: a loaded item is not always a fixed point of the loader.
+    const loaded = load(messy())!;
+    const out = canonicalCanvas(loaded)!;
+    const flow = out.items.find((i) => i.id === "f1");
+    const tree = out.items.find((i) => i.id === "tr");
+    expect(flow).not.toBe(loaded.items.find((i) => i.id === "f1"));
+    expect(flow).toMatchObject({ name: "a".repeat(47) });
+    expect(tree).toMatchObject({ path: "src" });
+    expect(out).toStrictEqual(load(loaded));
+    expect(shape(out)).toEqual(shape(load(loaded)));
+  });
+
+  it("reuses what a parse kept as parsed, as long as JSON would write it back the same", () => {
+    // `-0` and an overflowing literal parse fine, but JSON writes them back
+    // as `0` and `null`: those items are not what the next load returns.
+    const text = JSON.stringify({ viewport: { x: 0, y: 0, zoom: 1 }, nodes: {}, items: [
+      { id: "ok", type: "stroke", color: "#fff", size: "m", points: [1, 2, 3, 4] },
+      { id: "neg", type: "stroke", color: "#fff", size: "m", points: [1, 2, 3, 4] },
+      { id: "big", type: "rect", color: "#fff", x: 0, y: 0, w: 5, h: 5, size: "s", seed: 1 },
+      { id: "deep", type: "connection", color: "#fff", from: "a", to: "b", clamp: { id: "c", x: 7, y: 0 } },
+    ] })
+      .replace('"neg","type":"stroke","color":"#fff","size":"m","points":[1', '"neg","type":"stroke","color":"#fff","size":"m","points":[-0')
+      .replace('"seed":1', '"seed":1e999')
+      .replace('"x":7', '"x":-0.0');
+    const parsed = normalizeParsedCanvas(JSON.parse(text))!;
+    expect(parsed).toStrictEqual(normalizeCanvas(JSON.parse(text)));
+    const out = canonicalCanvas(parsed)!;
+    expect(out.items[0]).toBe(parsed.items[0]);
+    for (const i of [1, 2, 3]) expect(out.items[i]).not.toBe(parsed.items[i]);
+    expect(out).toStrictEqual(load(parsed));
+    expect(shape(out)).toEqual(shape(load(parsed)));
+  });
+
+  it("drops a filed note's tab when the note left the board in the same commit", () => {
+    const loaded = load(messy())!;
+    const without = { ...loaded, items: loaded.items.filter((i) => i.id !== "n1") };
+    const out = canonicalCanvas(without)!;
+    expect(out.items.find((i) => i.id === "b1")).toMatchObject({ notes: [], active: undefined });
+    expect(out).toStrictEqual(load(without));
+  });
+
+  /**
+   * An unnamed group is named by `t()`, so what a load gives depends on the
+   * language at the moment of the load. Answering now could disagree with the
+   * read it stands in for, so the board is left to the regular parse.
+   */
+  it("declines a board whose unnamed group a load would name", () => {
+    const canvas = { ...messy(), items: [{ id: "g", type: "group", color: "#fff", x: 0, y: 0, w: 10, h: 10, name: "  " }] };
+    expect(canonicalCanvas(canvas)).toBeUndefined();
+    try {
+      setActiveLang("en");
+      expect(load(canvas)!.items[0]).toMatchObject({ name: "Group" });
+    } finally {
+      setActiveLang("pt-BR");
+    }
+  });
+
+  it("declines a board a load would choke on, and anything that is not a plain object", () => {
+    const choking = { ...messy(), items: [{ id: "g", type: "group", color: "#fff", x: 0, y: 0, w: 10, h: 10, name: 5 }] };
+    expect(() => load(choking)).toThrow();
+    expect(canonicalCanvas(choking)).toBeUndefined();
+    expect(canonicalCanvas([])).toBeUndefined();
+    expect(canonicalCanvas(null)).toBeUndefined();
+  });
+});
+
+/**
+ * The stroke hit test is what the eraser runs for every stroke on the board,
+ * for every pointer sample, so it rejects far points with a cached bounding
+ * box before walking the segments. That shortcut is only allowed to be
+ * faster: these tests pin the answer to the plain definition (some segment
+ * within half the stroke's width plus the tolerance), including right on
+ * that boundary, where a box drawn one ulp too tight would leave a stroke
+ * the eraser visibly crossed.
+ */
+describe("hitting a stroke", () => {
+  /** A seeded generator: the same fixtures on every run. */
+  function seeded(seed: number) {
+    let s = seed >>> 0;
+    return () => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /** The definition, walked segment by segment with no shortcut. */
+  function nearPolyline(points: number[], wx: number, wy: number, t: number): boolean {
+    for (let i = 0; i + 3 < points.length; i += 2) {
+      const ax = points[i];
+      const ay = points[i + 1];
+      const dx = points[i + 2] - ax;
+      const dy = points[i + 3] - ay;
+      const len2 = dx * dx + dy * dy;
+      const k = len2 === 0 ? 0 : Math.min(1, Math.max(0, ((wx - ax) * dx + (wy - ay) * dy) / len2));
+      if (Math.hypot(wx - (ax + k * dx), wy - (ay + k * dy)) <= t) return true;
+    }
+    return false;
+  }
+
+  const SIZES = ["s", "m", "l"] as const;
+  const HALF = { s: 2, m: 3.5, l: 6 };
+
+  function strokes(rand: () => number): Extract<CanvasItem, { type: "stroke" }>[] {
+    const out: Extract<CanvasItem, { type: "stroke" }>[] = [];
+    for (const n of [1, 2, 3, 8, 60, 400]) {
+      for (const origin of [0, -3000, 1_000_000]) {
+        const points: number[] = [];
+        let x = origin + rand() * 500;
+        let y = origin - rand() * 500;
+        for (let i = 0; i < n; i++) {
+          points.push(x, y);
+          // Every so often the pen stands still: a zero-length segment.
+          if (rand() < 0.1) continue;
+          x += (rand() - 0.5) * 40;
+          y += (rand() - 0.5) * 40;
+        }
+        out.push({ id: `s${out.length}`, type: "stroke", points, size: SIZES[out.length % 3], color: "#fff" });
+      }
+    }
+    return out;
+  }
+
+  it("is hit exactly where some segment comes within half its width plus the tolerance", () => {
+    const rand = seeded(7);
+    const wrong: { id: string; tol: number; wx: number; wy: number; expected: boolean }[] = [];
+    let hits = 0;
+    let misses = 0;
+    for (const stroke of strokes(rand)) {
+      const pts = stroke.points;
+      for (const tol of [0.3, 6, 24]) {
+        const t = tol + HALF[stroke.size];
+        for (let k = 0; k < 300; k++) {
+          // Mostly right on the edge of the hit band, the rest scattered
+          // near and far, so both answers get exercised.
+          let wx: number;
+          let wy: number;
+          const seg = 2 * Math.floor(rand() * Math.max(1, pts.length / 2 - 1));
+          const ax = pts[seg];
+          const ay = pts[seg + 1];
+          const bx = pts[seg + 2] ?? ax;
+          const by = pts[seg + 3] ?? ay;
+          if (k % 3 !== 2) {
+            const f = rand();
+            const nx = -(by - ay);
+            const ny = bx - ax;
+            const len = Math.hypot(nx, ny) || 1;
+            const off = t * (1 + (rand() - 0.5) * 1e-12) * (rand() < 0.5 ? -1 : 1);
+            wx = ax + (bx - ax) * f + (nx / len) * off;
+            wy = ay + (by - ay) * f + (ny / len) * off;
+          } else {
+            const spread = rand() < 0.5 ? 60 : 5000;
+            wx = ax + (rand() - 0.5) * spread;
+            wy = ay + (rand() - 0.5) * spread;
+          }
+          const expected = nearPolyline(pts, wx, wy, t);
+          if (hitItem(stroke, wx, wy, tol, () => undefined) !== expected) {
+            wrong.push({ id: stroke.id, tol, wx, wy, expected });
+          }
+          if (expected) hits++;
+          else misses++;
+        }
+      }
+    }
+    expect(wrong).toEqual([]);
+    // Not a vacuous pass: the boundary samples land on both sides of it.
+    expect(hits).toBeGreaterThan(500);
+    expect(misses).toBeGreaterThan(500);
+  });
+
+  it("is hit just past its end cap and missed just beyond the band", () => {
+    const stroke: CanvasItem = { id: "s", type: "stroke", points: [0, 0, 100, 0], size: "m", color: "#fff" };
+    // Half width 3.5 plus tolerance 6: the band reaches 9.5 from the segment.
+    expect(hitItem(stroke, 109.5, 0, 6, () => undefined)).toBe(true);
+    expect(hitItem(stroke, 50, -9.5, 6, () => undefined)).toBe(true);
+    expect(hitItem(stroke, 109.6, 0, 6, () => undefined)).toBe(false);
+    expect(hitItem(stroke, 50, 9.6, 6, () => undefined)).toBe(false);
+  });
+
+  it("a single point is no segment and is never hit, even right on it", () => {
+    const dot: CanvasItem = { id: "d", type: "stroke", points: [10, 10], size: "l", color: "#fff" };
+    expect(hitItem(dot, 10, 10, 6, () => undefined)).toBe(false);
+  });
+
+  it("a stroke whose points grew after a first test is hit at its new end", () => {
+    // A shortcut cached on the first test must not outlive the points it was
+    // measured from.
+    const points = [0, 0, 10, 0];
+    const stroke: CanvasItem = { id: "g", type: "stroke", points, size: "s", color: "#fff" };
+    expect(hitItem(stroke, 500, 0, 1, () => undefined)).toBe(false);
+    points.push(500, 0);
+    expect(hitItem(stroke, 500, 0, 1, () => undefined)).toBe(true);
   });
 });

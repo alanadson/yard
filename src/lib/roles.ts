@@ -56,15 +56,29 @@ export interface RolePick {
 /** KV key of the global library. Written as `{ name: text | {text,color} }`. */
 export const ROLE_PRESETS_KEY = "rolePresets";
 
+export function roleNameConflict(library: Record<string, RolePreset>, name: string, original: string | null): string | null {
+  const match = Object.keys(library).find((key) => key.toLowerCase() === name.trim().toLowerCase());
+  return match && match !== original ? match : null;
+}
+
 export async function readGlobalRoles(): Promise<Record<string, RolePreset>> {
+  const kv = await ipc.readPrefs();
+  let parsed: unknown;
   try {
-    const kv = await ipc.readPrefs();
-    return normalizePresets(JSON.parse(kv[ROLE_PRESETS_KEY] ?? "{}")) ?? {};
+    parsed = JSON.parse(kv[ROLE_PRESETS_KEY] ?? "{}");
   } catch {
-    // A corrupt blob must not take the picker (or `yard role list`) down: an
-    // empty library is a recoverable state, an exception on boot is not.
-    return {};
+    // A row that is not JSON at all is the same corruption as one with the
+    // wrong shape; the parser's own message helps nobody.
+    parsed = null;
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(t("A biblioteca de papéis está corrompida. Restaure um backup antes de salvar."));
+  }
+  const normalized = normalizePresets(parsed);
+  if (!normalized && Object.keys(parsed).length > 0) {
+    throw new Error(t("A biblioteca de papéis está corrompida. Restaure um backup antes de salvar."));
+  }
+  return normalized ?? {};
 }
 
 /**

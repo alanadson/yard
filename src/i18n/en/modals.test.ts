@@ -30,6 +30,8 @@ const VISIBLE = [
   "Ler a conversa do começo, sem retomar o processo",
   // Modal chrome
   "Fechar (Esc)",
+  "Tentar novamente",
+  "Desconectado",
 ];
 
 describe("Modals in English", () => {

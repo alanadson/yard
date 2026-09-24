@@ -6,6 +6,7 @@
 // Public so integration tests in `tests/` can exercise the engine without
 // going through the UI.
 pub mod agents;
+pub mod devices;
 pub mod bridge;
 pub mod browsers;
 pub mod clipboard;
@@ -39,8 +40,14 @@ pub mod costs;
 pub mod mcp;
 pub mod ssh;
 pub mod lsp;
+pub mod checkpoints;
+mod checkpoint_commands;
 
 mod logging;
+mod bounded_cache;
+mod dir_entries;
+mod file_policy;
+mod lanes;
 mod resources;
 mod watcher;
 mod window_state;
@@ -55,7 +62,7 @@ use agents::resolver::AgentInfo;
 use agents::sessions::{AgentSession, SessionUsage};
 use browsers::BrowserInfo;
 use persistence::workspace::{SaveResult, WorkspaceSnapshot};
-use pty::{AttachResult, PtyDelta, PtyProbe, PtySnapshot, ShellOption, SpawnOptions};
+use pty::{AttachResult, AttachWants, PtyDelta, PtyProbe, PtySnapshot, ShellOption, SpawnOptions};
 use state::AppState;
 
 /// Keeps the non-blocking log writer alive for the lifetime of the app.
@@ -78,6 +85,10 @@ async fn spawn_pty(app: AppHandle, opts: SpawnOptions) -> Result<PtySnapshot, St
     .map_err(|e| format!("spawn interrompido: {e}"))?
 }
 
+/// Runs on the terminal's own lane (`lanes.rs`), not on the UI thread: a paste
+/// into a console that stopped reading blocks this write, and only this
+/// terminal's writes queue behind it. The promise still settles when the bytes
+/// are in the ConPTY, which is what `inject.ts` times its Enter from.
 #[tauri::command]
 fn write_pty(state: State<'_, Arc<AppState>>, id: String, data: String) -> Result<(), String> {
     pty::write(&state, &id, &data)
@@ -93,9 +104,26 @@ fn resize_pty(
     pty::resize(&state, &id, rows, cols)
 }
 
+/// Up to 4 MB of scrollback to copy and turn into JSON, or to read from disk
+/// for a dead terminal, so it goes to the blocking pool. It has no side effect
+/// to keep in order: the UI already treats the answer as unordered with the
+/// live output (`XTermView`'s `held`).
+///
+/// `wants` is what the view will use (`pty::AttachWants`): a dead history it
+/// discards is not read at all, and a live alternate screen sends only the
+/// tail it scans. Left out, the whole history comes back, as it always did.
 #[tauri::command]
-fn attach_pty(state: State<'_, Arc<AppState>>, id: String) -> AttachResult {
-    pty::attach(&state, &id)
+async fn attach_pty(
+    app: AppHandle,
+    id: String,
+    wants: Option<AttachWants>,
+) -> Result<AttachResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<Arc<AppState>>();
+        pty::attach_with(&state, &id, wants.unwrap_or_default())
+    })
+    .await
+    .map_err(|e| format!("attach interrompido: {e}"))
 }
 
 /// Asks the console host to re-emit the current frame (see `pty::repaint`).
@@ -114,6 +142,13 @@ async fn repaint_pty(app: AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 fn pty_probe(state: State<'_, Arc<AppState>>, id: String) -> PtyProbe {
     pty::probe(&state, &id)
+}
+
+/// The heartbeat the pump would send now (`pty::activity`), for a listener
+/// that registered after the last one went out.
+#[tauri::command]
+fn pty_activity(state: State<'_, Arc<AppState>>, id: String) -> Option<events::ActivityPayload> {
+    pty::activity(&state, &id)
 }
 
 #[tauri::command]
@@ -135,6 +170,10 @@ fn pty_exists(state: State<'_, Arc<AppState>>, id: String) -> bool {
 fn list_ptys(state: State<'_, Arc<AppState>>) -> Vec<PtySnapshot> {
     pty::list(&state)
 }
+
+// `kill_pty`, `suspend_pty` and `suspend_group` run on one lane of their own
+// (`lanes.rs`), in arrival order and off the UI thread: without a Job Object
+// the kill refreshes the whole process table and waits on `taskkill`.
 
 #[tauri::command]
 fn kill_pty(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
@@ -170,6 +209,8 @@ async fn restart_pty(app: AppHandle, id: String) -> Result<PtySnapshot, String> 
     .map_err(|e| format!("restart interrompido: {e}"))?
 }
 
+/// On the terminal's own lane (`lanes.rs`): it can wait on the scrollback
+/// lock behind a 4 MB rewrite, and then deletes a file.
 #[tauri::command]
 fn clear_pty(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
     pty::clear_scrollback(&state, &id)
@@ -181,15 +222,63 @@ fn set_pty_visible(state: State<'_, Arc<AppState>>, id: String, visible: bool) {
     pty::set_visible(&state, &id, visible);
 }
 
+/// The page took `chunks` chunks of `id`'s output off its channel: the pump
+/// may send that many again (`pty::reader::INFLIGHT_CAP`).
 #[tauri::command]
-fn get_pty_tree_info(
-    state: State<'_, Arc<AppState>>,
-    id: String,
-) -> Result<events::PtyResource, String> {
-    pty::tree_info(&state, &id)
+fn ack_pty_output(state: State<'_, Arc<AppState>>, id: String, chunks: u32) {
+    pty::ack_output(&state, &id, chunks);
+}
+
+/// Opens this page's PTY channel (`pty::pages`): output, exit, heartbeat and
+/// idle for the subscriptions made on it, in the order the engine produced
+/// them. `page` tells a reload (a new token, whose first link closes the old
+/// page's) from a module reloaded in place (the same token). Returns the
+/// link's number, which the other two take.
+#[tauri::command]
+fn pty_events_open(
+    webview: tauri::Webview,
+    pages: State<'_, Arc<pty::pages::Pages>>,
+    page: String,
+    channel: tauri::ipc::Channel,
+) -> u64 {
+    pages.open(webview.label(), &page, Box::new(channel))
+}
+
+/// Subscription `sub` (numbered by the page) on `link` listens to `topic`.
+#[tauri::command]
+fn pty_events_subscribe(
+    pages: State<'_, Arc<pty::pages::Pages>>,
+    link: u64,
+    sub: u64,
+    topic: pty::pages::Topic,
+) -> Result<(), String> {
+    pages.subscribe(link, sub, topic)
+}
+
+/// Subscription `sub` on `link` stops listening.
+#[tauri::command]
+fn pty_events_unsubscribe(
+    pages: State<'_, Arc<pty::pages::Pages>>,
+    link: u64,
+    sub: u64,
+) -> Result<(), String> {
+    pages.unsubscribe(link, sub)
+}
+
+/// Can refresh the whole process table, or wait behind the resources thread
+/// doing it, so it goes to the blocking pool. A read with nothing to order.
+#[tauri::command]
+async fn get_pty_tree_info(app: AppHandle, id: String) -> Result<events::PtyResource, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<Arc<AppState>>();
+        pty::tree_info(&state, &id)
+    })
+    .await
+    .map_err(|e| format!("leitura da arvore interrompida: {e}"))?
 }
 
 /// Deletes the on-disk scrollback of a terminal that was removed for good.
+/// On the terminal's own lane (`lanes.rs`), like its writes.
 #[tauri::command]
 fn forget_pty(state: State<'_, Arc<AppState>>, id: String) {
     state.statuses.lock().remove(&id);
@@ -266,14 +355,22 @@ fn bridge_hooks_file() -> String {
     bridge::claude_hooks_file().to_string_lossy().into_owned()
 }
 
+/// A PATH lookup (cached after the first one, `pty::default_shell`), so it
+/// goes to the blocking pool: a dead network share on PATH used to freeze the
+/// window while `which` waited on it.
 #[tauri::command]
-fn default_shell() -> String {
-    pty::default_shell()
+async fn default_shell() -> String {
+    tauri::async_runtime::spawn_blocking(pty::default_shell)
+        .await
+        .unwrap_or_else(|_| "powershell.exe".to_string())
 }
 
+/// Same as `default_shell`: PATH lookups, cached, on the blocking pool.
 #[tauri::command]
-fn list_shells() -> Vec<ShellOption> {
-    pty::list_shells()
+async fn list_shells() -> Vec<ShellOption> {
+    tauri::async_runtime::spawn_blocking(pty::list_shells)
+        .await
+        .unwrap_or_default()
 }
 
 /// Whether an agent can be told to run inside WSL, and in which distro.
@@ -311,6 +408,12 @@ async fn list_fonts() -> Vec<fonts::FontFamilyInfo> {
 // Workspace / preferences
 // ---------------------------------------------------------------------------
 
+// Every sync command here and in the notebook section below locks `state.db`,
+// and all of them run on the database lane (`lanes.rs`): one at a time, in the
+// order they arrived, as on the UI thread, but without freezing it while the
+// backup holds the lock. A new one must join `lanes::DB_COMMANDS` (a test in
+// `lanes.rs` reads this file and fails otherwise).
+
 #[tauri::command]
 fn save_workspace(
     state: State<'_, Arc<AppState>>,
@@ -341,6 +444,12 @@ fn write_pref(state: State<'_, Arc<AppState>>, key: String, value: String) -> Re
 }
 
 #[tauri::command]
+fn write_prefs(state: State<'_, Arc<AppState>>, entries: Vec<(String, String)>) -> Result<(), String> {
+    let conn = state.db.lock();
+    persistence::db::kv_set_many(&conn, &entries).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn delete_pref(state: State<'_, Arc<AppState>>, key: String) -> Result<(), String> {
     let conn = state.db.lock();
     persistence::db::kv_delete(&conn, &key).map_err(|e| e.to_string())
@@ -349,13 +458,12 @@ fn delete_pref(state: State<'_, Arc<AppState>>, key: String) -> Result<(), Strin
 #[tauri::command]
 async fn export_backup(app: AppHandle, dest: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        // The lock is held for the whole export on purpose: the checkpoint
-        // inside `export` only guarantees a complete `app.db` if no write
-        // lands between it and the copy. An autosave waiting a few hundred
-        // milliseconds is cheaper than a backup missing the last change.
+        // `export` locks the database itself, for the checkpoint and the copy
+        // of `app.db` only: the checkpoint guarantees a complete `app.db` only
+        // if no write lands between it and the copy. The zip is built after
+        // the lock is released, so an autosave no longer waits for it.
         let state = app.state::<Arc<AppState>>();
-        let conn = state.db.lock();
-        persistence::backup::export(&conn, std::path::Path::new(&dest))
+        persistence::backup::export(&state.db, std::path::Path::new(&dest))
             .map(|p| p.to_string_lossy().into_owned())
             .map_err(|e| e.to_string())
     })
@@ -470,9 +578,14 @@ fn set_keep_awake(on: bool) {
 /// without asking the user to do it by hand.
 #[tauri::command]
 fn restart_app(app: AppHandle) {
-    pty::kill_all(&app.state::<Arc<AppState>>());
-    portal::close_all(&app);
-    app.restart();
+    // A save that arrived before this used to run before it, on the same UI
+    // thread. On its lane now, it still has to reach the disk before the
+    // process goes.
+    lanes::before_teardown(lanes::lanes(), || {
+        pty::kill_all(&app.state::<Arc<AppState>>());
+        portal::close_all(&app);
+        app.restart();
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -512,19 +625,16 @@ async fn score_delete(name: String) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 /// `refresh = false` uses the cache; detection runs `--version` of each CLI.
+/// Callers that arrive while a detection runs wait for it instead of starting
+/// their own (`agents::resolver::SharedDetection`).
 #[tauri::command]
 async fn detect_agents(app: AppHandle, refresh: bool) -> Vec<AgentInfo> {
     let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app2.state::<Arc<AppState>>();
-        if !refresh {
-            if let Some(cached) = state.agents_cache.lock().clone() {
-                return cached;
-            }
-        }
-        let found = agents::resolver::detect_all();
-        *state.agents_cache.lock() = Some(found.clone());
-        found
+        state
+            .agents_cache
+            .get(refresh, agents::resolver::detect_all)
     })
     .await
     .unwrap_or_default()
@@ -577,6 +687,8 @@ fn session_tail_stop(state: State<'_, Arc<AppState>>, tail_id: String) {
 
 /// Starts watching a project root. Calling again with the same id
 /// replaces the watcher (the old one is dropped when it leaves the registry).
+/// On the project's own lane (`lanes.rs`), with `unwatch_project`: setting a
+/// watcher up over a big tree takes a while, and the two keep their order.
 #[tauri::command]
 fn watch_project(
     app: AppHandle,
@@ -1100,6 +1212,16 @@ async fn portal_open(
 }
 
 #[tauri::command]
+async fn device_list() -> Result<Vec<devices::AndroidDevice>, String> {
+    tauri::async_runtime::spawn_blocking(devices::list).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn device_action(serial: String, action: devices::DeviceAction) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || devices::execute(&serial, &action)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 fn portal_set_bounds(app: AppHandle, id: String, place: portal::PortalPlace) -> Result<(), String> {
     portal::place(&app, &id, place)
 }
@@ -1182,6 +1304,10 @@ async fn portal_set_ua(app: AppHandle, id: String, ua: Option<String>) -> Result
     portal::set_ua(app, id, ua).await
 }
 
+// Both shots run on one lane (`lanes.rs`), in arrival order and off the UI
+// thread: capture, crop, PNG encode and file write, or a round trip to the
+// browser's CDP port.
+
 #[tauri::command]
 fn portal_screenshot(app: AppHandle, id: String) -> Result<String, String> {
     portal::screenshot(&app, &id)
@@ -1220,23 +1346,31 @@ fn app_paths() -> AppPaths {
     }
 }
 
-/// Opens Explorer on the folder (or selects the file).
+/// Opens Explorer on the folder (or selects the file). A stat and a process
+/// spawn, so it goes to the blocking pool: a path on a dead network share
+/// stalls the stat for as long as the share takes to time out.
 #[tauri::command]
-fn reveal_path(path: String) -> Result<(), String> {
+async fn reveal_path(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || reveal_path_now(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn reveal_path_now(path: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let p = std::path::Path::new(&path);
+        let p = std::path::Path::new(path);
         // `explorer.exe` opens some window anyway on a dead path, and the
         // spawn succeeds — without this, clicking "Reveal" on a folder that
         // had been renamed reported success and opened Documents.
         paths::must_exist(p)?;
         let mut cmd = std::process::Command::new("explorer.exe");
         if p.is_file() {
-            cmd.arg("/select,").arg(&path);
+            cmd.arg("/select,").arg(path);
         } else {
-            cmd.arg(&path);
+            cmd.arg(path);
         }
         cmd.creation_flags(CREATE_NO_WINDOW);
         // explorer.exe returns a non-zero exit code even when it opens; only
@@ -1257,15 +1391,23 @@ fn reveal_path(path: String) -> Result<(), String> {
 /// `.zip`, an `.mkv` with a codec WebView2 will not play. The verb is Explorer's
 /// own — `explorer.exe <path>` opens through the Windows association, without
 /// going through a shell (and therefore with nothing to escape).
+///
+/// A stat and a process spawn: the blocking pool, like `reveal_path`.
 #[tauri::command]
-fn open_external(path: String) -> Result<(), String> {
+async fn open_external(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || open_external_now(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn open_external_now(path: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        paths::must_exist(std::path::Path::new(&path))?;
+        paths::must_exist(std::path::Path::new(path))?;
         std::process::Command::new("explorer.exe")
-            .arg(&path)
+            .arg(path)
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| e.to_string())?;
@@ -1278,10 +1420,15 @@ fn open_external(path: String) -> Result<(), String> {
     }
 }
 
-/// Checks that a path exists and is a directory — used when adding a project.
+/// Checks that a path exists and is a directory, used when adding a project
+/// and, at boot, for every floor's folder. A stat of a path on a dead network
+/// share waits for the share to time out, so it goes to the blocking pool
+/// (the boot loop asks for all of them at once).
 #[tauri::command]
-fn is_directory(path: String) -> bool {
-    std::path::Path::new(&path).is_dir()
+async fn is_directory(path: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || std::path::Path::new(&path).is_dir())
+        .await
+        .unwrap_or(false)
 }
 
 /// Bytes of a pasted image (base64) → a file in `%TEMP%`, returning the path.
@@ -1369,6 +1516,190 @@ pub fn run() {
         tracing::warn!("YARD_DATA_DIR definido: instancia unica desativada");
     }
 
+    // Every command the UI can call. `lanes::dispatch` sends the blocking ones
+    // that must keep their arrival order to a lane (`lanes.rs`) and runs the
+    // rest in place, exactly as this table would on its own.
+    let commands = lanes::commands::<tauri::Wry, _>(tauri::generate_handler![
+        spawn_pty,
+        write_pty,
+        resize_pty,
+        attach_pty,
+        repaint_pty,
+        pty_probe,
+        pty_activity,
+        pty_read_since,
+        pty_exists,
+        list_ptys,
+        kill_pty,
+        suspend_pty,
+        suspend_group,
+        restart_pty,
+        clear_pty,
+        set_pty_visible,
+        pty_events_open,
+        pty_events_subscribe,
+        pty_events_unsubscribe,
+        ack_pty_output,
+        get_pty_tree_info,
+        forget_pty,
+        default_shell,
+        list_shells,
+        wsl_status,
+        list_fonts,
+        save_workspace,
+        load_workspace,
+        read_prefs,
+        write_pref,
+        write_prefs,
+        delete_pref,
+        export_backup,
+        import_backup,
+        backup_pending,
+        cancel_backup,
+        restart_app,
+        set_keep_awake,
+        notes_load,
+        note_save,
+        note_delete,
+        notebook_save,
+        notebook_delete,
+        note_tag_save,
+        note_tag_delete,
+        note_export,
+        score_save,
+        score_list,
+        score_read,
+        score_delete,
+        detect_agents,
+        list_agent_sessions,
+        get_session_usage,
+        agent_resume_args,
+        session_tail_start,
+        session_tail_stop,
+        watch_project,
+        unwatch_project,
+        git_changes,
+        git_file_diff,
+        git_head_text,
+        fs_list_dir,
+        fs_read_text,
+        fs_write_text,
+        fs_create_entry,
+        fs_rename_entry,
+        fs_delete_entry,
+        fs_search_text,
+        fs_replace_text,
+        fs_cancel_search,
+        fs_index_files,
+        scm_info,
+        scm_init,
+        scm_stage,
+        scm_stage_all,
+        scm_unstage,
+        scm_unstage_all,
+        scm_discard,
+        scm_discard_all,
+        scm_commit,
+        scm_last_message,
+        scm_log,
+        scm_commit_detail,
+        scm_commit_file_diff,
+        scm_branches,
+        scm_checkout,
+        scm_branch_create,
+        scm_branch_delete,
+        scm_branch_rename,
+        scm_merge,
+        scm_rebase,
+        scm_revert,
+        scm_reset,
+        scm_resolve_conflict,
+        scm_abort,
+        scm_continue,
+        scm_stash_list,
+        scm_stash_push,
+        scm_stash_apply,
+        scm_stash_drop,
+        scm_stash_show,
+        scm_fetch,
+        scm_pull,
+        scm_push,
+        scm_push_delete,
+        scm_tags,
+        scm_tag_create,
+        scm_tag_delete,
+        scm_apply_patch,
+        forge_status,
+        forge_pr,
+        forge_pr_create,
+        forge_pr_comments,
+        scm_diff,
+        worktree_provision,
+        worktree_preflight,
+        branch_delete_if_unchanged,
+        worktree_list,
+        worktree_dirty,
+        worktree_remove,
+        worktree_preview,
+        worktree_land,
+        floor_run_hook,
+        list_browsers,
+        portal_open,
+        device_list,
+        device_action,
+        portal_set_bounds,
+        portal_set_bounds_many,
+        portal_navigate,
+        portal_eval,
+        portal_probe,
+        portal_close,
+        portal_hide_except,
+        portal_retain,
+        portal_info,
+        portal_reload,
+        portal_back,
+        portal_forward,
+        portal_set_muted,
+        portal_set_ua,
+        portal_screenshot,
+        portal_grab_shot,
+        app_paths,
+        reveal_path,
+        open_external,
+        is_directory,
+        clipboard_save_image,
+        bridge_respond,
+        usage_snapshot,
+        usage_refresh,
+        ui_log,
+        pty_export,
+        search_scrollback,
+        bridge_remote,
+        bridge_hooks_file,
+        webhook_post,
+        tray::tray_set_status,
+        tray::window_summon,
+        support::support_bundle,
+        persistence::autobackup::backup_auto_run,
+        costs::usage_history,
+        agents::read::session_events,
+        mcp::mcp_list,
+        mcp::mcp_save,
+        mcp::mcp_delete,
+        mcp::mcp_env_values,
+        ssh_status,
+        lsp::lsp_start,
+        lsp::lsp_send,
+        lsp::lsp_stop,
+        lsp::lsp_detect,
+        checkpoint_commands::checkpoint_create,
+        checkpoint_commands::checkpoint_list,
+        checkpoint_commands::checkpoint_preview,
+        checkpoint_commands::checkpoint_compare,
+        checkpoint_commands::checkpoint_restore,
+        checkpoint_commands::checkpoint_delete,
+    ]);
+
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -1380,6 +1711,8 @@ pub fn run() {
         // (media.rs). It has to be registered before the window exists.
         .register_asynchronous_uri_scheme_protocol(media::SCHEME, media::serve)
         .manage(Arc::new(AppState::new(db)))
+        // Where every terminal's events go (`pty::emit::tauri_sink`).
+        .manage(Arc::new(pty::pages::Pages::default()))
         .manage(LogGuard(guard))
         .setup(|app| {
             let handle = app.handle().clone();
@@ -1399,172 +1732,7 @@ pub fn run() {
             bridge::start(handle);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            spawn_pty,
-            write_pty,
-            resize_pty,
-            attach_pty,
-            repaint_pty,
-            pty_probe,
-            pty_read_since,
-            pty_exists,
-            list_ptys,
-            kill_pty,
-            suspend_pty,
-            suspend_group,
-            restart_pty,
-            clear_pty,
-            set_pty_visible,
-            get_pty_tree_info,
-            forget_pty,
-            default_shell,
-            list_shells,
-            wsl_status,
-            list_fonts,
-            save_workspace,
-            load_workspace,
-            read_prefs,
-            write_pref,
-            delete_pref,
-            export_backup,
-            import_backup,
-            backup_pending,
-            cancel_backup,
-            restart_app,
-            set_keep_awake,
-            notes_load,
-            note_save,
-            note_delete,
-            notebook_save,
-            notebook_delete,
-            note_tag_save,
-            note_tag_delete,
-            note_export,
-            score_save,
-            score_list,
-            score_read,
-            score_delete,
-            detect_agents,
-            list_agent_sessions,
-            get_session_usage,
-            agent_resume_args,
-            session_tail_start,
-            session_tail_stop,
-            watch_project,
-            unwatch_project,
-            git_changes,
-            git_file_diff,
-            git_head_text,
-            fs_list_dir,
-            fs_read_text,
-            fs_write_text,
-            fs_create_entry,
-            fs_rename_entry,
-            fs_delete_entry,
-            fs_search_text,
-            fs_replace_text,
-            fs_cancel_search,
-            fs_index_files,
-            scm_info,
-            scm_init,
-            scm_stage,
-            scm_stage_all,
-            scm_unstage,
-            scm_unstage_all,
-            scm_discard,
-            scm_discard_all,
-            scm_commit,
-            scm_last_message,
-            scm_log,
-            scm_commit_detail,
-            scm_commit_file_diff,
-            scm_branches,
-            scm_checkout,
-            scm_branch_create,
-            scm_branch_delete,
-            scm_branch_rename,
-            scm_merge,
-            scm_rebase,
-            scm_revert,
-            scm_reset,
-            scm_resolve_conflict,
-            scm_abort,
-            scm_continue,
-            scm_stash_list,
-            scm_stash_push,
-            scm_stash_apply,
-            scm_stash_drop,
-            scm_stash_show,
-            scm_fetch,
-            scm_pull,
-            scm_push,
-            scm_push_delete,
-            scm_tags,
-            scm_tag_create,
-            scm_tag_delete,
-            scm_apply_patch,
-            forge_status,
-            forge_pr,
-            forge_pr_create,
-            forge_pr_comments,
-            scm_diff,
-            worktree_provision,
-            worktree_preflight,
-            branch_delete_if_unchanged,
-            worktree_list,
-            worktree_dirty,
-            worktree_remove,
-            worktree_preview,
-            worktree_land,
-            floor_run_hook,
-            list_browsers,
-            portal_open,
-            portal_set_bounds,
-            portal_set_bounds_many,
-            portal_navigate,
-            portal_eval,
-            portal_probe,
-            portal_close,
-            portal_hide_except,
-            portal_retain,
-            portal_info,
-            portal_reload,
-            portal_back,
-            portal_forward,
-            portal_set_muted,
-            portal_set_ua,
-            portal_screenshot,
-            portal_grab_shot,
-            app_paths,
-            reveal_path,
-            open_external,
-            is_directory,
-            clipboard_save_image,
-            bridge_respond,
-            usage_snapshot,
-            usage_refresh,
-            ui_log,
-            pty_export,
-            search_scrollback,
-            bridge_remote,
-            bridge_hooks_file,
-            webhook_post,
-            tray::tray_set_status,
-            tray::window_summon,
-            support::support_bundle,
-            persistence::autobackup::backup_auto_run,
-            costs::usage_history,
-            agents::read::session_events,
-            mcp::mcp_list,
-            mcp::mcp_save,
-            mcp::mcp_delete,
-            mcp::mcp_env_values,
-            ssh_status,
-            lsp::lsp_start,
-            lsp::lsp_send,
-            lsp::lsp_stop,
-            lsp::lsp_detect,
-        ])
+        .invoke_handler(move |invoke| lanes::dispatch(&commands, invoke))
         .build(tauri::generate_context!())
         .expect("erro ao construir o Yard")
         .run(|app, event| {
@@ -1572,12 +1740,21 @@ pub fn run() {
             // the crash case; this covers a clean exit.
             if let RunEvent::ExitRequested { .. } | RunEvent::Exit = event {
                 window_state::flush_now(app);
-                let state = app.state::<Arc<AppState>>();
-                pty::kill_all(&state);
-                // Language servers are children like the PTYs: none may outlive
-                // the window (lsp.rs).
-                lsp::stop_all();
-                portal::close_all(app);
+                // Every save that arrived before the exit reaches the disk
+                // before it, as when they shared the UI thread (`lanes.rs`).
+                lanes::before_teardown(lanes::lanes(), || {
+                    // A backup still compressing would be cut off by the
+                    // process exit and left with no central directory. The
+                    // exit waits for it, as it waited for the database lock
+                    // that used to cover the whole zip.
+                    persistence::backup::wait_for_exports();
+                    let state = app.state::<Arc<AppState>>();
+                    pty::kill_all(&state);
+                    // Language servers are children like the PTYs: none may
+                    // outlive the window (lsp.rs).
+                    lsp::stop_all();
+                    portal::close_all(app);
+                });
             }
         });
 }

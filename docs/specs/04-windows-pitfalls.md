@@ -30,7 +30,14 @@
    possible heuristic quarantine (an app that spawns many child processes
    looks suspicious). An EV/OV signature solves it; open source projects can
    get a free certificate through the SignPath Foundation. In the meantime,
-   document the "Run anyway" step.
+   document the "Run anyway" step. The same goes for any exe the app writes
+   at runtime: the native `yard` client in `<data>\bin` is probed once at
+   startup and the shims fall back to PowerShell when it is blocked. A block
+   is remembered for that build (`yard-cli-<hash>.blocked`) and retried only a
+   day later, so Windows does not raise it at every start; an exe quarantined
+   after the probe sends the shims to `yard.ps1` on their own. Its
+   first run is also when Defender looks at it (about 0.7 s here, 20 ms after),
+   which is why the probe runs off the setup thread.
 8. **WebView2 missing** on frozen corporate Windows 10 → the bundle's
    `downloadBootstrapper` handles it.
 9. **HiDPI and zoom.** Test at 125%/150%: the `FitAddon` rounds cells and

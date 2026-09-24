@@ -38,6 +38,18 @@ export function reasonOf(error: unknown): string {
   return raw.trim() || t("falha desconhecida");
 }
 
+/** Keeps a useful action prefix while removing implementation noise. */
+export function readableMessage(message: string): string {
+  const clean = message.replace(/(^|:\s*)Error:\s*/g, "$1").trim();
+  return !clean || clean === "[object Object]" ? t("falha desconhecida") : clean;
+}
+
+export function failureMessage(error: unknown): string {
+  return t("Não foi possível concluir esta ação: {reason}. Tente novamente.", {
+    reason: reasonOf(error),
+  });
+}
+
 /**
  * Awaits the promise and returns the matching state. A rejection **never**
  * becomes `pronto`: that is the one rule this module exists to guarantee.

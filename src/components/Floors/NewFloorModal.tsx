@@ -64,6 +64,8 @@ import {
 import { nanoid } from "nanoid";
 
 import { Modal } from "../modals/Modal";
+import { fieldAccessibility } from "./fieldAccessibility";
+import { frontToResume } from "./frontContinuation";
 import { Select } from "../Select";
 import { BrandIcon } from "../BrandIcon";
 import { brandById } from "../../lib/brands";
@@ -219,7 +221,7 @@ export function NewFloorModal() {
   const t = useT();
   const closeModal = useUI((s) => s.closeModal);
   const showToast = useUI((s) => s.showToast);
-  const payload = useUI((s) => s.modalPayload) as { projectId?: string } | null;
+  const payload = useUI((s) => s.modalPayload) as { projectId?: string; initialAgentId?: string } | null;
 
   const projects = useProjects((s) => s.projects);
   /**
@@ -241,7 +243,7 @@ export function NewFloorModal() {
   const terminals = useProjects((s) => s.terminals);
   const agentDefaults = useAgentDefaults((s) => s.defaults);
 
-  const [rows, setRows] = useState<FrontRow[]>(() => [newRow(nanoid(8))]);
+  const [rows, setRows] = useState<FrontRow[]>(() => [newRow(nanoid(8), { agentId: payload?.initialAgentId ?? null })]);
   const [multi, setMulti] = useState(false);
   const [nameMode, setNameMode] = useState<NameMode>("name");
   const [pattern, setPattern] = useState("exp-{agent}-{index}");
@@ -453,7 +455,7 @@ export function NewFloorModal() {
     });
     setReport(done);
     setStage("done");
-    void useWorktrees.getState().refresh(project.id, project.path);
+    void useWorktrees.getState().refresh(project.id, project.path, true);
   };
 
   /** Runs again only the rows that failed, on a freshly read repository. */
@@ -481,13 +483,18 @@ export function NewFloorModal() {
         return fixed ? { ...i, state: fixed.state, issue: fixed.issue } : i;
       }),
     });
-    void useWorktrees.getState().refresh(project.id, project.path);
+    void useWorktrees.getState().refresh(project.id, project.path, true);
   };
 
   const openFront = (item: ItemReport) => {
     if (!item.groupId) return;
     useProjects.getState().setActiveGroup(item.groupId);
     closeModal();
+    const ui = useUI.getState();
+    if (ui.modal === "new-terminal") {
+      if (report?.journal.entries.some((entry) => entry.itemId === item.clientItemId && entry.effect === "agent_started")) ui.openModal(null);
+      else ui.openModal("new-terminal", { ...(ui.modalPayload as object), groupId: item.groupId, destination: null });
+    }
   };
 
   const continueAdding = () => {
@@ -496,6 +503,11 @@ export function NewFloorModal() {
     setAcked([]);
     setReport(null);
     setStage("form");
+  };
+  const requestClose = () => {
+    const item = frontToResume(useUI.getState().modalParents.at(-1)?.modal ?? null, stage, report?.items ?? []);
+    if (item) openFront(item);
+    else closeModal();
   };
 
   const warnings = plan ? materialWarnings(plan) : [];
@@ -622,7 +634,7 @@ export function NewFloorModal() {
           <span>{t("Criar vários")}</span>
         </label>
         <span className="grow" />
-        <button className="btn" onClick={closeModal}>
+        <button className="btn" onClick={requestClose}>
           {t("Cancelar")}
         </button>
         <button className="btn btn--primary" disabled={!ready} onClick={() => void start()}>
@@ -661,7 +673,7 @@ export function NewFloorModal() {
             )}
             {addAnother && !multi ? (
               <>
-                <button className="btn" onClick={closeModal}>
+                <button className="btn" onClick={requestClose}>
                   {t("Fechar")}
                 </button>
                 <button className="btn btn--primary" onClick={continueAdding}>
@@ -669,7 +681,7 @@ export function NewFloorModal() {
                 </button>
               </>
             ) : (
-              <button className="btn btn--primary" onClick={closeModal}>
+              <button className="btn btn--primary" onClick={requestClose}>
                 {t("Fechar")}
               </button>
             )}
@@ -681,7 +693,7 @@ export function NewFloorModal() {
   return (
     <Modal
       title={multi ? t("Abrir frentes") : t("Abrir frente")}
-      onClose={closeModal}
+      onClose={requestClose}
       wide={multi}
       initialFocus="[data-front-focus]"
       dirty={stage === "form" && rows.some((r) => !!r.name.trim() || !!r.prompt.trim())}
@@ -1190,11 +1202,14 @@ function MatrixRows({
       {rows.map((row, i) => {
         const mine = plan?.items.find((it) => it.clientItemId === row.id);
         return (
-          <div className="front-row" key={row.id}>
+          <fieldset className="front-row" key={row.id}>
+            <legend className="sr-only">{t("Frente {n}", { n: i + 1 })}</legend>
             <div className="front-row-head">
               <span className="front-row-n">{i + 1}</span>
               <input
                 className="front-row-name"
+                aria-label={t("Nome da frente {n}", { n: i + 1 })}
+                {...fieldAccessibility(row.id, "name", mine?.errors)}
                 value={row.name}
                 placeholder={t("nome da frente")}
                 onChange={(e) => onPatch(row.id, { name: e.target.value })}
@@ -1202,7 +1217,7 @@ function MatrixRows({
               <Select
                 className="front-row-kind"
                 value={row.kind}
-                label={t("Destino")}
+                label={t("Destino da frente {n}", { n: i + 1 })}
                 // Same rule as the single row: a destination with nothing
                 // behind it is not offered, or the row can only be corrected
                 // by changing it back.
@@ -1227,7 +1242,8 @@ function MatrixRows({
               <Select
                 className="front-row-agent"
                 value={row.agentId ?? ""}
-                label={t("Agente")}
+                label={t("Agente da frente {n}", { n: i + 1 })}
+                  {...fieldAccessibility(row.id, "agent", mine?.errors)}
                 placeholder={t("sem agente")}
                 options={[
                   { value: "", label: t("sem agente") },
@@ -1270,7 +1286,8 @@ function MatrixRows({
               {row.kind === "new_worktree_existing_branch" && (
                 <Select
                   value={row.branch}
-                  label={t("Branch existente")}
+                  label={t("Branch da frente {n}", { n: i + 1 })}
+                  {...fieldAccessibility(row.id, "branch", mine?.errors)}
                   placeholder={t("Escolha uma branch")}
                   // Only the ones that can be reused: the rest of the list is
                   // a base, and the base has its own field on the row.
@@ -1286,7 +1303,8 @@ function MatrixRows({
               {row.kind === "existing_worktree" && (
                 <Select
                   value={row.worktreePath}
-                  label={t("Worktree no disco")}
+                  label={t("Worktree da frente {n}", { n: i + 1 })}
+                  {...fieldAccessibility(row.id, "worktree", mine?.errors)}
                   placeholder={t("Escolha um worktree")}
                   options={worktrees.map((w) => ({
                     value: w.path,
@@ -1299,13 +1317,15 @@ function MatrixRows({
                 <>
                   <input
                     value={row.baseRef}
-                    aria-label={t("Base")}
+                    aria-label={t("Base da frente {n}", { n: i + 1 })}
+                  {...fieldAccessibility(row.id, "base", mine?.errors)}
                     placeholder={t("base (padrão: a branch do chão)")}
                     onChange={(e) => onPatch(row.id, { baseRef: e.target.value })}
                   />
                   <input
                     value={row.branch}
-                    aria-label={t("Branch")}
+                    aria-label={t("Branch da frente {n}", { n: i + 1 })}
+                  {...fieldAccessibility(row.id, "branch", mine?.errors)}
                     placeholder={t("branch (padrão: yard/<nome>)")}
                     onChange={(e) => onPatch(row.id, { branch: e.target.value })}
                   />
@@ -1313,14 +1333,14 @@ function MatrixRows({
               )}
               <input
                 value={row.prompt}
-                aria-label={t("Pedido")}
+                aria-label={t("Pedido da frente {n}", { n: i + 1 })}
                 placeholder={t("o que este agente deve fazer")}
                 onChange={(e) => onPatch(row.id, { prompt: e.target.value })}
               />
             </div>
 
-            <Issues item={mine} />
-          </div>
+            <Issues item={mine} rowId={row.id} />
+          </fieldset>
         );
       })}
 
@@ -1489,12 +1509,12 @@ function PlanBlock({
   );
 }
 
-function Issues({ item }: { item: PlannedItem | undefined }) {
+function Issues({ item, rowId }: { item: PlannedItem | undefined; rowId?: string }) {
   if (!item || (!item.errors.length && !item.warnings.length)) return null;
   return (
     <ul className="front-issues">
       {item.errors.map((e, i) => (
-        <li key={`e${i}`} className="is-error" role="alert">
+        <li key={`e${i}`} id={rowId ? `${rowId}-error-${i}` : undefined} className="is-error" role="alert">
           <CircleAlert size={12} aria-hidden="true" />
           {issueText(e)}
         </li>

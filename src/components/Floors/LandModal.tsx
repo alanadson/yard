@@ -21,6 +21,8 @@ import { useChanges } from "../../stores/changesStore";
 import { parseLayout, useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
 import { useT } from "../../hooks/useT";
+import { reasonOf } from "../../lib/loading";
+import { landActions } from "./landState";
 
 export interface LandPayload {
   project: ProjectRow;
@@ -48,15 +50,16 @@ export function LandModal() {
   const floor = group ? parseLayout(group.layoutJson).floor : undefined;
 
   /** Redoes the comparison — the floor changes while this dialog is open. */
-  const [comparing, setComparing] = useState(false);
+  const [comparing, setComparing] = useState(true);
   const compare = useCallback(async () => {
     if (!project || !group) return;
     setComparing(true);
+    setPreview(null);
     setError(null);
     try {
       setPreview(await previewFloor(project, group));
     } catch (e) {
-      setError(String(e));
+      setError(reasonOf(e));
     } finally {
       setComparing(false);
     }
@@ -70,8 +73,8 @@ export function LandModal() {
         if (!cancel) setPreview(p);
       })
       .catch((e) => {
-        if (!cancel) setError(String(e));
-      });
+        if (!cancel) setError(reasonOf(e));
+      }).finally(() => { if (!cancel) setComparing(false); });
     return () => {
       cancel = true;
     };
@@ -87,9 +90,10 @@ export function LandModal() {
     (!preview.alreadyMerged && !preview.clean);
 
   const siblings = siblingFloors(project.id, group.id, floor?.task?.id);
+  const actions = landActions({ hasPreview: !!preview, blocked, error: err, comparing, busy });
 
   const land = async () => {
-    if (!preview) return;
+    if (!actions.canLand) return;
     setBusy(true);
     try {
       const result = await landFloor(project, group);
@@ -149,18 +153,18 @@ export function LandModal() {
               >
                 <GitCompare size={13} aria-hidden="true" /> {t("Ver as alterações")}
               </button>
-              <button className="btn" disabled={comparing} onClick={() => void compare()}>
-                <RotateCw size={13} aria-hidden="true" />
-                {comparing ? t("Comparando…") : t("Comparar de novo")}
-              </button>
             </>
           )}
+          <button className="btn" disabled={!actions.canRetry} onClick={() => void compare()}>
+            <RotateCw size={13} aria-hidden="true" />
+            {comparing ? t("Comparando…") : t("Comparar de novo")}
+          </button>
           <button className="btn" onClick={closeModal}>
             {t("Cancelar")}
           </button>
           <button
             className="btn btn--primary"
-            disabled={busy || blocked}
+            disabled={!actions.canLand}
             onClick={() => void land()}
           >
             <GitMerge size={13} aria-hidden="true" />
@@ -169,8 +173,8 @@ export function LandModal() {
         </div>
       }
     >
-      {err && <p className="floors-warn">{err}</p>}
-      {!err && !preview && <p className="hint">{t("Comparando com o chão…")}</p>}
+      {err && <p className="floors-warn" role="alert">{err}</p>}
+      <div role="status" aria-live="polite">{comparing && <p className="hint">{t("Comparando com o chão…")}</p>}</div>
       {preview && (
         <LandPreviewBody preview={preview} />
       )}

@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const calls = vi.hoisted(() => ({
   scmInfo: vi.fn(),
+  gitChanges: vi.fn(),
   scmBranches: vi.fn(),
   scmStashList: vi.fn(),
   scmTags: vi.fn(),
@@ -30,6 +31,7 @@ const calls = vi.hoisted(() => ({
 vi.mock("../lib/ipc", () => ({
   ipc: {
     scmInfo: calls.scmInfo,
+    gitChanges: calls.gitChanges,
     scmBranches: calls.scmBranches,
     scmStashList: calls.scmStashList,
     scmTags: calls.scmTags,
@@ -43,6 +45,7 @@ vi.mock("../lib/ipc", () => ({
 }));
 
 import { useScm, type ScmRepo } from "./scmStore";
+import { useChanges } from "./changesStore";
 
 const INFO = {
   isRepo: true,
@@ -63,6 +66,7 @@ function reset() {
   useScm.setState({ root: null, projectId: null, byRoot: {}, drafts: {} });
   for (const fn of Object.values(calls)) fn.mockReset();
   calls.scmInfo.mockResolvedValue(INFO);
+  calls.gitChanges.mockResolvedValue({ isRepo: true, branch: "main", files: [], additions: 0, deletions: 0, uncounted: 0 });
   calls.scmBranches.mockResolvedValue([]);
   calls.scmStashList.mockResolvedValue([]);
   calls.scmTags.mockResolvedValue([]);
@@ -84,6 +88,28 @@ const repo = (root = "C:/proj"): ScmRepo | undefined =>
 
 describe("useScm.refresh", () => {
   beforeEach(reset);
+
+  it("keeps the forced header refresh when an older response arrives later", async () => {
+    let finish!: (value: typeof INFO) => void;
+    calls.scmInfo
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+      .mockResolvedValue({ ...INFO, branch: "updated" });
+    const older = useScm.getState().refresh("C:/proj");
+    const newer = useScm.getState().refresh("C:/proj", true);
+    finish(INFO);
+    await Promise.all([older, newer]);
+    expect(repo()?.info?.branch).toBe("updated");
+    expect(repo()?.loading).toBe(false);
+  });
+
+  it("shares simultaneous header reads for the same root and section", async () => {
+    await Promise.all([
+      useScm.getState().refresh("C:/proj"),
+      useScm.getState().refresh("c:/proj/"),
+    ]);
+    expect(repo()?.info?.branch).toBe("main");
+    expect(calls.scmInfo).toHaveBeenCalledTimes(1);
+  });
 
   it("stores what the backend answered under the root that was asked", async () => {
     await useScm.getState().refresh("C:/proj");
@@ -119,6 +145,31 @@ describe("useScm.refresh", () => {
     await useScm.getState().refresh("C:/proj");
     expect(repo()?.error).toBeNull();
   });
+});
+
+it("refreshes the project that started a mutation after the visible project changes", async () => {
+  reset();
+  useChanges.setState({ gitByProject: {} });
+  useScm.setState({ projectId: "original", root: "C:/proj" });
+  let finish!: () => void;
+  const mutation = useScm.getState().run("C:/proj", "stage", () => new Promise<void>((resolve) => { finish = resolve; }));
+  useScm.setState({ projectId: "other", root: "C:/other" });
+  finish();
+  await mutation;
+  expect(useChanges.getState().gitByProject.original?.branch).toBe("main");
+  expect(useChanges.getState().gitByProject.other).toBeUndefined();
+});
+
+it("discards history that was read before a successful repository mutation", async () => {
+  reset();
+  let finish!: (value: unknown[]) => void;
+  calls.scmLog.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const older = useScm.getState().loadLog("C:/proj", false);
+  await useScm.getState().run("C:/proj", "commit", async () => {});
+  finish([{ hash: "obsolete", short: "old", author: "a", email: "a@x", date: 0,
+    parents: [], refs: [], subject: "obsolete history", body: "" }]);
+  await older;
+  expect(repo()?.commits).toEqual([]);
 });
 
 /**
@@ -281,6 +332,36 @@ describe("message draft", () => {
 
 describe("paginated history", () => {
   beforeEach(reset);
+
+  it("keeps file history when an older repository history request finishes", async () => {
+    const commit = {
+      hash: "file", short: "file", author: "a", email: "a@x", date: 1,
+      parents: [], refs: [], subject: "file commit", body: "",
+    };
+    let finish!: (value: typeof commit[]) => void;
+    calls.scmLog
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+      .mockResolvedValue([commit]);
+    const older = useScm.getState().loadLog("C:/proj", false);
+    await useScm.getState().loadFileLog("C:/proj", "file.ts");
+    finish([{ ...commit, hash: "unrelated" }]);
+    await older;
+    expect(repo()?.commits).toEqual([commit]);
+    expect(repo()?.logDone).toBe(true);
+  });
+
+  it("appends a history page only once when two callers request it together", async () => {
+    const commit = {
+      hash: "aaa", short: "aaa", author: "a", email: "a@x", date: 1,
+      parents: [], refs: [], subject: "new commit", body: "",
+    };
+    calls.scmLog.mockResolvedValue([commit]);
+    await Promise.all([
+      useScm.getState().loadLog("C:/proj", true),
+      useScm.getState().loadLog("C:/proj", true),
+    ]);
+    expect(repo()?.commits).toEqual([commit]);
+  });
 
   it("the first page replaces and the next one appends at the end", async () => {
     const commit = (hash: string) => ({

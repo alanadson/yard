@@ -11,7 +11,7 @@
  * transport) are translated here, where they are drawn.
  */
 import { useEffect, useMemo, useState } from "react";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../../lib/confirmation";
 import { Pencil, Plus, Power, Trash2 } from "lucide-react";
 
 import { useT } from "../../../hooks/useT";

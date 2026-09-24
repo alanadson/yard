@@ -22,9 +22,12 @@
  * exact cost the rest of the file is built to avoid.
  */
 import { memo, useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import { circuitPoints } from "../../lib/circuit";
+import type { WireClamp } from "../../lib/wireClamps";
+import { WireClampHandle, type ClampPhase } from "./WireClampHandle";
 
 import {
-  connectionGeometry,
+  connectionGeometries,
   type CanvasItem,
   type CanvasNode,
   type CanvasViewport,
@@ -49,7 +52,7 @@ import {
  * rest — that is what the DOM shows if the spring never wakes, and it is
  * what a browser without animation frames shows too.
  */
-function useCable(geom: ConnectionGeom) {
+function useCable(geom: ConnectionGeom, enabled = true) {
   const paths = useRef<(SVGPathElement | null)[]>([]);
   const cubic = useRef(geom.cubic);
   cubic.current = geom.cubic;
@@ -75,6 +78,10 @@ function useCable(geom: ConnectionGeom) {
   }
 
   useLayoutEffect(() => {
+    if (!enabled) {
+      sleep(tick.current!);
+      return;
+    }
     const [bx, by] = belly(cubic.current);
     const s = spring.current;
     // First layout: the wire is born already at rest, no swing on load.
@@ -105,6 +112,8 @@ function useCable(geom: ConnectionGeom) {
 }
 
 interface Props {
+  onClampMove: (clamp: WireClamp, phase: ClampPhase) => void;
+  onClampRelease: (id: string) => void;
   items: CanvasItem[];
   rects: Record<string, CanvasNode>;
   vp: CanvasViewport;
@@ -135,6 +144,8 @@ interface Props {
  */
 const Connection = memo(function Connection({
   id,
+  style,
+  clamp,
   a,
   b,
   selected,
@@ -144,6 +155,8 @@ const Connection = memo(function Connection({
   onItemUp,
 }: {
   id: string;
+  style?: "rope" | "circuit";
+  clamp?: { id: string; x: number; y: number };
   a: CanvasNode;
   b: CanvasNode;
   selected: boolean;
@@ -153,8 +166,12 @@ const Connection = memo(function Connection({
   onItemMove: (e: React.PointerEvent) => void;
   onItemUp: (e: React.PointerEvent) => void;
 }) {
-  const geom = connectionGeometry(a, b);
-  const paths = useCable(geom);
+  const geometries = connectionGeometries(a, b, clamp);
+  const geom = geometries[0];
+  const paths = useCable(geom, style !== "circuit" && !clamp);
+  const path = style === "circuit"
+    ? circuitPoints(a, b, clamp).map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`).join(" ")
+    : geometries.map((geometry) => geometry.d).join(" ");
   return (
     <g className={`cv-conn ${selected ? "is-selected" : ""} ${flowClass}`}>
       {selected && (
@@ -163,14 +180,14 @@ const Connection = memo(function Connection({
         <path
           className="cv-conn-halo"
           ref={(el) => void (paths.current[0] = el)}
-          d={geom.d}
+          d={path}
           fill="none"
         />
       )}
       <path
         className="cv-conn-line"
         ref={(el) => void (paths.current[1] = el)}
-        d={geom.d}
+        d={path}
         fill="none"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -178,7 +195,7 @@ const Connection = memo(function Connection({
       <path
         className="cv-hit"
         ref={(el) => void (paths.current[2] = el)}
-        d={geom.d}
+        d={path}
         fill="none"
         stroke="transparent"
         strokeWidth={16}
@@ -192,6 +209,8 @@ const Connection = memo(function Connection({
 });
 
 function ConnectionsLayerImpl({
+  onClampMove,
+  onClampRelease,
   items,
   rects,
   vp,
@@ -203,6 +222,8 @@ function ConnectionsLayerImpl({
   onItemUp,
 }: Props) {
   const z = vp.zoom;
+  const clamps = new Map<string, WireClamp>();
+  for (const item of items) if (item.type === "connection" && item.clamp) clamps.set(item.clamp.id, item.clamp);
 
   const kids = useMemo(
     () =>
@@ -215,6 +236,8 @@ function ConnectionsLayerImpl({
           <Connection
             key={it.id}
             id={it.id}
+            style={it.style}
+            clamp={it.clamp}
             a={a}
             b={b}
             selected={selection.has(it.id)}
@@ -232,6 +255,7 @@ function ConnectionsLayerImpl({
     <svg className="cv-svg cv-svg--under">
       <g transform={`translate(${-vp.x * z} ${-vp.y * z}) scale(${z})`}>
         {kids}
+        {[...clamps.values()].map((clamp) => <WireClampHandle key={clamp.id} clamp={clamp} zoom={z} onMove={onClampMove} onRelease={onClampRelease} />)}
         {pendingConnect && (
           // Everything here is divided by zoom: the provisional wire is cursor
           // feedback, so it has constant thickness in screen px. The dash

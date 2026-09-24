@@ -15,6 +15,7 @@ import {
   findAgent,
   findAny,
   findMentions,
+  findNote,
   findPortal,
   makeCtx,
   reaches,
@@ -81,9 +82,29 @@ function conn(from: string, to: string): CanvasItem {
   return { id: `c-${from}-${to}`, type: "connection", from, to, color: "#6b6b6b" };
 }
 
+it("resolves stable note and portal references after renaming without exposing disconnected ids", () => {
+  const caller = term("writer", "Writer");
+  const liveNote = note("note-id", "Updated title");
+  const livePortal = portal("portal-id", "https://example.com", { name: "Renamed preview" });
+  const ctx = makeCtx(caller, "g1", { ...EMPTY_CANVAS, items: [liveNote, livePortal, note("private-id", "Private"), conn(caller.id, liveNote.id), conn(liveNote.id, livePortal.id)] }, [caller]);
+  expect(findNote(ctx, "note-id")).toEqual(liveNote);
+  expect(findPortal(ctx, "portal-id")).toEqual(livePortal);
+  expect(findNote(ctx, "private-id")).toBeNull();
+});
+
 function canvasWith(items: CanvasItem[]): CanvasData {
   return { ...EMPTY_CANVAS, viewport: { ...EMPTY_CANVAS.viewport }, items };
 }
+
+it("a connected binder exposes its filed notes without crossing another agent", () => {
+  const caller = term("me", "Me"), teammate = term("them", "Them");
+  const ctx = makeCtx(caller, "g1", canvasWith([
+    note("public", "Brief"), note("private", "Private"),
+    { id: "binder", type: "binder", notes: ["public"], x: 0, y: 0, w: 300, h: 300, color: "#fff" },
+    conn("me", "binder"), conn("binder", "them"), conn("them", "private"),
+  ]), [caller, teammate]);
+  expect(connectedNotes(ctx).map((item) => item.id)).toEqual(["public"]);
+});
 
 /**
  * `connect` is the only command that can widen an agent's reach, so it is where

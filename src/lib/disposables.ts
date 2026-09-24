@@ -1,5 +1,19 @@
 export type DisposeFn = () => void;
 
+/** Adapt APIs that acknowledge registration before exposing a separate release command. */
+export function ownRegistration(
+  register: () => Promise<void>,
+  unregister: () => Promise<void>,
+  onError: (error: unknown) => void = () => {},
+): DisposeFn {
+  const owner = new AsyncDisposer(onError);
+  void owner.add((async () => {
+    await register();
+    return () => { void unregister().catch(onError); };
+  })());
+  return () => owner.dispose();
+}
+
 /**
  * Owns cleanup callbacks whose registration may finish after the consumer has
  * already unmounted. Tauri's event APIs return their unlisten function through

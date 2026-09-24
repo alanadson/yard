@@ -50,7 +50,11 @@ import { usePortalWeb } from "../../stores/portalWebStore";
 import { ContextMenu, type MenuEntry } from "../ContextMenu";
 import { InlineRename } from "../ContextMenu/InlineRename";
 import { ResizeHandles } from "./ResizeHandles";
-import { isLocalUrl } from "../../lib/portalLive";
+import { endPhase, rectChanged } from "./gestureEnd";
+import { resyncUrlDraft } from "../BrowserPane/urlDraft";
+import { dockMenu } from "./DockFrame";
+import { ItemMaximizeButton } from "./ItemMaximizeButton";
+import { isLocalUrl, parkPortal } from "../../lib/portalLive";
 import { useGrabMode } from "../../hooks/useGrabMode";
 import {
   elementBounds,
@@ -78,6 +82,7 @@ import {
 import { rectsOverlap, useOccluders } from "../../stores/occludersStore";
 import { useUI } from "../../stores/uiStore";
 import { useT } from "../../hooks/useT";
+import { failureMessage } from "../../lib/loading";
 
 export type PortalData = Extract<CanvasItem, { type: "portal" }>;
 
@@ -100,7 +105,7 @@ export type { RectPhase };
  */
 type Veil = "opening" | "failed" | "covered" | "away";
 
-interface Props {
+export interface PortalCardProps {
   it: PortalData;
   dx: number;
   dy: number;
@@ -155,6 +160,8 @@ interface Props {
   onPatch: (id: string, patch: Partial<PortalData>) => void;
   onDelete: (id: string) => void;
   onFocus: (id: string) => void;
+  onMaximize: (id: string) => void;
+  onDock: (id: string, side: "left" | "right" | undefined) => void;
   onMenuOpen?: (open: boolean) => void;
   onRect: (
     id: string,
@@ -167,6 +174,12 @@ interface Props {
   onRenameStart: (id: string) => void;
   onRenameEnd: () => void;
   onRename: (id: string, name: string) => void;
+  /**
+   * Inside the camera's view (with the culling margin). Off it, the card
+   * stops polling: the reload probe of a web page, the screenshot stream of
+   * a phone. Missing means on screen.
+   */
+  visible?: boolean;
 }
 
 function PortalCardImpl({
@@ -191,6 +204,8 @@ function PortalCardImpl({
   onPatch,
   onDelete,
   onFocus,
+  onMaximize,
+  onDock,
   onMenuOpen,
   onRect,
   onBounds,
@@ -198,7 +213,8 @@ function PortalCardImpl({
   onRenameStart,
   onRenameEnd,
   onRename,
-}: Props) {
+  visible = true,
+}: PortalCardProps) {
   const t = useT();
   const showToast = useUI((s) => s.showToast);
   const occluders = useOccluders((s) => s.rects);
@@ -206,14 +222,17 @@ function PortalCardImpl({
   const sess = useRef<DragSession | null>(null);
   const { menu, openMenu, closeMenu } = usePortalMenu(it.id, bodyRef);
   const [urlDraft, setUrlDraft] = useState(it.url);
+  const urlRef = useRef<HTMLInputElement>(null);
   /** Why the site is not on screen — `null` while it is. */
   const [veil, setVeil] = useState<Veil | null>("away");
   // Modo Design lives in `useGrabMode` — the pane browser runs the same
   // picker over the same engine, and the two must not drift.
   const { grabbing, toggleGrab } = useGrabMode(it.id, showToast);
 
+  // The page moved (a redirect, a link the agent clicked): the address bar
+  // follows it, unless the user is typing an address right now.
   useEffect(() => {
-    setUrlDraft(it.url);
+    setUrlDraft((d) => resyncUrlDraft(d, it.url, document.activeElement === urlRef.current));
   }, [it.url]);
 
   /**
@@ -289,6 +308,8 @@ function PortalCardImpl({
 
   const local = isLocalUrl(it.url);
   const liveOn = local && (it.live ?? true);
+  // Off the board, the "Ao vivo" probe waits; back on it, it checks at once.
+  useEffect(() => (visible ? undefined : parkPortal(it.id)), [it.id, visible]);
   const { ready, failed, retry } = usePortalSurface({
     id: it.id,
     url: it.url,
@@ -338,7 +359,7 @@ function PortalCardImpl({
     setUrlDraft(next);
     onPatch(it.id, { url: next });
     usePortalWeb.getState().visited(next);
-    void ipc.portalNavigate(it.id, next).catch((e) => showToast(String(e), "error"));
+    void ipc.portalNavigate(it.id, next).catch((e) => showToast(failureMessage(e), "error"));
   };
 
   // What every portal shares: the addresses typed before, offered under the
@@ -403,11 +424,15 @@ function PortalCardImpl({
     const s = sess.current;
     if (!s || e.pointerId !== s.pointerId) return;
     sess.current = null;
-    onRect(it.id, rectFor(s, e), "commit");
+    const r = rectFor(s, e);
+    // A plain click on a grip is not a commit: no undo entry, no save.
+    const phase = endPhase(e.type, rectChanged(s.start, r));
+    onRect(it.id, phase === "commit" ? r : s.start, phase);
   };
 
   const menuItems = (): MenuEntry[] => {
     return [
+      dockMenu(t, it.dock, (side) => onDock(it.id, side)),
       {
         kind: "swatches",
         colors: CANVAS_COLORS,
@@ -500,6 +525,7 @@ function PortalCardImpl({
   return (
     <div
       className={`cv-card cv-portal ${selected ? "is-focused" : ""} ${connectClass}`}
+      data-maximized={!!it.restore}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -547,18 +573,7 @@ function PortalCardImpl({
           </span>
         )}
         <div className="cv-card-actions">
-          <button
-            className="icon-btn"
-            data-tip={t("Preencher a tela (100%)")}
-            aria-label={t("Maximizar no canvas")}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              onFocus(it.id);
-            }}
-          >
-            <Maximize2 size={12} />
-          </button>
+          <ItemMaximizeButton item={it} onMaximize={onMaximize} />
           <button
             className="icon-btn"
             data-tip-at="right" data-tip={it.muted ? t("Ativar som") : t("Silenciar")}
@@ -685,6 +700,7 @@ function PortalCardImpl({
           }}
         >
           <input
+            ref={urlRef}
             value={urlDraft}
             spellCheck={false}
             aria-label={t("Endereço do portal")}

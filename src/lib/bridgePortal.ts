@@ -44,6 +44,7 @@ import {
 } from "./portals";
 import { openPortalEngine, type PortalSpawn } from "./portalSpawn";
 import { useProjects } from "../stores/projectsStore";
+import { deviceCommand, devicePortalItem } from "./devicePortal";
 
 const ok = (output: string): BridgeResponse => ({ code: 0, output });
 const err = (output: string): BridgeResponse => ({ code: 1, output });
@@ -83,12 +84,28 @@ export async function cmdPortal(
   const sub = (args[0] ?? "").toLowerCase();
   const rest = args.slice(1);
 
+  if (sub === "devices") {
+    try { return ok(JSON.stringify(await ipc.deviceList(), null, 2) + "\n"); }
+    catch (e) { return err(`yard: Android: ${e}\n`); }
+  }
+
   if (sub === "create") {
     const p = parseFlags(rest, {
+      "--device": "string",
       "--engine": "string",
       "--ua": "string",
       "--size": "string",
     });
+    if (p.string.device) {
+      try {
+        const device = (await ipc.deviceList()).find((d) => d.serial === p.string.device);
+        if (!device) return err("yard: Android device not found. Use yard portal devices.\n");
+        const base = callerRect(ctx);
+        const item = devicePortalItem(nanoid(8), device, { x: base.x + base.w + 48, y: base.y }, p.positional[0]);
+        commitCanvas(ctx.groupId, (c) => addItems(c, item, connection(ctx.caller.id, item.id)));
+        return ok(`Android portal created and connected: ${item.name} (${item.id})\n`);
+      } catch (e) { return err(`yard: Android: ${e}\n`); }
+    }
     // Every portal runs in WebView2. `--engine` announced a choice of browser
     // engine and only ever set the UA string — so an agent asking for Firefox
     // to reproduce a compatibility bug tested Chromium and reported that it
@@ -191,6 +208,7 @@ export async function cmdPortal(
     }
     const p = findPortal(ctx, name);
     if (!p) return err(portalMiss(ctx, name));
+    if (p.deviceSerial) return err('yard: Android portals do not have browser settings. Use yard portal navigate "Name" URL.\n');
     if (url && !isSupportedPortalUrl(url)) {
       return err(
         "yard: um portal abre páginas http/https (ou about:blank). " +
@@ -225,6 +243,9 @@ export async function cmdPortal(
 
   const verbsNeedName = [
     "navigate",
+    "swipe",
+    "launch",
+    "stop",
     "info",
     "screenshot",
     "snapshot",
@@ -253,6 +274,20 @@ export async function cmdPortal(
 
   const p = name ? findPortal(ctx, name) : null;
   if (!p) return err(portalMiss(ctx, name));
+
+  if (p.deviceSerial && sub === "screenshot") {
+    try {
+      const png = await ipc.deviceAction(p.deviceSerial, { kind: "screenshot" });
+      return ok(`${await ipc.clipboardSaveImage(png)}\n`);
+    } catch (e) { return err(`yard: Android: ${e}\n`); }
+  }
+  if (p.deviceSerial) {
+    try {
+      if (sub === "info") return ok(JSON.stringify({ serial: p.deviceSerial, name: p.name, platform: "android" }) + "\n");
+      const out = await ipc.deviceAction(p.deviceSerial, deviceCommand(sub, rest.slice(1)));
+      return ok((out || "ok") + "\n");
+    } catch (e) { return err(`yard: Android: ${e}\n`); }
+  }
 
   const ready = async () => {
     try {

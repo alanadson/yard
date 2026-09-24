@@ -6,7 +6,13 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { FIRST_RUN_SHORTCUTS, agentRows, firstRunDecision, needsOnboarding } from "./onboarding";
+import {
+  FIRST_RUN_SHORTCUTS,
+  agentRows,
+  firstRunDecision,
+  needsOnboarding,
+  visibleAgentRows,
+} from "./onboarding";
 
 describe("firstRunDecision", () => {
   it("shows the sheet to a fresh install — no key in kv and no project", () => {
@@ -40,6 +46,16 @@ describe("agentRows", () => {
     const rows = agentRows(catalog);
     expect(rows[0]).toEqual({ id: "claude", name: "Claude Code", found: true, version: "2.1.0" });
     expect(rows[2]).toEqual({ id: "gemini", name: "Gemini CLI", found: false, version: null });
+  });
+
+  it("keeps missing CLIs out of the first-use path until the user asks for them", () => {
+    const rows = agentRows(catalog);
+    expect(visibleAgentRows(rows, false).map((row) => row.id)).toEqual(["claude", "codex"]);
+    expect(visibleAgentRows(rows, true).map((row) => row.id)).toEqual([
+      "claude",
+      "codex",
+      "gemini",
+    ]);
   });
 });
 

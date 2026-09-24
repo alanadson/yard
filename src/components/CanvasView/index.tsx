@@ -1,3 +1,4 @@
+import { partitionItems } from "./layers";
 /**
  * The infinite canvas (§F2-canvas): loose terminals as cards, freehand
  * drawing, notes, text and connections — living alongside the grid, never
@@ -44,7 +45,8 @@ import {
 import "./canvas.css";
 import "./canvas-tail.css";
 import { nanoid } from "nanoid";
-import { ask, open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../lib/confirmation";
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -110,15 +112,34 @@ import {
   type MenuSwatches,
 } from "../ContextMenu";
 import { ConnectionsLayer } from "./ConnectionsLayer";
+import type { ClampPhase } from "./WireClampHandle";
+import { ConnectionsDialog } from "./ConnectionsDialog";
+import { connectionIssue } from "./connectionForm";
+import { noteName, portalName } from "../../lib/canvas";
 import { ItemsLayer } from "./ItemsLayer";
 import { COMMIT_DEBOUNCE_MS, NoteItem, TextItem } from "./DomItems";
 import { PortalCard } from "./PortalCard";
+import { backgroundPan, suppressPanMenu } from "../../lib/canvasPan";
+import { DevicePortalCard } from "./DevicePortalCard";
+import { DockFrame, dockMenu } from "./DockFrame";
+import { bundleWires, copyWireRouting, positionClamp, type WireClamp } from "../../lib/wireClamps";
+import { canDock, setDock, undockCopy, type DockSide } from "../../lib/canvasDock";
+import {
+  anchorLayer,
+  cameraWhileDocked,
+  cardLayer,
+  itemBoxLayer,
+  placeAnchors,
+  placeCards,
+  placeItemBoxes,
+} from "./dockedGeometry";
 import { TerminalCard, type RectPhase } from "./TerminalCard";
+import { erasedBy, erasePoints, pointerSamples, type QueuedErase } from "../../lib/canvasErase";
 import type { XTermHandle } from "../XTermView";
 import { useEditor } from "../../stores/editorStore";
 import { useFlows } from "../../stores/flowStore";
 import { parseLayout, useProjects } from "../../stores/projectsStore";
-import { frontBadge, frontColor, frontOfPath, type FrontRef } from "../../lib/floorColor";
+import { cardBadges, type CardBadge, type FrontRef } from "../../lib/floorColor";
 import { brandOf } from "../../lib/brands";
 import { MARKS } from "../BrandIcon/marks";
 import { useUI } from "../../stores/uiStore";
@@ -126,6 +147,10 @@ import { ipc, on, type PortalPlace, type ScoreMeta, type TerminalRow } from "../
 import { applyScore, readScore } from "../../lib/scores";
 import { PortalBoundsQueue } from "../../lib/portalBoundsQueue";
 import { useOccluder } from "../../hooks/useOccluder";
+import { coveredByMaximizedItem, isBoxItem, resizeVectorItem, toggleItemMaximize } from "../../lib/itemSizing";
+import { canvasKeyEvent, spaceActivatesTarget } from "./keyboardEvent";
+import { nextNode } from "./patchNodeRule";
+import { navigatePortal } from "./portalNav";
 import { usePortalsCovered } from "../../hooks/usePortalsCovered";
 import { copyText, readClipboardText } from "../../lib/clipboard";
 import { registerDropCamera } from "../../lib/dropPoint";
@@ -135,6 +160,7 @@ import {
   pinnedIds,
   raiseNode,
   setPinned,
+  setContentHidden,
   toggleMaximize,
 } from "../../lib/cardChrome";
 import { canRename, renameItem } from "../../lib/rename";
@@ -214,9 +240,8 @@ import {
   mediaBoxAt,
   mediaNodeName,
   splitForRoot,
-  type MediaItem,
 } from "../../lib/mediaNode";
-import { DOC_MIN_H, DOC_MIN_W, type DocItem } from "../../lib/docNode";
+import { DOC_MIN_H, DOC_MIN_W } from "../../lib/docNode";
 import { mediaUrl } from "../../lib/media";
 import { dropItems, hasDragPaths, readDragPaths, shellQuote } from "../../lib/canvasDrop";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -226,13 +251,13 @@ import {
   BINDER_MIN_H,
   BINDER_MIN_W,
   binderHolding,
+  colorBinder,
   fileIntoBinder,
   filedNoteIds,
   releaseNotes,
   removeFromBinder,
   reorderTab,
   showTab,
-  type BinderItem,
 } from "../../lib/binder";
 import {
   TREE_DEFAULT_H,
@@ -241,7 +266,7 @@ import {
   TREE_MIN_W,
   type TreeItem,
 } from "../../lib/treeNode";
-import { flowsOf, wireOfPair, type FlowItem } from "../../lib/flow";
+import { flowsOf, wireOfPair } from "../../lib/flow";
 import { cancelRunsOf, liveRunsOf } from "../../lib/flowRun";
 import {
   autoNodeRect,
@@ -271,6 +296,7 @@ import {
   PORTAL_MIN_W,
   reconcileItems,
   reconcileNodes,
+  reconcileRoles,
   resizeRect,
   stepFont,
   TEXT_FONT_DEFAULT,
@@ -284,10 +310,12 @@ import {
   type CanvasItem,
   type CanvasNode,
   type CanvasViewport,
+  type CardRole,
   type ResizeDir,
   type StrokeSize,
 } from "../../lib/canvas";
 import { useT } from "../../hooks/useT";
+import { failureMessage } from "../../lib/loading";
 
 interface Props {
   groupId: string;
@@ -471,6 +499,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   const [marquee, setMarquee] = useState<Box | null>(null);
   /** Magnetic guides of the gesture in progress. */
   const [guides, setGuides] = useState<readonly SnapGuide[]>([]);
+  const [clampDrag, setClampDrag] = useState<WireClamp | null>(null);
   const [minimap, setMinimap] = useState(false);
   /** Size of the canvas viewport in screen px — the minimap needs it to draw
       the camera rectangle, and it is the only thing here that reads it. */
@@ -522,12 +551,14 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   const redoRef = useRef<CanvasData[]>([]);
   const draftSeed = useRef(randSeed());
   const panSess = useRef<{
+    button: number;
     pointerId: number;
     cx: number;
     cy: number;
     vx: number;
     vy: number;
   } | null>(null);
+  const suppressContext = useRef(false);
   /**
    * The drag of a selection started from an item.
    *
@@ -699,6 +730,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     prevItemsRef.current = next;
     return next;
   }, [data.items]);
+  const layers = useMemo(() => partitionItems(items), [items]);
   const itemsRef = useRef(items);
   itemsRef.current = items;
 
@@ -709,18 +741,33 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     return next;
   }, [data.nodes]);
 
+  // The roles too: each card gets its role as an object, and a fresh one per
+  // re-parse would re-render every card with a role on every commit.
+  const prevRolesRef = useRef<Record<string, CardRole> | undefined>(undefined);
+  const roles = useMemo(() => {
+    const next = reconcileRoles(prevRolesRef.current, data.roles);
+    prevRolesRef.current = next;
+    return next;
+  }, [data.roles]);
+
   // Stable automatic positions: generating `autoNodeRect` inside the `rects`
   // memo would create a new object per recompute — and every drag frame
   // would re-render the cards that were never moved.
   const autoRects = useMemo(() => sorted.map((_, i) => autoNodeRect(i)), [sorted]);
 
-  const rects = useMemo(() => {
-    const m: Record<string, CanvasNode> = {};
-    sorted.forEach((t, i) => {
-      m[t.id] = nodeOverrides[t.id] ?? nodes[t.id] ?? autoRects[i];
-    });
-    return m;
-  }, [sorted, nodes, nodeOverrides, autoRects]);
+  // Built without the camera, then placed for it (`dockedGeometry.ts`): only
+  // a docked card follows a pan or a zoom, and with none docked the camera is
+  // not even a dependency, so every frame of a pan hands the memos below the
+  // same map instead of a fresh one.
+  const cardRects = useMemo(
+    () => cardLayer(sorted, nodes, nodeOverrides, autoRects),
+    [sorted, nodes, nodeOverrides, autoRects],
+  );
+  const [cardCamera, cardScreen] = cameraWhileDocked(cardRects, vp, viewSize);
+  const rects = useMemo(
+    () => (cardCamera && cardScreen ? placeCards(cardRects, cardCamera, cardScreen) : cardRects.base),
+    [cardRects, cardCamera, cardScreen],
+  );
   const rectsRef = useRef(rects);
   rectsRef.current = rects;
 
@@ -741,14 +788,15 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   /**
    * The badge each card wears, memoized as a map so the object a card gets
    * is the same one across pan frames (a fresh one would break its memo).
+   * The memo alone is not enough: every layout write rebuilds `groups`, so
+   * `fronts` recomputes on each commit of the board, and `cardBadges` hands
+   * back last time's object for every badge whose id, name and colour held.
    */
+  const prevBadgesRef = useRef<ReadonlyMap<string, CardBadge>>(new Map());
   const frontOfCard = useMemo(() => {
-    const m = new Map<string, { id: string; name: string; color: string }>();
-    for (const t of sorted) {
-      const badge = frontBadge(frontOfPath(t.cwd, fronts), groupFront, projectId === null);
-      if (badge) m.set(t.id, { id: badge.id, name: badge.name, color: frontColor(badge) });
-    }
-    return m;
+    const next = cardBadges(sorted, fronts, groupFront, projectId === null, prevBadgesRef.current);
+    prevBadgesRef.current = next;
+    return next;
   }, [sorted, fronts, groupFront, projectId]);
 
   // Dragging/resizing a note only touches its own DOM until pointerup; the
@@ -781,43 +829,23 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   // here, and without reusing the previous object every wire touching a note
   // would recompute its bezier on every frame of any gesture — exactly what
   // the memo on `<Connection>` exists to avoid.
+  //
+  // Split in two like `rects` (`dockedGeometry.ts`, where the filed-note rule
+  // lives): only a docked item moves with the camera, so a pan over a board
+  // with nothing docked does not rebuild, nor even reconcile, the anchors.
+  const anchorRects = useMemo(
+    () => anchorLayer(rects, items, noteDrag, noteResize),
+    [rects, items, noteDrag, noteResize],
+  );
+  const [anchorCamera, anchorScreen] = cameraWhileDocked(anchorRects, vp, viewSize);
   const prevAnchorsRef = useRef<Record<string, CanvasNode>>({});
   const anchors = useMemo(() => {
-    const m: Record<string, CanvasNode> = { ...rects };
-    for (const it of items) {
-      if (
-        it.type !== "note" &&
-        it.type !== "portal" &&
-        it.type !== "flow" &&
-        it.type !== "binder" &&
-        it.type !== "tree" &&
-        it.type !== "media" &&
-        it.type !== "doc"
-      )
-        continue;
-      const live = noteResize?.id === it.id ? noteResize : null;
-      const shift = noteDrag?.ids.has(it.id) ? noteDrag : null;
-      m[it.id] = {
-        x: it.x + (shift?.dx ?? 0),
-        y: it.y + (shift?.dy ?? 0),
-        w: live?.w ?? it.w,
-        h: live?.h ?? it.h,
-      };
-    }
-    // A filed note has no rectangle of its own on the board, but the wires
-    // drawn to it are still live — the agent connected to it still reads and
-    // writes it through the CLI. They anchor on the fichário that is showing
-    // it, which is also where the user's eye expects the cable to land.
-    for (const it of items) {
-      if (it.type !== "binder") continue;
-      const box = m[it.id];
-      if (!box) continue;
-      for (const id of it.notes) m[id] = box;
-    }
+    const m =
+      anchorCamera && anchorScreen ? placeAnchors(anchorRects, anchorCamera, anchorScreen) : anchorRects.base;
     const next = reconcileNodes(prevAnchorsRef.current, m);
     prevAnchorsRef.current = next;
     return next;
-  }, [rects, items, noteDrag, noteResize]);
+  }, [anchorRects, anchorCamera, anchorScreen]);
   const anchorsRef = useRef(anchors);
   anchorsRef.current = anchors;
 
@@ -828,21 +856,17 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   // different rates — `rects` moves on every frame of a drag, while the item
   // boxes only change on a commit, and a stroke's bounds means walking all its
   // points. Merging them per frame would put that walk on the hot path.
+  //
+  // The camera is kept off it the same way: the bounds are walked once per
+  // commit (`itemBoxLayer`, which also leaves filed notes out), and a pan or
+  // a zoom only places what is docked, if anything is (`dockedGeometry.ts`).
 
-  const itemBoxes = useMemo(() => {
-    const m: Record<string, Box> = {};
-    for (const it of items) {
-      if (it.type === "connection") continue;
-      // A filed note has no rectangle on the board: its `x`/`y` are wherever
-      // it sat before it was filed, and leaving them here would put an
-      // invisible box in the marquee's way, in a frame's membership test and
-      // in "enquadrar tudo".
-      if (it.type === "note" && filed.has(it.id)) continue;
-      const b = itemBounds(it, () => undefined);
-      if (b) m[it.id] = b;
-    }
-    return m;
-  }, [items, filed]);
+  const itemRects = useMemo(() => itemBoxLayer(items, filed), [items, filed]);
+  const [itemCamera, itemScreen] = cameraWhileDocked(itemRects, vp, viewSize);
+  const itemBoxes = useMemo(
+    () => (itemCamera && itemScreen ? placeItemBoxes(itemRects, itemCamera, itemScreen) : itemRects.base),
+    [itemRects, itemCamera, itemScreen],
+  );
   const itemBoxesRef = useRef(itemBoxes);
   itemBoxesRef.current = itemBoxes;
 
@@ -1414,12 +1438,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         // Every page reached, by the user or by the agent, goes into the
         // shared history the address bars suggest from.
         usePortalWeb.getState().visited(p.url);
-        updateCanvas(groupId, (c) => ({
-          ...c,
-          items: c.items.map((i) =>
-            i.type === "portal" && i.id === p.id ? { ...i, url: p.url } : i,
-          ),
-        }));
+        updateCanvas(groupId, (c) => navigatePortal(c, p.id, p.url));
       })
       .then(keep);
     void on
@@ -1671,9 +1690,9 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           continue;
         }
         const fresh = idMap.get(it.id);
-        if (fresh) copies.push({ ...translateItem(it, dx, dy), id: fresh });
+        if (fresh) copies.push({ ...undockCopy(translateItem(it, dx, dy)), id: fresh });
       }
-      return { copies, ids: new Set(idMap.values()) };
+      return { copies: copyWireRouting(copies, dx, dy, () => nanoid(8)), ids: new Set(idMap.values()) };
     },
     [currentData],
   );
@@ -1801,6 +1820,17 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       // No undo entry: turning a page is navigation, not a change to the
       // board, and filling the stack with it would bury the real edits.
       commit((c) => showTab(c, binderId, noteId), { undo: false });
+    },
+    [commit],
+  );
+
+  // Stable for the memo of `BinderCard`: written inline in the JSX, it was a
+  // new function on every render of the board, pan frames included. No ref
+  // is needed for the latest state: `commit` hands `reorderTab` the canvas
+  // as it is in the store at the moment of the drop.
+  const reorderBinderTab = useCallback(
+    (binderId: string, from: number, to: number) => {
+      commit((c) => reorderTab(c, binderId, from, to));
     },
     [commit],
   );
@@ -2535,6 +2565,10 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
 
       /** The rebindable keys (`lib/keymap.ts`). `true` = the key was spent. */
       const runAction = (action: CanvasAction): boolean => {
+        if (action === "tool.connect") {
+          useUI.getState().openModal("connections", { groupId });
+          return true;
+        }
         if (action.startsWith("tool.")) {
           setTool(action.slice("tool.".length) as Tool);
           setConnectFrom(null);
@@ -2596,15 +2630,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         }
       };
       // The numeric keypad spells the same chords as the top row.
-      const code =
-        e.code === "Numpad0"
-          ? "Digit0"
-          : e.code === "NumpadAdd"
-            ? "Equal"
-            : e.code === "NumpadSubtract"
-              ? "Minus"
-              : e.code;
-      const action = actionFor(keymapRef.current, { ...e, code });
+      const action = actionFor(keymapRef.current, canvasKeyEvent(e));
       if (action && runAction(action)) {
         e.preventDefault();
         return;
@@ -2667,6 +2693,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         return;
       }
       if (e.code === "Space") {
+        // On a card's button, Space is that button's click.
+        if (spaceActivatesTarget(t)) return;
         if (!e.repeat) setSpaceHeld(true);
         e.preventDefault();
         return;
@@ -2794,6 +2822,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   }, []);
 
   const onContainerPointerDown = (e: React.PointerEvent) => {
+    suppressContext.current = false;
     const target = e.target as HTMLElement;
     // The fixed UI (toolbar, zoom) never becomes pan: capturing the pointer
     // here would swallow the button click.
@@ -2825,7 +2854,6 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     }
     const onBg =
       target === containerRef.current || target.classList.contains("cv-bg");
-    const middle = e.button === 1;
     // A placement offer is up. In free mode a press on the background is the
     // answer ("here"); any other press means the user moved on.
     const hint = hintsRef.current;
@@ -2873,10 +2901,11 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       return;
     }
     const panIntent =
-      middle || (e.button === 0 && (spaceHeld || tool === "pan"));
+      backgroundPan(e.button, onBg, spaceHeld, tool);
     if (!panIntent) return;
     e.preventDefault();
     panSess.current = {
+      button: e.button,
       pointerId: e.pointerId,
       cx: e.clientX,
       cy: e.clientY,
@@ -2916,6 +2945,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     const p = panSess.current;
     if (!p || e.pointerId !== p.pointerId) return;
     panLast.current = { x: e.clientX, y: e.clientY };
+    suppressContext.current = suppressPanMenu(p.button, e.clientX - p.cx, e.clientY - p.cy, suppressContext.current);
     // The tail of the gesture, for the throw on release.
     const s = panSamples.current;
     s.push({ x: e.clientX, y: e.clientY, t: e.timeStamp });
@@ -2954,6 +2984,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     const p = panSess.current;
     if (!p || e.pointerId !== p.pointerId) return;
     panSess.current = null;
+    suppressContext.current = suppressPanMenu(p.button, e.clientX - p.cx, e.clientY - p.cy, suppressContext.current);
     cancelFrame("pan");
     const z = vpRef.current.zoom;
     setVp((v) => ({
@@ -3180,24 +3211,34 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     setHoverNode(anchorAt(w));
   }, [anchorAt, toWorld]);
 
-  const pendingEraseRef = useRef(pendingErase);
-  pendingEraseRef.current = pendingErase;
-
-  const eraseAt = (w: { x: number; y: number }) => {
-    const tol = 6 / vpRef.current.zoom;
-    const hits = currentData().items.filter(
-      (it) =>
-        !pendingEraseRef.current.has(it.id) &&
-        hitItem(it, w.x, w.y, tol, (id) => anchorsRef.current[id]),
+  // --- eraser ---
+  // The same shape as the pen: pointer events only queue their samples (every
+  // coalesced one, with the camera it was taken under), and one pass per frame
+  // tests the queue against the board (`lib/canvasErase`), reading the
+  // container's rectangle once instead of once per event. The ref is the
+  // truth during the gesture: pointerup drains the queue and commits from it,
+  // never from state, which may be a frame behind. State only paints the fade.
+  const eraseQueue = useRef<QueuedErase[]>([]);
+  const erasedRef = useRef(pendingErase);
+  const flushErase = useCallback(() => {
+    const queue = eraseQueue.current;
+    if (queue.length === 0) return;
+    eraseQueue.current = [];
+    // The overlay lives inside the container: no container, no gesture.
+    const el = containerRef.current;
+    if (!el) return;
+    const hits = erasedBy(
+      currentData().items,
+      erasePoints(queue, el.getBoundingClientRect()),
+      (id) => anchorsRef.current[id],
+      erasedRef.current,
     );
-    if (hits.length) {
-      setPendingErase((prev) => {
-        const next = new Set(prev);
-        hits.forEach((h) => next.add(h.id));
-        return next;
-      });
-    }
-  };
+    if (hits.length === 0) return;
+    const next = new Set(erasedRef.current);
+    for (const id of hits) next.add(id);
+    erasedRef.current = next;
+    setPendingErase(next);
+  }, [currentData]);
 
   const onOverlayPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
@@ -3232,7 +3273,10 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         break;
       }
       case "eraser":
-        eraseAt(w);
+        // The press erases at once, as it always did: queued and drained now.
+        eraseQueue.current.push({ clientX: e.clientX, clientY: e.clientY, camera: vpRef.current });
+        cancelFrame("erase");
+        flushErase();
         (e.currentTarget as Element).setPointerCapture(e.pointerId);
         break;
       case "text": {
@@ -3317,7 +3361,16 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     }
     if (tool === "flow") return;
     if (tool === "eraser") {
-      if ((e.buttons & 1) === 1) eraseAt(toWorld(e.clientX, e.clientY));
+      if ((e.buttons & 1) === 1) {
+        // Every coalesced sample, not just the last: a fast sweep delivers
+        // one event per frame, and a thin stroke crossed between two of them
+        // used to survive the eraser passing right over it.
+        const camera = vpRef.current;
+        for (const s of pointerSamples(e.nativeEvent)) {
+          eraseQueue.current.push({ clientX: s.clientX, clientY: s.clientY, camera });
+        }
+        scheduleFrame("erase", flushErase);
+      }
       return;
     }
     const d = draftRef.current;
@@ -3326,10 +3379,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       // Pointermove arrives coalesced: the browser only delivers the last
       // event and keeps the intermediates. For the stroke, the intermediates
       // ARE the drawing — without them a fast curve becomes a straight segment.
-      const ne = e.nativeEvent;
-      const coalesced =
-        typeof ne.getCoalescedEvents === "function" ? ne.getCoalescedEvents() : null;
-      const evs: PointerEvent[] = coalesced && coalesced.length ? coalesced : [ne];
+      const evs = pointerSamples(e.nativeEvent);
       const pts = d.points;
       const min = 1.2 / vpRef.current.zoom;
       let added = false;
@@ -3352,11 +3402,16 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
 
   const onOverlayPointerUp = () => {
     if (tool === "eraser") {
-      const dead = pendingEraseRef.current;
+      // Samples the last frame has not tested yet are part of the gesture.
+      cancelFrame("erase");
+      flushErase();
+      const dead = erasedRef.current;
       if (dead.size) {
         commit((c) => ({ ...c, items: c.items.filter((i) => !dead.has(i.id)) }));
       }
-      setPendingErase(new Set());
+      const cleared = new Set<string>();
+      erasedRef.current = cleared;
+      setPendingErase(cleared);
       return;
     }
     // The ref has the points that haven't reached state yet (pending flush).
@@ -3617,14 +3672,21 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     [selectOnly, toggleSelected],
   );
 
-  /** Closes the in-progress edit by id, looking up the item in current state. */
-  const finishEditing = () => {
+  /**
+   * Closes the in-progress edit by id, looking up the item in current state.
+   *
+   * Stable on purpose: it sits in the deps of `onContentHidden` and `onDock`,
+   * which every card receives as props. As a plain arrow it was a new
+   * function on every render, and every pan frame re-rendered every
+   * memoized card through it.
+   */
+  const finishEditing = useCallback(() => {
     const id = editingIdRef.current;
     if (!id) return;
     const it = currentData().items.find((i) => i.id === id);
     if (it) endTextEdit(it);
     else setEditingId(null);
-  };
+  }, [currentData, endTextEdit]);
 
   const noteResizeLast = useRef({ x: 0, y: 0 });
 
@@ -4040,28 +4102,14 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   /**
    * Writes one field of a card's entry in `nodes`.
    *
-   * The terminal may still be in an automatic position (nothing in `nodes`
-   * yet), so the current rectangle goes in with it — otherwise picking a color
-   * would snap the card back to its computed slot. `undefined` drops the
-   * field, which is how "back to the default" is spelled.
+   * The rebuild itself (which keys survive, how `undefined` drops a field)
+   * is `nextNode` (`patchNodeRule.ts`); the live rectangle goes in with it.
    */
   const patchNode = useCallback(
     (id: string, patch: Partial<CanvasNode>) => {
       const r = rectsRef.current[id];
       if (!r) return;
-      commit((c) => {
-        const prev = c.nodes[id] ?? r;
-        const merged = { ...prev, ...patch };
-        const next: CanvasNode = { x: r.x, y: r.y, w: r.w, h: r.h };
-        // Rebuilt field by field so an explicit `undefined` really removes the
-        // key instead of persisting as `"color": null` in the workspace JSON.
-        if (merged.color) next.color = merged.color;
-        if (merged.fontSize != null) next.fontSize = merged.fontSize;
-        if (merged.z != null) next.z = merged.z;
-        if (merged.pinned) next.pinned = true;
-        if (merged.restore) next.restore = merged.restore;
-        return { ...c, nodes: { ...c.nodes, [id]: next } };
-      });
+      commit((c) => ({ ...c, nodes: { ...c.nodes, [id]: nextNode(c.nodes[id] ?? r, patch, r) } }));
     },
     [commit],
   );
@@ -4086,17 +4134,26 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
 
   const onPinToggle = useCallback(
     (id: string, next: boolean) => {
-      commit((c) => setPinned(c, id, next));
+      commit((c) => (c.nodes[id]?.dock || c.items.find((item) => item.id === id)?.dock) ? setDock(c, id, undefined) : setPinned(c, id, next));
     },
     [commit],
   );
+
+  const onContentHidden = useCallback((id: string, hidden: boolean) => {
+    if (hidden) finishEditing();
+    commit((data) => setContentHidden(data, id, hidden, rectsRef.current[id]));
+  }, [commit, finishEditing]);
+  const onDock = useCallback((id: string, side: DockSide | undefined) => {
+    finishEditing();
+    commit((canvas) => setDock(canvas, id, side, rectsRef.current[id]));
+  }, [commit, finishEditing]);
 
   /** Fills the visible board with the card, or gives its rectangle back. */
   const onNodeMaximize = useCallback(
     (id: string) => {
       const el = containerRef.current;
       const r = rectsRef.current[id];
-      if (!el || !r) return;
+      if (!el || !r || r.dock) return;
       const v = vpRef.current;
       const view = { x: v.x, y: v.y, w: el.clientWidth / v.zoom, h: el.clientHeight / v.zoom };
       commit((c) => ({
@@ -4106,6 +4163,17 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     },
     [commit],
   );
+
+  const onItemMaximize = useCallback((id: string) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const v = vpRef.current;
+    const view = { x: v.x, y: v.y, w: el.clientWidth / v.zoom, h: el.clientHeight / v.zoom };
+    commit((c) => patchItemById(c, id, (item) => item.dock ? item : toggleItemMaximize(item, view, v.zoom)));
+  }, [commit]);
+  const onVectorResize = useCallback((id: string, dir: ResizeDir, dx: number, dy: number) => {
+    commit((c) => patchItemById(c, id, (item) => resizeVectorItem(item, dir, dx, dy)));
+  }, [commit]);
 
   const renameCanvasItem = useCallback(
     (id: string, name: string) => {
@@ -4129,7 +4197,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       if (!p) return;
       void ipc
         .revealPath(p)
-        .catch((e) => useUI.getState().showToast(String(e), "error"));
+        .catch((e) => useUI.getState().showToast(failureMessage(e), "error"));
     },
     [projectRoot],
   );
@@ -4140,18 +4208,23 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     commit((c) => patchItemById(c, id, fn));
   };
 
-  const deleteItem = (id: string) => {
-    const it = currentData().items.find((i) => i.id === id);
-    if (it?.type === "portal") void ipc.portalClose(id).catch(() => {});
-    // Same rule as the selection delete: the flow card leaves, the pipeline
-    // it is running stops with it.
-    cancelRunsOf([id]);
-    // A fichário is a container, and a container that takes its contents with
-    // it is a trapdoor: the notes are put back on the board *before* the
-    // binder goes (§13).
-    commit((c) => removeItemAndEdges(releaseNotes(c, id), id));
-    dropFromSelection(id);
-  };
+  // Stable, because it is a prop of every portal card: a fresh closure per
+  // render defeated their `memo` on every frame of a drag or a pen stroke.
+  const deleteItem = useCallback(
+    (id: string) => {
+      const it = currentData().items.find((i) => i.id === id);
+      if (it?.type === "portal") void ipc.portalClose(id).catch(() => {});
+      // Same rule as the selection delete: the flow card leaves, the pipeline
+      // it is running stops with it.
+      cancelRunsOf([id]);
+      // A fichário is a container, and a container that takes its contents with
+      // it is a trapdoor: the notes are put back on the board *before* the
+      // binder goes (§13).
+      commit((c) => removeItemAndEdges(releaseNotes(c, id), id));
+      dropFromSelection(id);
+    },
+    [commit, currentData, dropFromSelection],
+  );
 
   const duplicateItem = (id: string) => {
     const src = currentData().items.find((i) => i.id === id);
@@ -4171,6 +4244,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   };
 
   const onContainerContextMenu = (e: React.MouseEvent) => {
+    if (suppressContext.current) { e.preventDefault(); suppressContext.current = false; return; }
     const t = e.target as HTMLElement;
     // Never let the host WebView2 show "Inspecionar / Copiar imagem" on
     // the canvas. Cards and notes open the Yard menu; inputs keep paste.
@@ -4183,8 +4257,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     // overlay lets the contextmenu bubble up here).
     const tol = 6 / vpRef.current.zoom;
     const its = currentData().items;
-    let hitId: string | null = null;
-    for (let i = its.length - 1; i >= 0; i--) {
+    let hitId: string | null = t.closest<HTMLElement>("[data-dock-id]")?.dataset.dockId ?? null;
+    for (let i = its.length - 1; !hitId && i >= 0; i--) {
       if (hitItem(its[i], w.x, w.y, tol, (id) => anchorsRef.current[id])) {
         hitId = its[i].id;
         break;
@@ -4286,10 +4360,15 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     // empty space still gets the background menu — a group being selected is
     // no reason to stop offering "add here".
     if (it && selection.size > 1 && selection.has(it.id)) {
+      const selectedWires = items.filter((item) => item.type === "connection" && selection.has(item.id));
       const notesInSel = items.filter(
         (i) => i.type === "note" && selection.has(i.id),
       ).length;
       return [
+        ...(selectedWires.length >= 2 ? [{ id: "bundle-wires", label: t("Agrupar cabos com prendedor"), onSelect: () => {
+          const point = ctxMenu.world;
+          commit((c) => ({ ...c, items: bundleWires(c.items, selection, { id: nanoid(8), ...point }) }));
+        } } as MenuEntry] : []),
         {
           id: "group",
           label: t("Agrupar"),
@@ -4561,7 +4640,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       kind: "swatches",
       colors: CANVAS_COLORS,
       active: it.color,
-      onPick: (c) => patchItem(it.id, (i) => ({ ...i, color: c })),
+      onPick: (c) => it.type === "binder" ? commit((canvas) => colorBinder(canvas, it.id, c)) : patchItem(it.id, (i) => ({ ...i, color: c })),
     };
     const del: MenuEntry = {
       id: "delete",
@@ -4591,6 +4670,14 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         onSelect: () => reorderItem(it.id, "back"),
       },
     ];
+    const maximizeEntry: MenuEntry[] = isBoxItem(it) ? [{
+      id: "maximize",
+      label: it.restore ? t("Restaurar o tamanho") : t("Maximizar no canvas"),
+      icon: <Maximize2 size={13} />,
+      disabled: it.pinned || !!it.dock,
+      onSelect: () => onItemMaximize(it.id),
+    }] : [];
+    if (canDock(it)) maximizeEntry.push(dockMenu(t, it.dock, (side) => onDock(it.id, side)));
     const pinEntry: MenuEntry = {
       id: "pin",
       label: it.pinned ? t("Soltar (voltar a mover)") : t("Fixar no lugar"),
@@ -4636,6 +4723,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           // palette: the note is a single object, and a strip whose tones do
           // not exist on the block reads as two things glued together.
           { ...swatches, label: t("Faixa") },
+          { id: "conceal", label: it.contentHidden ? t("Mostrar conteúdo") : t("Ocultar conteúdo"),
+            onSelect: () => onContentHidden(it.id, !it.contentHidden) },
           {
             kind: "swatches",
             label: t("Fundo"),
@@ -4710,6 +4799,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             onSelect: () => toggleLock(it.id),
           },
           ...renameEntry,
+          ...maximizeEntry,
           pinEntry,
           dup,
           { kind: "sep" },
@@ -4771,6 +4861,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               beginTextEdit(it.id);
             },
           },
+          ...maximizeEntry,
           pinEntry,
           dup,
           { kind: "sep" },
@@ -4779,6 +4870,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           del,
         ];
       case "portal":
+        if (it.deviceSerial) return [swatches, ...renameEntry, ...maximizeEntry, pinEntry, dup, { kind: "sep" }, ...order, { kind: "sep" }, del];
         return [
           swatches,
           { kind: "sep" },
@@ -4811,6 +4903,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             },
           },
           ...renameEntry,
+          ...maximizeEntry,
           pinEntry,
           dup,
           { kind: "sep" },
@@ -4827,6 +4920,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             icon: <Pencil size={13} />,
             onSelect: () => editFlow(it.id),
           },
+          ...maximizeEntry,
           pinEntry,
           dup,
           { kind: "sep" },
@@ -4838,6 +4932,11 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         // No swatches: the wire is plumbing and always white (see
         // `.cv-conn-line`). Direction is all there is to change here.
         return [
+          ...(it.clamp ? [{ id: "release-clamp", label: t("Soltar cabos do prendedor"), onSelect: () => commit((c) => ({ ...c, items: positionClamp(c.items, it.clamp!.id, undefined) })) } as MenuEntry] : []),
+          { id: "wire-style", label: t("Estilo de conexão"), submenu: [
+            { id: "rope", label: t("Corda"), checked: it.style !== "circuit", onSelect: () => patchItem(it.id, (item) => item.type === "connection" ? { ...item, style: "rope" } : item) },
+            { id: "circuit", label: t("Circuito"), checked: it.style === "circuit", onSelect: () => patchItem(it.id, (item) => item.type === "connection" ? { ...item, style: "circuit" } : item) },
+          ] },
           {
             id: "flip",
             label: t("Inverter direção"),
@@ -4862,6 +4961,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           { kind: "sep" },
           ...renameEntry,
           ...pathEntries,
+          ...maximizeEntry,
           pinEntry,
           dup,
           ...order,
@@ -4919,6 +5019,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             : []),
           { kind: "sep" },
           ...renameEntry,
+          ...maximizeEntry,
           pinEntry,
           ...order,
           { kind: "sep" },
@@ -4958,6 +5059,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           { kind: "sep" },
           ...renameEntry,
           ...pathEntries,
+          ...maximizeEntry,
           pinEntry,
           dup,
           ...order,
@@ -4980,6 +5082,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           { kind: "sep" },
           ...renameEntry,
           ...pathEntries,
+          ...maximizeEntry,
           pinEntry,
           dup,
           ...order,
@@ -5002,6 +5105,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             onSelect: () => selectGroupContents(it.id),
           },
           { kind: "sep" },
+          ...maximizeEntry,
           pinEntry,
           dup,
           ...order,
@@ -5031,6 +5135,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               ),
           },
           { kind: "sep" },
+          ...maximizeEntry,
           pinEntry,
           dup,
           ...order,
@@ -5061,7 +5166,11 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
    * margin (`lib/culling.ts`), and whatever the user is in the middle of.
    * Off-screen terminals coalesce their output slowly; off-screen notes,
    * files, trees and binders are not mounted at all.
+   *
+   * The view moves on every frame of a pan, the boxes do not: they are merged
+   * once per change of either map, not once per frame.
    */
+  const boardBoxes = useMemo(() => ({ ...itemBoxes, ...rects }), [itemBoxes, rects]);
   const shown = useMemo(() => {
     const keep: string[] = [...selection];
     if (focusedTerminalId) keep.push(focusedTerminalId);
@@ -5069,7 +5178,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     if (renamingId) keep.push(renamingId);
     if (hints) keep.push(hints.id);
     return visibleIds(
-      { ...itemBoxes, ...rects },
+      boardBoxes,
       { x: vp.x, y: vp.y, w: viewSize.w / z, h: viewSize.h / z },
       keep,
     );
@@ -5079,8 +5188,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     editingId,
     renamingId,
     hints,
-    itemBoxes,
-    rects,
+    boardBoxes,
     vp.x,
     vp.y,
     z,
@@ -5140,10 +5248,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     return m;
   }, [flowRuns, items, groupId]);
 
-  const flowItems = useMemo(
-    () => items.filter((i): i is FlowItem => i.type === "flow"),
-    [items],
-  );
+  const flowItems = layers.flow;
 
   /** How many agent CLIs each flow card has hanging off it. */
   const flowWired = useMemo(() => {
@@ -5280,52 +5385,16 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   // Memoized because these run on the pan path: `items` only changes on a
   // commit, but this component re-renders on every frame of a camera move.
   const domItems = useMemo(
-    () =>
-      items.filter(
-        (i): i is Extract<CanvasItem, { type: "text" | "note" }> =>
-          // A filed note is drawn by its fichário, not by the board. It is
-          // still an item — still addressable by the CLI, still wired — it
-          // just has one place on screen, and that place is the tab.
-          (i.type === "text" || (i.type === "note" && !filed.has(i.id))) && shown.has(i.id),
-      ),
-    [items, filed, shown],
+    () => layers.dom.filter((item) => (item.type === "text" || !filed.has(item.id)) && shown.has(item.id)),
+    [layers.dom, filed, shown],
   );
-  const treeItems = useMemo(
-    () => items.filter((i): i is TreeItem => i.type === "tree" && shown.has(i.id)),
-    [items, shown],
-  );
-  // The whole list, not only the visible ones: the note menu lists every
-  // binder a note can be filed into, wherever it sits.
-  const binderItems = useMemo(
-    () => items.filter((i): i is BinderItem => i.type === "binder"),
-    [items],
-  );
-  const binderCards = useMemo(
-    () => binderItems.filter((i) => shown.has(i.id)),
-    [binderItems, shown],
-  );
-  const portalItems = useMemo(
-    () =>
-      items.filter(
-        (i): i is Extract<CanvasItem, { type: "portal" }> => i.type === "portal",
-      ),
-    [items],
-  );
-  const mediaItems = useMemo(
-    () => items.filter((i): i is MediaItem => i.type === "media" && shown.has(i.id)),
-    [items, shown],
-  );
-  const docItems = useMemo(
-    () => items.filter((i): i is DocItem => i.type === "doc" && shown.has(i.id)),
-    [items, shown],
-  );
-  const groupItems = useMemo(
-    () =>
-      items.filter(
-        (i): i is Extract<CanvasItem, { type: "group" }> => i.type === "group",
-      ),
-    [items],
-  );
+  const treeItems = useMemo(() => layers.tree.filter((item) => shown.has(item.id)), [layers.tree, shown]);
+  const binderItems = layers.binder;
+  const binderCards = useMemo(() => binderItems.filter((item) => shown.has(item.id)), [binderItems, shown]);
+  const portalItems = layers.portal;
+  const mediaItems = useMemo(() => layers.media.filter((item) => shown.has(item.id)), [layers.media, shown]);
+  const docItems = useMemo(() => layers.doc.filter((item) => shown.has(item.id)), [layers.doc, shown]);
+  const groupItems = layers.group;
 
   /**
    * What the minimap paints. Skipped entirely when it is closed — walking
@@ -5406,11 +5475,52 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         // Frame what just landed, once React has painted it.
         setTimeout(fitView, 0);
       } catch (e) {
-        useUI.getState().showToast(String(e), "error");
+        useUI.getState().showToast(failureMessage(e), "error");
       }
     },
     [fitView, groupId],
   );
+
+  // The chrome around the board (wiring, toolbar, flow HUD) is memoized and
+  // the camera is React state: every callback handed to it has to be stable,
+  // or a pan frame re-renders it for nothing.
+  const onClampMove = useCallback(
+    (clamp: WireClamp, phase: ClampPhase) => {
+      if (phase === "live") setClampDrag(clamp);
+      else {
+        setClampDrag(null);
+        if (phase === "commit") commit((c) => ({ ...c, items: positionClamp(c.items, clamp.id, clamp) }));
+      }
+    },
+    [commit],
+  );
+  const onClampRelease = useCallback(
+    (id: string) => commit((c) => ({ ...c, items: positionClamp(c.items, id, undefined) })),
+    [commit],
+  );
+  const drawFlow = useCallback(() => setTool("flow"), []);
+  const openConnections = useCallback(
+    () => useUI.getState().openModal("connections", { groupId }),
+    [groupId],
+  );
+  const pickTool = useCallback(
+    (next: Tool) => {
+      setTool(next);
+      setConnectFrom(null);
+      clearDraft();
+    },
+    [clearDraft],
+  );
+  const toolKey = useCallback(
+    (id: Tool) => {
+      const chord = keymap[`tool.${id}` as CanvasAction];
+      return chord ? chordLabel(chord) : "";
+    },
+    [keymap],
+  );
+
+  const docked = (id: string, side: DockSide | undefined, child: React.ReactNode) =>
+    <DockFrame key={id} id={id} side={side} viewport={vp} size={viewSize} onRelease={() => onDock(id, undefined)}>{child}</DockFrame>;
 
   return (
     <div
@@ -5480,7 +5590,9 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
           DOM so the z-index tie with .cv-note/.cv-text resolves in their
           favor (see .cv-svg--under in styles.css). */}
       <ConnectionsLayer
-        items={items}
+        items={clampDrag ? positionClamp(items, clampDrag.id, clampDrag) : items}
+        onClampMove={onClampMove}
+        onClampRelease={onClampRelease}
         rects={anchors}
         vp={vp}
         selection={selection}
@@ -5529,6 +5641,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               onResizeStart={startNoteResize}
               onResizeMove={moveNoteResize}
               onResizeEnd={endNoteResize}
+              onMaximize={onItemMaximize}
             />
           );
         })}
@@ -5564,8 +5677,9 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               : tool === "connect" && hoverNode === raw.id && connectFrom
                 ? "is-connect-target"
                 : "";
-          return (
+          return docked(raw.id, raw.dock,
             <NoteItem
+              onContentHidden={onContentHidden}
               key={raw.id}
               it={raw}
               dx={dx}
@@ -5592,11 +5706,13 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               onResizeStart={startNoteResize}
               onResizeMove={moveNoteResize}
               onResizeEnd={endNoteResize}
+              onMaximize={onItemMaximize}
             />
           );
         })}
 
         {portalItems.map((raw) => {
+          const PortalComponent = raw.deviceSerial ? DevicePortalCard : PortalCard;
           const { dx, dy } = shiftOf(raw.id);
           const connectClass =
             tool === "connect" && connectFrom === raw.id
@@ -5604,8 +5720,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               : tool === "connect" && hoverNode === raw.id && connectFrom
                 ? "is-connect-target"
                 : "";
-          return (
-            <PortalCard
+          return docked(raw.id, raw.dock,
+            <PortalComponent
               key={raw.id}
               it={raw}
               dx={dx}
@@ -5617,7 +5733,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               connectClass={connectClass}
               getZoom={getZoom}
               vp={vp}
-              covered={portalsHidden}
+              covered={portalsHidden || coveredByMaximizedItem(items, raw.id)}
               layoutTick={layoutTick}
               getClip={getPortalClip}
               projectId={projectId}
@@ -5626,8 +5742,10 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               onItemMove={onItemMove}
               onItemUp={onItemUp}
               onPatch={patchPortal}
+              onDock={onDock}
               onDelete={deleteItem}
               onFocus={focusNode}
+              onMaximize={onItemMaximize}
               onMenuOpen={setCardMenuOpen}
               onRect={onPortalRect}
               onBounds={onPortalBounds}
@@ -5635,6 +5753,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               onRenameStart={startRename}
               onRenameEnd={endRename}
               onRename={renameCanvasItem}
+              visible={shown.has(raw.id)}
             />
           );
         })}
@@ -5647,7 +5766,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               : tool === "connect" && hoverNode === raw.id && connectFrom
                 ? "is-connect-target"
                 : "";
-          return (
+          return docked(raw.id, raw.dock,
             <TreeCard
               key={raw.id}
               it={raw}
@@ -5667,6 +5786,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               onResizeStart={startNoteResize}
               onResizeMove={moveNoteResize}
               onResizeEnd={endNoteResize}
+              onMaximize={onItemMaximize}
               renaming={renamingId === raw.id}
               onRenameStart={startRename}
               onRenameEnd={endRename}
@@ -5683,7 +5803,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               : tool === "connect" && hoverNode === raw.id && connectFrom
                 ? "is-connect-target"
                 : "";
-          return (
+          return docked(raw.id, raw.dock,
             <BinderCard
               key={raw.id}
               it={raw}
@@ -5702,8 +5822,10 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               onItemMove={onItemMove}
               onItemUp={onItemUp}
               onShowTab={showBinderTab}
+              onReorderTab={reorderBinderTab}
               onRemoveTab={unfileNote}
               onNewNote={newNoteInBinder}
+              onContentHidden={onContentHidden}
               onBeginEdit={beginTextEdit}
               onPatchText={patchText}
               onEndEdit={endTextEdit}
@@ -5712,6 +5834,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               onResizeStart={startNoteResize}
               onResizeMove={moveNoteResize}
               onResizeEnd={endNoteResize}
+              onMaximize={onItemMaximize}
               renaming={renamingId === raw.id}
               onRenameStart={startRename}
               onRenameEnd={endRename}
@@ -5728,7 +5851,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               : tool === "connect" && hoverNode === raw.id && connectFrom
                 ? "is-connect-target"
                 : "";
-          return (
+          return docked(raw.id, raw.dock,
             <MediaCard
               key={raw.id}
               it={raw}
@@ -5747,6 +5870,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               onResizeStart={startNoteResize}
               onResizeMove={moveNoteResize}
               onResizeEnd={endNoteResize}
+              onMaximize={onItemMaximize}
               renaming={renamingId === raw.id}
               onRenameStart={startRename}
               onRenameEnd={endRename}
@@ -5763,7 +5887,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               : tool === "connect" && hoverNode === raw.id && connectFrom
                 ? "is-connect-target"
                 : "";
-          return (
+          return docked(raw.id, raw.dock,
             <DocCard
               key={raw.id}
               it={raw}
@@ -5782,6 +5906,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               onResizeStart={startNoteResize}
               onResizeMove={moveNoteResize}
               onResizeEnd={endNoteResize}
+              onMaximize={onItemMaximize}
               renaming={renamingId === raw.id}
               onRenameStart={startRename}
               onRenameEnd={endRename}
@@ -5818,11 +5943,12 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
               onResizeStart={startNoteResize}
               onResizeMove={moveNoteResize}
               onResizeEnd={endNoteResize}
+              onMaximize={onItemMaximize}
             />
           );
         })}
 
-        {orderedCards.map((t) => (
+        {orderedCards.map((t) => docked(t.id, rects[t.id].dock,
           <TerminalCard
             key={t.id}
             term={t}
@@ -5831,7 +5957,7 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             focused={focusedTerminalId === t.id}
             selected={selection.has(t.id)}
             onPick={pickNode}
-            role={data.roles?.[t.id]}
+            role={roles?.[t.id]}
             routineCount={routineCounts[t.id] ?? 0}
             triggerCount={triggerCounts[t.id] ?? 0}
             connectRole={
@@ -5851,12 +5977,14 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
             registerHandle={registerHandle}
             onOrder={onNodeOrder}
             onPin={onPinToggle}
+            onContentHidden={onContentHidden}
+            onDock={onDock}
             onMaximize={onNodeMaximize}
             renaming={renamingId === t.id}
             onRenameStart={startRename}
             onRenameEnd={endRename}
             visible={shown.has(t.id)}
-            renderScale={renderScale}
+            renderScale={rects[t.id].dock ? 1 : renderScale}
             front={frontOfCard.get(t.id)}
             frontFocus={
               focusedFront ? (frontOfCard.get(t.id)?.id === focusedFront ? "on" : "off") : null
@@ -5879,6 +6007,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
       </div>
 
       <ItemsLayer
+        getZoom={getZoom}
+        onResize={onVectorResize}
         items={items}
         vp={vp}
         selection={selection}
@@ -6030,29 +6160,40 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         groupId={groupId}
         flows={flowItems}
         onReveal={focusNode}
-        onDraw={() => setTool("flow")}
+        onDraw={drawFlow}
       />
 
       <CanvasToolbar
+        onConnections={openConnections}
         tool={tool}
-        onTool={(t) => {
-          setTool(t);
-          setConnectFrom(null);
-          clearDraft();
-        }}
+        onTool={pickTool}
         color={color}
         onColor={setColor}
         size={size}
         onSize={setSize}
-        keyFor={(id) => {
-          const chord = keymap[`tool.${id}` as CanvasAction];
-          return chord ? chordLabel(chord) : "";
-        }}
+        keyFor={toolKey}
         canUndo={undoRef.current.length > 0}
         canRedo={redoRef.current.length > 0}
         onUndo={undo}
         onRedo={redo}
       />
+      {modalOpen === "connections" && <ConnectionsDialog
+        endpoints={Object.keys(anchors).map((id) => {
+          const terminal = sorted.find((term) => term.id === id);
+          const item = items.find((entry) => entry.id === id);
+          const label = terminal ? baseName(terminal) : item?.type === "note" ? noteName(item) : item?.type === "portal" ? portalName(item) : item && "name" in item && item.name ? item.name : t("Cartão {id}", { id });
+          return { value: id, label: `${label} (${id.slice(0, 6)})` };
+        })}
+        wires={items.filter((item) => item.type === "connection")}
+        initialSource={[...selection].find((id) => !!anchors[id])}
+        onCreate={(from, to) => {
+          const wires = currentData().items.filter((item) => item.type === "connection");
+          if (!connectionIssue(Object.keys(anchorsRef.current), wires, from, to)) commit((data) => addItems(data, connection(from, to)));
+        }}
+        onRemove={(id) => commit((data) => ({ ...data, items: data.items.filter((item) => item.id !== id) }))}
+        onStyle={(id, style) => patchItem(id, (item) => item.type === "connection" ? { ...item, style } : item)}
+        onClose={() => useUI.getState().closeModal()}
+      />}
 
       {/* Map and zoom in one pane of glass: both answer "where am I?", and
           stacked as two floaters with a gap between them they read as two

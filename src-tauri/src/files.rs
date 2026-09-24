@@ -17,9 +17,10 @@
 //!   noisy directories stay out and the window has a path cap; anything
 //!   past the cap becomes just a `dropped` counter in the payload.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -35,23 +36,7 @@ const MAX_WINDOW: Duration = Duration::from_millis(900);
 const MAX_PATHS: usize = 400;
 
 /// Directories that never interest the user and generate an event avalanche.
-const IGNORED_DIRS: &[&str] = &[
-    ".git",
-    "node_modules",
-    "target",
-    "dist",
-    "build",
-    "out",
-    ".next",
-    ".nuxt",
-    ".turbo",
-    ".cache",
-    ".venv",
-    "venv",
-    "__pycache__",
-    ".idea",
-    ".vs",
-];
+use crate::file_policy::{excluded_directory, DirectoryUse};
 
 /// Keeps the watcher alive; dropping it turns off notify and, with the channel
 /// closed, the flush thread ends on its own.
@@ -66,6 +51,12 @@ struct PathState {
     saw_create: bool,
 }
 
+/// What is already queued for the flusher: a path, and whether the queued
+/// event was a create (the one fact `ingest` keeps per path). A repeat of
+/// the same key adds nothing to the window, so it is not sent and, above
+/// all, not counted as lost when the channel is full.
+type Pending = Mutex<HashSet<(PathBuf, bool)>>;
+
 pub fn watch<R: Runtime>(
     app: AppHandle<R>,
     project_id: String,
@@ -75,16 +66,40 @@ pub fn watch<R: Runtime>(
         return Err(format!("pasta inexistente: {}", root.display()));
     }
 
-    let (tx, rx) = mpsc::channel::<Event>();
+    let (tx, rx) = mpsc::sync_channel::<Event>(MAX_PATHS);
+    let overflow = Arc::new(AtomicU32::new(0));
+    let callback_overflow = overflow.clone();
+    let pending: Arc<Pending> = Arc::new(Mutex::new(HashSet::new()));
+    let callback_pending = pending.clone();
     let filter_root = root.clone();
+    // Worked out once instead of on every event: the callback runs on
+    // notify's own thread, and time spent there delays that thread's next
+    // pass over the kernel's change buffer. It is the key `invalidate_status`
+    // would work out per event for as long as the root keeps its canonical
+    // path, which only renaming the folder (or re-pointing a link to it)
+    // mid-watch changes.
+    let status_key = crate::git::status_key(&root);
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
-        let Ok(event) = res else { return };
+        let event = match res {
+            Ok(event) => event,
+            Err(_) => {
+                callback_overflow.fetch_add(1, Ordering::Relaxed);
+                enqueue(&tx, &callback_overflow, &callback_pending, Event::new(EventKind::Any));
+                return;
+            }
+        };
+        if event.need_rescan() {
+            callback_overflow.fetch_add(1, Ordering::Relaxed);
+            enqueue(&tx, &callback_overflow, &callback_pending, event);
+            return;
+        }
         // Access is pure noise (every file read would fire an event).
         if matches!(event.kind, EventKind::Access(_)) {
             return;
         }
         if event.paths.iter().any(|p| !ignored(&filter_root, p)) {
-            let _ = tx.send(event);
+            crate::git::invalidate_status_key(&status_key);
+            enqueue(&tx, &callback_overflow, &callback_pending, event);
         }
     })
     .map_err(|e| e.to_string())?;
@@ -95,12 +110,44 @@ pub fn watch<R: Runtime>(
     tracing::info!(project = %project_id, path = %root.display(), "observando arquivos do projeto");
 
     let flusher_root = root.clone();
-    std::thread::spawn(move || flusher(app, project_id, flusher_root, rx));
+    std::thread::spawn(move || flusher(app, project_id, flusher_root, rx, overflow, pending));
 
     Ok(WatchHandle {
         _watcher: watcher,
         root,
     })
+}
+
+/// Callback-side backpressure is nonblocking; lost paths require a root rescan.
+///
+/// Paths already queued (same path, same create-ness) are left out before
+/// the send: a burst of saves on the same few files never fills the channel
+/// and never reads as a loss. Events with no path (rescan, watcher error)
+/// cannot be deduplicated and always go through.
+fn enqueue(tx: &mpsc::SyncSender<Event>, dropped: &AtomicU32, pending: &Pending, mut event: Event) {
+    if event.paths.len() > MAX_PATHS {
+        dropped.fetch_add((event.paths.len() - MAX_PATHS).min(u32::MAX as usize) as u32, Ordering::Relaxed);
+        event.paths.truncate(MAX_PATHS);
+    }
+    if event.paths.is_empty() {
+        if let Err(mpsc::TrySendError::Full(_)) = tx.try_send(event) {
+            dropped.fetch_add(1, Ordering::Relaxed);
+        }
+        return;
+    }
+    let create = matches!(event.kind, EventKind::Create(_));
+    // Held across the send so a refused event can take its keys back.
+    let mut queued = pending.lock().unwrap_or_else(|p| p.into_inner());
+    event.paths.retain(|p| queued.insert((p.clone(), create)));
+    if event.paths.is_empty() {
+        return;
+    }
+    if let Err(mpsc::TrySendError::Full(event)) = tx.try_send(event) {
+        for p in &event.paths {
+            queued.remove(&(p.clone(), create));
+        }
+        dropped.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 /// Joins events by path and emits classified batches to the UI.
@@ -109,6 +156,8 @@ fn flusher<R: Runtime>(
     project_id: String,
     root: PathBuf,
     rx: mpsc::Receiver<Event>,
+    overflow: Arc<AtomicU32>,
+    pending: Arc<Pending>,
 ) {
     loop {
         // Blocks until the first activity; closed channel = watcher removed.
@@ -132,13 +181,17 @@ fn flusher<R: Runtime>(
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => break,
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    emit(&app, &project_id, &root, batch, dropped);
+                    emit(&app, &project_id, &root, batch, dropped.saturating_add(overflow.swap(0, Ordering::Relaxed)));
                     return;
                 }
             }
         }
 
-        emit(&app, &project_id, &root, batch, dropped);
+        // The window is closed: whatever the callback queues from here on
+        // is news again. A path queued between the last `recv` and this
+        // clear is merely sent twice, never lost.
+        pending.lock().unwrap_or_else(|p| p.into_inner()).clear();
+        emit(&app, &project_id, &root, batch, dropped.saturating_add(overflow.swap(0, Ordering::Relaxed)));
     }
 }
 
@@ -151,7 +204,7 @@ fn ingest(batch: &mut HashMap<PathBuf, PathState>, dropped: &mut u32, root: &Pat
         if let Some(st) = batch.get_mut(&path) {
             st.saw_create |= saw_create;
         } else if batch.len() >= MAX_PATHS {
-            *dropped += 1;
+            *dropped = dropped.saturating_add(1);
         } else {
             batch.insert(path, PathState { saw_create });
         }
@@ -223,7 +276,7 @@ fn ignored(root: &Path, path: &Path) -> bool {
             continue;
         };
         let name = os.to_string_lossy();
-        if IGNORED_DIRS.iter().any(|d| name.eq_ignore_ascii_case(d)) {
+        if excluded_directory(&name, DirectoryUse::Watch) {
             return true;
         }
     }
@@ -244,6 +297,55 @@ fn ignored(root: &Path, path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Native callbacks cannot grow an unbounded queue during a checkout.
+    #[test]
+    fn bounded_intake_reports_overflow_without_blocking_the_producer() {
+        let (tx, rx) = mpsc::sync_channel(2);
+        let dropped = std::sync::atomic::AtomicU32::new(0);
+        let pending = std::sync::Mutex::new(std::collections::HashSet::new());
+        for _ in 0..1000 {
+            enqueue(&tx, &dropped, &pending, Event::new(EventKind::Any));
+        }
+        assert_eq!(rx.try_iter().count(), 2);
+        assert_eq!(dropped.load(std::sync::atomic::Ordering::Relaxed), 998);
+    }
+
+    /// A burst on the same few paths is not a loss: the flusher joins events
+    /// by path anyway, so nothing distinct went missing, and a `dropped`
+    /// count here made the UI treat the whole window as lossy and rescan.
+    #[test]
+    fn a_burst_on_a_few_paths_is_not_reported_as_dropped() {
+        let (tx, rx) = mpsc::sync_channel(MAX_PATHS);
+        let dropped = std::sync::atomic::AtomicU32::new(0);
+        let pending = std::sync::Mutex::new(std::collections::HashSet::new());
+        for i in 0..5000 {
+            let mut event = Event::new(EventKind::Modify(notify::event::ModifyKind::Any));
+            event.paths.push(PathBuf::from(format!("C:\\proj\\src\\file{}.rs", i % 10)));
+            enqueue(&tx, &dropped, &pending, event);
+        }
+        assert_eq!(dropped.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert_eq!(rx.try_iter().count(), 10);
+    }
+
+    /// Index-only exclusions stay explicit so manually inspected folders remain watched.
+    #[test]
+    fn shared_directory_policy_preserves_watcher_and_index_differences() {
+        use crate::file_policy::{excluded_directory, DirectoryUse};
+        assert!(excluded_directory("NODE_MODULES", DirectoryUse::Watch));
+        assert!(excluded_directory("node_modules", DirectoryUse::Index));
+        assert!(!excluded_directory("vendor", DirectoryUse::Watch));
+        assert!(excluded_directory("vendor", DirectoryUse::Index));
+        assert!(!excluded_directory(".vscode", DirectoryUse::Watch));
+    }
+
+    /// Explorer lowercases directory names, including the mixed-case Pods exclusion.
+    #[test]
+    fn index_directory_exclusions_match_case_insensitively() {
+        use crate::file_policy::{excluded_directory, DirectoryUse};
+        assert!(excluded_directory("pods", DirectoryUse::Index));
+        assert!(excluded_directory("NODE_MODULES", DirectoryUse::Index));
+    }
 
     #[test]
     fn filters_noisy_directories_and_junk() {

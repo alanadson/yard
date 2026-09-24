@@ -1859,3 +1859,4 @@
   left: 0;
   right: auto;
 }
+.front-row { min-width: 0; margin-inline: 0; }

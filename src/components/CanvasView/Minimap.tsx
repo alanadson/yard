@@ -8,13 +8,15 @@
  * everything is *while* staying zoomed in, and click to go there.
  *
  * It renders in its own coordinate space (world scaled down to fit the little
- * box), so it costs one `<svg>` of `<rect>`s per frame of a camera move and
- * nothing else: no DOM per card, no xterm, no portal.
+ * box). A camera move re-renders it for the camera box alone: the board's
+ * bounds are walked once per change of the boxes, and the card rectangles are
+ * rebuilt only when the map's frame itself moves (`minimapFrame.ts`).
  */
-import { memo, useCallback, useRef } from "react";
+import { memo, useCallback, useMemo, useRef } from "react";
 
 import type { CanvasViewport } from "../../lib/canvas";
 import { useT } from "../../hooks/useT";
+import { contentBounds, mapFrame } from "./minimapFrame";
 
 export type MiniKind = "terminal" | "note" | "portal" | "draw";
 
@@ -42,8 +44,7 @@ interface Props {
 
 const MAP_W = 188;
 const MAP_H = 118;
-/** Slack around the content so a card at the edge is not drawn on the border. */
-const PAD = 0.06;
+const MAP_SIZE = { w: MAP_W, h: MAP_H };
 
 function MinimapImpl({ boxes, vp, view, selection, onJump, onClose }: Props) {
   const t = useT();
@@ -53,33 +54,35 @@ function MinimapImpl({ boxes, vp, view, selection, onJump, onClose }: Props) {
   // piece of that pane now, never a floater on its own (see CanvasView).
   const dragging = useRef(false);
 
-  // The camera rectangle is part of the extent on purpose: panning into empty
-  // space has to keep the viewport box visible, otherwise the one control that
-  // tells you "you are far from everything" scrolls itself out of the map.
+  const content = useMemo(() => contentBounds(boxes), [boxes]);
   const cam = { x: vp.x, y: vp.y, w: view.w / vp.zoom, h: view.h / vp.zoom };
-  let minX = cam.x;
-  let minY = cam.y;
-  let maxX = cam.x + cam.w;
-  let maxY = cam.y + cam.h;
-  for (const b of boxes) {
-    minX = Math.min(minX, b.x);
-    minY = Math.min(minY, b.y);
-    maxX = Math.max(maxX, b.x + b.w);
-    maxY = Math.max(maxY, b.y + b.h);
-  }
-  const padX = (maxX - minX) * PAD || 40;
-  const padY = (maxY - minY) * PAD || 40;
-  minX -= padX;
-  minY -= padY;
-  maxX += padX;
-  maxY += padY;
-
-  const scale = Math.min(MAP_W / (maxX - minX), MAP_H / (maxY - minY));
-  // Centered inside the little box, so a tall board does not hug the left edge.
-  const offX = (MAP_W - (maxX - minX) * scale) / 2;
-  const offY = (MAP_H - (maxY - minY) * scale) / 2;
+  const { minX, minY, scale, offX, offY } = mapFrame(content, cam, MAP_SIZE);
   const sx = (v: number) => offX + (v - minX) * scale;
   const sy = (v: number) => offY + (v - minY) * scale;
+
+  // Keyed on the frame's numbers, not on the camera: a pan inside the board
+  // yields the same frame and React reuses every `<rect>` as it is.
+  const cards = useMemo(
+    () =>
+      boxes.map((b) => (
+        <rect
+          key={b.id}
+          className={`cv-mini-box cv-mini-box--${b.kind} ${
+            selection.has(b.id) ? "is-selected" : ""
+          }`}
+          x={offX + (b.x - minX) * scale}
+          y={offY + (b.y - minY) * scale}
+          // Nothing may collapse to a hairline: a pen stroke drawn in a
+          // straight line has zero height in world units and would vanish
+          // from the one view that exists to prove it is there.
+          width={Math.max(2, b.w * scale)}
+          height={Math.max(2, b.h * scale)}
+          rx={3}
+          style={b.color ? { fill: b.color } : undefined}
+        />
+      )),
+    [boxes, selection, minX, minY, scale, offX, offY],
+  );
 
   const jumpFromEvent = useCallback(
     (clientX: number, clientY: number) => {
@@ -116,23 +119,7 @@ function MinimapImpl({ boxes, vp, view, selection, onJump, onClose }: Props) {
           (e.currentTarget as Element).releasePointerCapture(e.pointerId);
         }}
       >
-        {boxes.map((b) => (
-          <rect
-            key={b.id}
-            className={`cv-mini-box cv-mini-box--${b.kind} ${
-              selection.has(b.id) ? "is-selected" : ""
-            }`}
-            x={sx(b.x)}
-            y={sy(b.y)}
-            // Nothing may collapse to a hairline: a pen stroke drawn in a
-            // straight line has zero height in world units and would vanish
-            // from the one view that exists to prove it is there.
-            width={Math.max(2, b.w * scale)}
-            height={Math.max(2, b.h * scale)}
-            rx={3}
-            style={b.color ? { fill: b.color } : undefined}
-          />
-        ))}
+        {cards}
         <rect
           className="cv-mini-cam"
           x={sx(cam.x)}

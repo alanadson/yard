@@ -1,3 +1,4 @@
+import { PreferenceWriter } from "../lib/preferenceWriter";
 /**
  * File explorer and editor — the project tree (the bench's "Files" tab) and
  * the documents open in the editor.
@@ -24,12 +25,12 @@ import {
   type FilesActivity,
 } from "../lib/ipc";
 import { diffDocId, diffSuffix, parseDiffSpec, type DiffSpec } from "../lib/diffTab";
-import { docHost } from "../lib/docHost";
+import { docHost, type DocHost } from "../lib/docHost";
 import { t } from "../lib/i18n";
 import { uiLog } from "../lib/log";
 import { toggleTaskLine } from "../lib/mdedit";
 import { splitPath } from "../lib/paths";
-import { persistPref, readPrefs, type PrefsSnapshot } from "../lib/prefs";
+import { readPrefs, writePrefs, type PrefsSnapshot } from "../lib/prefs";
 import {
   arrive,
   forgetDoc,
@@ -54,7 +55,7 @@ import {
   serializeFoldRecord,
   type FoldRange,
   type FoldRecord,
-} from "../components/CodeEditor/foldMemory";
+} from "../components/CodeEditor/foldRecord";
 import {
   forget as forgetClosed,
   pop as popClosed,
@@ -62,7 +63,8 @@ import {
   type ClosedTab,
 } from "../lib/closedTabs";
 import { closesWith, type CloseScope } from "../lib/tabRules";
-import { rootedPathKey, sameRoot } from "../lib/roots";
+import { rootKey, rootedPathKey, sameRoot } from "../lib/roots";
+import { ReadCoordinator } from "../lib/readCoordinator";
 import { useProjects } from "./projectsStore";
 import { useReopen } from "./reopenStore";
 import { useUI } from "./uiStore";
@@ -383,16 +385,9 @@ export function serializeDocs(docs: OpenDoc[]): string {
   return JSON.stringify(out);
 }
 
-const write = (key: string, value: string) =>
-  persistPref(key, value, (error) =>
-    uiLog.warn(`não consegui gravar ${key}: ${error}`),
-  );
-
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 /** Distinguishes two jumps to the same line of the same file. */
 let revealTick = 0;
-/** One index walk at a time — a second call while one runs just waits its turn. */
-let indexBuilding = false;
 
 interface EditorState {
   /** Project and root the tree is showing (the active floor's worktree). */
@@ -577,6 +572,7 @@ interface EditorState {
   restore: (prefs?: PrefsSnapshot) => Promise<void>;
   /** Writes the tabs and drafts to kv (debounced). */
   persist: () => void;
+  flush: () => Promise<void>;
 }
 
 const pendingDirs = new Set<string>();
@@ -606,10 +602,11 @@ interface TabTarget {
 }
 
 /**
- * @param projectId The tree's project, who owns a group created now. A file
- * from a root nobody in the workspace claims has no group to be born into.
+ * Where a document of `projectId` would land, decided without touching the
+ * workspace. `tabTarget` is the version that makes the group; this one is
+ * for the paths that only need to know whether the overlay is the host.
  */
-function tabTarget(projectId: string | null): TabTarget {
+function tabHost(projectId: string | null): { host: DocHost; owner: string | null } {
   const projects = useProjects.getState();
   const { activeGroupId, layoutOf } = projects;
   const owner = projects.projects.some((p) => p.id === projectId) ? projectId : null;
@@ -618,6 +615,17 @@ function tabTarget(projectId: string | null): TabTarget {
     surface: activeGroupId ? layoutOf(activeGroupId).surface : null,
     projectId: owner,
   });
+  return { host, owner };
+}
+
+/**
+ * @param projectId The tree's project, who owns a group created now. A file
+ * from a root nobody in the workspace claims has no group to be born into.
+ */
+function tabTarget(projectId: string | null): TabTarget {
+  const projects = useProjects.getState();
+  const { activeGroupId } = projects;
+  const { host, owner } = tabHost(projectId);
 
   if (host === "group") {
     // `addGroup` also makes it the active one, the workspace stops showing
@@ -655,8 +663,16 @@ function showTab(
 }
 
 export const useEditor = create<EditorState>((set, get) => {
+  const preferenceWriter = new PreferenceWriter(writePrefs);
+  const documentReads = new ReadCoordinator();
+  const indexReads = new ReadCoordinator();
+  let indexRevision = 0;
   /** Applies a patch to one open document, without touching the others. */
   const patchDoc = (id: string, patch: Partial<OpenDoc>) => {
+    const previous = get().docs.find((doc) => doc.id === id);
+    if (!previous || (Object.keys(patch) as (keyof OpenDoc)[]).every(
+      (key) => Object.is(previous[key], patch[key]),
+    )) return;
     set((s) => ({
       docs: s.docs.map((d) => (d.id === id ? { ...d, ...patch } : d)),
     }));
@@ -669,11 +685,12 @@ export const useEditor = create<EditorState>((set, get) => {
    * Reconciles a document with disk without overwriting a draft that appeared
    * while the read was in flight. Shared by watcher events and root switches.
    */
-  const syncDocFromDisk = async (id: string) => {
+  const syncDocFromDisk = (id: string) => {
     const before = get().docs.find((d) => d.id === id);
-    if (!before) return;
-    try {
-      const file = await ipc.fsReadText(before.root, before.path);
+    if (!before) return Promise.resolve();
+    return documentReads.run(id, rootedPathKey(before.root, before.path),
+      () => ipc.fsReadText(before.root, before.path),
+      (file) => {
       const current = get().docs.find((d) => d.id === id);
       if (!current || current.root !== before.root || current.path !== before.path) return;
       if (isDirty(current)) {
@@ -701,11 +718,11 @@ export const useEditor = create<EditorState>((set, get) => {
         missing: false,
         error: null,
       });
-    } catch (error) {
+    }, (error) => {
       if (get().docs.some((d) => d.id === id)) {
         patchDoc(id, { missing: true, error: String(error) });
       }
-    }
+    });
   };
 
   /** Re-reads from disk the directories the watcher touched, in a single burst. */
@@ -852,7 +869,10 @@ export const useEditor = create<EditorState>((set, get) => {
       const { root, projectId, docs } = get();
       if (!root) return;
       const id = docId(root, path);
-      const target = tabTarget(projectId);
+      // The target is resolved only once a new tab is really being added:
+      // resolving it here made the group before the read, and a file that
+      // failed to open (or was already open) left an empty group behind.
+      const overlay = tabHost(projectId).host === "overlay";
 
       // The tree reveals the opened path, even when it comes from outside
       // (changes panel, live feed).
@@ -871,8 +891,8 @@ export const useEditor = create<EditorState>((set, get) => {
         // Already open: bring its tab to the front where it already lives —
         // moving it to another pane because it was clicked from elsewhere
         // would take the file away from the split the user built.
-        showTab(isOpen.groupId, isOpen.slot, id, target);
-        set({ activeId: id, open: target.overlay });
+        showTab(isOpen.groupId, isOpen.slot, id, { groupId: isOpen.groupId, slot: isOpen.slot, overlay });
+        set({ activeId: id, open: overlay });
         return;
       }
 
@@ -881,9 +901,10 @@ export const useEditor = create<EditorState>((set, get) => {
         if (!sameRoot(get().root, root)) return;
         // The read may finish after another attempt on the same file.
         if (get().docs.some((d) => d.id === id)) {
-          set({ activeId: id, open: target.overlay });
+          set({ activeId: id, open: overlay });
           return;
         }
+        const target = tabTarget(projectId);
         set((s) => ({
           docs: [
             ...s.docs,
@@ -1079,23 +1100,32 @@ export const useEditor = create<EditorState>((set, get) => {
 
     ensureFileIndex: async () => {
       const { root, fileIndex, indexStale } = get();
-      if (!root || indexBuilding) return;
+      if (!root) return;
       if (fileIndex && !indexStale) return;
-      indexBuilding = true;
-      try {
-        const index = await ipc.fsIndexFiles(root);
-        // The walk may outlive a project switch; the answer is about old news.
-        if (!sameRoot(get().root, root)) return;
-        set({
-          fileIndex: index.paths,
-          indexTruncated: index.truncated,
-          indexStale: false,
-        });
-      } catch (e) {
-        uiLog.warn(`não consegui indexar os arquivos do projeto: ${e}`);
-      } finally {
-        indexBuilding = false;
-      }
+      return indexReads.run(
+        "file-index",
+        rootKey(root),
+        async () => {
+          for (;;) {
+            const revision = indexRevision;
+            const index = await ipc.fsIndexFiles(root);
+            if (revision === indexRevision || !sameRoot(get().root, root))
+              return index;
+          }
+        },
+        (index) => {
+          // The walk may outlive a project switch; the answer is about old news.
+          if (!sameRoot(get().root, root)) return;
+          set({
+            fileIndex: index.paths,
+            indexTruncated: index.truncated,
+            indexStale: false,
+          });
+        },
+        (e) => {
+          uiLog.warn(`não consegui indexar os arquivos do projeto: ${e}`);
+        },
+      );
     },
 
     closeEditor: () => {
@@ -1631,28 +1661,42 @@ export const useEditor = create<EditorState>((set, get) => {
 
     applyActivity: (p) => {
       const { projectId, root, docs, dirs } = get();
-      if (!root || !sameRoot(root, p.root) || (projectId && p.projectId !== projectId)) return;
+      const activeRoot = !!root && sameRoot(root, p.root) && (!projectId || p.projectId === projectId);
 
       // Files being born or dying age the quick-open index. Only the flag is
       // set here — rebuilding is left to the next Ctrl+P, not to a feed that
       // arrives in bursts while an agent works.
       if (
-        get().fileIndex &&
-        !get().indexStale &&
-        p.events.some((ev) => ev.kind === "created" || ev.kind === "deleted")
+        activeRoot &&
+        (p.dropped > 0 || p.events.some((ev) => ev.kind === "created" || ev.kind === "deleted"))
       ) {
-        set({ indexStale: true });
+        indexRevision++;
+        if (!get().indexStale) set({ indexStale: true });
       }
 
-      for (const ev of p.events) {
+      const documentsByPath = new Map<string, OpenDoc[]>();
+      for (const doc of docs) {
+        if (doc.diff || !sameRoot(doc.root, p.root) || (doc.projectId && doc.projectId !== p.projectId)) continue;
+        const matching = documentsByPath.get(doc.path) ?? [];
+        matching.push(doc);
+        documentsByPath.set(doc.path, matching);
+      }
+      const latestEvents = new Map(p.events.map((event) => [event.path, event]));
+      if (p.dropped > 0) {
+        if (activeRoot) for (const path of Object.keys(dirs)) queueDir(path);
+        for (const path of documentsByPath.keys()) {
+          if (!latestEvents.has(path)) latestEvents.set(path, { path, kind: "modified", at: 0 });
+        }
+      }
+      for (const ev of latestEvents.values()) {
         const dir = parentDir(ev.path);
-        if (dirs[dir]) queueDir(dir);
+        if (activeRoot && dirs[dir]) queueDir(dir);
 
         // Every tab of that path, not the first: the file and its comparison
         // can be open side by side, and the comparison is not the file — it
         // has no disk to follow, and git (not the watcher) tells it to move.
-        for (const doc of docs) {
-          if (doc.diff || !sameRoot(doc.root, p.root) || doc.path !== ev.path) continue;
+        for (const doc of documentsByPath.get(ev.path) ?? []) {
+          documentReads.invalidate(doc.id);
           if (ev.kind === "deleted") {
             patchDoc(doc.id, { missing: true });
           } else if (isDirty(doc)) {
@@ -1668,16 +1712,44 @@ export const useEditor = create<EditorState>((set, get) => {
       if (persistTimer) clearTimeout(persistTimer);
       persistTimer = setTimeout(() => {
         persistTimer = null;
-        const { docs, activeId, open, mdMode, outline, wrap } = get();
-        write(KV_DOCS, serializeDocs(docs));
-        write(KV_ACTIVE, activeId ?? "");
-        write(KV_OPEN, String(open));
-        write(KV_MD_MODE, mdMode);
-        write(KV_OUTLINE, String(outline));
-        write(KV_WRAP, String(wrap));
-        write(KV_MARKS, serializeBookmarks(get().marks));
-        write(KV_FOLDS, serializeFoldRecord(get().folds));
+        void get().flush().catch((error) => uiLog.warn(`Unable to save editor drafts: ${error}`));
       }, PERSIST_DEBOUNCE_MS);
+    },
+
+    flush: async () => {
+      for (;;) {
+        if (persistTimer) clearTimeout(persistTimer);
+        persistTimer = null;
+        const snapshot = get();
+        const { docs, activeId, open, mdMode, outline, wrap, marks, folds } =
+          snapshot;
+        await preferenceWriter.write({
+          [KV_DOCS]: serializeDocs(docs),
+          [KV_ACTIVE]: activeId ?? "",
+          [KV_OPEN]: String(open),
+          [KV_MD_MODE]: mdMode,
+          [KV_OUTLINE]: String(outline),
+          [KV_WRAP]: String(wrap),
+          [KV_MARKS]: serializeBookmarks(marks),
+          [KV_FOLDS]: serializeFoldRecord(folds),
+        });
+        const current = get();
+        if (
+          (
+            [
+              "docs",
+              "activeId",
+              "open",
+              "mdMode",
+              "outline",
+              "wrap",
+              "marks",
+              "folds",
+            ] as const
+          ).every((key) => current[key] === snapshot[key])
+        )
+          return;
+      }
     },
 
     restore: async (prefs) => {
@@ -1711,6 +1783,21 @@ export const useEditor = create<EditorState>((set, get) => {
       // The disk is the authority on what the file *is*; the record is the
       // authority on what the user had *typed*. Reading first is what lets
       // the restore say "this changed underneath while you were away".
+      //
+      // Every file is asked for at once: the boot's loading screen waits for
+      // this restore, and one round trip after another is what it used to
+      // wait for. The answers are still taken in the stored order below, so
+      // the tabs come back as they were left whatever order the disk replies.
+      const reads = new Map<string, ReturnType<typeof ipc.fsReadText>>();
+      for (const g of stored) {
+        const id = docId(g.root, g.path);
+        if (g.diff || reads.has(id)) continue;
+        const read = ipc.fsReadText(g.root, g.path);
+        // Awaited in turn, not as it lands: until then a failed read needs a
+        // handler, or it is reported as an unhandled rejection.
+        read.catch(() => {});
+        reads.set(id, read);
+      }
       const docs: OpenDoc[] = [];
       for (const g of stored) {
         const id = g.diff ? diffDocId(g.root, g.path, g.diff) : docId(g.root, g.path);
@@ -1748,7 +1835,7 @@ export const useEditor = create<EditorState>((set, get) => {
           continue;
         }
         try {
-          const file = await ipc.fsReadText(g.root, g.path);
+          const file = await reads.get(id)!;
           const draft = g.draft ?? null;
           docs.push({
             id,

@@ -27,6 +27,7 @@ import {
   ClipboardPaste,
   Clock,
   Eraser,
+  EyeOff,
   FileText,
   FolderOpen,
   Globe,
@@ -46,11 +47,15 @@ import {
 } from "lucide-react";
 
 import { TerminalMark } from "../BrandIcon";
+import { dockMenu } from "./DockFrame";
 import { ExitBanner } from "../ExitBanner";
 import type { XTermHandle } from "../XTermView";
+import { loadXTermView } from "../XTermView/load";
 import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
 import { InlineRename } from "../ContextMenu/InlineRename";
 import { ResizeHandles } from "./ResizeHandles";
+import { endPhase, rectChanged } from "./gestureEnd";
+import { appliedScale } from "./appliedScale";
 import { ipc, type TerminalRow } from "../../lib/ipc";
 import { copyText } from "../../lib/clipboard";
 import { hasDragPaths, readDragPaths, shellQuote } from "../../lib/canvasDrop";
@@ -85,9 +90,11 @@ import {
   type ResizeDir,
 } from "../../lib/canvas";
 import { useT } from "../../hooks/useT";
+import { failureMessage } from "../../lib/loading";
 import { hudKind, hudLabel } from "./hud";
 
-const XTermView = lazy(() => import("../XTermView"));
+// The same promise the boot starts (`XTermView/load.ts`), as in `TerminalPane`.
+const XTermView = lazy(loadXTermView);
 
 export type { RectPhase };
 
@@ -130,6 +137,8 @@ interface Props {
   onOrder: (id: string, dir: "front" | "back") => void;
   /** Fixes the card in place, or frees it. */
   onPin: (id: string, pinned: boolean) => void;
+  onContentHidden: (id: string, hidden: boolean) => void;
+  onDock: (id: string, side: "left" | "right" | undefined) => void;
   /** Fills the visible board, or goes back to the rectangle it had. */
   onMaximize: (id: string) => void;
   /** The in-place rename is open on this card (the board owns which one). */
@@ -206,6 +215,8 @@ function TerminalCardImpl({
   onMenuOpen,
   onOrder,
   onPin,
+  onContentHidden,
+  onDock,
   onMaximize,
   renaming,
   onRenameStart,
@@ -233,6 +244,11 @@ function TerminalCardImpl({
   const prefsFontSize = useUI((s) => s.prefs.fontSize);
   /** What this card actually paints with — its own size, or the global one. */
   const fontPx = rect.fontSize ?? prefsFontSize;
+  // A zoom step off the board would rebuild an atlas nobody sees: the card
+  // keeps the scale it drew with and catches up when it is visible again.
+  const [heldScale, setHeldScale] = useState(renderScale);
+  const scale = appliedScale(heldScale, renderScale, visible);
+  if (scale !== heldScale) setHeldScale(scale);
 
   const sess = useRef<DragSession | null>(null);
   const handleRef = useRef<XTermHandle | null>(null);
@@ -296,6 +312,17 @@ function TerminalCardImpl({
     },
     [term.id, registerHandle],
   );
+  // Stable for the same reason: `XTermView` is memoized, and an inline arrow
+  // is a new prop on every render, so every drag frame re-rendered the
+  // terminal inside the card.
+  const focusThisTerminal = useCallback(
+    () => focusTerminal(term.id, term.slot),
+    [focusTerminal, term.id, term.slot],
+  );
+  const openMenuAt = useCallback(
+    (e: MouseEvent) => setMenu({ x: e.clientX, y: e.clientY }),
+    [],
+  );
 
   const label = baseName(term);
   const running = isLive(rt);
@@ -344,14 +371,22 @@ function TerminalCardImpl({
     if (!s || e.pointerId !== s.pointerId) return;
     sess.current = null;
     const r = rectFor(s, e);
-    // A stationary click on the header doesn't become a commit: it would
-    // waste a useless undo entry and a workspace rewrite.
-    const changed =
-      Math.abs(r.x - s.start.x) > 0.01 ||
-      Math.abs(r.y - s.start.y) > 0.01 ||
-      Math.abs(r.w - s.start.w) > 0.01 ||
-      Math.abs(r.h - s.start.h) > 0.01;
-    onRect(term.id, r, changed ? "commit" : "cancel");
+    // A stationary click on the header doesn't become a commit (a useless
+    // undo entry and a workspace rewrite), and neither does a pointercancel.
+    const phase = endPhase(e.type, rectChanged(s.start, r));
+    onRect(term.id, phase === "commit" ? r : s.start, phase);
+  };
+
+  /**
+   * The pointer went away without a `pointerup` (the window lost it, the
+   * capture was taken): the card goes back where the gesture started, or the
+   * live rectangle would stay stuck wherever the pointer was last seen.
+   */
+  const cancelSession = (e: React.PointerEvent) => {
+    const s = sess.current;
+    if (!s || e.pointerId !== s.pointerId) return;
+    sess.current = null;
+    onRect(term.id, s.start, "cancel");
   };
 
   // A function, not an array: this is ~14 entries with JSX icons, and as a
@@ -467,6 +502,9 @@ function TerminalCardImpl({
       icon: rect.pinned ? <PinOff size={13} /> : <Pin size={13} />,
       onSelect: () => onPin(term.id, !rect.pinned),
     },
+    dockMenu(t, rect.dock, (side) => onDock(term.id, side)),
+    { id: "conceal", label: rect.contentHidden ? t("Mostrar conteúdo") : t("Ocultar conteúdo"),
+      icon: <EyeOff size={13} />, onSelect: () => onContentHidden(term.id, !rect.contentHidden) },
     {
       id: "front",
       label: t("Trazer para a frente"),
@@ -493,7 +531,7 @@ function TerminalCardImpl({
       onSelect: () =>
         void ipc
           .revealPath(term.cwd)
-          .catch((e) => useUI.getState().showToast(String(e), "error")),
+          .catch((e) => useUI.getState().showToast(failureMessage(e), "error")),
     },
     { kind: "sep" },
     {
@@ -583,6 +621,8 @@ function TerminalCardImpl({
         onPointerDown={(e) => startSession(e, "move")}
         onPointerMove={moveSession}
         onPointerUp={endSession}
+        onPointerCancel={cancelSession}
+        onLostPointerCapture={cancelSession}
         onDoubleClick={(e) => {
           if ((e.target as HTMLElement).closest("input")) return;
           onFocusZoom(term.id);
@@ -832,18 +872,21 @@ function TerminalCardImpl({
         onPointerDown={(e) => startSession(e, "move")}
         onPointerMove={moveSession}
         onPointerUp={endSession}
+        onPointerCancel={cancelSession}
+        onLostPointerCapture={cancelSession}
         onDoubleClick={() => onFocusZoom(term.id)}
       >
         <span className="cv-card-hud-role">{role?.name ?? label}</span>
         <span className={`cv-card-hud-state is-${hudKind(rt)}`}>
           {hudLabel(rt)}
         </span>
-        {rt?.blocked && rt.blockedAsk && (
+        {!rect.contentHidden && rt?.blocked && rt.blockedAsk && (
           <span className="cv-card-hud-ask">{rt.blockedAsk}</span>
         )}
       </div>
 
-      <div className="cv-card-body">
+      <div className={`cv-card-body ${rect.contentHidden ? "is-concealed" : ""}`}>
+        {rect.contentHidden && <button className="cv-content-cover" onClick={() => onContentHidden(term.id, false)} aria-label={t("Mostrar conteúdo")}><EyeOff size={24} /><span>{t("Mostrar conteúdo")}</span></button>}
         <ExitBanner
           rt={rt}
           term={term}
@@ -856,12 +899,12 @@ function TerminalCardImpl({
         <div
           className="cv-card-scale"
           style={
-            renderScale > 1
+            scale > 1
               ? {
                   flex: "none",
-                  width: `${renderScale * 100}%`,
-                  height: `${renderScale * 100}%`,
-                  transform: `scale(${1 / renderScale})`,
+                  width: `${scale * 100}%`,
+                  height: `${scale * 100}%`,
+                  transform: `scale(${1 / scale})`,
                 }
               : undefined
           }
@@ -877,13 +920,13 @@ function TerminalCardImpl({
               title={term.title || term.program}
               autoStart={term.alive}
               visible={visible}
-              // Past 100% the glyphs are drawn `renderScale` times bigger and
+              // Past 100% the glyphs are drawn `scale` times bigger and
               // the wrapper above shrinks them back: crisp, same columns.
-              fontSize={renderScale > 1 ? Math.round(fontPx * renderScale) : rect.fontSize}
-              onFocus={() => focusTerminal(term.id, term.slot)}
+              fontSize={scale > 1 ? Math.round(fontPx * scale) : rect.fontSize}
+              onFocus={focusThisTerminal}
               // The terminal stops the right click before xterm sees it, so the
               // card's own `onContextMenu` never fires over the body.
-              onContextMenu={(e) => setMenu({ x: e.clientX, y: e.clientY })}
+              onContextMenu={openMenuAt}
             />
           </Suspense>
         </div>

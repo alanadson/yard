@@ -45,6 +45,10 @@ export function focusAfterTab<T>(
   return null;
 }
 
+export function isFrontDialog<T>(current: T | null, dialogs: readonly T[]): boolean {
+  return current !== null && dialogs[dialogs.length - 1] === current;
+}
+
 /**
  * Whether a press on the backdrop is an exit. Only the primary button: with
  * the right one the gesture is "open the menu", and closing the dialog from

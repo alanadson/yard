@@ -23,6 +23,9 @@ const VISIBLE = [
   "Nenhum terminal neste grupo",
   "Mostrar ou esconder a barra lateral",
   "Agentes",
+  "Tamanho",
+  "o quadro",
+  "Abrindo o caderno",
 ];
 
 describe("the shell in English", () => {

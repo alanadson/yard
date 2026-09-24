@@ -24,7 +24,13 @@
  *    the live items every time it is read, and `normalizeCanvas` prunes the
  *    dead ids on load.
  */
-import type { CanvasData, CanvasItem } from "./canvas";
+import type { Box, CanvasData, CanvasItem } from "./canvas";
+
+export function tabDropIndex(start: { x: number; y: number }, end: { x: number; y: number }, bounds: readonly Box[]): number | null {
+  if (Math.hypot(end.x - start.x, end.y - start.y) < 6) return null;
+  const index = bounds.findIndex((box) => end.x >= box.x && end.x <= box.x + box.w && end.y >= box.y && end.y <= box.y + box.h);
+  return index < 0 ? null : index;
+}
 
 export type BinderItem = Extract<CanvasItem, { type: "binder" }>;
 export type NoteItem = Extract<CanvasItem, { type: "note" }>;
@@ -39,6 +45,13 @@ export const BINDER_NAME_MAX = 48;
 
 /** Height of the header plus the tab strip, in world px. */
 export const BINDER_CHROME = 56;
+
+export function colorBinder(canvas: CanvasData, id: string, color: string): CanvasData {
+  const binder = canvas.items.find((item) => item.id === id && item.type === "binder");
+  if (!binder || binder.type !== "binder") return canvas;
+  const notes = new Set(binder.notes);
+  return { ...canvas, items: canvas.items.map((item) => item.id === id && item.type === "binder" ? { ...item, color, colorNotes: true } : item.type === "note" && notes.has(item.id) ? { ...item, color } : item) };
+}
 
 /** Where a note released from a binder lands, relative to the binder. */
 const RELEASE_GAP = 24;
@@ -128,11 +141,12 @@ export function fileIntoBinder(
   if (target.notes.includes(noteId)) return c;
 
   const items = c.items.map((i) => {
+    if (i.id === noteId && i.type === "note" && target.colorNotes) return { ...i, color: target.color };
     if (i.type !== "binder") return i;
     // Invariant 1, applied in the same pass: whoever had it, loses it.
     if (i.id === binderId) {
-      const notes = [...i.notes, noteId];
-      return { ...i, notes, active: notes.length - 1 };
+      const notes = [noteId, ...i.notes];
+      return { ...i, notes, active: 0 };
     }
     if (!i.notes.includes(noteId)) return i;
     const notes = i.notes.filter((n) => n !== noteId);

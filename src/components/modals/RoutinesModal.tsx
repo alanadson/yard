@@ -8,13 +8,15 @@
 import { useMemo, useState } from "react";
 import "./routines.css";
 import { nanoid } from "nanoid";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../lib/confirmation";
 import { Clock, Pause, Play, Plus, Trash2 } from "lucide-react";
 
 import { Modal } from "./Modal";
+import { routineDraftIsDirty, validateRoutineDraft } from "../../lib/routineDraft";
 import { TriggersSection } from "./TriggersSection";
 import { NumberField } from "../NumberField";
 import { useT } from "../../hooks/useT";
+import { useDraftExit } from "../../hooks/useDraftExit";
 import { commitCanvasExternal } from "../../lib/canvasWrite";
 import {
   clampRoutineInterval,
@@ -70,22 +72,27 @@ export function RoutinesModal() {
 
   const [text, setText] = useState("");
   const [everyMin, setEveryMin] = useState(30);
+  const [intervalDraft, setIntervalDraft] = useState("30");
   const [once, setOnce] = useState(false);
+  const validation = validateRoutineDraft(text, intervalDraft);
+  const [triggerDirty, setTriggerDirty] = useState(false);
+  const [savedSchedule, setSavedSchedule] = useState({ interval: "30", once: false });
+  const requestClose = useDraftExit(routineDraftIsDirty({ text, interval: intervalDraft, once }, savedSchedule) || triggerDirty, closeModal);
 
   const create = () => {
-    const content = text.trim();
-    if (!content || !groupId || !terminalId) return;
+    if (!validation.valid || !groupId || !terminalId) return;
     const fresh: RoutineDef = {
       id: nanoid(6),
       terminalId,
-      text: content,
-      everyMin: clampRoutineInterval(everyMin),
+      text: validation.text,
+      everyMin: validation.everyMin,
       enabled: true,
       once,
       createdAt: Date.now(),
     };
     commitCanvasExternal(groupId, (c) => ({ ...c, routines: [...(c.routines ?? []), fresh] }));
     setText("");
+    setSavedSchedule({ interval: intervalDraft, once });
   };
 
   const toggle = (id: string) =>
@@ -115,7 +122,7 @@ export function RoutinesModal() {
   };
 
   return (
-    <Modal title={t("Rotinas e gatilhos — {name}", { name: label })} onClose={closeModal} wide>
+    <Modal title={t("Rotinas e gatilhos — {name}", { name: label })} onClose={requestClose} wide>
       <p className="hint">
         {t("Um prompt agendado só é entregue com o terminal ")}
         <strong>{t("rodando e ocioso")}</strong>
@@ -145,6 +152,7 @@ export function RoutinesModal() {
             max={ROUTINE_MAX_MIN}
             clamp={clampRoutineInterval}
             onChange={setEveryMin}
+            onDraftChange={setIntervalDraft}
           />
           <label className="routine-check">
             <input
@@ -154,7 +162,7 @@ export function RoutinesModal() {
             />
             {t("Só uma vez (lembrete)")}
           </label>
-          <button className="btn btn--primary" disabled={!text.trim()} onClick={create}>
+          <button className="btn btn--primary" disabled={!validation.valid} onClick={create}>
             <Plus size={13} /> {t("Criar rotina")}
           </button>
         </div>
@@ -194,7 +202,7 @@ export function RoutinesModal() {
         </>
       )}
 
-      <TriggersSection groupId={groupId} terminalId={terminalId} />
+      <TriggersSection groupId={groupId} terminalId={terminalId} onDraftChange={setTriggerDirty} />
     </Modal>
   );
 }

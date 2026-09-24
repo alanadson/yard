@@ -396,11 +396,19 @@
 .set-agent-pair {
   display: flex;
   gap: 8px;
-  flex-shrink: 0;
+  flex: 1 1 280px;
+  flex-wrap: wrap;
+  min-width: 0;
+  justify-content: flex-end;
 }
+
+.set-row:has(.set-agent-pair) { flex-wrap: wrap; }
+.set-row:has(.set-agent-pair) > .set-row-text { flex: 1 1 140px; }
 
 .set-agent-pair .set-picker {
   width: 148px;
+  max-width: 100%;
+  flex: 1 1 148px;
 }
 
 /* The SSH host and the remote folder sit where the distro picker would: two
@@ -408,6 +416,8 @@
 .set-agent-pair .set-agent-field {
   width: 148px;
   min-width: 0;
+  max-width: 100%;
+  flex: 1 1 148px;
 }
 
 .set-agent-pair .set-agent-field--path {
@@ -424,7 +434,7 @@
   flex-shrink: 0;
   color: var(--text-dim);
   font-size: var(--fs-xs);
-  white-space: nowrap;
+  white-space: normal;
 }
 
 /* A setting that is on but cannot work is a warning, not a hint. */

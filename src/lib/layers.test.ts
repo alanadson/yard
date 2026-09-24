@@ -9,6 +9,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { anyLayerOpen, subscribeLayers, topLayer } from "./layers";
+import { ask, resetConfirmationsForTests, settleConfirmation } from "./confirmation";
 import { useChanges } from "../stores/changesStore";
 import { useEditor } from "../stores/editorStore";
 import { useLive } from "../stores/liveStore";
@@ -16,6 +17,7 @@ import { useNotes } from "../stores/notesStore";
 import { useUI } from "../stores/uiStore";
 
 beforeEach(() => {
+  resetConfirmationsForTests();
   useUI.setState({ paletteOpen: false, modal: null, composerOpen: false });
   useEditor.setState({ open: false });
   useChanges.setState({ viewer: null });
@@ -24,6 +26,15 @@ beforeEach(() => {
 });
 
 describe("the layers that cover the window", () => {
+  it("a shared confirmation owns Escape and covers native portal surfaces", async () => {
+    const answer = ask("Excluir?");
+    expect(topLayer()).toBe("modal");
+    expect(anyLayerOpen()).toBe(true);
+    settleConfirmation(false);
+    await expect(answer).resolves.toBe(false);
+    expect(topLayer()).toBeNull();
+  });
+
   it("the Busca counts: with the palette open, the portals are covered", () => {
     expect(anyLayerOpen()).toBe(false);
     useUI.setState({ paletteOpen: true });

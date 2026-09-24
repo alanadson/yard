@@ -113,13 +113,16 @@ fn build(app: &AppHandle) -> tauri::Result<TrayIcon> {
     builder.build(app)
 }
 
-/// Show + unminimize + focus — the same three calls the single-instance
-/// handler makes when a second launch knocks.
+/// Show + unminimize + focus, the same three calls the single-instance
+/// handler makes when a second launch knocks. The terminals go back to the
+/// on-screen pace right away (`window_state::report_shown`), not at the next
+/// window event.
 pub fn bring_front(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+        crate::window_state::report_shown(app, true);
     }
 }
 
@@ -163,6 +166,9 @@ pub fn window_summon(app: AppHandle) -> &'static str {
     match action {
         Summon::Hide => {
             let _ = w.hide();
+            // A hide sends no window event: said here, the terminals slow
+            // down now instead of at the next resources tick.
+            crate::window_state::report_shown(&app, false);
         }
         Summon::Show => bring_front(&app),
     }

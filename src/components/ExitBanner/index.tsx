@@ -20,16 +20,7 @@ import { useT } from "../../hooks/useT";
 import { useAgents } from "../../stores/agentsStore";
 import { useTerminals, type TerminalRuntime } from "../../stores/terminalsStore";
 import type { TerminalRow } from "../../lib/ipc";
-
-/**
- * Free RAM the backend demands before spawning an agent (`SPAWN_MIN_FREE_MB`
- * in `pty/mod.rs`). It waits up to 45 s for it — silently, with the card
- * stuck on "Iniciando" without saying why. The front end already receives the
- * free memory in the resources tick, so the same truth can be told without
- * inventing a new event: below this mark, a spawn that takes long is waiting
- * for RAM.
- */
-const SPAWN_MIN_FREE_MB = 400;
+import { memoryWaitMb, SPAWN_MIN_FREE_MB } from "./memoryWait";
 
 export function ExitBanner({
   rt,
@@ -55,13 +46,12 @@ export function ExitBanner({
     return args?.length ? args : null;
   });
 
-  const freeMemoryMb = useTerminals((s) => s.systemAvailableMb);
-  if (
-    rt?.state === "starting" &&
-    term?.kind === "agent" &&
-    freeMemoryMb > 0 &&
-    freeMemoryMb < SPAWN_MIN_FREE_MB
-  ) {
+  // Not the free memory itself: it moves every two seconds and every mounted
+  // terminal renders this strip. The answer only moves while an agent is
+  // starting below the mark, and then only when the printed MB does
+  // (`memoryWait.ts`).
+  const waitingMb = useTerminals((s) => memoryWaitMb(rt, term, s.systemAvailableMb));
+  if (waitingMb !== null) {
     return (
       <div className="pane-exit-banner">
         <span
@@ -73,7 +63,7 @@ export function ExitBanner({
         >
           <Hourglass size={11} aria-hidden="true" />{" "}
           {t("Esperando memória livre — {free} MB de {min} MB", {
-            free: Math.round(freeMemoryMb),
+            free: waitingMb,
             min: SPAWN_MIN_FREE_MB,
           })}
         </span>

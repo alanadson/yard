@@ -8,12 +8,15 @@
  */
 import {
   forwardRef,
+  memo,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   type CSSProperties,
 } from "react";
 import { Terminal } from "@xterm/xterm";
+import { terminalAccessibility } from "../../lib/terminalAccessibility";
 import { FitAddon } from "@xterm/addon-fit";
 import { CanvasAddon } from "@xterm/addon-canvas";
 import { SearchAddon } from "@xterm/addon-search";
@@ -31,21 +34,24 @@ import {
 import { AsyncDisposer } from "../../lib/disposables";
 import { interceptFlowInput } from "../../lib/flowIntercept";
 import { spawnEnvFor } from "../../lib/spawnEnv";
-import { ipc, on, type SpawnOptions } from "../../lib/ipc";
+import { ipc, on, type SpawnOptions, type TerminalRow } from "../../lib/ipc";
 import { ligatureRanges } from "../../lib/ligatures";
 import { uiLog } from "../../lib/log";
 import { baseName } from "../../lib/terminals";
 import { openTermLink } from "../../lib/termLinkOpen";
 import { termLinkProvider } from "../../lib/termLinkProvider";
+import { resumeRenderer } from "../../lib/xtermResume";
 import { useExtensions } from "../../stores/extensionsStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useAdvertised } from "../../stores/advertisedStore";
 import { useBroadcast } from "../../stores/broadcastStore";
-import { feedTail, useTerminals } from "../../stores/terminalsStore";
+import { feedTail, useTerminals, type TerminalRuntime } from "../../stores/terminalsStore";
 import { useUI } from "../../stores/uiStore";
 import { resolvedTheme, useResolvedTheme } from "../../stores/themeStore";
 import { t } from "../../lib/i18n";
 import { TERM_WELL_VAR, termPaletteFor } from "../../lib/termTheme";
+import { attachWants, replayPlan } from "./attachPlan";
+import { attachRenderer } from "../../lib/termRenderer";
 
 export interface XTermHandle {
   /** Spawns the process (used by the "resume" button). */
@@ -86,6 +92,15 @@ interface Props {
   /** Spawns on its own at mount if there is no live process. */
   autoStart: boolean;
   visible: boolean;
+  /**
+   * Resume the renderer inside the frame that reveals this terminal, instead
+   * of waiting for xterm's observer to notice (see `lib/xtermResume.ts`).
+   * For a host that hides its terminals out of the viewport and whose
+   * `visible` means "on screen": the tab panes. Not the canvas cards, whose
+   * `visible` also covers cards up to a screen past the board's edge, which
+   * must stay paused.
+   */
+  resumeOnShow?: boolean;
   /**
    * Overrides the global font size for this instance only (canvas cards carry
    * their own — see `CanvasNode.fontSize`). Changing it reflows the PTY, which
@@ -129,14 +144,6 @@ const SEARCH_OPTIONS = {
  * paste minutes later (a host menu, a mouse driver) finds the gate shut.
  */
 const PASTE_INTENT_MS = 2000;
-
-/**
- * How much replayed scrollback the URL scanner reads on attach. A startup
- * banner is at the top of the session, but the ring buffer can be 4 MB — this
- * is the compromise: enough for a server that started recently, cheap enough
- * to run on every mount.
- */
-const SCAN_TAIL = 64 * 1024;
 
 /**
  * Plain `Ctrl+<letter>` combinations the **window** owns (see
@@ -240,7 +247,14 @@ function noteDeadWrite(id: string) {
     .showToast(t("{name} não está rodando — use Retomar para iniciar de novo.", { name }));
 }
 
-export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
+/**
+ * Memoized: a parent that re-renders with the same props (a canvas drag moves
+ * the card, not the terminal) no longer re-renders the terminal. Nothing is
+ * lost by skipping those renders: what it shows comes from its props and its
+ * own store subscriptions, and what it installs once reads the current render
+ * through refs (`spawnArgs`, `cbRef`, `latest`).
+ */
+export const XTermView = memo(forwardRef<XTermHandle, Props>(function XTermView(
   {
     id,
     program,
@@ -250,6 +264,7 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
     title,
     autoStart,
     visible,
+    resumeOnShow,
     fontSize,
     onFocus,
     onContextMenu,
@@ -297,21 +312,33 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
   const termLigatures = useUI((s) => s.prefs.termLigatures);
   const scrollback = useUI((s) => s.prefs.scrollback);
   const cursorBlink = useUI((s) => s.prefs.cursorBlink);
+  const termScreenReader = useUI((s) => s.prefs.termScreenReader);
+  const termAccessibleContrast = useUI((s) => s.prefs.termAccessibleContrast);
 
   // --- keyboard broadcast (lib/broadcast.ts) --------------------------------
-  // Three scalars, so nothing here re-renders while the mode is off: the
-  // armed group, whether it is *this* terminal's group, and — only then —
-  // how many other CLIs are alive to receive the keystrokes.
+  // Scalars only, so nothing here re-renders while the mode is off: the
+  // armed group, whether it is *this* terminal's group, and (only then) how
+  // many other CLIs are alive to receive the keystrokes.
   const broadcastGroup = useBroadcast((s) => s.groupId);
   const broadcasting = useProjects((s) =>
     broadcastGroup !== null &&
     s.terminals.find((t) => t.id === id)?.groupId === broadcastGroup,
   );
-  const broadcastCount = useTerminals((s) =>
+  // The count has one half in each store: who is in the group (the rows) and
+  // who is alive (the runtimes). So it is subscribed on both sides, each
+  // selector reading the other store's current state. The membership half
+  // used to ride on the parent's re-renders, which a memoized view no longer
+  // gets: a live CLI moved into the group would not have been counted.
+  const countTargets = (
+    rows: readonly TerminalRow[],
+    runtimes: Record<string, TerminalRuntime | undefined>,
+  ) =>
     broadcasting && broadcastGroup
-      ? broadcastTargets(useProjects.getState().terminals, s.byId, id, broadcastGroup).length
-      : -1,
-  );
+      ? broadcastTargets(rows, runtimes, id, broadcastGroup).length
+      : -1;
+  const broadcastCount = useTerminals((s) => countTargets(useProjects.getState().terminals, s.byId));
+  // Subscribed for the re-render only: at render time it is the same number.
+  useProjects((s) => countTargets(s.terminals, useTerminals.getState().byId));
   // The strip is imperative DOM, not a React child: xterm owns the host's
   // children (`term.open(host)`), and a React node reconciled next to them
   // is one re-render away from an `insertBefore` on a node React never made.
@@ -502,13 +529,26 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
     }
   };
 
+  // What the handle calls, as of the latest render (the handle itself is
+  // built once per id, below).
+  const latest = useRef({ doStart, pasteFromClipboard });
+  latest.current = { doStart, pasteFromClipboard };
+
+  /**
+   * One handle per id. With no dependency list React rebuilt it on every
+   * render, and a new handle is a detached ref: the parent's ref callback got
+   * `null` and then the new object, so a canvas drag unregistered and
+   * re-registered every card's handle on every frame. Nothing in it can go
+   * stale: the two closures are read through `latest`, everything else
+   * through the xterm refs, and `id` is the dependency.
+   */
   useImperativeHandle(ref, () => ({
-    start: doStart,
+    start: (override) => latest.current.doStart(override),
     focus: () => termRef.current?.focus(),
     fit: () => fitRef.current?.fit(),
     paste: () => {
       termRef.current?.focus();
-      pasteFromClipboard(true);
+      latest.current.pasteFromClipboard(true);
     },
     typeText: (text) => {
       termRef.current?.focus();
@@ -538,7 +578,7 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
     setSearchListener: (cb) => {
       searchCbRef.current = cb;
     },
-  }));
+  }), [id]);
 
   // --- mount: create xterm, attach, listen for events ---
   useEffect(() => {
@@ -547,12 +587,16 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
 
     // Every mount starts by rebuilding a screen, and stays quiet until it has.
     replayingRef.current = true;
+    // Lowered by the cleanup: what arrives after it (the WebGL module) must
+    // not be loaded into a terminal that is gone.
+    let mounted = true;
 
     // Read imperatively: this effect only runs on mount (deps are `[id]`), so
     // a subscription here would buy nothing and cost a render per change.
     const boot = useUI.getState().prefs;
 
     const term = new Terminal({
+      ...terminalAccessibility(boot),
       fontFamily: boot.fontFamily,
       fontSize: fontSize ?? boot.fontSize,
       scrollback: boot.scrollback,
@@ -584,23 +628,16 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
     term.open(host);
 
     // Renderer: canvas by default. WebGL works in WebView2 but not on
-    // every GPU/driver — if it fails, canvas is already in effect.
-    if (boot.renderer === "webgl") {
-      void import("@xterm/addon-webgl")
-        .then(({ WebglAddon }) => {
-          try {
-            const addon = new WebglAddon();
-            addon.onContextLoss(() => addon.dispose());
-            term.loadAddon(addon);
-          } catch (e) {
-            console.warn("[yard] WebGL indisponivel, usando canvas", e);
-            term.loadAddon(new CanvasAddon());
-          }
-        })
-        .catch(() => term.loadAddon(new CanvasAddon()));
-    } else {
-      term.loadAddon(new CanvasAddon());
-    }
+    // every GPU/driver; if it fails, canvas takes over (`lib/termRenderer.ts`,
+    // which also keeps a module arriving after unmount out of a dead terminal).
+    void attachRenderer({
+      term,
+      prefer: boot.renderer === "webgl" ? "webgl" : "canvas",
+      webgl: () => import("@xterm/addon-webgl").then(({ WebglAddon }) => new WebglAddon()),
+      canvas: () => new CanvasAddon(),
+      alive: () => mounted,
+      warn: (e) => console.warn("[yard] WebGL indisponivel, usando canvas", e),
+    });
 
     try {
       fit.fit();
@@ -806,7 +843,9 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
 
       // Attach first. If the PTY exists (reload/HMR/layout switch), just
       // repaint; if not, decide between spawning or waiting for the user.
-      const attached = await ipc.attachPty(id);
+      // The request says which parts of the history the plan below will read,
+      // so the backend leaves the rest where it is (`attachPlan.ts`).
+      const attached = await ipc.attachPty(id, attachWants(autoStart));
       if (subscriptions.disposed) return;
 
       uiLog.debug(
@@ -815,53 +854,20 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
           `autoStart=${autoStart}`,
       );
 
-      // Dead and with auto-start (app boot, respawn after exit): the new
-      // process starts with a clean screen. Dead scrollback carries positioning
-      // sequences recorded at a *different* screen size — replaying that
-      // leaves blank lines at the top and the prompt in the middle of the pane.
-      // Replay is for the cases where it's faithful: a live process (reload/HMR,
-      // same buffer) and a manual "Resume" after suspend (no spawn until the click).
-      const freshBoot = !attached.alive && autoStart;
-
-      /**
-       * A live full-screen CLI is asked for its screen; everything else has
-       * its screen rebuilt from the log.
-       *
-       * The scrollback of an agent is not a history of *lines*, it is a
-       * history of *edits* to one frame — "erase to end of line, cursor to
-       * 50;3, three cells" — and every one of them assumes the frame that
-       * preceded it, at the width it was drawn at. Replay that into a pane of
-       * another size (which is exactly what leaving the canvas is) and almost
-       * nothing lands: measured on a real session, 6 of 40 rows survive. The
-       * pane goes black and the CLI never redraws it, because from its side
-       * nothing happened.
-       *
-       * The console host, on the other hand, has the frame — and hands it over
-       * on any size change. So: ask, don't guess.
-       */
-      const askForFrame = attached.alive && attached.altScreen;
-      const rebuild = askForFrame
-        ? // Land where the CLI thinks it is drawing. Without this the frame
-          // arrives into the normal buffer and scrolls the pane instead of
-          // painting it.
-          "\x1b[?1049h"
-        : attached.data && !freshBoot
-          ? attached.data
-          : "";
+      // Clean screen for a fresh boot, the frame for a live full-screen CLI,
+      // the log for everything else (why each, in `replayPlan`).
+      const { askForFrame, rebuild, scanTail } = replayPlan(attached, autoStart);
       // The callback is what makes the ordering real: live output waits in
       // `held` until the last byte of this has been parsed.
       if (rebuild) term.write(rebuild, doneRebuilding);
       else doneRebuilding();
 
-      // The scanner only sees what arrives while this view is mounted, and a
-      // dev server announces itself once, at boot — very likely before anyone
-      // opened the pane. The tail of the replayed scrollback closes that gap.
-      if (attached.alive && attached.data) {
-        useAdvertised.getState().ingest(id, attached.data.slice(-SCAN_TAIL));
-        // Same gap for the blocked detector, and worse: an agent can sit at a
-        // prompt for an hour, so the pane is very likely to be opened *after*
-        // the question was asked.
-        feedTail(id, attached.data.slice(-SCAN_TAIL));
+      // "Local: http://localhost:5173" printed before the pane was opened,
+      // and a question the agent asked an hour ago: the tail of the replayed
+      // scrollback is how the scanner and the blocked detector catch up.
+      if (scanTail !== null) {
+        useAdvertised.getState().ingest(id, scanTail);
+        feedTail(id, scanTail);
       }
 
       if (attached.alive) {
@@ -975,6 +981,7 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
     ro.observe(host);
 
     return () => {
+      mounted = false;
       subscriptions.dispose();
       cancelAnimationFrame(raf);
       if (fitTimer) clearTimeout(fitTimer);
@@ -1005,13 +1012,14 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
     term.options.fontFamily = fontFamily;
     term.options.scrollback = scrollback;
     term.options.cursorBlink = cursorBlink;
+    Object.assign(term.options, terminalAccessibility({ termScreenReader, termAccessibleContrast }));
     try {
       fitRef.current?.fit();
       syncSize();
     } catch {
       /* ignore */
     }
-  }, [id, px, fontFamily, scrollback, cursorBlink]);
+  }, [id, px, fontFamily, scrollback, cursorBlink, termScreenReader, termAccessibleContrast]);
 
   // --- color scheme (the Extensions store), applied hot like the prefs ---
   const schemeId = useExtensions((s) => s.scheme.terminal);
@@ -1079,6 +1087,16 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
     };
   }, [id, termLigatures]);
 
+  // --- reveal: repaint inside the frame that shows the terminal ---
+  // A layout effect: it runs once the commit has put the tab back on screen
+  // and before the browser paints it, so the render xterm schedules here lands
+  // in that very frame. A passive effect may run after the paint, which is
+  // the stale frame this exists to prevent. On mount the terminal does not
+  // exist yet (the mount effect is passive), and there is nothing to resume.
+  useLayoutEffect(() => {
+    if (visible && resumeOnShow) resumeRenderer(termRef.current);
+  }, [id, visible, resumeOnShow]);
+
   // --- visibility: a hidden pane drops to 1 emission/450 ms (§5.3) ---
   useEffect(() => {
     void ipc.setPtyVisible(id, visible).catch(() => {});
@@ -1107,6 +1125,6 @@ export const XTermView = forwardRef<XTermHandle, Props>(function XTermView(
       onMouseDown={onFocus}
     />
   );
-});
+}));
 
 export default XTermView;

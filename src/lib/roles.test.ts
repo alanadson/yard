@@ -4,7 +4,10 @@
  * that the launch decides exactly one delivery channel — a role handed over
  * twice would tell the agent to be itself twice.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const readPrefs = vi.hoisted(() => vi.fn(async (): Promise<Record<string, string>> => ({})));
+vi.mock("./ipc", () => ({ ipc: { readPrefs, writePref: vi.fn(async () => undefined) } }));
 
 import {
   normalizePresets,
@@ -13,7 +16,24 @@ import {
   roleFromText,
   ROLE_NAME_MAX,
 } from "./canvas";
-import { briefingFor, mergeRoles, roleLaunch, withoutArgs } from "./roles";
+import {
+  briefingFor,
+  mergeRoles,
+  readGlobalRoles,
+  roleLaunch,
+  ROLE_PRESETS_KEY,
+  withoutArgs,
+  roleNameConflict,
+} from "./roles";
+
+it("requires replacement approval for a role name already used in the destination scope", () => {
+  const library = { Reviewer: { text: "Existing instructions" } };
+  expect(roleNameConflict(library, " reviewer ", null)).toBe("Reviewer");
+  expect(roleNameConflict(library, "Reviewer", "Tester")).toBe("Reviewer");
+  expect(roleNameConflict(library, "reviewer", "Reviewer")).toBeNull();
+  expect(roleNameConflict(library, "Tester", null)).toBeNull();
+  expect(library.Reviewer.text).toBe("Existing instructions");
+});
 
 describe("roleFromText", () => {
   it("a short single line becomes just a name — the old form, and a label is not an instruction", () => {
@@ -128,5 +148,17 @@ describe("briefingFor", () => {
     expect(theText).toContain("Papel deste terminal");
     expect(theText).toContain("não escreva código");
     expect(theText).toContain("toda a sessão");
+  });
+});
+
+describe("readGlobalRoles", () => {
+  /**
+   * The regression: a library row that was not JSON at all threw a raw
+   * `SyntaxError` out of `JSON.parse`, before the corrupt-library check
+   * could put the user's own sentence on it.
+   */
+  it("reports a library that is not JSON as corrupted, not as a parser error", async () => {
+    readPrefs.mockResolvedValueOnce({ [ROLE_PRESETS_KEY]: "{not json" });
+    await expect(readGlobalRoles()).rejects.toThrow("A biblioteca de papéis está corrompida");
   });
 });

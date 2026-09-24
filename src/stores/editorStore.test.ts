@@ -24,6 +24,7 @@ import {
 import { useProjects } from "./projectsStore";
 
 const fsReadText = vi.fn();
+const fsIndexFiles = vi.fn();
 const fsWriteText = vi.fn();
 const fsRenameEntry = vi.fn();
 const fsListDir = vi.fn(
@@ -34,16 +35,20 @@ const fsListDir = vi.fn(
   }),
 );
 const readPrefs = vi.fn(async (): Promise<Record<string, string>> => ({}));
-const writePref = vi.fn(async () => {});
+const writePref = vi.fn(async (_key: string, _value: string) => {});
 
 vi.mock("../lib/ipc", () => ({
   ipc: {
     fsReadText: (...args: unknown[]) => fsReadText(...args),
+    fsIndexFiles: (...args: unknown[]) => fsIndexFiles(...args),
     fsWriteText: (...args: unknown[]) => fsWriteText(...args),
     fsRenameEntry: (...args: unknown[]) => fsRenameEntry(...args),
     fsListDir: (...args: unknown[]) => fsListDir(...args),
     readPrefs: () => readPrefs(),
-    writePref: (...args: unknown[]) => writePref(...(args as [])),
+    writePref: (...args: unknown[]) => writePref(...(args as [string, string])),
+    writePrefs: async (entries: [string, string][]) => {
+      for (const entry of entries) await writePref(...entry);
+    },
   },
 }));
 
@@ -89,6 +94,73 @@ function activity(paths: { path: string; kind: "created" | "modified" | "deleted
     dropped: 0,
   };
 }
+
+it("does not publish an unchanged document patch", () => {
+  const original = doc("same.ts");
+  useEditor.setState({ docs: [original] });
+  const before = useEditor.getState();
+  useEditor.getState().setText(original.id, original.text);
+  expect(useEditor.getState()).toBe(before);
+});
+
+it("flushes the latest draft immediately without waiting for autosave", async () => {
+  const original = doc("close.ts");
+  useEditor.setState({ docs: [original] });
+  useEditor.getState().setText(original.id, "latest before closing");
+  writePref.mockClear();
+  await useEditor.getState().flush();
+  const drafts = writePref.mock.calls.find((call) => call[0] === "editor.docs");
+  expect(JSON.parse(String(drafts?.[1]))[0].draft).toBe("latest before closing");
+});
+
+it("includes edits made while the closing draft flush is still pending", async () => {
+  const original = doc("closing-race.ts");
+  useEditor.setState({ docs: [original] });
+  useEditor.getState().setText(original.id, "first closing draft");
+  let finish!: () => void;
+  writePref.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+  const flush = useEditor.getState().flush();
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  useEditor.getState().setText(original.id, "latest closing draft");
+  finish();
+  await flush;
+  const drafts = writePref.mock.calls.filter((call) => call[0] === "editor.docs").at(-1);
+  expect(JSON.parse(String(drafts?.[1]))[0].draft).toBe("latest closing draft");
+});
+
+it("resynchronizes open documents after watcher overflow while preserving dirty drafts", async () => {
+  const clean = doc("clean.ts");
+  const dirty = doc("dirty.ts", { text: "local draft" });
+  useEditor.setState({ docs: [clean, dirty] });
+  fsReadText.mockResolvedValue({ text: "disk after overflow", modifiedAt: 2, crlf: false,
+    encoding: "utf-8", bom: false, binary: false, truncated: false, lossy: false, size: 19, media: null });
+  useEditor.getState().applyActivity({ ...activity([]), dropped: 3 });
+  await vi.waitFor(() => expect(useEditor.getState().docs[0].text).toBe("disk after overflow"));
+  expect(useEditor.getState().docs[1].text).toBe("local draft");
+  expect(useEditor.getState().docs[1].stale).toBe(true);
+});
+
+it("updates an open document in a background project when that project's files change", async () => {
+  const background = doc("background.ts");
+  useEditor.setState({ root: "C:/other", projectId: "other", docs: [background] });
+  fsReadText.mockResolvedValue({ text: "background change", modifiedAt: 2, crlf: false,
+    encoding: "utf-8", bom: false, binary: false, truncated: false, lossy: false, size: 17, media: null });
+  useEditor.getState().applyActivity(activity([{ path: "background.ts", kind: "modified" }]));
+  await vi.waitFor(() => expect(useEditor.getState().docs[0].text).toBe("background change"));
+  expect(useEditor.getState().root).toBe("C:/other");
+});
+
+it("repeats an index scan invalidated by file creation before it finishes", async () => {
+  useEditor.setState({ fileIndex: null, indexStale: true });
+  let finish!: (value: { paths: string[]; truncated: boolean }) => void;
+  fsIndexFiles.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+    .mockResolvedValueOnce({ paths: ["created.ts"], truncated: false });
+  const indexing = useEditor.getState().ensureFileIndex();
+  useEditor.getState().applyActivity(activity([{ path: "created.ts", kind: "created" }]));
+  finish({ paths: [], truncated: false });
+  await indexing;
+  expect(useEditor.getState().fileIndex).toEqual(["created.ts"]);
+});
 
 describe("loadDoc (a document card's way in)", () => {
   const onDisk = {
@@ -160,6 +232,48 @@ describe("paths", () => {
 });
 
 describe("the disk changed from outside", () => {
+  it("indexes the current root while the previous root is still being scanned", async () => {
+    let finish!: (value: { paths: string[]; truncated: boolean }) => void;
+    fsIndexFiles
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+      .mockResolvedValue({ paths: ["current.ts"], truncated: false });
+    useEditor.setState({ root: "C:/old", fileIndex: null, indexStale: true });
+    const older = useEditor.getState().ensureFileIndex();
+    useEditor.setState({ root: "C:/current" });
+    await useEditor.getState().ensureFileIndex();
+    finish({ paths: ["old.ts"], truncated: false });
+    await older;
+    expect(useEditor.getState().fileIndex).toEqual(["current.ts"]);
+  });
+
+  it("reads a touched document once per activity batch", async () => {
+    useEditor.setState({ docs: [doc("a.ts")] });
+    fsReadText.mockResolvedValue({ ...doc("a.ts"), text: "updated", modifiedAt: 2000 });
+    useEditor.getState().applyActivity(activity([
+      { path: "a.ts", kind: "created" },
+      { path: "a.ts", kind: "modified" },
+      { path: "a.ts", kind: "modified" },
+    ]));
+    await vi.waitFor(() => expect(useEditor.getState().docs[0].text).toBe("updated"));
+    expect(fsReadText).toHaveBeenCalledTimes(1);
+  });
+
+  // Two watcher reads can finish in reverse order while the document is clean.
+  it("does not replace newer disk text with an older pending read", async () => {
+    const current = doc("a.ts");
+    useEditor.setState({ docs: [current] });
+    let finish!: (value: typeof current) => void;
+    fsReadText
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+      .mockResolvedValue({ ...current, text: "newest", modifiedAt: 3000 });
+    useEditor.getState().applyActivity(activity([{ path: "a.ts", kind: "modified" }]));
+    useEditor.getState().applyActivity(activity([{ path: "a.ts", kind: "modified" }]));
+    await Promise.resolve();
+    finish({ ...current, text: "older", modifiedAt: 2000 });
+    await vi.waitFor(() => expect(useEditor.getState().docs[0].text).toBe("newest"));
+    expect(useEditor.getState().docs[0].saved).toBe("newest");
+  });
+
   it("an open, untouched file follows the agent", async () => {
     fsReadText.mockResolvedValue({
       path: "a.ts",
@@ -699,6 +813,87 @@ describe("surviving a reload", () => {
     expect(d.text).toBe("não perca isto");
     expect(d.missing).toBe(true);
   });
+
+  /**
+   * The boot's loading screen waits for this restore, and every tab is an IPC
+   * round trip to the disk. Read one after another, ten tabs were ten round
+   * trips in a row in front of a person looking at a spinner.
+   */
+  describe("with several tabs to bring back", () => {
+    const tabs = (...entries: { path: string; draft?: string }[]) => ({
+      "editor.docs": JSON.stringify(
+        entries.map((e) => ({
+          projectId: "p1",
+          root: "C:\\proj",
+          path: e.path,
+          modifiedAt: 1,
+          crlf: false,
+          ...(e.draft === undefined ? {} : { draft: e.draft }),
+        })),
+      ),
+    });
+
+    const onDisk = (path: string) => ({
+      path,
+      text: `disco de ${path}`,
+      binary: false,
+      truncated: false,
+      size: 1,
+      modifiedAt: 1,
+      crlf: false,
+    });
+
+    /** The next `count` reads wait for the test to answer them, in any order. */
+    function holdReads(count: number) {
+      const held = new Map<string, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
+      for (let i = 0; i < count; i++) {
+        fsReadText.mockImplementationOnce(
+          (_root: string, path: string) =>
+            new Promise((resolve, reject) => held.set(path, { resolve, reject })),
+        );
+      }
+      return held;
+    }
+
+    it("asks the disk for every tab before the first file answers", async () => {
+      const held = holdReads(3);
+      const restoring = useEditor
+        .getState()
+        .restore(tabs({ path: "a.ts" }, { path: "b.ts" }, { path: "c.ts" }));
+
+      await vi.waitFor(() => expect(fsReadText).toHaveBeenCalledTimes(3), { timeout: 200 });
+
+      for (const path of ["a.ts", "b.ts", "c.ts"]) held.get(path)!.resolve(onDisk(path));
+      await restoring;
+    });
+
+    it("brings the tabs back in the stored order, a vanished file included, whatever order the disk answers in", async () => {
+      const held = holdReads(4);
+      const restoring = useEditor
+        .getState()
+        .restore(
+          tabs(
+            { path: "a.ts" },
+            { path: "sumiu.ts" },
+            { path: "rascunho.ts", draft: "só existe aqui" },
+            { path: "d.ts" },
+          ),
+        );
+      await vi.waitFor(() => expect(held.size).toBe(4), { timeout: 200 });
+
+      // Last asked, first answered: the disk owes the tab bar no order.
+      held.get("d.ts")!.resolve(onDisk("d.ts"));
+      held.get("rascunho.ts")!.reject(new Error("não existe"));
+      held.get("sumiu.ts")!.reject(new Error("não existe"));
+      held.get("a.ts")!.resolve(onDisk("a.ts"));
+      await restoring;
+
+      const docs = useEditor.getState().docs;
+      expect(docs.map((d) => d.path)).toEqual(["a.ts", "rascunho.ts", "d.ts"]);
+      expect(docs[1].text).toBe("só existe aqui");
+      expect(docs[1].missing).toBe(true);
+    });
+  });
 });
 
 /**
@@ -879,6 +1074,24 @@ describe("where the tab is born", () => {
     // The regression this locks down: `open` is the centred window, and it
     // must stay down, the file has a tab bar of its own now.
     expect(useEditor.getState().open).toBe(false);
+  });
+
+  /**
+   * The regression: the group was created before the read, so a file that
+   * could not be read left an empty group behind in the workspace.
+   */
+  it("a file that cannot be read leaves no group behind", async () => {
+    fsReadText.mockRejectedValue(new Error("não existe"));
+    await expect(useEditor.getState().openFile("a.ts")).rejects.toThrow("não existe");
+    expect(useProjects.getState().groups).toEqual([]);
+    expect(useEditor.getState().docs).toEqual([]);
+  });
+
+  it("a file that is already open somewhere does not get a new group either", async () => {
+    useEditor.setState({ docs: [doc("a.ts", { groupId: "g1", root: "C:\\proj" })] });
+    await useEditor.getState().openFile("a.ts");
+    expect(useProjects.getState().groups).toEqual([]);
+    expect(fsReadText).not.toHaveBeenCalled();
   });
 
   it("the second file joins the group the first one opened", async () => {

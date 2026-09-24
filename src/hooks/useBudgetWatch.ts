@@ -13,11 +13,7 @@
  * boot, so a level already blown when the app opens is heard about at once.
  */
 import { useEffect } from "react";
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
+import { notify as deliverNotice } from "../lib/notifications";
 
 import { budgetMessage, budgetState, worsened, type BudgetLevel } from "../lib/budget";
 import { localDay, totals } from "../lib/costs";
@@ -25,7 +21,6 @@ import { fireBudgetEdge } from "./useTriggers";
 import { t } from "../lib/i18n";
 import { ipc } from "../lib/ipc";
 import { uiLog } from "../lib/log";
-import { pushOut } from "../lib/notifyOut";
 import { useUI } from "../stores/uiStore";
 
 /** The session files move in bursts; there is nothing to learn faster than this. */
@@ -86,10 +81,7 @@ export function useBudgetWatch() {
 
 async function notify(body: string): Promise<void> {
   try {
-    let ok = await isPermissionGranted();
-    if (!ok) ok = (await requestPermission()) === "granted";
-    if (ok) sendNotification({ title: t("Yard — orçamento"), body });
-    pushOut(t("Yard — orçamento"), body, "budget");
+    await deliverNotice({ title: t("Yard, orçamento"), body, event: "budget" });
   } catch (e) {
     uiLog.warn(`orçamento: notificação indisponível: ${e}`);
   }

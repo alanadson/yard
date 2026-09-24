@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { EMPTY_CANVAS, type CanvasData } from "./canvas";
+import { EMPTY_CANVAS, normalizeCanvas, reconcileNodes, reconcileItems, type CanvasData } from "./canvas";
 import {
   maximizedRect,
   nodeOrder,
@@ -14,6 +14,7 @@ import {
   lowerNode,
   setPinned,
   toggleMaximize,
+  setContentHidden,
 } from "./cardChrome";
 
 const canvas = (): CanvasData => ({
@@ -27,6 +28,27 @@ const canvas = (): CanvasData => ({
     { id: "n1", type: "note", x: 0, y: 0, w: 200, h: 100, text: "", color: "#fff" },
     { id: "p1", type: "portal", x: 0, y: 0, w: 300, h: 200, url: "https://x", color: "#fff" },
   ],
+});
+
+it("remembers concealed terminal and note contents without changing their text or positions", () => {
+  const source = canvas();
+  const hidden = setContentHidden(setContentHidden(source, "a", true), "n1", true);
+  const restored = normalizeCanvas(JSON.parse(JSON.stringify(hidden)))!;
+  expect(restored.nodes.a).toEqual({ ...source.nodes.a, contentHidden: true });
+  expect(restored.items.find((item) => item.id === "n1")).toMatchObject({ ...source.items[0], contentHidden: true });
+});
+
+it("updates concealment on already rendered terminals and notes", () => {
+  const source = canvas();
+  const hidden = setContentHidden(setContentHidden(source, "a", true), "n1", true);
+  expect(reconcileNodes(source.nodes, hidden.nodes).a.contentHidden).toBe(true);
+  expect(reconcileItems(source.items, hidden.items)[0]).toMatchObject({ contentHidden: true });
+});
+
+it("conceals an automatically placed terminal without moving it", () => {
+  const initial = { x: 200, y: 400, w: 640, h: 400 };
+  const result = setContentHidden(EMPTY_CANVAS, "new", true, initial);
+  expect(result.nodes.new).toEqual({ ...initial, contentHidden: true });
 });
 
 describe("z-order of cards", () => {

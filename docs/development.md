@@ -49,6 +49,12 @@ The tests in `pty::engine_tests` start a real PowerShell and verify F1's
 acceptance criteria (see the [roadmap](./specs/05-roadmap.md)). Details of what
 each suite covers are in [features.md](./features.md#tests).
 
+`build.rs` also compiles the `yard` CLI client (`src/yard_cli.rs`) into a
+console exe with the same `rustc` cargo uses, about a second, and only when
+that file changes. It is std only on purpose: no crates, no crate-level
+attributes, because it is built on its own and also included in the lib as
+`bridge::cli` for its tests.
+
 ## Launcher and environment variables
 
 `npm run app` opens Yard freshly rebuilt from the code currently in the
@@ -81,8 +87,31 @@ rebuilding after one changed line with every dependency already compiled:
 Nearly the whole bill was one step: LTO over the 611-crate graph, on every
 link. It buys something in what ships and nothing on a machine that rebuilds
 twenty times an hour, so `release.yml` puts it back with
-`CARGO_PROFILE_RELEASE_LTO=thin` and the local profile leaves it off. The local
-binary is ~27 MB instead of ~22 MB; the released one is unchanged.
+`CARGO_PROFILE_RELEASE_LTO=thin` and the local profile leaves it off. The same
+goes for codegen units: 16 let a local rebuild codegen in parallel, and
+`release.yml` sets `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1` so the optimizer
+sees each crate whole in the build that ships, at the cost of a slower tag
+build only. `opt-level` is 2 in both. The local binary is ~27 MB, against
+~22 MB for the old fat-LTO, size-optimized profile.
+
+The `dev` profile behind `npm run tauri dev` went through the same treatment.
+The slow part of that loop was never the dependencies, which are cached, but
+the last two steps of every rebuild: compiling `yard_lib` itself and linking
+`yard.exe`. Measured on the same machine, rebuilding after one changed line:
+
+| `[lib]` / `[profile.dev]` | rebuild |
+| --- | --- |
+| `crate-type = ["staticlib", "cdylib", "rlib"]`, full debuginfo everywhere | 14 to 19 s |
+| `crate-type = ["rlib"]`, `debug = "line-tables-only"`, dependencies `debug = false` | **7 to 8 s** |
+
+`staticlib` and `cdylib` come from the Tauri template and exist for the mobile
+targets this app does not have; here every rebuild archived the whole graph
+into a 1.4 GB `yard_lib.lib` and linked a DLL nothing loads. The debuginfo
+settings shrink the PDB from 276 MB to 70 MB, which is where the linker spent
+its time. What is given up: variable inspection in a debugger (backtraces keep
+file and line). Put `debug = 2` back under `[profile.dev]` when you need it.
+Changing either debuginfo line recompiles every dependency once, about two
+minutes.
 
 Everything else the launcher does follows from the same idea — don't pay for
 what didn't move. Nothing changed at all: **0.5 s**. Only `src-tauri/` changed:

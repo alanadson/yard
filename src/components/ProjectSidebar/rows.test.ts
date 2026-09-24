@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { cardOrigin, groupBranch, groundWithoutGit, sectionsFor, treeRows } from "./rows";
+import { cardOrigin, groupBranch, groundWithoutGit, sectionsFor, tabStop, treeRows } from "./rows";
 
 const board = (id: string) => ({ id, projectId: null as null, name: id });
 const project = (id: string) => ({ id, name: id, path: `C:/Workspace/${id}` });
@@ -198,5 +198,37 @@ describe("the ground of a project with no repository", () => {
   it("is never said of a front, which exists only because there is a repository", () => {
     expect(groundWithoutGit({ kind: "isolated", worktreePath: "C:/w/f" }, null, true)).toBe(false);
     expect(groundWithoutGit({ kind: "plain" }, null, true)).toBe(false);
+  });
+});
+
+/**
+ * The tree is one tab stop (roving tabindex): Tab lands on one row and the
+ * arrows walk the rest. Which row is a single answer for the whole tree, and
+ * it used to be recomputed once per row, each time scanning every row, so a
+ * big workspace paid rows x rows on every render. `tabStop` is that answer,
+ * computed once; these rules are the ones the inline version followed.
+ */
+describe("tabStop", () => {
+  const rows = [
+    { id: "b1", kind: "board" as const },
+    { id: "p1", kind: "project" as const },
+    { id: "g1", kind: "group" as const },
+  ];
+
+  it("is the row that last had focus, while that row is still in the tree", () => {
+    expect(tabStop(rows, "g1")).toBe("g1");
+  });
+
+  it("falls back to the first row when the focused one left the tree (collapsed, deleted)", () => {
+    expect(tabStop(rows, "t-gone")).toBe("b1");
+  });
+
+  it("is the first row before anything had focus", () => {
+    expect(tabStop(rows, null)).toBe("b1");
+  });
+
+  it("is nobody in an empty tree, so no row claims the stop", () => {
+    expect(tabStop([], "g1")).toBeNull();
+    expect(tabStop([], null)).toBeNull();
   });
 });

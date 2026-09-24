@@ -20,12 +20,18 @@
  * - **HMR is left alone.** Vite's index.html does not change when a module is
  *   patched, so a portal pointed at a dev server never gets reloaded out from
  *   under its own hot updates.
+ * - **Nobody looking, nobody probing.** A card panned off the board
+ *   (`parkPortal`) or a window hidden in the tray (`lib/windowShown.ts`)
+ *   lets its heartbeat lapse instead of asking the server every few seconds;
+ *   the moment it is seen again it is checked at once, so a build that
+ *   landed meanwhile reloads right away.
  *
  * Only loopback/private addresses take part: reloading a site on the internet
  * because a local file moved is nonsense.
  */
 import { hostKind } from "./advertised";
 import { ipc, on } from "./ipc";
+import { isWindowShown, subscribeWindowShown } from "./windowShown";
 
 /** Heartbeat between checks while nothing is announcing itself. */
 const IDLE_MS = 4000;
@@ -49,6 +55,10 @@ interface Watch {
 const watches = new Map<string, Watch>();
 /** The shared `files://activity` listener, `dead` once nobody wants it. */
 let sub: { off: (() => void) | null; dead: boolean } | null = null;
+/** Portals whose card is off the board right now (see `parkPortal`). */
+const parked = new Set<string>();
+/** The window-shown listener, taken while any portal is watched. */
+let windowSub: (() => void) | null = null;
 
 /** Is this an address a local project could be serving? */
 export function isLocalUrl(url: string): boolean {
@@ -76,6 +86,7 @@ export function watchPortal(id: string, url: string): () => void {
   } else {
     watches.set(id, { id, url, seen: null, fails: 0, timer: null, busy: false });
     subscribeActivity();
+    subscribeWindow();
   }
   schedule(id, IDLE_MS);
   return () => unwatchPortal(id);
@@ -86,7 +97,30 @@ export function unwatchPortal(id: string): void {
   if (!w) return;
   if (w.timer !== null) window.clearTimeout(w.timer);
   watches.delete(id);
-  if (watches.size === 0) unsubscribeActivity();
+  if (watches.size === 0) {
+    unsubscribeActivity();
+    unsubscribeWindow();
+  }
+}
+
+/**
+ * Holds the probe of a portal whose card is off the board. Returns the
+ * release: the card is back on screen, and it is checked at once.
+ */
+export function parkPortal(id: string): () => void {
+  parked.add(id);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    parked.delete(id);
+    if (watches.has(id) && isWindowShown()) schedule(id, 0);
+  };
+}
+
+/** Somebody can see the page: the window is up and the card is on the board. */
+function seen(id: string): boolean {
+  return isWindowShown() && !parked.has(id);
 }
 
 function schedule(id: string, delay: number): void {
@@ -102,6 +136,9 @@ function schedule(id: string, delay: number): void {
 async function check(id: string): Promise<void> {
   const w = watches.get(id);
   if (!w || w.busy) return;
+  // Nobody is looking: the heartbeat lapses here and the release (or the
+  // window coming back) restarts it with an immediate check.
+  if (!seen(id)) return;
   w.busy = true;
   try {
     const print = await ipc.portalProbe(w.url);
@@ -154,4 +191,18 @@ function unsubscribeActivity(): void {
   sub.dead = true;
   sub.off?.();
   sub = null;
+}
+
+/** The window came back: every portal on the board catches up at once. */
+function subscribeWindow(): void {
+  if (windowSub) return;
+  windowSub = subscribeWindowShown((shown) => {
+    if (!shown) return;
+    for (const id of watches.keys()) if (!parked.has(id)) schedule(id, 0);
+  });
+}
+
+function unsubscribeWindow(): void {
+  windowSub?.();
+  windowSub = null;
 }

@@ -6,6 +6,7 @@ import { create } from "zustand";
 
 import { AUTO_BACKUP_MODES, type AutoBackupMode } from "../lib/autoBackup";
 import { LANG_PREFS, type LangPref } from "../lib/i18n";
+import { readableMessage } from "../lib/loading";
 import { THEME_PREFS, type ThemePref } from "../lib/theme";
 import {
   persistJsonPref,
@@ -22,8 +23,11 @@ import {
 export const COMPOSER_SCRATCH = "__sem-destino__";
 
 export type ModalKind =
+  | "checkpoints"
   | null
   | "new-terminal"
+  | "connections"
+  | "notifications"
   | "new-portal"
   | "new-project"
   | "new-floor"
@@ -55,6 +59,8 @@ export interface Prefs {
    * renderer a character joiner per frame.
    */
   termLigatures: boolean;
+  termScreenReader: boolean;
+  termAccessibleContrast: boolean;
   /** App (interface) font family; empty string = the Yard default stack. */
   uiFontFamily: string;
   /** Code font (file editor, diffs, code blocks); empty = the default `--mono`. */
@@ -164,6 +170,8 @@ export const DEFAULT_PREFS: Prefs = {
   fontSize: 13,
   fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace',
   termLigatures: false,
+  termScreenReader: false,
+  termAccessibleContrast: true,
   uiFontFamily: "",
   codeFontFamily: "",
   codeLigatures: true,
@@ -287,6 +295,7 @@ export function clampPref<K extends keyof Prefs>(key: K, value: Prefs[K]): Prefs
 interface UIState {
   modal: ModalKind;
   modalPayload: unknown;
+  modalParents: { modal: ModalKind; payload: unknown }[];
   focusedTerminalId: string | null;
   focusedSlot: number;
   sidebarOpen: boolean;
@@ -336,6 +345,7 @@ interface UIState {
    * because a stack taller than that stops being readable.
    */
   toasts: Toast[];
+  toastHistory: Toast[];
   /**
    * Notices the cap pushed out before anyone dismissed them. The stack shows
    * this as a "+N avisos" caption instead of discarding in silence.
@@ -358,6 +368,7 @@ interface UIState {
   treeCollapsed: Record<string, boolean>;
 
   openModal: (modal: ModalKind, payload?: unknown) => void;
+  openChildModal: (modal: ModalKind, payload?: unknown, returnPayload?: unknown) => void;
   closeModal: () => void;
   focusTerminal: (id: string | null, slot?: number) => void;
   toggleSidebar: () => void;
@@ -379,7 +390,7 @@ interface UIState {
   setPrefLocal: <K extends keyof Prefs>(key: K, value: Prefs[K]) => void;
   /** Returns every preference to the factory default (and writes it). */
   resetPrefs: () => void;
-  showToast: (message: string, kind?: "info" | "error") => void;
+  showToast: (message: string, kind?: "info" | "error", source?: string) => void;
   dismissToast: (id?: number) => void;
   setBackupPending: (pending: boolean) => void;
   /** Collapses (or expands) a project/group row of the tree, and remembers it. */
@@ -397,6 +408,8 @@ export interface Toast {
   id: number;
   message: string;
   kind: "info" | "error";
+  createdAt?: number;
+  source?: string;
 }
 
 let toastSeq = 0;
@@ -457,6 +470,7 @@ function parseCollapsed(raw: string | undefined): Record<string, boolean> {
 export const useUI = create<UIState>((set, get) => ({
   modal: null,
   modalPayload: null,
+  modalParents: [],
   focusedTerminalId: null,
   focusedSlot: 0,
   sidebarOpen: true,
@@ -468,12 +482,20 @@ export const useUI = create<UIState>((set, get) => ({
   composerTargetId: null,
   prefs: { ...DEFAULT_PREFS },
   toasts: [],
+  toastHistory: [],
   toastOverflow: 0,
   backupPending: false,
   treeCollapsed: {},
 
-  openModal: (modal, payload) => set({ modal, modalPayload: payload ?? null }),
-  closeModal: () => set({ modal: null, modalPayload: null }),
+  openModal: (modal, payload) => set({ modal, modalPayload: payload ?? null, modalParents: [] }),
+  openChildModal: (modal, payload, returnPayload) => set((s) => ({
+    modal, modalPayload: payload ?? null,
+    modalParents: [...s.modalParents, { modal: s.modal, payload: returnPayload ?? s.modalPayload }],
+  })),
+  closeModal: () => set((s) => {
+    const parent = s.modalParents.at(-1);
+    return { modal: parent?.modal ?? null, modalPayload: parent?.payload ?? null, modalParents: s.modalParents.slice(0, -1) };
+  }),
   focusTerminal: (id, slot) =>
     set((s) => ({
       focusedTerminalId: id,
@@ -586,18 +608,27 @@ export const useUI = create<UIState>((set, get) => ({
     }
   },
 
-  showToast: (message, kind = "info") => {
+  showToast: (message, kind = "info", source = "Yard") => {
     // Its own identity, not the text: two identical notices in a row (two
     // failures of the same hook, for instance) made the first one's timer
     // clear the second before its time.
     const id = ++toastSeq;
     set((s) => {
-      const full = [...s.toasts, { id, message, kind }];
+      const toast: Toast = { id, message: readableMessage(message), kind, createdAt: Date.now(), source };
+      const full = [...s.toasts, toast];
       const dropped = Math.max(0, full.length - TOAST_CAP);
+      if (dropped) {
+        // Only what was already there gives way: searching the whole stack
+        // found the newcomer itself when every older notice was an error,
+        // and the notice that had just arrived was the one thrown out.
+        const informational = s.toasts.findIndex((item) => item.kind !== "error");
+        full.splice(informational < 0 ? 0 : informational, dropped);
+      }
       // A burst (N floors × hooks) used to push the oldest notice out in
       // silence; the stack now keeps count of what it had to hide.
       return {
-        toasts: full.slice(-TOAST_CAP),
+        toasts: full,
+        toastHistory: [...s.toastHistory, toast].slice(-100),
         toastOverflow: s.toastOverflow + dropped,
       };
     });
@@ -638,6 +669,13 @@ export const useUI = create<UIState>((set, get) => ({
   /** Without an id, clears everything on screen (the × of the last notice). */
   dismissToast: (id) =>
     set((s) => {
+      // Nothing to take away (the timer of a notice already closed by hand,
+      // a clear on an empty stack): the same state, so nobody re-renders.
+      const absent =
+        id === undefined
+          ? s.toasts.length === 0 && s.toastOverflow === 0
+          : !s.toasts.some((t) => t.id === id);
+      if (absent) return s;
       const toasts = id === undefined ? [] : s.toasts.filter((t) => t.id !== id);
       // The overflow caption is anchored to the stack; an empty stack has
       // nothing left to explain.

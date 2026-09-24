@@ -40,6 +40,7 @@ import { fileName, toOsPath } from "../../lib/paths";
 import { useUI } from "../../stores/uiStore";
 import type { OpenDoc } from "../../stores/editorStore";
 import { useT } from "../../hooks/useT";
+import { failureMessage } from "../../lib/loading";
 import { t } from "../../lib/i18n";
 
 /** Zoom step per click. */
@@ -88,11 +89,11 @@ export function MediaView({ doc }: { doc: OpenDoc }) {
   }, [url]);
 
   const openExternally = useCallback(() => {
-    void ipc.openExternal(osPath).catch((e) => showToast(String(e), "error"));
+    void ipc.openExternal(osPath).catch((e) => showToast(failureMessage(e), "error"));
   }, [osPath, showToast]);
 
   const reveal = useCallback(() => {
-    void ipc.revealPath(osPath).catch((e) => showToast(String(e), "error"));
+    void ipc.revealPath(osPath).catch((e) => showToast(failureMessage(e), "error"));
   }, [osPath, showToast]);
 
   if (!kind || failed) {

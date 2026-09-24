@@ -16,11 +16,13 @@ import { FileQuestion, PenSquare } from "lucide-react";
 import { InlineRename } from "../ContextMenu/InlineRename";
 import { DocBody } from "../CodeEditor";
 import { ResizeHandles } from "./ResizeHandles";
+import { ItemMaximizeButton } from "./ItemMaximizeButton";
 import { FileGlyph } from "../FileGlyph";
 import { docId as docKey, useEditor } from "../../stores/editorStore";
 import { docNodeName, type DocItem } from "../../lib/docNode";
 import type { ResizeDir } from "../../lib/canvas";
 import { useT } from "../../hooks/useT";
+import { reasonOf } from "../../lib/loading";
 
 interface Props {
   it: DocItem;
@@ -41,6 +43,7 @@ interface Props {
   onResizeStart: (e: React.PointerEvent, it: DocItem, dir: ResizeDir) => void;
   onResizeMove: (e: React.PointerEvent) => void;
   onResizeEnd: (e: React.PointerEvent) => void;
+  onMaximize: (id: string) => void;
   renaming: boolean;
   onRenameStart: (id: string) => void;
   onRenameEnd: () => void;
@@ -64,6 +67,7 @@ function DocCardImpl({
   onResizeStart,
   onResizeMove,
   onResizeEnd,
+  onMaximize,
   renaming,
   onRenameStart,
   onRenameEnd,
@@ -83,7 +87,7 @@ function DocCardImpl({
       .getState()
       .loadDoc(root, it.path)
       .catch((e) => {
-        if (alive) setError(String(e));
+        if (alive) setError(reasonOf(e));
       });
     return () => {
       alive = false;
@@ -96,6 +100,7 @@ function DocCardImpl({
   return (
     <div
       className={`cv-doc ${selected ? "is-selected" : ""} ${connectClass}`}
+      data-maximized={!!it.restore}
       style={{ left: it.x + dx, top: it.y + dy, width: w, height: h, opacity: faded ? 0.22 : 1 }}
     >
       <div
@@ -127,6 +132,7 @@ function DocCardImpl({
             {name}
           </span>
         )}
+        <ItemMaximizeButton item={it} onMaximize={onMaximize} />
         {!it.root && (
           <button
             className="cv-doc-btn"

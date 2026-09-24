@@ -19,12 +19,13 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
+use crate::agents::resolver::{probe_each, SharedDetection};
 use crate::pty::job::JobHandle;
 
 /// One decoded message from a server, addressed by the client id the
@@ -64,9 +65,32 @@ pub enum LspEvent {
 /// Incremental on purpose — a chunk from the pipe may hold half a header, or
 /// two whole messages, or a body split at a UTF-8 boundary. Bytes are kept
 /// until a whole message is there.
+///
+/// Linear in the bytes fed, however the pipe cuts them: what a push learned
+/// is kept for the next one (where the header's blank line was searched up
+/// to, where the body starts and how long it is), so a four-megabyte answer
+/// arriving in 64 KiB reads is not searched again from its first byte on
+/// every read. It used to be, and the search for a bare `\n\n` (which
+/// compact JSON never has) ran to the end of the buffer each time: about a
+/// gigabyte of comparisons for one such message in 8 KiB reads.
 #[derive(Default)]
 pub struct Framer {
+    /// Unconsumed bytes. While a header is pending it starts at `buf[0]`.
     buf: Vec<u8>,
+    state: FrameState,
+}
+
+/// Where the decoder is in the message that starts at `Framer::buf[0]`.
+#[derive(Clone, Copy, Default)]
+enum FrameState {
+    /// Looking for a `Content-Length:` (the bytes before it are noise).
+    #[default]
+    Seeking,
+    /// A header starts at `buf[0]` and its blank line has not been seen:
+    /// no position before `scanned` can start one.
+    Header { scanned: usize },
+    /// The header is read: `len` body bytes start at `body_start`.
+    Body { body_start: usize, len: usize },
 }
 
 impl Framer {
@@ -74,40 +98,64 @@ impl Framer {
     pub fn push(&mut self, bytes: &[u8]) -> Vec<String> {
         self.buf.extend_from_slice(bytes);
         let mut out = Vec::new();
+        // Bytes of `buf` already consumed in this push. They are drained once
+        // at the end, not after each message: a read holding a thousand
+        // small notifications would otherwise move its tail a thousand times.
+        let mut at = 0;
         loop {
-            let Some(start) = find_ci(&self.buf, b"content-length:") else {
-                // Nothing that looks like a header yet: keep only a tail
-                // long enough to complete a header that straddles chunks.
-                let keep = self.buf.len().min(b"content-length:".len() - 1);
-                let drop = self.buf.len() - keep;
-                if drop > 0 {
-                    self.buf.drain(..drop);
+            let rest = &self.buf[at..];
+            match self.state {
+                FrameState::Seeking => {
+                    let Some(start) = find_ci(rest, b"content-length:") else {
+                        // Nothing that looks like a header yet: keep only a
+                        // tail long enough to complete a header that
+                        // straddles chunks.
+                        let keep = rest.len().min(b"content-length:".len() - 1);
+                        at = self.buf.len() - keep;
+                        break;
+                    };
+                    // Garbage before the header (a server that printed to
+                    // stdout before speaking the protocol): thrown away.
+                    at += start;
+                    self.state = FrameState::Header { scanned: 0 };
                 }
-                break;
-            };
-            if start > 0 {
-                // Garbage before the header (a server that printed to stdout
-                // before speaking the protocol): throw it away.
-                self.buf.drain(..start);
+                FrameState::Header { scanned } => {
+                    let Some((header_end, sep_len)) = header_terminator(rest, scanned) else {
+                        // The last three positions can still become the
+                        // start of a `\r\n\r\n` when more bytes arrive.
+                        self.state = FrameState::Header {
+                            scanned: rest.len().saturating_sub(3),
+                        };
+                        break;
+                    };
+                    let header = String::from_utf8_lossy(&rest[..header_end]);
+                    self.state = match content_length(&header) {
+                        Some(len) => FrameState::Body {
+                            body_start: header_end + sep_len,
+                            len,
+                        },
+                        None => {
+                            // A header block with no usable length: skip it
+                            // and look for the next one instead of wedging
+                            // the stream forever.
+                            at += header_end + sep_len;
+                            FrameState::Seeking
+                        }
+                    };
+                }
+                FrameState::Body { body_start, len } => {
+                    if rest.len() < body_start + len {
+                        break;
+                    }
+                    let body = String::from_utf8_lossy(&rest[body_start..body_start + len]);
+                    out.push(body.into_owned());
+                    at += body_start + len;
+                    self.state = FrameState::Seeking;
+                }
             }
-            let Some((header_end, sep_len)) = header_terminator(&self.buf) else {
-                break;
-            };
-            let header = String::from_utf8_lossy(&self.buf[..header_end]).into_owned();
-            let Some(len) = content_length(&header) else {
-                // A header block with no usable length: skip it and look for
-                // the next one instead of wedging the stream forever.
-                self.buf.drain(..header_end + sep_len);
-                continue;
-            };
-            let body_start = header_end + sep_len;
-            if self.buf.len() < body_start + len {
-                break;
-            }
-            let body =
-                String::from_utf8_lossy(&self.buf[body_start..body_start + len]).into_owned();
-            self.buf.drain(..body_start + len);
-            out.push(body);
+        }
+        if at > 0 {
+            self.buf.drain(..at);
         }
         out
     }
@@ -126,15 +174,22 @@ fn find_ci(hay: &[u8], needle: &[u8]) -> Option<usize> {
     })
 }
 
-/// End of the header block: the offset of the blank line and the length of
-/// the separator that made it (`\r\n\r\n` per the spec; `\n\n` tolerated).
-fn header_terminator(buf: &[u8]) -> Option<(usize, usize)> {
-    let crlf = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| (p, 4));
-    let lf = buf.windows(2).position(|w| w == b"\n\n").map(|p| (p, 2));
-    match (crlf, lf) {
-        (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
-        (a, b) => a.or(b),
-    }
+/// End of the header block: the offset of the first blank line at or after
+/// `from` and the length of the separator that made it (`\r\n\r\n` per the
+/// spec; `\n\n` tolerated). One forward pass that stops at the first match,
+/// so it reads the header and never the body behind it. (The two patterns
+/// cannot start at the same offset: one starts with `\r`, the other `\n`.)
+fn header_terminator(buf: &[u8], from: usize) -> Option<(usize, usize)> {
+    (from..buf.len()).find_map(|p| {
+        let tail = &buf[p..];
+        if tail.starts_with(b"\r\n\r\n") {
+            Some((p, 4))
+        } else if tail.starts_with(b"\n\n") {
+            Some((p, 2))
+        } else {
+            None
+        }
+    })
 }
 
 /// The `Content-Length` value of a header block, if it has a valid one.
@@ -165,7 +220,8 @@ pub type Sink = Arc<dyn Fn(LspEvent) + Send + Sync>;
 
 struct Server {
     child: Child,
-    stdin: ChildStdin,
+    /// Shared so `send` can write with the registry lock already released.
+    stdin: Arc<Mutex<Box<dyn Write + Send>>>,
     pid: u32,
     /// Kill-on-close job, as for a PTY: the app dying takes the server along.
     #[allow(dead_code)]
@@ -233,7 +289,7 @@ impl Servers {
             id.to_string(),
             Server {
                 child,
-                stdin,
+                stdin: Arc::new(Mutex::new(Box::new(stdin))),
                 pid,
                 job,
             },
@@ -269,7 +325,10 @@ impl Servers {
 
     fn read_loop(&self, id: &str, pid: u32, mut stdout: impl Read, sink: Sink) {
         let mut framer = Framer::default();
-        let mut chunk = [0u8; 8192];
+        // A read returns whatever the pipe holds, up to this, so a bigger
+        // buffer adds no wait: it only takes a multi-megabyte answer in
+        // fewer trips. On the heap, not in the thread's stack.
+        let mut chunk = vec![0u8; 64 * 1024];
         loop {
             match stdout.read(&mut chunk) {
                 Ok(0) | Err(_) => break,
@@ -298,15 +357,23 @@ impl Servers {
     }
 
     /// Writes one framed message to the server's stdin.
+    ///
+    /// The stdin handle is cloned out and the registry lock released before
+    /// the write: a server that stops draining its stdin blocks here, and
+    /// with the registry locked `stop`/`stop_all` (the app's exit) would
+    /// wait behind it.
     pub fn send(&self, id: &str, message: &str) -> Result<(), String> {
-        let mut map = self.map.lock().unwrap();
-        let server = map
-            .get_mut(id)
+        let stdin = self
+            .map
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|s| s.stdin.clone())
             .ok_or_else(|| format!("servidor de linguagem {id} não está rodando"))?;
-        server
-            .stdin
+        let mut stdin = stdin.lock().unwrap();
+        stdin
             .write_all(&frame(message))
-            .and_then(|_| server.stdin.flush())
+            .and_then(|_| stdin.flush())
             .map_err(|e| format!("falha ao escrever para o servidor {id}: {e}"))
     }
 
@@ -337,7 +404,8 @@ impl Servers {
 
 fn kill_server(mut server: Server) {
     // Dropping stdin first: a well-behaved server exits on EOF, and the
-    // kill below is for the others.
+    // kill below is for the others. (A `send` stalled on this same stdin
+    // still holds a clone; the kill covers that case too.)
     drop(server.stdin);
     let killed = server.job.as_ref().map(|j| j.terminate()).unwrap_or(false);
     if !killed {
@@ -432,34 +500,30 @@ const CATALOG: &[CatalogEntry] = &[
 
 /// The catalog with what is installed on this machine. Cached: the version
 /// probes are seven process launches, and the answer only changes when the
-/// user installs something — `refresh` is the button for that.
+/// user installs something (`refresh` is the button for that). Two callers
+/// at once share one detection (`SharedDetection`).
 pub fn detect(refresh: bool) -> Vec<LspServerInfo> {
-    static CACHE: OnceLock<Mutex<Option<Vec<LspServerInfo>>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(None));
-    if !refresh {
-        if let Some(list) = cache.lock().unwrap().as_ref() {
-            return list.clone();
-        }
-    }
-    let list = detect_with(|program, version_args| {
-        crate::agents::resolver::find_binary(program).map(|_| {
-            crate::agents::resolver::probe_version(program, version_args)
+    static CACHE: SharedDetection<Vec<LspServerInfo>> = SharedDetection::new();
+    CACHE.get(refresh, || {
+        detect_with(|program, version_args| {
+            crate::agents::resolver::find_binary(program)
+                .map(|_| crate::agents::resolver::probe_version(program, version_args))
         })
-    });
-    *cache.lock().unwrap() = Some(list.clone());
-    list
+    })
 }
 
 /// The catalog resolved through `probe`: `None` when the program is not on
 /// this machine, `Some(version)` when it is (the version itself may be
-/// unknown — some servers answer nothing to `--version`).
+/// unknown, some servers answer nothing to `--version`). Every server is
+/// probed at once (`probe_each`), and the list keeps the catalog's order.
 fn detect_with(
-    probe: impl Fn(&str, &[&str]) -> Option<Option<String>>,
+    probe: impl Fn(&str, &[&str]) -> Option<Option<String>> + Sync,
 ) -> Vec<LspServerInfo> {
+    let probed = probe_each(CATALOG, |entry| probe(entry.program, entry.version_args));
     CATALOG
         .iter()
-        .map(|entry| {
-            let probed = probe(entry.program, entry.version_args);
+        .zip(probed)
+        .map(|(entry, probed)| {
             LspServerInfo {
                 language_ids: entry.language_ids.iter().map(|s| s.to_string()).collect(),
                 program: entry.program.to_string(),
@@ -499,8 +563,14 @@ fn emit_sink(app: AppHandle, id: String) -> Sink {
     })
 }
 
+// `lsp_start`, `lsp_send` and `lsp_stop` are plain `fn`s on purpose: each
+// runs on its server's own lane (`lanes.rs`), off the UI thread and in the
+// order the editor sent them. On the blocking pool, as they used to be, two
+// messages the editor fired back to back could reach the server swapped (a
+// `didChange` for version 5 written before the one for version 4).
+
 #[tauri::command]
-pub async fn lsp_start(
+pub fn lsp_start(
     app: AppHandle,
     id: String,
     program: String,
@@ -508,25 +578,17 @@ pub async fn lsp_start(
     cwd: String,
 ) -> Result<u32, String> {
     let sink = emit_sink(app, id.clone());
-    tauri::async_runtime::spawn_blocking(move || {
-        global().start(&id, &program, &args, &cwd, sink)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    global().start(&id, &program, &args, &cwd, sink)
 }
 
 #[tauri::command]
-pub async fn lsp_send(id: String, message: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || global().send(&id, &message))
-        .await
-        .map_err(|e| e.to_string())?
+pub fn lsp_send(id: String, message: String) -> Result<(), String> {
+    global().send(&id, &message)
 }
 
 #[tauri::command]
-pub async fn lsp_stop(id: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || global().stop(&id))
-        .await
-        .map_err(|e| e.to_string())?
+pub fn lsp_stop(id: String) -> Result<(), String> {
+    global().stop(&id)
 }
 
 #[tauri::command]
@@ -625,6 +687,192 @@ mod tests {
         let mut bytes = b"X-Nothing: here\r\n\r\n".to_vec();
         bytes.extend(msg(r#"{"after":1}"#));
         assert_eq!(f.push(&bytes), vec![r#"{"after":1}"#.to_string()]);
+    }
+
+    // --- framing: the same messages whatever the pipe's chunking ----------
+    //
+    // The pipe decides where a read ends, not the protocol, so the decoder
+    // must yield the same messages, in the same order, however the stream is
+    // cut. These lock that down across every shape the decoder tolerates
+    // (bare LF, `\r\n\n`, garbage, a header with no usable length, bodies
+    // that look like headers, invalid UTF-8) and across the sizes a real
+    // server sends (a multi-megabyte `textDocument/semanticTokens` answer,
+    // thousands of small notifications in one read).
+
+    /// Every shape the decoder accepts or tolerates, back to back, with the
+    /// messages it has to yield.
+    fn mixed_stream() -> (Vec<u8>, Vec<String>) {
+        let mut bytes: Vec<u8> = Vec::new();
+        let mut want: Vec<String> = Vec::new();
+        // A banner printed before the protocol, blank line included.
+        bytes.extend(b"starting up...\nready\n\n");
+        // The spec's framing.
+        bytes.extend(msg(r#"{"n":1}"#));
+        want.push(r#"{"n":1}"#.into());
+        // Bare LF, lower-case name, no space after the colon.
+        bytes.extend(b"content-length:7\n\n{\"n\":2}");
+        want.push(r#"{"n":2}"#.into());
+        // A Content-Type before the length, the name in upper case.
+        bytes.extend(
+            b"Content-Type: application/vscode-jsonrpc; charset=utf-8\r\nCONTENT-LENGTH: 7\r\n\r\n{\"n\":3}",
+        );
+        want.push(r#"{"n":3}"#.into());
+        // A header with no usable length: skipped, and what follows it up to
+        // the next header is noise.
+        bytes.extend(b"Content-Length: many\r\n\r\n{\"lost\":1}");
+        // The length counts bytes, not characters.
+        bytes.extend(msg(r#"{"t":"ação"}"#));
+        want.push(r#"{"t":"ação"}"#.into());
+        // A body holding a header-looking line and blank lines of both
+        // kinds: the body is taken by its length, never searched.
+        let tricky = "{\"s\":\"Content-Length: 99\"}\r\n\r\n\n\n";
+        bytes.extend(msg(tricky));
+        want.push(tricky.into());
+        // CRLF followed by a bare LF: the blank line is the LF LF.
+        bytes.extend(b"Content-Length: 7\r\n\n{\"n\":4}");
+        want.push(r#"{"n":4}"#.into());
+        // Noise between two messages.
+        bytes.extend(b"oops\n");
+        // Invalid UTF-8, decoded lossily.
+        bytes.extend(b"Content-Length: 2\r\n\r\n\xff\xfe");
+        want.push("\u{FFFD}\u{FFFD}".into());
+        // An empty body.
+        bytes.extend(b"Content-Length: 0\r\n\r\n");
+        want.push(String::new());
+        // Two lengths: the first one wins. A header after the length.
+        bytes.extend(b"Content-Length: 7\r\nContent-Length: 99\r\nX-Extra: 1\r\n\r\n{\"n\":5}");
+        want.push(r#"{"n":5}"#.into());
+        (bytes, want)
+    }
+
+    fn feed(f: &mut Framer, chunks: impl IntoIterator<Item = impl AsRef<[u8]>>) -> Vec<String> {
+        let mut out = Vec::new();
+        for chunk in chunks {
+            out.extend(f.push(chunk.as_ref()));
+        }
+        out
+    }
+
+    #[test]
+    fn a_mixed_stream_in_one_chunk_yields_every_message_in_order() {
+        let (bytes, want) = mixed_stream();
+        assert_eq!(feed(&mut Framer::default(), [&bytes]), want);
+    }
+
+    #[test]
+    fn a_mixed_stream_cut_at_any_single_point_yields_the_same_messages() {
+        let (bytes, want) = mixed_stream();
+        for cut in 0..=bytes.len() {
+            let (a, b) = bytes.split_at(cut);
+            assert_eq!(feed(&mut Framer::default(), [a, b]), want, "cut at {cut}");
+        }
+    }
+
+    #[test]
+    fn a_mixed_stream_fed_one_byte_at_a_time_yields_the_same_messages() {
+        let (bytes, want) = mixed_stream();
+        assert_eq!(feed(&mut Framer::default(), bytes.chunks(1)), want);
+    }
+
+    /// Chunk sizes from a fixed-seed generator: every cut position mixed with
+    /// every other, deterministic from run to run.
+    #[test]
+    fn a_mixed_stream_in_chunks_of_varying_sizes_yields_the_same_messages() {
+        let (bytes, want) = mixed_stream();
+        let mut seed: u64 = 0x5eed;
+        for run in 0..300 {
+            let mut chunks = Vec::new();
+            let mut at = 0;
+            while at < bytes.len() {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let size = 1 + (seed >> 33) as usize % 40;
+                let end = (at + size).min(bytes.len());
+                chunks.push(&bytes[at..end]);
+                at = end;
+            }
+            assert_eq!(feed(&mut Framer::default(), chunks), want, "run {run}");
+        }
+    }
+
+    /// A body of `size` bytes of compact JSON (no blank line anywhere, the
+    /// case that made a scan for one run to the end of the buffer), with
+    /// multibyte characters so the reads cut them in half.
+    fn big_body(size: usize) -> String {
+        let mut body = String::from(r#"{"jsonrpc":"2.0","id":7,"result":{"data":""#);
+        while body.len() < size {
+            body.push_str("ação,");
+        }
+        body.push_str(r#""}}"#);
+        body
+    }
+
+    #[test]
+    fn a_four_megabyte_message_fed_in_8_kib_reads_comes_out_once_and_whole() {
+        let body = big_body(4 * 1024 * 1024);
+        let bytes = msg(&body);
+        let mut f = Framer::default();
+        let chunks: Vec<&[u8]> = bytes.chunks(8 * 1024).collect();
+        let (last, rest) = chunks.split_last().unwrap();
+        for (i, chunk) in rest.iter().enumerate() {
+            assert!(f.push(chunk).is_empty(), "read {i} finished nothing");
+        }
+        assert_eq!(f.push(last), vec![body]);
+    }
+
+    /// A big answer with small notifications on both sides, in the reads a
+    /// pipe hands over (8 KiB and 64 KiB): the order survives.
+    #[test]
+    fn a_big_message_between_small_ones_keeps_the_order_at_any_read_size() {
+        let body = big_body(300 * 1024);
+        let mut bytes = msg(r#"{"before":1}"#);
+        bytes.extend(msg(&body));
+        bytes.extend(b"Content-Length: 11\n\n{\"after\":1}");
+        let want = vec![r#"{"before":1}"#.to_string(), body, r#"{"after":1}"#.to_string()];
+        for read in [8 * 1024, 64 * 1024] {
+            assert_eq!(feed(&mut Framer::default(), bytes.chunks(read)), want, "read {read}");
+        }
+    }
+
+    /// A server that floods notifications (diagnostics, progress) puts
+    /// hundreds of messages in one read, and cuts one in half at its end.
+    #[test]
+    fn thousands_of_small_messages_come_out_in_order_at_any_read_size() {
+        let mut bytes = Vec::new();
+        let mut want = Vec::new();
+        for n in 0..3000 {
+            let body = format!(r#"{{"jsonrpc":"2.0","method":"$/progress","params":{{"n":{n}}}}}"#);
+            if n % 3 == 0 {
+                bytes.extend(format!("Content-Length: {}\n\n{body}", body.len()).into_bytes());
+            } else {
+                bytes.extend(msg(&body));
+            }
+            want.push(body);
+        }
+        for read in [8 * 1024, 64 * 1024, bytes.len()] {
+            assert_eq!(feed(&mut Framer::default(), bytes.chunks(read)), want, "read {read}");
+        }
+    }
+
+    /// The reader thread, off a stream bigger than any single read: every
+    /// message goes to the sink in order, then the exit (no code: nobody
+    /// registered the server, so there is no process to reap).
+    #[test]
+    fn the_reader_delivers_a_stream_bigger_than_one_read_in_order_then_the_exit() {
+        let body = big_body(200 * 1024);
+        let mut bytes = Vec::new();
+        let mut want = Vec::new();
+        for n in 0..50 {
+            let small = format!(r#"{{"n":{n}}}"#);
+            bytes.extend(msg(&small));
+            want.push(LspEvent::Message(small));
+        }
+        bytes.extend(msg(&body));
+        want.push(LspEvent::Message(body));
+        want.push(LspEvent::Exit(None));
+        let servers = Servers::new();
+        let (sink, rx) = channel_sink();
+        servers.read_loop("t-reader", 0, std::io::Cursor::new(bytes), sink);
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), want);
     }
 
     // --- processes -------------------------------------------------------
@@ -849,6 +1097,26 @@ process.stderr.write('fake server up\n');
         assert_eq!(ts.args, vec!["--stdio"]);
     }
 
+    /// Seven `--version` runs one after the other (most of them Node) held
+    /// the settings list for their sum. They run side by side, and the list
+    /// still comes out in the catalog's order.
+    #[test]
+    fn detection_probes_every_server_at_the_same_time_and_keeps_the_catalog_order() {
+        let gauge = crate::agents::resolver::tests::Gauge::default();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let list = detect_with(|program, _| {
+            gauge.probe(CATALOG.len(), deadline);
+            Some(Some(format!("{program} 1.0")))
+        });
+        assert_eq!(gauge.max(), CATALOG.len(), "probes running at once");
+        let programs: Vec<&str> = list.iter().map(|s| s.program.as_str()).collect();
+        let catalog: Vec<&str> = CATALOG.iter().map(|e| e.program).collect();
+        assert_eq!(programs, catalog);
+        for server in &list {
+            assert_eq!(server.version, Some(format!("{} 1.0", server.program)));
+        }
+    }
+
     #[test]
     fn every_language_id_has_exactly_one_server_in_the_catalog() {
         let mut seen = std::collections::HashMap::new();
@@ -858,5 +1126,78 @@ process.stderr.write('fake server up\n');
             }
         }
         assert!(seen.values().all(|n| *n == 1), "{seen:?}");
+    }
+
+    /// A server that stops draining its stdin used to block `send` with the
+    /// registry locked, and `stop`, `stop_all` (the app's exit) and every
+    /// other client waited behind it. The registry lock is released before
+    /// the bytes go out.
+    #[cfg(windows)]
+    #[test]
+    fn a_stalled_send_does_not_hold_the_registry_lock() {
+        struct Stalled {
+            entered: mpsc::Sender<()>,
+            gate: mpsc::Receiver<()>,
+        }
+        impl Write for Stalled {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                let _ = self.entered.send(());
+                let _ = self.gate.recv();
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let servers = Servers::new();
+        let mut cmd = Command::new("cmd.exe");
+        cmd.args(["/c", "exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000);
+        }
+        let mut child = cmd.spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, gate) = mpsc::channel();
+        servers.map.lock().unwrap().insert(
+            "x".into(),
+            Server {
+                child,
+                stdin: Arc::new(Mutex::new(Box::new(Stalled {
+                    entered: entered_tx,
+                    gate,
+                }))),
+                pid,
+                job: None,
+            },
+        );
+
+        let sender = {
+            let servers = servers.clone();
+            std::thread::spawn(move || servers.send("x", "{}"))
+        };
+        entered
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the write never started");
+        let (probe_tx, probe) = mpsc::channel();
+        {
+            let servers = servers.clone();
+            std::thread::spawn(move || {
+                let _ = probe_tx.send(servers.is_running("x"));
+            });
+        }
+        assert_eq!(
+            probe.recv_timeout(Duration::from_secs(2)),
+            Ok(true),
+            "the registry is locked while the write is stalled"
+        );
+        release.send(()).unwrap();
+        assert!(sender.join().unwrap().is_ok());
     }
 }

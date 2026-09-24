@@ -60,6 +60,10 @@ export function agentRows(
     .map((a) => ({ id: a.id, name: a.name, found: a.installed, version: a.version }));
 }
 
+export function visibleAgentRows(rows: readonly AgentRow[], showMissing: boolean): AgentRow[] {
+  return showMissing ? [...rows] : rows.filter((row) => row.found);
+}
+
 /**
  * The six gestures worth learning on day one. Keys first so the sheet draws
  * them as `<kbd>`s; the sentence is what the gesture does, not its name.

@@ -19,10 +19,15 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, WindowEvent};
+use tauri::{
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow,
+    WindowEvent,
+};
 
+use crate::lanes;
 use crate::persistence::db;
 use crate::state::AppState;
+use crate::{events, pty};
 
 const KEY: &str = "window.geometry";
 /// Mirrors `minWidth`/`minHeight` in `tauri.conf.json`: a geometry saved by an
@@ -113,17 +118,59 @@ pub fn watch(app: &AppHandle) {
     };
     let handle = app.clone();
     window.on_window_event(move |event| match event {
+        // Minimizing and restoring arrive as a `Resized`; the tray and the
+        // summon hotkey bring the window back with a focus change. A hide
+        // from the page arrives as nothing at all: the resources tick is what
+        // catches that one (`resources.rs`).
         WindowEvent::Resized(_) | WindowEvent::Moved(_) => {
             if let Some(w) = handle.get_webview_window("main") {
                 capture(&w);
             }
+            if matches!(event, WindowEvent::Resized(_)) {
+                observe(&handle);
+            }
             flush(&handle, false);
         }
+        WindowEvent::Focused(_) => observe(&handle),
         // The last gesture is usually inside the throttle window; this is what
         // makes sure it still lands.
         WindowEvent::Destroyed | WindowEvent::CloseRequested { .. } => flush(&handle, true),
         _ => {}
     });
+}
+
+/// Whether the window is on anybody's screen: shown and not minimized.
+/// Hidden to the tray, the OS does not call it minimized; minimized, it still
+/// calls it visible.
+pub fn window_shown(visible: bool, minimized: bool) -> bool {
+    visible && !minimized
+}
+
+/// Reads the main window and reports whether it is on screen (`report_shown`).
+/// A getter that fails counts as on screen: slowing the terminals down for a
+/// window nobody can prove is hidden would be the worse mistake.
+pub fn observe<R: Runtime>(app: &AppHandle<R>) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let shown = window_shown(
+        window.is_visible().unwrap_or(true),
+        window.is_minimized().unwrap_or(false),
+    );
+    report_shown(app, shown);
+}
+
+/// Records whether the window is on screen. On a change, every terminal's
+/// pump follows it (`pty::set_window_shown`) and the page hears it as
+/// `window://shown`; a report that changes nothing says nothing.
+pub fn report_shown<R: Runtime>(app: &AppHandle<R>, shown: bool) {
+    let state = app.state::<Arc<AppState>>();
+    if pty::set_window_shown(&state, shown) {
+        tracing::debug!(shown, "janela na tela mudou");
+        if let Err(e) = app.emit(events::WINDOW_SHOWN, events::WindowShown { shown }) {
+            tracing::warn!(error = %e, "falha ao emitir window://shown");
+        }
+    }
 }
 
 /// Writes whatever is pending, ignoring the throttle. For the exit path.
@@ -183,10 +230,27 @@ fn flush(app: &AppHandle, force: bool) {
     let Ok(raw) = serde_json::to_string(&geo) else {
         return;
     };
-    let state = app.state::<Arc<AppState>>();
-    let conn = state.db.lock();
-    if let Err(e) = db::kv_set(&conn, KEY, &raw) {
-        tracing::warn!(error = %e, "nao consegui salvar a geometria da janela");
+    // This runs on the UI thread, once per mouse move of a drag, and the
+    // backup can hold `state.db` for seconds. So the write goes to the
+    // database lane: in order with the other writes, the newest last.
+    let handle = app.clone();
+    write_on_lane(lanes::lanes(), force, move || {
+        let state = handle.state::<Arc<AppState>>();
+        let conn = state.db.lock();
+        if let Err(e) = db::kv_set(&conn, KEY, &raw) {
+            tracing::warn!(error = %e, "nao consegui salvar a geometria da janela");
+        }
+    });
+}
+
+/// Hands a geometry write to the database lane, behind every write queued
+/// before it. With `force` (the close path, about to take the process down) it
+/// returns only once that write has run: the geometry is on disk by then, as it
+/// was when it was written right on the calling thread.
+fn write_on_lane(lanes: &lanes::Lanes, force: bool, write: impl FnOnce() + Send + 'static) {
+    lanes.submit(lanes::DB, write);
+    if force {
+        lanes.drain(lanes::DB);
     }
 }
 
@@ -212,6 +276,18 @@ fn overlaps(a: (i32, i32, u32, u32), b: (i32, i32, u32, u32)) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Hidden to the tray (`hide()`), the window is not minimized; minimized,
+    /// the OS still calls it visible. Neither one is on anybody's screen, and
+    /// the terminals, the resources tick and the usage poller slow down or
+    /// stop for both.
+    #[test]
+    fn the_window_is_on_screen_only_when_visible_and_not_minimized() {
+        assert!(window_shown(true, false));
+        assert!(!window_shown(false, false), "hidden to the tray");
+        assert!(!window_shown(true, true), "minimized");
+        assert!(!window_shown(false, true));
+    }
 
     #[test]
     fn geometry_survives_the_json_round_trip() {
@@ -252,5 +328,65 @@ mod tests {
         assert!(!overlaps((-1800, 60, 1280, 800), primary));
         // Touching from outside, without a single pixel in common.
         assert!(!overlaps((2560, 100, 1280, 800), primary));
+    }
+
+    // The geometry write left the UI thread for the database lane. These lock
+    // down the two halves of that trade: the close path still finds the write
+    // on disk when the flush returns (drop the drain and the last resize or
+    // move is lost on every close), and a flush during a drag still never
+    // waits for the database.
+
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+
+    /// Long enough for any lane job below; a failure waits this long and no
+    /// longer.
+    const DEADLINE: Duration = Duration::from_secs(5);
+
+    /// Holds the database lane of `lanes` until the returned sender fires (or
+    /// the deadline passes), so whatever is queued behind it has not run yet.
+    fn hold_the_database_lane(lanes: &lanes::Lanes) -> mpsc::Sender<()> {
+        let (open, gate) = mpsc::channel::<()>();
+        lanes.submit(lanes::DB, move || {
+            let _ = gate.recv_timeout(DEADLINE);
+        });
+        open
+    }
+
+    /// The close path takes the process down right after the forced flush.
+    /// Written on the calling thread, the geometry was on disk by then; on
+    /// the lane, the flush has to wait for it.
+    #[test]
+    fn a_forced_flush_returns_only_after_the_geometry_write_ran() {
+        let lanes = lanes::Lanes::new(DEADLINE);
+        let open = hold_the_database_lane(&lanes);
+        let written = Arc::new(AtomicBool::new(false));
+        let flag = written.clone();
+        let opener = std::thread::spawn(move || open.send(()));
+        write_on_lane(&lanes, true, move || flag.store(true, Ordering::SeqCst));
+        assert!(
+            written.load(Ordering::SeqCst),
+            "the forced flush returned before the geometry was written"
+        );
+        let _ = opener.join();
+    }
+
+    /// Why the write left the UI thread: a drag flushes once per throttle
+    /// window, and the backup can hold the database for seconds. An unforced
+    /// flush hands the write over and returns at once; the write still runs.
+    #[test]
+    fn an_unforced_flush_does_not_wait_for_the_database() {
+        let lanes = lanes::Lanes::new(DEADLINE);
+        let open = hold_the_database_lane(&lanes);
+        let (tx, rx) = mpsc::channel();
+        write_on_lane(&lanes, false, move || {
+            let _ = tx.send(());
+        });
+        assert!(
+            rx.try_recv().is_err(),
+            "the unforced flush waited for the held database lane"
+        );
+        open.send(()).unwrap();
+        assert_eq!(rx.recv_timeout(DEADLINE), Ok(()), "the write never ran");
     }
 }

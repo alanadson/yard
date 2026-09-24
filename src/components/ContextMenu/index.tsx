@@ -131,6 +131,7 @@ export function ContextMenu({ anchor, items, onClose }: Props) {
   const [pos, setPos] = useState({ left: anchor.x, top: anchor.y });
   const enabled = items.filter(isItem).filter((i) => !i.disabled);
   const [activeId, setActiveId] = useState<string | null>(enabled[0]?.id ?? null);
+  const activeIndex = items.findIndex((entry) => isItem(entry) && entry.id === activeId);
 
   /**
    * A portal's page is an OS window over the DOM: it would swallow this menu
@@ -277,6 +278,7 @@ export function ContextMenu({ anchor, items, onClose }: Props) {
       className="menu menu--popup"
       role="menu"
       tabIndex={-1}
+      aria-activedescendant={activeIndex >= 0 ? `${occluderKey}-item-${activeIndex}` : undefined}
       style={{ left: pos.left, top: pos.top }}
       onKeyDown={onKeyDown}
       onContextMenu={(e) => e.preventDefault()}
@@ -291,7 +293,7 @@ export function ContextMenu({ anchor, items, onClose }: Props) {
               key={`sw-${i}`}
               className="menu-swatches"
               role="group"
-              aria-label={entry.label ?? "Cor"}
+              aria-label={entry.label ?? t("Cor")}
             >
               {entry.label && <span className="menu-swatches-label">{entry.label}</span>}
               <div className="menu-swatches-row">
@@ -301,8 +303,8 @@ export function ContextMenu({ anchor, items, onClose }: Props) {
                     className={`cv-swatch cv-swatch--none ${
                       entry.active ? "" : "is-active"
                     }`}
-                    data-tip="Sem cor"
-                    aria-label="Sem cor"
+                    data-tip={t("Sem cor")}
+                    aria-label={t("Sem cor")}
                     aria-pressed={!entry.active}
                     onClick={() => entry.onClear?.()}
                   />
@@ -314,7 +316,7 @@ export function ContextMenu({ anchor, items, onClose }: Props) {
                     className={`cv-swatch ${entry.active === c ? "is-active" : ""}`}
                     style={{ background: c }}
                     data-tip={c}
-                    aria-label={`Cor ${c}`}
+                    aria-label={t("Cor {c}", { c })}
                     aria-pressed={entry.active === c}
                     onClick={() => entry.onPick(c)}
                   />
@@ -369,7 +371,7 @@ export function ContextMenu({ anchor, items, onClose }: Props) {
         }
         if (entry.kind === "sizes") {
           return (
-            <div key={`sz-${i}`} className="menu-sizes" role="group" aria-label="Tamanho">
+            <div key={`sz-${i}`} className="menu-sizes" role="group" aria-label={t("Tamanho")}>
               {entry.options.map((s) => (
                 <button
                   key={s.id}
@@ -389,8 +391,10 @@ export function ContextMenu({ anchor, items, onClose }: Props) {
         return (
           <button
             key={entry.id}
+            id={`${occluderKey}-item-${i}`}
             type="button"
-            role="menuitem"
+            role={entry.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+            tabIndex={-1}
             disabled={entry.disabled}
             className={[
               entry.danger ? "menu-danger" : "",

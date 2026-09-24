@@ -71,6 +71,21 @@ export function agentsCaption(segments: readonly AgentSegment[]): string {
   return `Agentes: ${segments.map((s) => s.label).join(", ")}`;
 }
 
+/**
+ * What the agents chip subscribes to: its caption, as text. The runtimes are
+ * replaced every two seconds by the resources tick, so the whole map as a
+ * subscription re-rendered the chip on every tick to paint the same words.
+ * The caption names every segment (tone and count, in a fixed order), so two
+ * equal captions are two equal chips, and the text changes exactly when the
+ * chip does.
+ */
+export function agentsSignature(
+  rows: readonly TerminalRow[],
+  byId: Readonly<Record<string, TerminalRuntime | undefined>>,
+): string {
+  return agentsCaption(agentSegments(rows, byId));
+}
+
 // ---------------------------------------------------------------------------
 // git
 // ---------------------------------------------------------------------------

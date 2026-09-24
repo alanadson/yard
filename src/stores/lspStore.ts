@@ -15,7 +15,7 @@
  * to Settings is the catalog (`detected`) and the failures.
  */
 import { create } from "zustand";
-import { LSPClient, languageServerExtensions } from "@codemirror/lsp-client";
+import type { LSPClient } from "@codemirror/lsp-client";
 
 import { t } from "../lib/i18n";
 import { ipc, on, type LspServerInfo } from "../lib/ipc";
@@ -73,6 +73,13 @@ const pendingStarts = new Map<string, Promise<LSPClient | null>>();
 const pruneTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /** Ids we asked to stop: their exit is not a failure. */
 const stopping = new Set<string>();
+/**
+ * Ids spawned whose client is not registered yet: the library is still on its
+ * way. An exit for one of them has no entry to find, so it waits in
+ * `earlyExits` and is handled the moment the entry exists.
+ */
+const registering = new Set<string>();
+const earlyExits = new Map<string, number | null>();
 let exitWatch: Promise<() => void> | null = null;
 
 function normalizeRoot(root: string): string {
@@ -89,31 +96,35 @@ function tearDown(entry: ClientEntry) {
 }
 
 export const useLsp = create<LspState>((set, get) => {
+  const handleExit = ({ id, code }: { id: string; code: number | null }) => {
+    const entry = Object.values(get().clients).find((c) => c.id === id);
+    if (!entry) {
+      if (registering.has(id)) earlyExits.set(id, code);
+      return;
+    }
+    tearDown(entry);
+    const clients = { ...get().clients };
+    delete clients[entry.key];
+    if (stopping.delete(id)) {
+      set({ clients });
+      return;
+    }
+    const reason = t("{program} encerrou (código {code})", { program: entry.program, code: code ?? "?" });
+    uiLog.warn(`lsp: ${reason}`);
+    set({ clients, failed: { ...get().failed, [entry.key]: reason } });
+    useUI
+      .getState()
+      .showToast(
+        t(
+          'O servidor de linguagem {program} parou. Reabra o arquivo depois de "Procurar de novo" em Configurações → Editor.',
+          { program: entry.program },
+        ),
+        "error",
+      );
+  };
   const watchExits = () => {
     if (exitWatch) return;
-    exitWatch = on.lspExit(({ id, code }) => {
-      const entry = Object.values(get().clients).find((c) => c.id === id);
-      if (!entry) return;
-      tearDown(entry);
-      const clients = { ...get().clients };
-      delete clients[entry.key];
-      if (stopping.delete(id)) {
-        set({ clients });
-        return;
-      }
-      const reason = t("{program} encerrou (código {code})", { program: entry.program, code: code ?? "?" });
-      uiLog.warn(`lsp: ${reason}`);
-      set({ clients, failed: { ...get().failed, [entry.key]: reason } });
-      useUI
-        .getState()
-        .showToast(
-          t(
-            'O servidor de linguagem {program} parou. Reabra o arquivo depois de "Procurar de novo" em Configurações → Editor.',
-            { program: entry.program },
-          ),
-          "error",
-        );
-    });
+    exitWatch = on.lspExit(handleExit);
   };
 
   return {
@@ -161,10 +172,18 @@ export const useLsp = create<LspState>((set, get) => {
 
       const start = (async () => {
         const id = `lsp-${++seq}`;
-        try {
-          await ipc.lspStart(id, server.program, server.args, root);
-        } catch (e) {
-          const reason = String(e);
+        // The client library, and the CodeMirror behind it, is read only once
+        // a server really starts: imported by value it was a third of the
+        // startup chunk, paid on every boot, since `App` reaches this store
+        // through `useLspLifecycle`. It is read alongside the spawn rather
+        // than before it, so the first server comes up no later than it used
+        // to; the outcome is settled here so a spawn that fails first leaves
+        // no rejection unheard.
+        const library = import("@codemirror/lsp-client").then(
+          (lib) => ({ lib }),
+          (error: unknown) => ({ error }),
+        );
+        const startFailed = (reason: string) => {
           uiLog.warn(`lsp: ${server.program} não iniciou: ${reason}`);
           set({ failed: { ...get().failed, [key]: reason } });
           useUI
@@ -174,9 +193,31 @@ export const useLsp = create<LspState>((set, get) => {
               "error",
             );
           return null;
+        };
+        try {
+          await ipc.lspStart(id, server.program, server.args, root);
+        } catch (e) {
+          return startFailed(String(e));
         }
+        registering.add(id);
         watchExits();
         const transport = new IpcTransport(id);
+        const loaded = await library;
+        registering.delete(id);
+        // Nothing was awaited here before the library was lazy, so an exit
+        // always found its client; one that came during the wait is handled
+        // now, once the client exists, the same way.
+        const exitedEarly = earlyExits.has(id);
+        const earlyCode = earlyExits.get(id) ?? null;
+        earlyExits.delete(id);
+        if ("error" in loaded) {
+          // The process is up and nothing will ever talk to it: stop it now
+          // rather than leave it holding memory until the app closes.
+          transport.dispose();
+          void ipc.lspStop(id).catch(() => {});
+          return startFailed(String(loaded.error));
+        }
+        const { LSPClient, languageServerExtensions } = loaded.lib;
         const client = new LSPClient({
           // The project-wide diagnostics feed. Deliberately answers `false`:
           // `serverDiagnostics()` from `languageServerExtensions` is the next
@@ -206,6 +247,7 @@ export const useLsp = create<LspState>((set, get) => {
         });
         const entry: ClientEntry = { key, id, root, program: server.program, client, transport };
         set({ clients: { ...get().clients, [key]: entry } });
+        if (exitedEarly) handleExit({ id, code: earlyCode });
         return client;
       })().finally(() => pendingStarts.delete(key));
       pendingStarts.set(key, start);
@@ -260,6 +302,8 @@ export const useLsp = create<LspState>((set, get) => {
       pruneTimers.clear();
       pendingStarts.clear();
       stopping.clear();
+      registering.clear();
+      earlyExits.clear();
       for (const entry of Object.values(get().clients)) tearDown(entry);
       inFlightLoad = null;
       if (exitWatch) {

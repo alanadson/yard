@@ -8,7 +8,7 @@
  * board. Here they get only a play button (run without going through a CLI)
  * — the primary way to fire a flow is typing the task in a wired CLI.
  */
-import { useRef, useState } from "react";
+import { memo, useRef, useState } from "react";
 // The run strip also shows up outside the canvas (see `FlowRunsBar`), and
 // there `CanvasView` — the one that loads this stylesheet — is never mounted.
 import "./canvas.css";
@@ -107,7 +107,8 @@ export function RunRow({
   );
 }
 
-export function FlowHud({ groupId, flows, onReveal, onDraw }: Props) {
+/** Memoized: the board re-renders on every camera frame, the HUD has no reason to. */
+export const FlowHud = memo(function FlowHud({ groupId, flows, onReveal, onDraw }: Props) {
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   // Floats over the board: without publishing the rectangle, a portal
@@ -222,7 +223,7 @@ export function FlowHud({ groupId, flows, onReveal, onDraw }: Props) {
       )}
     </div>
   );
-}
+});
 
 /**
  * The same run strip, **outside the canvas**.

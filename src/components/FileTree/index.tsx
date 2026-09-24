@@ -22,15 +22,17 @@
  * instead of one per node; for a list, React handles it.
  */
 import {
+  memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { ChevronDown, ChevronRight, FolderOpen } from "lucide-react";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../lib/confirmation";
 
 import { fileTreeMenu } from "../../lib/fileTreeMenu";
 import { ContextMenu, type MenuAnchor } from "../ContextMenu";
@@ -44,7 +46,9 @@ import { ancestors, joinPath, parentDir, useEditor } from "../../stores/editorSt
 import { useChanges } from "../../stores/changesStore";
 import { useUI } from "../../stores/uiStore";
 import { useT } from "../../hooks/useT";
+import { failureMessage } from "../../lib/loading";
 import { t as tl } from "../../lib/i18n";
+import { OFFSCREEN_SKIP, gitMarks, rowMark, skipsOffscreen } from "./rowView";
 
 /** Where a new item is being named (parent directory + kind). */
 interface Drafting {
@@ -164,7 +168,7 @@ function buildRows(args: {
     const all = dirs[dir];
     if (!all) {
       if (loading[dir]) {
-        out.push({ kind: "note", key: `loading:${dir}`, depth, text: "lendo…" });
+        out.push({ kind: "note", key: `loading:${dir}`, depth, text: tl("lendo…") });
       }
       return;
     }
@@ -249,22 +253,11 @@ export function FileTree({
   const showToast = useUI((s) => s.showToast);
 
   // Map of `path -> git status`, plus the set of directories that contain
-  // some change. Recomputed only when `git status` changes.
+  // some change. Recomputed only when `git status` changes; each row gets
+  // only its own projection of it (`rowMark`), never the map itself.
   const projectId = useEditor((s) => s.projectId);
   const git = useChanges((s) => (projectId ? s.gitByProject[projectId] : undefined));
-  const marks = useMemo(() => {
-    const byPath = new Map<string, GitFileStatus>();
-    const dirsWithChanges = new Set<string>();
-    for (const f of git?.files ?? []) {
-      byPath.set(f.path, f.status);
-      let dir = parentDir(f.path);
-      while (dir) {
-        dirsWithChanges.add(dir);
-        dir = parentDir(dir);
-      }
-    }
-    return { byPath, dirsWithChanges };
-  }, [git]);
+  const marks = useMemo(() => gitMarks(git?.files), [git]);
 
   const visible = useMemo(() => visiblePaths(dirs, filter), [dirs, filter]);
   const rows = useMemo(
@@ -293,6 +286,9 @@ export function FileTree({
       ? focusPath
       : (navigable[0]?.entry.path ?? null);
 
+  /** A name field is open somewhere in the tree: no row skips its paint. */
+  const editingName = renaming !== null || !!drafting;
+
   useEffect(() => {
     const target = pendingFocus.current;
     if (!target) return;
@@ -308,9 +304,30 @@ export function FileTree({
     [],
   );
 
+  // The rows are memoized (`TreeRow`), so the handlers they get are made once
+  // and read the latest committed render through this ref. A fresh closure
+  // per row per render (what they got before) re-rendered every row on every
+  // git refresh. The layout effect runs in the same commit that used to hand
+  // the rows their new closures, before any event can reach them.
+  const latest = useRef({ navigable, onOpen });
+  useLayoutEffect(() => {
+    latest.current = { navigable, onOpen };
+  });
+
+  const openPath = useCallback((path: string) => latest.current.onOpen(path), []);
+  const stopRename = useCallback(() => setRenaming(null), []);
+  const openMenu = useCallback(
+    (entry: DirEntryInfo, anchor: MenuAnchor) => setMenu({ entry, anchor }),
+    [],
+  );
+  const registerRow = useCallback((path: string, el: HTMLDivElement | null) => {
+    if (el) rowRefs.current.set(path, el);
+    else rowRefs.current.delete(path);
+  }, []);
+
   const onRowKeyDown = useCallback(
-    (e: React.KeyboardEvent, row: Extract<Row, { kind: "entry" }>) => {
-      const { entry } = row;
+    (e: React.KeyboardEvent, entry: DirEntryInfo, isExpanded: boolean) => {
+      const { navigable, onOpen } = latest.current;
       const i = navigable.findIndex((r) => r.entry.path === entry.path);
       const consume = () => {
         // The canvas listens for the same arrows on the window: whatever the
@@ -343,13 +360,13 @@ export function FileTree({
         if (lastOne) moveFocus(lastOne.entry.path);
       } else if (e.key === "ArrowRight") {
         consume();
-        if (entry.dir && !row.expanded) useEditor.getState().toggleDir(entry.path);
-        else if (entry.dir && row.expanded && navigable[i + 1]) {
+        if (entry.dir && !isExpanded) useEditor.getState().toggleDir(entry.path);
+        else if (entry.dir && isExpanded && navigable[i + 1]) {
           moveFocus(navigable[i + 1].entry.path);
         }
       } else if (e.key === "ArrowLeft") {
         consume();
-        if (entry.dir && row.expanded) {
+        if (entry.dir && isExpanded) {
           useEditor.getState().toggleDir(entry.path);
         } else {
           // Go up to the parent directory, as in any tree.
@@ -358,7 +375,7 @@ export function FileTree({
         }
       }
     },
-    [moveFocus, navigable, onOpen],
+    [moveFocus],
   );
 
   if (!root) {
@@ -375,7 +392,7 @@ export function FileTree({
   // A failed root is **not** handled here any more — it comes through as a
   // `fail` row inside the tree, with its own retry.
   if (!dirs[""] && !dirError[""]) {
-    return <p className="bench-note">{loading[""] ? "lendo a pasta…" : ""}</p>;
+    return <p className="bench-note">{loading[""] ? t("lendo a pasta…") : ""}</p>;
   }
 
   return (
@@ -433,24 +450,29 @@ export function FileTree({
               </li>
             );
           }
+          const { entry } = row;
+          const mark = rowMark(marks, entry.path, entry.dir);
           return (
             <TreeRow
               key={row.key}
-              row={row}
+              entry={entry}
+              depth={row.depth}
+              expanded={row.expanded}
+              posinset={row.posinset}
+              setsize={row.setsize}
               root={root}
-              marks={marks}
-              activePath={activePath ?? null}
-              isTabStop={row.entry.path === tabStop}
-              renaming={renaming === row.entry.path}
-              onStopRename={() => setRenaming(null)}
-              registerRef={(el) => {
-                if (el) rowRefs.current.set(row.entry.path, el);
-                else rowRefs.current.delete(row.entry.path);
-              }}
-              onFocus={() => setFocusPath(row.entry.path)}
-              onKeyDown={(e) => onRowKeyDown(e, row)}
-              onOpen={onOpen}
-              onMenu={(entry, anchor) => setMenu({ entry, anchor })}
+              status={mark.status}
+              dot={mark.dot}
+              active={entry.path === activePath}
+              isTabStop={entry.path === tabStop}
+              renaming={renaming === entry.path}
+              skipOffscreen={skipsOffscreen(row.depth, editingName)}
+              onStopRename={stopRename}
+              registerRow={registerRow}
+              onFocusRow={setFocusPath}
+              onKeyDown={onRowKeyDown}
+              onOpen={openPath}
+              onMenu={openMenu}
               showToast={showToast}
             />
           );
@@ -474,7 +496,7 @@ export function FileTree({
             },
             copyPath: (path) => void copyText(path),
             reveal: (osPath) => {
-              void ipc.revealPath(osPath).catch((e) => showToast(String(e), "error"));
+              void ipc.revealPath(osPath).catch((e) => showToast(failureMessage(e), "error"));
             },
             refresh: () => useEditor.getState().refreshTree(),
             remove: (entry) => {
@@ -505,42 +527,64 @@ export function FileTree({
 // ---------------------------------------------------------------------------
 
 interface RowProps {
-  row: Extract<Row, { kind: "entry" }>;
+  entry: DirEntryInfo;
+  depth: number;
+  expanded: boolean;
+  posinset: number;
+  setsize: number;
   /** The tree's root: a drag carries the absolute path, not the relative one. */
   root: string;
-  marks: { byPath: Map<string, GitFileStatus>; dirsWithChanges: Set<string> };
-  activePath: string | null;
+  /** This row's own git state (`rowMark`), never the project-wide map. */
+  status: GitFileStatus | null;
+  dot: boolean;
+  active: boolean;
   isTabStop: boolean;
   renaming: boolean;
+  /** `content-visibility: auto` on the `<li>` (`skipsOffscreen`). */
+  skipOffscreen: boolean;
   onStopRename: () => void;
-  registerRef: (el: HTMLDivElement | null) => void;
-  onFocus: () => void;
-  onKeyDown: (e: React.KeyboardEvent) => void;
+  registerRow: (path: string, el: HTMLDivElement | null) => void;
+  onFocusRow: (path: string) => void;
+  onKeyDown: (e: React.KeyboardEvent, entry: DirEntryInfo, expanded: boolean) => void;
   onOpen: (path: string) => void;
   onMenu: (entry: DirEntryInfo, anchor: MenuAnchor) => void;
   showToast: (message: string, kind?: "info" | "error") => void;
 }
 
-function TreeRow({
-  row,
+/**
+ * One entry of the tree. Memoized: every prop is a plain value or a handler
+ * the tree makes once, so a git refresh, another active file or a folder
+ * opening elsewhere re-renders only the rows whose own props moved.
+ */
+const TreeRow = memo(function TreeRow({
+  entry,
+  depth,
+  expanded,
+  posinset,
+  setsize,
   root,
-  marks,
-  activePath,
+  status,
+  dot,
+  active,
   isTabStop,
   renaming,
+  skipOffscreen,
   onStopRename,
-  registerRef,
-  onFocus,
+  registerRow,
+  onFocusRow,
   onKeyDown,
   onOpen,
   onMenu,
   showToast,
 }: RowProps) {
   const t = useT();
-  const { entry, depth, expanded } = row;
 
-  const status = marks.byPath.get(entry.path);
-  const dirChanged = entry.dir && marks.dirsWithChanges.has(entry.path);
+  // Stable for the row's whole life (its key is the path): the element is
+  // registered once on mount and dropped on unmount.
+  const registerRef = useCallback(
+    (el: HTMLDivElement | null) => registerRow(entry.path, el),
+    [registerRow, entry.path],
+  );
 
   const activate = () => {
     if (entry.dir) useEditor.getState().toggleDir(entry.path);
@@ -563,12 +607,12 @@ function TreeRow({
   };
 
   return (
-    <li role="none">
+    <li role="none" style={skipOffscreen ? OFFSCREEN_SKIP : undefined}>
       <div
         ref={registerRef}
         className={[
           "ftree-row",
-          entry.path === activePath ? "is-active" : "",
+          active ? "is-active" : "",
           status ? `is-${status}` : "",
         ]
           .filter(Boolean)
@@ -576,18 +620,18 @@ function TreeRow({
         style={{ paddingLeft: 4 + depth * 12 }}
         role="treeitem"
         aria-expanded={entry.dir ? expanded : undefined}
-        aria-selected={entry.path === activePath}
+        aria-selected={active}
         aria-level={depth + 1}
-        aria-posinset={row.posinset}
-        aria-setsize={row.setsize}
+        aria-posinset={posinset}
+        aria-setsize={setsize}
         // Roving tabindex: the whole tree is one Tab stop and the arrows
         // navigate inside it. Before, every row was tabbable, so leaving a
         // large tree cost one keypress per file.
         tabIndex={isTabStop ? 0 : -1}
         onClick={activate}
-        onFocus={onFocus}
+        onFocus={() => onFocusRow(entry.path)}
         onContextMenu={onContextMenu}
-        onKeyDown={onKeyDown}
+        onKeyDown={(e) => onKeyDown(e, entry, expanded)}
         // A row can be carried onto the board (a card) or into a terminal
         // (its path at the prompt). The payload is the absolute path.
         draggable
@@ -617,7 +661,7 @@ function TreeRow({
           </span>
         )}
 
-        {dirChanged && !status && <span className="ftree-dot" aria-hidden="true" />}
+        {dot && <span className="ftree-dot" aria-hidden="true" />}
         {status && (
           <span className="ftree-mark" aria-label={t(GIT_LABEL[status])}>
             {GIT_LETTER[status]}
@@ -626,7 +670,7 @@ function TreeRow({
       </div>
     </li>
   );
-}
+});
 
 /** Blank row where the new item's name is typed. */
 function DraftRow({
@@ -686,4 +730,3 @@ const GIT_LABEL: Record<GitFileStatus, string> = {
   renamed: "renomeado",
   conflicted: "conflito",
 };
-

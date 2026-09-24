@@ -20,6 +20,15 @@ record the design, the contracts and the reasoning behind the decisions.
 
 ## Guides
 
+- [Code checkpoints](./specs/08-code-checkpoints.md): task snapshots, file comparison, restoration and recovery.
+
+- [Canvas capabilities and interaction contracts](./specs/07-canvas-capabilities.md): docking, cable routing, composer references, binders and Android device portals.
+
+- [UX and accessibility implementation](./ux-accessibility-2026-09.md): the 17 audit findings, resulting behavior, regression coverage and remaining native validation.
+
+- [September refactoring implementation](./refactoring-2026-09.md): changes,
+  regression evidence, measurements and pending visual validation.
+
 - [`AGENTS.md`](../AGENTS.md) (at the root) — **how work is done here**:
   mandatory TDD, the cycle, where tests live, the definition of done. Applies
   to agents and humans alike.

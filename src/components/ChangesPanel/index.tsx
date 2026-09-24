@@ -57,6 +57,7 @@ import {
 } from "../../stores/changesStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useT } from "../../hooks/useT";
+import { failureMessage, reasonOf } from "../../lib/loading";
 import { locale, tn } from "../../lib/i18n";
 import {
   useUI,
@@ -95,7 +96,6 @@ export function ChangesPanel() {
   );
   const width = useUI((s) => s.prefs.changesWidth);
   const setPref = useUI((s) => s.setPref);
-  const setPrefLocal = useUI((s) => s.setPrefLocal);
 
   // Root watched by the backend: the active floor's worktree, when there is
   // one. Falls back to the project path only while the first `ensureWatch` runs.
@@ -206,7 +206,7 @@ export function ChangesPanel() {
       );
     },
     reveal: (osPath: string) => {
-      void ipc.revealPath(osPath).catch((e) => showToast(String(e), "error"));
+      void ipc.revealPath(osPath).catch((e) => showToast(failureMessage(e), "error"));
     },
     refresh: () => {
       if (project && root) void useChanges.getState().refreshGit(project.id, root);
@@ -255,7 +255,6 @@ export function ChangesPanel() {
         max={CHANGES_MAX}
         defaultWidth={DEFAULT_PREFS.changesWidth}
         label={t("Largura do painel de arquivos")}
-        onResize={(w) => setPrefLocal("changesWidth", w)}
         onCommit={(w) => setPref("changesWidth", w)}
       />
 
@@ -419,7 +418,7 @@ function LiveFeed({
     <div className="changes-body">
       {dropped > 0 && (
         <div className="changes-note">
-          +{dropped} evento(s) além do teto de uma rajada não listados.
+          {t("+{n} evento(s) além do teto de uma rajada não listados.", { n: dropped })}
         </div>
       )}
       <ul className="feed-list">
@@ -530,7 +529,7 @@ function Review({
 
   if (!git) {
     return (
-      <div className="changes-empty">Lendo o estado do repositório…</div>
+      <div className="changes-empty">{t("Lendo o estado do repositório…")}</div>
     );
   }
 
@@ -707,7 +706,7 @@ function ReviewSection({
                   </span>
                 </button>
               </div>
-              {f.origPath && <div className="file-orig">era {f.origPath}</div>}
+              {f.origPath && <div className="file-orig">{t("era {path}", { path: f.origPath })}</div>}
               {open && <DiffView projectId={projectId} root={root} file={f} />}
             </li>
           );
@@ -747,6 +746,7 @@ function DiffView({
 }) {
   const t = useT();
   const git = useChanges((s) => s.gitByProject[projectId]);
+  const diffRevision = useChanges((s) => s.diffRevisionByProject[projectId] ?? 0);
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
   const lines = useMemo(() => diff?.text.split("\n") ?? [], [diff]);
@@ -770,11 +770,11 @@ function DiffView({
       false,
     )
       .then((d) => alive && setDiff(d))
-      .catch((e) => alive && setError(String(e)));
+      .catch((e) => alive && setError(reasonOf(e)));
     return () => {
       alive = false;
     };
-  }, [projectId, root, file.path, file.status, file.origPath, git]);
+  }, [projectId, root, file.path, file.status, file.origPath, git, diffRevision]);
 
   if (error) return <div className="diff-note diff-note--error">{error}</div>;
   if (!diff) return <div className="diff-note">{t("carregando diff…")}</div>;
@@ -875,6 +875,7 @@ function DiffPeek({
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { file } = target;
+  const diffRevision = useChanges((s) => s.diffRevisionByProject[projectId] ?? 0);
   // The preview floats to the left of the panel, over whatever pane is
   // there: a browser pane's page (an OS window) would paint over it unless
   // the rectangle is published and the page cuts a hole.
@@ -896,11 +897,11 @@ function DiffPeek({
       false,
     )
       .then((d) => alive && setDiff(d))
-      .catch((e) => alive && setError(String(e)));
+      .catch((e) => alive && setError(reasonOf(e)));
     return () => {
       alive = false;
     };
-  }, [projectId, root, file.path, file.status, file.origPath]);
+  }, [projectId, root, file.path, file.status, file.origPath, diffRevision]);
 
   const lines = useMemo(() => {
     if (!diff) return [];

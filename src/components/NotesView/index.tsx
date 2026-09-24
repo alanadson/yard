@@ -224,7 +224,6 @@ function NotesShell({ variant }: { variant: NotesVariant }) {
             max={320}
             defaultWidth={RAIL_DEFAULT}
             label={t("Largura da coluna de cadernos")}
-            onResize={(w) => useNotes.getState().setRailW(w)}
             onCommit={(w) => useNotes.getState().setRailW(w, true)}
           />
         </aside>
@@ -237,7 +236,6 @@ function NotesShell({ variant }: { variant: NotesVariant }) {
             max={440}
             defaultWidth={LIST_DEFAULT}
             label={t("Largura da lista de notas")}
-            onResize={(w) => useNotes.getState().setListW(w)}
             onCommit={(w) => useNotes.getState().setListW(w, true)}
           />
         </section>

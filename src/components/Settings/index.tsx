@@ -43,7 +43,7 @@ import "./settings.css";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { isTopLayer } from "../../lib/layers";
 import { useUI } from "../../stores/uiStore";
-import { backdropPressExits } from "../modals/modalGestures";
+import { backdropPressExits, isFrontDialog } from "../modals/modalGestures";
 import {
   category,
   isValidCategory,
@@ -98,6 +98,7 @@ export function SettingsScreen() {
       // The editor and the diff also listen for `Escape` on the window; without
       // the layer check, one Esc here would close both at once.
       if (e.key !== "Escape" || !isTopLayer("modal")) return;
+      if (!isFrontDialog(ref.current, [...document.querySelectorAll<HTMLDivElement>(".modal, .settings")])) return;
       e.preventDefault();
       closeModal();
     };

@@ -38,6 +38,7 @@ import { NOTES_TAB_ID, useNotes } from "../../stores/notesStore";
 import { parseLayout, useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
 import type { TerminalRow } from "../../lib/ipc";
+import { groupTerminalsSelector, layoutJsonOf } from "./selectors";
 
 /**
  * Loaded on demand: the canvas drags in roughjs and perfect-freehand, and a
@@ -73,28 +74,26 @@ export function WorkspaceGrid({ groupId }: Props) {
 
 function GridBody({ groupId }: Props) {
   const t = useT();
-  // The selector returns the store's raw reference. Filtering inside it
-  // would create a new array on every call, and since Zustand compares by
-  // identity that becomes "Maximum update depth exceeded" — the render
-  // feeds itself. Every list slice goes into `useMemo`.
-  const allTerminals = useProjects((s) => s.terminals);
-  const groups = useProjects((s) => s.groups);
+  // Only this group's CLIs and this group's layout string (`selectors.ts`).
+  // Both used to be the whole store arrays, so a write to any group (a board
+  // viewport commit, a note typed through `yard`, a tab switch elsewhere)
+  // re-rendered every pane and xterm here. A plain `filter` inside the
+  // selector would be worse: a new array on every call, and since Zustand
+  // compares by identity that is "Maximum update depth exceeded". The
+  // selector keeps its previous array while the rows in it are the same
+  // objects; it is per grid, so it is made once per group.
+  const selectTerminals = useMemo(() => groupTerminalsSelector(groupId), [groupId]);
+  const terminals = useProjects(selectTerminals);
+  const layoutJson = useProjects((s) => layoutJsonOf(s.groups, groupId));
   const [menu, setMenu] = useState<MenuAnchor | null>(null);
 
-  const terminals = useMemo(
-    () => allTerminals.filter((t) => t.groupId === groupId),
-    [allTerminals, groupId],
-  );
   // The two surfaces no longer draw the same CLIs: a card recruited on the
   // board is not a tab of any pane, and a tab is not a card. Everything below
   // this line is about the panes; the canvas gets its own slice.
   const paneTerminals = useMemo(() => onSurface(terminals, "grid"), [terminals]);
   const cardTerminals = useMemo(() => onSurface(terminals, "canvas"), [terminals]);
 
-  const layout = useMemo(() => {
-    const g = groups.find((x) => x.id === groupId);
-    return parseLayout(g?.layoutJson ?? "");
-  }, [groups, groupId]);
+  const layout = useMemo(() => parseLayout(layoutJson), [layoutJson]);
 
   const bySlot = useMemo(() => {
     const map = new Map<number, TerminalRow[]>();
@@ -226,7 +225,7 @@ function GridBody({ groupId }: Props) {
   // at all) and remounts on group switch — the `key` resets camera and selection.
   if (layout.surface === "canvas") {
     return (
-      <ErrorBoundary where="o quadro">
+      <ErrorBoundary where={t("o quadro")}>
         {/* Not `grid-empty`: that is the "no terminals here" screen, and a
             blank rectangle while a heavy chunk loads reads as an empty group
             or as a crash (`loading.test.ts`). The class lives in the boot
@@ -298,16 +297,16 @@ function GridBody({ groupId }: Props) {
           </p>
           <div className="pane-empty-actions">
             <button
-              className="btn btn--sm"
+               className="btn btn--primary"
               onClick={() => useUI.getState().openModal("new-terminal", { groupId, slot: 0 })}
             >
-              <Plus size={12} /> {t("Nova aba")}
+               <Plus size={13} /> {t("Abrir agente ou shell")}
             </button>
             <button
               className="btn btn--sm"
               onClick={() => useBrowsers.getState().open({ groupId, slot: 0 })}
             >
-              <Globe size={12} /> {t("Navegador")}
+               <Globe size={12} /> {t("Abrir navegador")}
             </button>
           </div>
         </div>
@@ -408,4 +407,3 @@ function PanelSlot({
     </>
   );
 }
-

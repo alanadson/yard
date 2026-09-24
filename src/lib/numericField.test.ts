@@ -14,10 +14,34 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { valueOnBlur } from "./numericField";
+import { validateNumericDraft, valueOnBlur } from "./numericField";
 
 /** The clamp of an "every N minutes" field: 1 to 10080. */
 const between1And10080 = (n: number) => Math.min(10080, Math.max(1, Math.round(n)));
+
+describe("validating a numeric draft", () => {
+  it("keeps invalid text visible and explains that it is not a number", () => {
+    expect(validateNumericDraft("abc", between1And10080)).toEqual({
+      valid: false,
+      reason: "not-a-number",
+    });
+  });
+
+  it("refuses a value the field would otherwise change silently", () => {
+    expect(validateNumericDraft("0", between1And10080)).toEqual({
+      valid: false,
+      reason: "outside-range",
+    });
+    expect(validateNumericDraft("2.6", between1And10080)).toEqual({
+      valid: false,
+      reason: "outside-range",
+    });
+  });
+
+  it("returns the typed value when no correction is necessary", () => {
+    expect(validateNumericDraft("60", between1And10080)).toEqual({ valid: true, value: 60 });
+  });
+});
 
 describe("valorAoSair", () => {
   it("a typed number goes through the clamp", () => {

@@ -1,7 +1,7 @@
 /**
  * Behavior — confirmations, and the door back to the defaults.
  */
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../../lib/confirmation";
 import { RotateCcw } from "lucide-react";
 
 import { useT } from "../../../hooks/useT";

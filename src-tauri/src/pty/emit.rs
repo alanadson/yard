@@ -7,48 +7,35 @@
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
+use super::pages::Pages;
 use crate::events;
 
 pub trait PtyEvents: Send + Sync + 'static {
-    fn output(&self, id: &str, data: String);
+    /// `true` when a page took the chunk, and so owes an acknowledgement for
+    /// it (`PtyShared::ack`); `false` when nobody was showing the terminal.
+    fn output(&self, id: &str, data: String) -> bool;
     fn exit(&self, payload: events::ExitPayload);
     fn activity(&self, payload: events::ActivityPayload);
     fn idle(&self, payload: events::IdlePayload);
 }
 
-/// Delivery via the Tauri bus — what the real app uses.
-pub struct TauriEvents<R: Runtime>(pub AppHandle<R>);
-
-impl<R: Runtime> PtyEvents for TauriEvents<R> {
-    fn output(&self, id: &str, data: String) {
-        let _ = self
-            .0
-            .emit(&events::output(id), events::OutputChunk { data });
-    }
-    fn exit(&self, payload: events::ExitPayload) {
-        let topic = events::exit(&payload.id);
-        let _ = self.0.emit(&topic, payload);
-    }
-    fn activity(&self, payload: events::ActivityPayload) {
-        let topic = events::activity(&payload.id);
-        let _ = self.0.emit(&topic, payload);
-    }
-    fn idle(&self, payload: events::IdlePayload) {
-        let _ = self.0.emit(events::AGENT_IDLE, payload);
-    }
-}
-
+/// Delivery to the pages over their IPC channels (`pages.rs`), what the real
+/// app uses. One `Pages` for the whole app, managed by Tauri, so every
+/// terminal's events reach a page through the same links, in the order the
+/// engine produced them.
 pub fn tauri_sink<R: Runtime>(app: &AppHandle<R>) -> Arc<dyn PtyEvents> {
-    Arc::new(TauriEvents(app.clone()))
+    app.state::<Arc<Pages>>().inner().clone()
 }
 
 /// Discards everything. Useful on paths where there is no window (tests, tools).
 pub struct NullEvents;
 
 impl PtyEvents for NullEvents {
-    fn output(&self, _id: &str, _data: String) {}
+    fn output(&self, _id: &str, _data: String) -> bool {
+        false
+    }
     fn exit(&self, _payload: events::ExitPayload) {}
     fn activity(&self, _payload: events::ActivityPayload) {}
     fn idle(&self, _payload: events::IdlePayload) {}
@@ -65,18 +52,20 @@ pub mod collect {
         pub output: Mutex<String>,
         pub exits: Mutex<Vec<events::ExitPayload>>,
         pub idles: Mutex<Vec<events::IdlePayload>>,
-        pub activities: Mutex<usize>,
+        /// Every `activity` heartbeat, in the order it went out.
+        pub beats: Mutex<Vec<events::ActivityPayload>>,
     }
 
     impl PtyEvents for Arc<CollectingEvents> {
-        fn output(&self, _id: &str, data: String) {
+        fn output(&self, _id: &str, data: String) -> bool {
             self.output.lock().push_str(&data);
+            true
         }
         fn exit(&self, payload: events::ExitPayload) {
             self.exits.lock().push(payload);
         }
-        fn activity(&self, _payload: events::ActivityPayload) {
-            *self.activities.lock() += 1;
+        fn activity(&self, payload: events::ActivityPayload) {
+            self.beats.lock().push(payload);
         }
         fn idle(&self, payload: events::IdlePayload) {
             self.idles.lock().push(payload);

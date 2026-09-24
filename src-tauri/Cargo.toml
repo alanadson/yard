@@ -9,7 +9,13 @@ license = "Apache-2.0"
 [lib]
 # The `_lib` suffix avoids a name clash with the Windows binary.
 name = "yard_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# Only `rlib`: the binary in main.rs links the library the ordinary way. The
+# Tauri template also lists `staticlib` and `cdylib`, which exist for the
+# mobile targets this app does not have. Here they were not free: every
+# rebuild of yard_lib archived the whole dependency graph into a 1.4 GB
+# `yard_lib.lib` and linked a `yard_lib.dll` nothing loads, about 8 s of the
+# dev loop and 138 MB more in every release build.
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -31,7 +37,18 @@ serde_json = "1"
 portable-pty = "0.9"
 rusqlite = { version = "0.32", features = ["bundled"] }
 which = "7"
-sysinfo = "0.32"
+# Process tree and RAM readings (process_tree.rs) and the OS name in support
+# bundles (support.rs) live in the `system` feature. The defaults also compile
+# disks, networks, components (WMI) and users, which nothing here reads, so
+# those stay off. `multithread` stays on, on purpose: the process refresh
+# (`ProcSnapshot::refresh_if_stale`, every 2 s from resources.rs) runs while
+# `state.procs` is locked, and the RAM gate on every agent spawn
+# (`pty::wait_for_memory`) and the no-job kill fallback wait on that same lock.
+# On one thread the scan takes ~35 ms on an idle machine and hundreds of ms,
+# sometimes seconds, under full CPU load (agents building in the terminals);
+# on the rayon pool it stays around 20 to 70 ms. The few ms of CPU a
+# single-threaded scan saves per tick are not worth a slower agent spawn.
+sysinfo = { version = "0.32", default-features = false, features = ["system", "multithread"] }
 notify = "7"
 notify-debouncer-mini = "0.5"
 dirs = "5"
@@ -84,6 +101,20 @@ tauri-plugin-single-instance = "2"
 [profile.dev]
 # a panic in a command becomes Err instead of taking the app down during HMR
 panic = "unwind"
+# File and line in every backtrace, but no variable info: with the full
+# debuginfo this 42k-line crate spent most of its codegen describing types,
+# and the linker most of its time merging a 276 MB PDB. Measured on a
+# 16-core machine, `tauri dev` rebuild after one changed line: 14 to 19 s
+# before, 7 to 8 s with this, the `rlib`-only crate type above and the
+# dependency setting below. Put `debug = 2` back here to step through
+# yard_lib in a debugger; the dependencies stay without.
+debug = "line-tables-only"
+
+# No debuginfo for the ~540 dependencies: the PDB drops from 276 MB to 70 MB
+# and the final link from 4 to 8 s to under 2 s. Stepping into dependency
+# code in a debugger is what this gives up.
+[profile.dev.package."*"]
+debug = false
 
 # One release profile, used by the launcher (scripts/yard.ps1) and by the
 # installer alike. There used to be a second, `release-fast`, for the everyday
@@ -99,11 +130,13 @@ panic = "unwind"
 #   lto = false,  codegen-units = 16, opt-level = 2       35s   <- this profile
 #
 # Nearly all of the old cost was one step: LTO over the whole 611-crate graph
-# on every link. Cross-crate LTO is worth having in what ships and worth
-# nothing on a machine where you rebuild twenty times an hour — so the release
-# workflow turns it back on with `CARGO_PROFILE_RELEASE_LTO=thin` (see
-# .github/workflows/release.yml), and here it stays off. The binary a developer
-# runs is ~27 MB instead of ~22 MB; the one that ships is unaffected.
+# on every link. Cross-crate LTO and a single codegen unit are worth having in
+# what ships and worth nothing on a machine where you rebuild twenty times an
+# hour, so the release workflow turns them back on with
+# `CARGO_PROFILE_RELEASE_LTO=thin` and `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1`
+# (see .github/workflows/release.yml), and here they stay off. `opt-level` is 2
+# in both. The binary a developer runs is ~27 MB, against ~22 MB for the old
+# fat-LTO, size-optimized profile.
 [profile.release]
 panic = "abort"
 lto = false

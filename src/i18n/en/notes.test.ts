@@ -12,6 +12,7 @@ import notes from "./notes";
 const VISIBLE = [
   // the palette row of the status bar
   "agentes, branch, fluxos e memória no rodapé",
+  "Tema, ícones e recursos do editor…",
   // NotesView rail and list
   "Todas as notas",
   "Cadernos",

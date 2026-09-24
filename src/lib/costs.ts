@@ -146,8 +146,11 @@ export function windowDays(opts: { days: number; now: Date }): string[] {
 
 /** The rows whose day falls inside the window. */
 export function filterRange(rows: readonly UsageRow[], opts: { days: number; now: Date }): UsageRow[] {
-  const first = windowDays(opts)[0];
-  return rows.filter((r) => r.day >= first);
+  const days = windowDays(opts);
+  const first = days[0];
+  const last = days[days.length - 1];
+  // Both ends: a row stamped after today (a clock that jumped) is not "Hoje".
+  return rows.filter((r) => r.day >= first && r.day <= last);
 }
 
 export interface DayPoint {

@@ -145,3 +145,18 @@ describe("formatting", () => {
     expect(projectLabel("")).toBe("(sem projeto)");
   });
 });
+
+describe("filterRange and a row from the future", () => {
+  const now = new Date(2026, 7, 26, 15, 0, 0); // 26 Aug 2026, local
+
+  /**
+   * The regression: only the lower bound was checked, so a row stamped with
+   * tomorrow's day (a clock that jumped, a machine in another zone) leaked
+   * into "Hoje" and "7 dias".
+   */
+  it("leaves out a row stamped after today, it belongs to no window", () => {
+    const rows = [row({ day: "2026-08-26" }), row({ day: "2026-08-27" })];
+    expect(filterRange(rows, { days: 1, now }).map((r) => r.day)).toEqual(["2026-08-26"]);
+    expect(filterRange(rows, { days: 7, now }).map((r) => r.day)).toEqual(["2026-08-26"]);
+  });
+});

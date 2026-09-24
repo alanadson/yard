@@ -15,6 +15,24 @@ import { t } from "./i18n";
 
 export type FlowItem = Extract<CanvasItem, { type: "flow" }>;
 
+export type PreparedFlowStages =
+  | { readonly valid: true; readonly stages: FlowStage[] }
+  | { readonly valid: false; readonly emptyIndexes: number[] };
+
+/** A draft is saved as a whole or refused as a whole. */
+export function prepareFlowStages(stages: FlowStage[]): PreparedFlowStages {
+  const emptyIndexes: number[] = [];
+  const clean = stages.map((stage, index) => {
+    const prompt = stage.prompt.trim();
+    if (!prompt) emptyIndexes.push(index);
+    const label = stage.label?.trim();
+    return { prompt, ...(label ? { label } : {}) };
+  });
+  return emptyIndexes.length
+    ? { valid: false, emptyIndexes }
+    : { valid: true, stages: clean };
+}
+
 export function flowsOf(c: CanvasData | undefined): FlowItem[] {
   return (c?.items ?? []).filter((i): i is FlowItem => i.type === "flow");
 }

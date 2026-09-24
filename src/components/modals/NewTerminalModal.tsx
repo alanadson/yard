@@ -46,9 +46,11 @@ import {
 } from "lucide-react";
 
 import { Modal } from "./Modal";
+import { gridNeighbor } from "./gridNavigation";
 import { Select } from "../Select";
 import { BrandIcon } from "../BrandIcon";
 import { useT } from "../../hooks/useT";
+import { reasonOf } from "../../lib/loading";
 import { defaultRoleOf, pickableAgents, titleFor } from "../../lib/agentDefaults";
 import { suggestBoardFolder } from "../../lib/boardFolder";
 import { brandById } from "../../lib/brands";
@@ -73,6 +75,9 @@ import { useUI } from "../../stores/uiStore";
 import { NO_WORKTREES, useWorktrees } from "../../stores/worktreesStore";
 
 interface Payload {
+  boardFolder?: string;
+  destination?: string | null;
+  activeChoice?: string | null;
   groupId?: string;
   slot?: number;
   /** Top-left of the card, when the gesture that opened this had a point. */
@@ -134,6 +139,7 @@ export function NewTerminalModal() {
   const t = useT();
   const closeModal = useUI((s) => s.closeModal);
   const openModal = useUI((s) => s.openModal);
+  const openChildModal = useUI((s) => s.openChildModal);
   const showToast = useUI((s) => s.showToast);
   const payload = useUI((s) => s.modalPayload) as Payload | null;
   const projects = useProjects((s) => s.projects);
@@ -155,6 +161,7 @@ export function NewTerminalModal() {
   /** Locks the grid while `is_directory` and the spawn resolve. */
   const [busy, setBusy] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
+  const [activeChoice, setActiveChoice] = useState<string | null>(payload?.activeChoice ?? null);
 
   /**
    * Where the tab is born: the group of the pane that asked, else the one in
@@ -191,7 +198,7 @@ export function NewTerminalModal() {
    * home folder (`lib/boardFolder.ts`), then typed or picked from the disk.
    * The offer only fills an empty field, so what the user typed survives it.
    */
-  const [boardFolder, setBoardFolder] = useState("");
+  const [boardFolder, setBoardFolder] = useState(payload?.boardFolder ?? "");
   useEffect(() => {
     if (!onBoard || !groupId) return;
     const known = suggestBoardFolder(useProjects.getState().terminalsOf(groupId), "");
@@ -246,7 +253,7 @@ export function NewTerminalModal() {
     });
   }, [targetProject, groups, worktrees]);
   /** `null` = the dialog has not been touched: follow the group in view. */
-  const [destPicked, setDestPicked] = useState<string | null>(null);
+  const [destPicked, setDestPicked] = useState<string | null>(payload?.destination ?? null);
   const destValue =
     destPicked && destinations.some((d) => d.value === destPicked)
       ? destPicked
@@ -268,7 +275,7 @@ export function NewTerminalModal() {
       // slow load rather than a failure.
       .catch((e) => {
         setShells([]);
-        setShellsError(String(e));
+        setShellsError(reasonOf(e));
       });
   }, []);
 
@@ -280,7 +287,7 @@ export function NewTerminalModal() {
       .then(setAgents)
       .catch((e) => {
         setAgents([]);
-        setAgentsError(String(e));
+        setAgentsError(reasonOf(e));
       })
       .finally(() => setLoadingAgents(false));
   };
@@ -357,6 +364,7 @@ export function NewTerminalModal() {
    */
   const destGroupId = onBoard ? null : (dest?.groupId ?? null);
   const groupFor = () => destGroupId ?? group?.id ?? addGroup(targetProject!.id);
+  const draftPayload = (choice = activeChoice) => ({ ...payload, boardFolder, destination: destPicked, activeChoice: choice });
 
   const createIt = async (recipient: Choice) => {
     if (busy || !recipient.available) return;
@@ -367,8 +375,7 @@ export function NewTerminalModal() {
     // "Nova frente…" is a door, not a destination: it hands the click to the
     // dialog that knows about branches and worktrees.
     if (destValue === NEW_FRONT && targetProject) {
-      closeModal();
-      openModal("new-floor", { projectId: targetProject.id });
+      openChildModal("new-floor", { projectId: targetProject.id, initialAgentId: recipient.kind === "agent" ? recipient.id : undefined }, draftPayload(`${recipient.kind}:${recipient.id}`));
       return;
     }
     // The notebook needs no project (it is global) and a board has none by
@@ -376,7 +383,7 @@ export function NewTerminalModal() {
     // forward is the other dialog, which answers the click instead of
     // scolding it.
     if (!onBoard && !targetProject && recipient.kind !== "notes") {
-      openModal("new-project");
+      openChildModal("new-project", undefined, draftPayload(`${recipient.kind}:${recipient.id}`));
       return;
     }
 
@@ -409,10 +416,7 @@ export function NewTerminalModal() {
       // own toolbar, so the dialog points there instead of opening a tab
       // nobody would ever see.
       if (onBoard) {
-        showToast(
-          t("Num quadro o navegador é um portal: use a ferramenta de portal na barra do quadro."),
-          "error",
-        );
+        openModal("new-portal", { groupId, x: payload?.x, y: payload?.y });
         return;
       }
       const target = groupFor();
@@ -575,9 +579,12 @@ export function NewTerminalModal() {
       ...(gridRef.current?.querySelectorAll<HTMLElement>(".quick-tile") ?? []),
     ];
     if (tiles.length === 0) return;
-    const at = tiles.indexOf(document.activeElement as HTMLElement);
-    const delta = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1;
-    tiles[(Math.max(0, at) + delta + tiles.length) % tiles.length]?.focus();
+    const active = (document.activeElement as HTMLElement)?.dataset.choice ?? tiles[0].dataset.choice!;
+    const next = gridNeighbor(tiles.map((tile) => {
+      const rect = tile.getBoundingClientRect();
+      return { id: tile.dataset.choice!, x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    }), active, e.key);
+    tiles.find((tile) => tile.dataset.choice === next)?.focus();
   };
 
   return (
@@ -586,7 +593,7 @@ export function NewTerminalModal() {
       onClose={closeModal}
       wide
       // The first tile, so `Enter` opens what the eye is already on.
-      initialFocus=".quick-tile"
+      initialFocus='.quick-tile[tabindex="0"]'
       footer={
         <div className="modal-foot-row">
           <span className="hint grow">
@@ -598,7 +605,7 @@ export function NewTerminalModal() {
           </span>
           <button
             className="btn btn--sm"
-            onClick={() => openModal("preferences", "agentes")}
+            onClick={() => openChildModal("preferences", "agentes", draftPayload())}
           >
             <Settings2 size={12} aria-hidden="true" /> {t("Configurar agentes")}
           </button>
@@ -618,7 +625,7 @@ export function NewTerminalModal() {
           <span>
             {t("Tudo aqui nasce dentro de um projeto (uma pasta do disco) — e ainda não há nenhum.")}
           </span>
-          <button className="btn btn--sm" onClick={() => openModal("new-project")}>
+          <button className="btn btn--sm" onClick={() => openChildModal("new-project", undefined, draftPayload())}>
             <FolderPlus size={12} /> {t("Adicionar projeto…")}
           </button>
         </div>
@@ -676,6 +683,8 @@ export function NewTerminalModal() {
           className={`icon-btn ${loadingAgents ? "is-busy" : ""}`}
           data-tip={t("Detectar de novo")}
           aria-label={t("Detectar CLIs de novo")}
+          aria-busy={loadingAgents}
+          disabled={loadingAgents}
           onClick={() => detect(true)}
         >
           <RefreshCw size={13} />
@@ -694,15 +703,23 @@ export function NewTerminalModal() {
               <div key={i} className="quick-tile quick-tile--skeleton" />
             ))
           : familias.map((f, fi) => (
-              <div className="quick-grid-familia" key={f.title} role="presentation">
-                <div className="quick-grid-sect">{f.title}</div>
+              <div
+                className="quick-grid-familia"
+                key={f.title}
+                role="group"
+                aria-labelledby={`quick-grid-section-${fi}`}
+              >
+                <div className="quick-grid-sect" id={`quick-grid-section-${fi}`}>
+                  {f.title}
+                </div>
                 {f.items.map((c, i) => (
                   <button
                     key={`${c.kind}:${c.id}`}
                     type="button"
                     data-choice={`${c.kind}:${c.id}`}
                     // One Tab stop for the whole grid; the arrows do the rest.
-                    tabIndex={fi === 0 && i === 0 ? 0 : -1}
+                    tabIndex={activeChoice ? (activeChoice === `${c.kind}:${c.id}` ? 0 : -1) : (fi === 0 && i === 0 ? 0 : -1)}
+                    onFocus={() => setActiveChoice(`${c.kind}:${c.id}`)}
                     // `aria-disabled`, not `disabled`: a CLI that is not
                     // installed still has something to say (it says why), and a
                     // truly disabled button answers no hover and no focus.
@@ -721,12 +738,12 @@ export function NewTerminalModal() {
       </div>
 
       {shellsError && (
-        <p className="hint hint--error">
+        <p className="hint hint--error" role="alert">
           {t("Não consegui listar os shells desta máquina: {error}", { error: shellsError })}
         </p>
       )}
       {agentsError && (
-        <p className="hint hint--error">
+        <p className="hint hint--error" role="alert">
           {t("A detecção falhou: {error}. Clique em detectar de novo.", { error: agentsError })}
         </p>
       )}

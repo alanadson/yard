@@ -93,6 +93,13 @@ export function SecTerminal({ fontes: fontList }: { fontes: Fonts }) {
         )}
       </p>
 
+      <GroupTitle>{t("Acessibilidade do terminal")}</GroupTitle>
+      <Card>
+        <SwitchRow pref="termScreenReader" label={t("Leitor de tela")}
+          desc={t("Expõe a saída do terminal para tecnologias assistivas. Pode aumentar o uso de memória.")} />
+        <SwitchRow pref="termAccessibleContrast" label={t("Contraste de texto acessível")}
+          desc={t("Ajusta cores de texto para contraste mínimo de 4,5:1, preservando os fundos ANSI.")} />
+      </Card>
       <GroupTitle>{t("Recursos do terminal")}</GroupTitle>
       <Card>
         <FeatureRow

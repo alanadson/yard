@@ -35,6 +35,10 @@ import {
 import { t } from "../lib/i18n";
 import { persistJsonPref, type PrefsSnapshot } from "../lib/prefs";
 import { rootKey } from "../lib/roots";
+import { ReadCoordinator } from "../lib/readCoordinator";
+
+const headerReads = new ReadCoordinator();
+const historyReads = new ReadCoordinator();
 
 /** The tab's sections. The order is that of the segmented bar. */
 export type ScmSection = "changes" | "history" | "branches" | "stash";
@@ -107,7 +111,7 @@ interface ScmState {
    * asking for all four meant paying for three `git` processes per section
    * nobody is looking at, on every write and every tick of the watcher.
    */
-  refresh: (root: string) => Promise<void>;
+  refresh: (root: string, force?: boolean) => Promise<void>;
   loadLog: (root: string, more: boolean) => Promise<void>;
   /** The history of a single file — the same list, filtered and closed. */
   loadFileLog: (root: string, path: string) => Promise<void>;
@@ -183,71 +187,93 @@ export const useScm = create<ScmState>((set, get) => ({
 
   repoOf: (root) => (root ? (get().byRoot[rootKey(root)] ?? EMPTY) : EMPTY),
 
-  refresh: async (root) => {
-    patch(set, root, { loading: true });
+  refresh: (root, force = false) => {
+    if (force) headerReads.invalidate(rootKey(root));
     // Only what the section on screen draws.
     //
     // On Windows, spawning a `git` costs ~35 ms before it does anything at
     // all, and the three lists (branches, stashes, tags) feed sections that
     // are almost never open. Since every write ends here and the watcher
     // fires another `refresh` every time `git status` moves, that was ~110 ms
-    // of process thrown away per click — and per keystroke of an agent that
+    // of process thrown away per click , and per keystroke of an agent that
     // is saving a file.
     const section = get().section;
-    try {
-      // In parallel: they are short, independent `git` processes, and waiting
-      // for one after the other is what made the tab flicker on open.
-      const [info, branches, stashes, tags] = await Promise.all([
-        ipc.scmInfo(root),
-        section === "branches"
-          ? ipc.scmBranches(root).catch(() => [] as ScmBranch[])
-          : null,
-        section === "stash" ? ipc.scmStashList(root).catch(() => [] as ScmStash[]) : null,
-        section === "branches" ? ipc.scmTags(root).catch(() => [] as ScmTag[]) : null,
-      ]);
-      patch(set, root, {
-        info,
-        loading: false,
-        error: null,
-        // `null` here is "did not ask", not "there is none": overwriting with
-        // an empty list would wipe from the screen what the section just drew.
-        ...(branches ? { branches } : {}),
-        ...(stashes ? { stashes } : {}),
-        ...(tags ? { tags } : {}),
-      });
-    } catch (e) {
-      patch(set, root, { loading: false, error: String(e) });
-    }
+    return headerReads.run(
+      rootKey(root),
+      section,
+      async () => {
+        patch(set, root, { loading: true });
+        // In parallel: they are short, independent `git` processes, and waiting
+        // for one after the other is what made the tab flicker on open.
+        return Promise.all([
+          ipc.scmInfo(root),
+          section === "branches"
+            ? ipc.scmBranches(root).catch(() => [] as ScmBranch[])
+            : null,
+          section === "stash"
+            ? ipc.scmStashList(root).catch(() => [] as ScmStash[])
+            : null,
+          section === "branches"
+            ? ipc.scmTags(root).catch(() => [] as ScmTag[])
+            : null,
+        ]);
+      },
+      ([info, branches, stashes, tags]) => {
+        patch(set, root, {
+          info,
+          loading: false,
+          error: null,
+          // `null` here is "did not ask", not "there is none": overwriting with
+          // an empty list would wipe from the screen what the section just drew.
+          ...(branches ? { branches } : {}),
+          ...(stashes ? { stashes } : {}),
+          ...(tags ? { tags } : {}),
+        });
+      },
+      (e) => {
+        patch(set, root, { loading: false, error: String(e) });
+      },
+    );
   },
 
-  loadLog: async (root, more) => {
+  loadLog: (root, more) => {
     const currentValue = get().repoOf(root);
     const skip = more ? currentValue.commits.length : 0;
-    try {
-      const page = await ipc.scmLog(root, { limit: LOG_PAGE, skip });
-      patch(set, root, (prev) => ({
-        commits: more ? [...prev.commits, ...page] : page,
-        // A page smaller than requested = the end. It is the only signal git gives.
-        logDone: page.length < LOG_PAGE,
-        error: null,
-      }));
-    } catch (e) {
-      patch(set, root, { error: String(e) });
-    }
+    return historyReads.run(
+      rootKey(root),
+      `${more ? "more" : "all"}:${skip}`,
+      () => ipc.scmLog(root, { limit: LOG_PAGE, skip }),
+      (page) => {
+        patch(set, root, (prev) => ({
+          commits: more ? [...prev.commits, ...page] : page,
+          // A page smaller than requested = the end. It is the only signal git gives.
+          logDone: page.length < LOG_PAGE,
+          error: null,
+        }));
+      },
+      (e) => {
+        patch(set, root, { error: String(e) });
+      },
+    );
   },
 
-  loadFileLog: async (root, path) => {
-    try {
-      const commits = await ipc.scmLog(root, { limit: LOG_PAGE, path });
-      // Closed on purpose: asking for "more" with the filter lost would bring
-      // the whole repository's history on top of the file's.
-      patch(set, root, { commits, logDone: true, error: null });
-    } catch (e) {
-      patch(set, root, { error: String(e) });
-    }
-  },
+  loadFileLog: (root, path) =>
+    historyReads.run(
+      rootKey(root),
+      `file:${path}`,
+      () => ipc.scmLog(root, { limit: LOG_PAGE, path }),
+      (commits) => {
+        // Closed on purpose: asking for "more" with the filter lost would bring
+        // the whole repository's history on top of the file's.
+        patch(set, root, { commits, logDone: true, error: null });
+      },
+      (e) => {
+        patch(set, root, { error: String(e) });
+      },
+    ),
 
   run: async (root, label, fn) => {
+    const { projectId } = get();
     patch(set, root, { busy: label, error: null });
     try {
       await fn();
@@ -256,6 +282,7 @@ export const useScm = create<ScmState>((set, get) => ({
       patch(set, root, { busy: null, error: message });
       return message;
     }
+    historyReads.invalidate(rootKey(root));
     patch(set, root, (prev) => ({ busy: null, version: prev.version + 1 }));
     // Both in parallel: they are independent reads, and one waiting for the
     // other added the whole `git status` (~170 ms in a big repository) to the
@@ -263,9 +290,8 @@ export const useScm = create<ScmState>((set, get) => ({
     //
     // The `git status` that feeds the file list belongs to another store;
     // without this push the list would only update on the watcher's next event.
-    const { projectId } = get();
     await Promise.all([
-      get().refresh(root),
+      get().refresh(root, true),
       projectId ? refreshChanges(projectId, root) : Promise.resolve(),
     ]);
     return null;

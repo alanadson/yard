@@ -766,8 +766,9 @@ fn scope_of(s: &str) -> Result<Scope, String> {
 
 fn installed_ids(app: &AppHandle) -> Vec<String> {
     let state = app.state::<Arc<AppState>>();
-    let cached = state.agents_cache.lock().clone();
-    let agents = cached.unwrap_or_else(crate::agents::resolver::detect_all);
+    let agents = state
+        .agents_cache
+        .get(false, crate::agents::resolver::detect_all);
     agents.into_iter().filter(|a| a.installed).map(|a| a.id).collect()
 }
 

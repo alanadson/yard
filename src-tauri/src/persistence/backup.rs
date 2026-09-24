@@ -10,9 +10,12 @@
 //! `YARD_DATA_DIR`, and cargo runs tests in parallel — so the tests drive
 //! their own directory instead of fighting over an env var.
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
+use std::io::{BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use parking_lot::{Mutex, ReentrantMutex};
 use rusqlite::Connection;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
@@ -20,16 +23,100 @@ use zip::{ZipArchive, ZipWriter};
 /// Builds a `.zip` with the database and every scrollback `.bin`.
 /// Returns the path written.
 ///
-/// Takes the **live connection** because of the WAL: see `export_in`. The
-/// caller holds the database lock for the whole export, which is also what
-/// keeps a write from landing between the checkpoint and the copy.
-pub fn export(conn: &Connection, dest: &Path) -> anyhow::Result<PathBuf> {
-    export_in(&crate::paths::app_dir(), conn, dest)
+/// Takes the **locked connection**, not a bare one, because the lock is only
+/// needed for part of the job: see `export_in`.
+pub fn export(db: &Mutex<Connection>, dest: &Path) -> anyhow::Result<PathBuf> {
+    export_in(&crate::paths::app_dir(), db, dest)
 }
 
 /// `pub(super)`: the automatic backup (`autobackup.rs`) writes through the
 /// same path, so a WAL checkpoint is never skipped by the scheduled copy.
-pub(super) fn export_in(app_dir: &Path, conn: &Connection, dest: &Path) -> anyhow::Result<PathBuf> {
+///
+/// The database lock is held for the checkpoint and a plain copy of `app.db`,
+/// and released before anything is compressed. It used to cover the whole
+/// zip, scrollbacks included (up to 8 MB each), and every autosave and
+/// preference write queued behind it for seconds. The scrollbacks were never
+/// protected by this lock anyway: the PTY engine writes them on its own.
+pub(super) fn export_in(
+    app_dir: &Path,
+    db: &Mutex<Connection>,
+    dest: &Path,
+) -> anyhow::Result<PathBuf> {
+    let _turn = TURN.lock();
+    // Under the turn no export of ours is in flight, so any scratch copy found
+    // here was orphaned by a power cut or an OS crash. Swept before the
+    // database lock, so the locked window does not grow.
+    sweep_orphan_copies(app_dir);
+    let copy = {
+        let conn = db.lock();
+        copy_db_in(app_dir, &conn)?
+    };
+    zip_in(app_dir, copy, dest)
+}
+
+/// Removes the scratch copies (`copy_db_in`) that outlived their handle.
+/// `FILE_FLAG_DELETE_ON_CLOSE` lives in memory only: a power cut or a BSOD
+/// during the zip leaves the file behind, under a pid and a counter no later
+/// process reuses. Errors are ignored: a leftover that will not go must never
+/// fail the backup, and the next export tries again. A copy another process
+/// still holds open is only marked for deletion (it was opened with delete
+/// sharing), so its handle keeps reading.
+fn sweep_orphan_copies(app_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(app_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_name().to_str().is_some_and(is_scratch_name) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Start of every scratch copy's name: `app.db.backup-<pid>-<seq>.tmp`.
+const SCRATCH_PREFIX: &str = "app.db.backup-";
+
+/// Is `name` exactly the shape `copy_db_in` writes? Only those are the sweep's
+/// to delete, whatever else sits in the data folder.
+fn is_scratch_name(name: &str) -> bool {
+    let Some(stamp) = name
+        .strip_prefix(SCRATCH_PREFIX)
+        .and_then(|rest| rest.strip_suffix(".tmp"))
+    else {
+        return false;
+    };
+    let number = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    matches!(stamp.split_once('-'), Some((pid, seq)) if number(pid) && number(seq))
+}
+
+/// One backup at a time. The database lock used to give that for free, held
+/// from the first byte of the zip to the last; now that it covers only the
+/// copy, two exports aimed at the same file would write it side by side into
+/// one corrupt zip. This lock keeps them in turn, and only them: database
+/// commands never wait on it. Reentrant because the automatic backup holds
+/// it across its export and its pruning (`autobackup::run_in`), the whole
+/// run the database lock used to cover. The exit waits on it too
+/// (`wait_for_exports`), as it used to wait on the database lock.
+pub(super) static TURN: ReentrantMutex<()> = parking_lot::const_reentrant_mutex(());
+
+/// Blocks until no export is in flight, manual or automatic, the automatic
+/// run's pruning included. For the exit path: the process exit would kill a
+/// zip halfway and leave it with no central directory, and the database lock,
+/// which used to cover the whole export, is what made the exit wait before.
+/// One uncontended lock when no backup is running.
+pub(crate) fn wait_for_exports() {
+    drop(TURN.lock());
+}
+
+/// `app.db` as it stood right after a WAL checkpoint, in a scratch file that
+/// the operating system removes as soon as it is closed (see `scratch_file`).
+/// `None` inside when there was no `app.db` to copy.
+pub(super) struct DbCopy(Option<File>);
+
+/// Phase one, **under the database lock**: checkpoint, then copy. The copy is
+/// what makes releasing the lock safe: a write that lands afterwards goes to
+/// the live database, never into the backup, so the zip still carries one
+/// consistent moment, the same bytes the old single-phase export zipped.
+pub(super) fn copy_db_in(app_dir: &Path, conn: &Connection) -> anyhow::Result<DbCopy> {
     // The database is in WAL, so a commit lives in `app.db-wal` until a
     // checkpoint moves it into `app.db` — and only `app.db` goes into the zip.
     // This line used to be a comment claiming a checkpoint had happened;
@@ -42,6 +129,62 @@ pub(super) fn export_in(app_dir: &Path, conn: &Connection, dest: &Path) -> anyho
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
         .map_err(|e| anyhow::anyhow!("nao consegui esvaziar o WAL antes do backup: {e}"))?;
 
+    let db = app_dir.join("app.db");
+    if !db.exists() {
+        return Ok(DbCopy(None));
+    }
+    // Same volume as the database, so the copy is a fast disk-to-disk move;
+    // pid plus a counter, so two exports in flight never share a scratch file.
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let scratch = app_dir.join(format!(
+        "{SCRATCH_PREFIX}{}-{}.tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut file = scratch_file(&scratch)?;
+    // A wide buffer: this runs with the lock held, and 8 KB reads would make
+    // the copy, not the disk, the slow part.
+    std::io::copy(&mut BufReader::with_capacity(1 << 20, File::open(&db)?), &mut file)?;
+    file.seek(SeekFrom::Start(0))?;
+    Ok(DbCopy(Some(file)))
+}
+
+/// A read-write file that deletes itself when its handle closes, so a copy of
+/// the whole database never lingers beside the real one: not after an error,
+/// not after a crash halfway through the zip. A power cut or an OS crash does
+/// leave it behind (the flag lives in memory); the next export sweeps it
+/// (`sweep_orphan_copies`).
+#[cfg(windows)]
+fn scratch_file(path: &Path) -> std::io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_DELETE_ON_CLOSE: u32 = 0x0400_0000;
+    // `truncate`, not `create_new`: a scratch file can only outlive its
+    // handle through a power cut, and Windows reuses pids, so a leftover with
+    // this very name must be taken over instead of failing the backup.
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(FILE_FLAG_DELETE_ON_CLOSE)
+        .open(path)
+}
+
+/// Same promise elsewhere: an unlinked file lives exactly as long as its handle.
+#[cfg(not(windows))]
+fn scratch_file(path: &Path) -> std::io::Result<File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
+    std::fs::remove_file(path)?;
+    Ok(file)
+}
+
+/// Phase two, **without the lock**: the zip, from the copy and the scrollbacks.
+pub(super) fn zip_in(app_dir: &Path, copy: DbCopy, dest: &Path) -> anyhow::Result<PathBuf> {
     let file = File::create(dest)?;
     let mut zip = ZipWriter::new(file);
     let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
@@ -50,10 +193,9 @@ pub(super) fn export_in(app_dir: &Path, conn: &Connection, dest: &Path) -> anyho
     // into a `Vec` in full before going into the zip, and this app's whole
     // point is keeping the CLIs' history — a few dozen terminals at 4 MB each
     // is a peak of memory nobody asked for.
-    let db = app_dir.join("app.db");
-    if db.exists() {
+    if let DbCopy(Some(mut db)) = copy {
         zip.start_file("app.db", opts)?;
-        std::io::copy(&mut File::open(&db)?, &mut zip)?;
+        std::io::copy(&mut db, &mut zip)?;
     }
 
     let sb_dir = app_dir.join("scrollback");
@@ -274,8 +416,9 @@ mod tests {
     }
 
     /// Opens a WAL database in `dir` and writes one row **without closing it** —
-    /// exactly the state the app is in when someone asks for a backup.
-    fn live_db(dir: &Path, value: &str) -> Connection {
+    /// exactly the state the app is in when someone asks for a backup, down to
+    /// the mutex `AppState` keeps it behind.
+    fn live_db(dir: &Path, value: &str) -> Mutex<Connection> {
         let conn = Connection::open(dir.join("app.db")).unwrap();
         conn.pragma_update(None, "journal_mode", "WAL").unwrap();
         conn.pragma_update(None, "synchronous", "NORMAL").unwrap();
@@ -287,7 +430,243 @@ mod tests {
             [value],
         )
         .unwrap();
-        conn
+        Mutex::new(conn)
+    }
+
+    fn rev_in(conn: &Connection) -> String {
+        conn.query_row("SELECT value FROM kv WHERE key = 'workspace_rev'", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// Everything in `dir`, by name, sorted.
+    fn listing(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// The reason the lock got narrower: compressing every scrollback (up to
+    /// 8 MB each) used to happen with the database locked, and every autosave
+    /// and preference write queued behind it for seconds. Now the lock covers
+    /// the checkpoint and the copy only, so a write can land while the zip is
+    /// still being built. It must not have to wait for it, and it must not
+    /// leak into it: the backup is the database as of the copy. The write is
+    /// checkpointed into `app.db` itself, so a zip that read the live file
+    /// instead of the copy would carry it.
+    #[test]
+    fn a_write_that_lands_while_the_zip_is_built_neither_waits_nor_leaks_into_it() {
+        let app = temp_dir("fatia");
+        let db = live_db(&app, "42");
+
+        let copy = copy_db_in(&app, &db.lock()).unwrap();
+
+        let live = db.try_lock().expect("the lock is free once the copy is taken");
+        live.execute("UPDATE kv SET value = '43' WHERE key = 'workspace_rev'", [])
+            .unwrap();
+        live.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        // Still held by "the autosave" while the zip is written: the zip does
+        // not need the connection at all.
+        let zip = app.join("backup.zip");
+        zip_in(&app, copy, &zip).unwrap();
+        assert_eq!(rev_in(&live), "43");
+        drop(live);
+
+        let restored = db_from_zip(&zip, &app);
+        assert_eq!(rev_in(&restored), "42");
+
+        drop(restored);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&app);
+    }
+
+    /// Exports used to be serialized by the database lock they held from start
+    /// to finish. With the lock down to the copy, two of them aimed at the
+    /// same file (the timer's `yard-auto-<minute>.zip` asked for twice within
+    /// a minute, after a reload reset the front end's own guard) would write
+    /// their bytes into it side by side. They take turns instead, so the file
+    /// is always one whole zip.
+    #[test]
+    fn exports_aimed_at_the_same_file_take_turns_instead_of_interleaving() {
+        let app = temp_dir("vez");
+        let db = live_db(&app, "42");
+        let sb = app.join("scrollback");
+        std::fs::create_dir_all(&sb).unwrap();
+        let mut seed: u64 = 7;
+        for k in 0..2 {
+            let bytes: Vec<u8> = (0..400_000)
+                .map(|_| {
+                    seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    (seed >> 56) as u8
+                })
+                .collect();
+            std::fs::write(sb.join(format!("t{k}.bin")), bytes).unwrap();
+        }
+
+        // Each run sees a different database (an autosave landed in between),
+        // so two of them mixed in one file cannot pass for either.
+        let zip = app.join("backup.zip");
+        std::thread::scope(|s| {
+            for run in 0..4 {
+                let (app, db, zip) = (&app, &db, &zip);
+                s.spawn(move || {
+                    db.lock()
+                        .execute(
+                            "UPDATE kv SET value = ?1 WHERE key = 'workspace_rev'",
+                            [format!("rodada {run} {}", "x".repeat(run * 500))],
+                        )
+                        .unwrap();
+                    export_in(app, db, zip).unwrap();
+                });
+            }
+        });
+
+        let mut archive = ZipArchive::new(File::open(&zip).unwrap()).expect("one whole zip");
+        let mut names = Vec::new();
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).unwrap();
+            names.push(entry.name().to_string());
+            // Reading to the end checks the CRC of every entry.
+            std::io::copy(&mut entry, &mut std::io::sink()).expect("an entry intact");
+        }
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "app.db",
+                "scrollback/t0.bin",
+                "scrollback/t1.bin"
+            ]
+        );
+
+        drop(archive);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&app);
+    }
+
+    /// The regression that motivated the fix: the database lock used to cover
+    /// the whole zip, and every way out of the app had to take that lock, so
+    /// Yard could not exit halfway through a backup. With the lock narrowed to
+    /// the copy, nothing on the exit path waited for the zip, and closing Yard
+    /// mid-backup cut it off before its central directory. The exit waits for
+    /// the export's turn to end instead, as it used to wait for the lock.
+    #[test]
+    fn the_exit_waits_for_an_export_that_is_still_zipping() {
+        use std::sync::mpsc::{self, RecvTimeoutError};
+        use std::time::Duration;
+        let (held_tx, held_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let export = std::thread::spawn(move || {
+            let _turn = TURN.lock();
+            held_tx.send(()).unwrap();
+            // "Still zipping" until the test says otherwise.
+            let _ = release_rx.recv();
+        });
+        held_rx.recv().unwrap();
+        let (done_tx, done_rx) = mpsc::channel();
+        let exit = std::thread::spawn(move || {
+            wait_for_exports();
+            let _ = done_tx.send(());
+        });
+        // An absence check needs a bound. Its length can only make a wait that
+        // does not wait easier to catch; it never makes the real one flaky,
+        // since the export is not released before it runs out.
+        assert!(
+            matches!(
+                done_rx.recv_timeout(Duration::from_millis(300)),
+                Err(RecvTimeoutError::Timeout)
+            ),
+            "the exit went ahead while an export was still being written"
+        );
+        release_tx.send(()).unwrap();
+        done_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the exit goes ahead once the export is done");
+        export.join().unwrap();
+        exit.join().unwrap();
+    }
+
+    /// The copy is a whole database file sitting beside the real one. It is
+    /// scratch for the zip and nothing else, so it goes away with the export,
+    /// whether the zip got written or not.
+    #[test]
+    fn the_database_copy_does_not_outlive_the_export() {
+        let app = temp_dir("copia");
+        let db = live_db(&app, "42");
+        let before = listing(&app);
+
+        let zip = app.join("backup.zip");
+        export_in(&app, &db, &zip).unwrap();
+        let mut expected = before.clone();
+        expected.push("backup.zip".to_string());
+        expected.sort();
+        assert_eq!(listing(&app), expected);
+
+        let copy = copy_db_in(&app, &db.lock()).unwrap();
+        let nowhere = app.join("nao-existe").join("backup.zip");
+        assert!(zip_in(&app, copy, &nowhere).is_err());
+        assert_eq!(listing(&app), expected);
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&app);
+    }
+
+    /// The regression that motivated the fix: the scratch copy of `app.db` is
+    /// deleted only when its handle closes, so a power cut or a BSOD during
+    /// the zip leaves it on disk, under a pid and a counter no later process
+    /// reuses. Each such crash left another full copy of the database beside
+    /// the real one for good. The next export sweeps them.
+    #[test]
+    fn a_scratch_copy_left_by_a_crash_is_swept_by_the_next_export() {
+        let app = temp_dir("sobra");
+        let db = live_db(&app, "42");
+        let before = listing(&app);
+        std::fs::write(app.join("app.db.backup-1-0.tmp"), vec![0u8; 4096]).unwrap();
+        std::fs::write(app.join("app.db.backup-99999-7.tmp"), b"x").unwrap();
+
+        let zip = app.join("backup.zip");
+        export_in(&app, &db, &zip).unwrap();
+
+        let mut expected = before.clone();
+        expected.push("backup.zip".to_string());
+        expected.sort();
+        assert_eq!(listing(&app), expected);
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&app);
+    }
+
+    /// The sweep runs in the folder where the user's real work lives, so it
+    /// deletes only the names `copy_db_in` writes (a pid and a counter), the
+    /// same rule the retention pass follows: a file someone parked there
+    /// under a look-alike name is not ours to remove.
+    #[test]
+    fn the_sweep_leaves_look_alike_names_it_did_not_write() {
+        let app = temp_dir("parecido");
+        let db = live_db(&app, "42");
+        let strangers = [
+            "app.db.backup-antes-da-migracao.tmp",
+            "app.db.backup-.tmp",
+            "app.db.backup-12.tmp",
+            "app.db.backup-1-2-3.tmp",
+            "app.db.backup-1-x.tmp",
+        ];
+        for name in strangers {
+            std::fs::write(app.join(name), b"not a scratch copy").unwrap();
+        }
+
+        export_in(&app, &db, &app.join("backup.zip")).unwrap();
+
+        let left = listing(&app);
+        for name in strangers {
+            assert!(left.iter().any(|n| n == name), "{name} was swept: {left:?}");
+        }
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&app);
     }
 
     /// Reads `app.db` out of the zip into `dir` and opens it.
@@ -321,6 +700,50 @@ mod tests {
         assert_eq!(rev, "42");
 
         drop(restored);
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&app);
+    }
+
+    /// What a backup is made of, locked before the database lock was narrowed
+    /// to the checkpoint and the copy: `app.db` first, byte for byte the file
+    /// the checkpoint left on disk, then every `scrollback/*.bin` untouched,
+    /// all deflated, and nothing else from the data directory.
+    #[test]
+    fn the_zip_holds_the_checkpointed_db_then_every_scrollback_and_nothing_else() {
+        let app = temp_dir("conteudo");
+        let conn = live_db(&app, "42");
+        let sb = app.join("scrollback");
+        std::fs::create_dir_all(&sb).unwrap();
+        std::fs::write(sb.join("t1.bin"), b"historico um").unwrap();
+        std::fs::write(sb.join("t2.bin"), vec![7u8; 64 * 1024]).unwrap();
+        std::fs::write(sb.join("leiame.txt"), b"nao entra").unwrap();
+
+        let zip = app.join("backup.zip");
+        export_in(&app, &conn, &zip).unwrap();
+
+        let mut archive = ZipArchive::new(File::open(&zip).unwrap()).unwrap();
+        let names: Vec<String> = (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .collect();
+        assert_eq!(names.first().map(String::as_str), Some("app.db"));
+        let mut rest = names[1..].to_vec();
+        rest.sort();
+        assert_eq!(rest, vec!["scrollback/t1.bin", "scrollback/t2.bin"]);
+
+        let read = |archive: &mut ZipArchive<File>, name: &str| {
+            let mut entry = archive.by_name(name).unwrap();
+            assert_eq!(entry.compression(), zip::CompressionMethod::Deflated);
+            let mut out = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut out).unwrap();
+            out
+        };
+        // Nothing was written after the export, so the file on disk is still
+        // exactly what the checkpoint produced.
+        assert_eq!(read(&mut archive, "app.db"), std::fs::read(app.join("app.db")).unwrap());
+        assert_eq!(read(&mut archive, "scrollback/t1.bin"), b"historico um");
+        assert_eq!(read(&mut archive, "scrollback/t2.bin"), vec![7u8; 64 * 1024]);
+
+        drop(archive);
         drop(conn);
         let _ = std::fs::remove_dir_all(&app);
     }

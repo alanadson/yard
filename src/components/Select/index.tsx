@@ -26,6 +26,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronsUpDown } from "lucide-react";
+import { selectTabTarget, selectTypeahead } from "./keyboard";
 
 export interface SelectOption {
   value: string;
@@ -40,6 +41,8 @@ interface Props {
   options: SelectOption[];
   onChange: (value: string) => void;
   id?: string;
+  "aria-invalid"?: boolean;
+  "aria-describedby"?: string;
   /** Extra class on the trigger, for callers that reshape the control. */
   className?: string;
   /** Accessible name, for triggers with no visible `<label>` around them. */
@@ -93,6 +96,8 @@ export function Select({
   options,
   onChange,
   id,
+  "aria-invalid": invalid,
+  "aria-describedby": describedBy,
   className,
   label,
   placeholder,
@@ -106,6 +111,7 @@ export function Select({
   const anchor = useRef<DOMRect | null>(null);
   /** The highlight moved by key, not by hover — see the scroll effect. */
   const byKey = useRef(false);
+  const typed = useRef({ text: "", at: 0 });
   const listId = useId();
 
   const [pos, setPos] = useState<Pos | null>(null);
@@ -122,6 +128,7 @@ export function Select({
   }, []);
 
   const openList = () => {
+    typed.current = { text: "", at: 0 };
     const rect = trigger.current?.getBoundingClientRect();
     if (!rect) return;
     anchor.current = rect;
@@ -210,7 +217,16 @@ export function Select({
   };
 
   const onListKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key === "Escape" || e.key === "Tab") {
+    if (e.key === "Tab" && trigger.current) {
+      const dialog = trigger.current.closest('.modal, .settings');
+      const scope = dialog ?? document.body;
+      const items = [...scope.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea, [tabindex]')]
+        .filter((el) => el.tabIndex >= 0 && !el.matches(":disabled") && el.getClientRects().length > 0 && !list.current?.contains(el));
+      const target = selectTabTarget(items, trigger.current, e.shiftKey, !!dialog);
+      e.stopPropagation();
+      closeList();
+      if (target) { e.preventDefault(); target.focus(); }
+    } else if (e.key === "Escape") {
       // Without the `stopPropagation` the `Escape` would reach the Modal's
       // window listener and close the whole dialog along with the list.
       e.preventDefault();
@@ -232,6 +248,12 @@ export function Select({
       e.preventDefault();
       const option = enabled.find((o) => o.value === activeValue);
       if (option) pick(option);
+    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      const result = selectTypeahead(options, activeValue, e.key, typed.current, Date.now());
+      typed.current = result;
+      highlight(options.find((option) => option.value === result.value));
     }
   };
 
@@ -251,6 +273,7 @@ export function Select({
       id={`${listId}-${index}`}
       type="button"
       role="option"
+      tabIndex={-1}
       data-value={option.value}
       aria-selected={option.value === value}
       disabled={option.disabled}
@@ -280,6 +303,8 @@ export function Select({
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
         aria-label={label}
+        aria-invalid={invalid}
+        aria-describedby={describedBy}
         data-tip={tip}
         onClick={() => (open ? closeList() : openList())}
         onKeyDown={(e) => {

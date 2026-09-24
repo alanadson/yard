@@ -236,6 +236,19 @@ describe("creation", () => {
     const b = useNotes.getState().createNote();
     expect(useNotes.getState().notes.find((n) => n.id === b)!.status).toBe("none");
   });
+
+  /**
+   * The regression: the status was forced to "none" but the collection stayed
+   * on "done", whose list only shows finished notes, so the note the user had
+   * just created was nowhere on screen.
+   */
+  it("in a resolved-status collection moves to 'all', so the new note is on screen", () => {
+    for (const status of ["done", "dropped"] as const) {
+      useNotes.getState().select({ kind: "status", status });
+      useNotes.getState().createNote();
+      expect(useNotes.getState().collection).toEqual({ kind: "all" });
+    }
+  });
 });
 
 describe("trash", () => {

@@ -165,6 +165,26 @@ describe("notices (toasts)", () => {
     useUI.getState().dismissToast(target);
     expect(useUI.getState().toasts.map((t) => t.message)).toEqual(["fica"]);
   });
+
+  /**
+   * The 4 s timer of a notice the user already closed still fires. It used to
+   * build a fresh (identical) array anyway, and every component subscribed to
+   * `toasts` rendered again for nothing.
+   */
+  it("dismissing a notice that is no longer on screen leaves the state untouched", () => {
+    useUI.getState().showToast("fica", "error");
+    const before = useUI.getState();
+    useUI.getState().dismissToast(before.toasts[0].id + 1000);
+    expect(useUI.getState()).toBe(before);
+    expect(useUI.getState().toasts).toBe(before.toasts);
+  });
+
+  it("clearing an already empty stack leaves the state untouched", () => {
+    useUI.setState({ toasts: [], toastOverflow: 0 });
+    const before = useUI.getState();
+    useUI.getState().dismissToast();
+    expect(useUI.getState()).toBe(before);
+  });
 });
 
 /**
@@ -417,5 +437,20 @@ describe("panel floors", () => {
   ])("the %s floor in the sheet is the number the collapse math subtracts", (_name, selector, min) => {
     const css = selector === ".sidebar" ? bootCss : selector === ".changes" ? changesCss : benchCss;
     expect(px(block(css, selector), "min-width")).toBe(min);
+  });
+});
+
+describe("notices (toasts) over a stack of errors", () => {
+  beforeEach(() => useUI.setState({ toasts: [] }));
+
+  /**
+   * The regression: with three sticky errors on the stack, the search for an
+   * informational notice to evict found the newcomer itself, and the fourth
+   * notice was dropped before anyone saw it.
+   */
+  it("the notice that just arrived is never the one evicted", () => {
+    for (const m of ["e1", "e2", "e3"]) useUI.getState().showToast(m, "error");
+    useUI.getState().showToast("info");
+    expect(useUI.getState().toasts.map((t) => t.message)).toEqual(["e2", "e3", "info"]);
   });
 });

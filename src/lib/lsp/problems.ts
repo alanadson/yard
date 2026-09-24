@@ -114,10 +114,33 @@ export function receive(
       });
     }
   }
+  const raw = Array.isArray(diagnostics) ? diagnostics : [];
+  // Servers report every file they compile, clean ones included, and
+  // republish the same list after each edit: news that changes nothing keeps
+  // the same state, so nobody subscribed to it renders again.
+  const had = state[uri];
+  if (problems.length === 0 ? !had : had && sameFile(had, root, path, raw)) {
+    return state;
+  }
   const next = { ...state };
   if (problems.length === 0) delete next[uri];
-  else next[uri] = { root, path, problems, raw: Array.isArray(diagnostics) ? diagnostics : [] };
+  else next[uri] = { root, path, problems, raw };
   return next;
+}
+
+/**
+ * Would storing this report leave the file's entry as it is? The rows derive
+ * from the raw entries, so those decide, compared whole: a quick fix is looked
+ * up by fields (`code`, `data`) the rows never keep.
+ */
+function sameFile(had: FileProblems, root: string, path: string, raw: unknown[]): boolean {
+  if (had.root !== root || had.path !== path || had.raw.length !== raw.length) return false;
+  try {
+    return JSON.stringify(had.raw) === JSON.stringify(raw);
+  } catch {
+    // A foreign payload that cannot be serialised is taken as news.
+    return false;
+  }
 }
 
 /** The servers of `root` are gone; so are the problems they reported. */

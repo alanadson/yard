@@ -1,5 +1,22 @@
 import type { EditorView } from "@codemirror/view";
 
+/** Own host references without clearing a view installed by a later mount. */
+export function ownSurface<T extends { destroy: () => void }>(
+  view: T,
+  holders: { current: T | null }[],
+): () => void {
+  for (const holder of holders) holder.current = view;
+  let disposed = false;
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    try { view.destroy(); }
+    finally {
+      for (const holder of holders) if (holder.current === view) holder.current = null;
+    }
+  };
+}
+
 /**
  * Publishes the first visible source line at most once per animation frame.
  * Returns the whole cleanup so every CodeMirror surface cancels a queued

@@ -31,7 +31,9 @@ import { ContextMenu, type MenuEntry } from "../ContextMenu";
 import { useGrabMode } from "../../hooks/useGrabMode";
 import { usePortalsCovered } from "../../hooks/usePortalsCovered";
 import { useT } from "../../hooks/useT";
+import { failureMessage } from "../../lib/loading";
 import { t } from "../../lib/i18n";
+import { resyncUrlDraft } from "./urlDraft";
 import {
   elementBounds,
   holesOver,
@@ -49,7 +51,7 @@ import { useUI } from "../../stores/uiStore";
 
 /** What the tab strip calls this tab. */
 export function browserLabel(tab: PaneBrowser): string {
-  return tab.name || tab.title || hostnameOf(tab.url) || "Navegador";
+  return tab.name || tab.title || hostnameOf(tab.url) || t("Navegador");
 }
 
 /**
@@ -73,13 +75,16 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
 
   const bodyRef = useRef<HTMLDivElement>(null);
   const [urlDraft, setUrlDraft] = useState(tab.url);
+  const urlRef = useRef<HTMLInputElement>(null);
   /** Why the site is not on screen — `null` while it is. */
   const [veil, setVeil] = useState<Veil | null>("away");
   const { grabbing, toggleGrab } = useGrabMode(tab.id, showToast);
   const { menu, closeMenu } = usePortalMenu(tab.id, bodyRef);
 
+  // The page moved (a redirect, a link the agent clicked): the address bar
+  // follows it, unless the user is typing an address right now.
   useEffect(() => {
-    setUrlDraft(tab.url);
+    setUrlDraft((d) => resyncUrlDraft(d, tab.url, document.activeElement === urlRef.current));
   }, [tab.url]);
 
   const bodyBox = () => elementBounds(bodyRef.current);
@@ -189,7 +194,7 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
     if (!next) return;
     setUrlDraft(next);
     patch(tab.id, { url: next });
-    void ipc.portalNavigate(tab.id, next).catch((e) => showToast(String(e), "error"));
+    void ipc.portalNavigate(tab.id, next).catch((e) => showToast(failureMessage(e), "error"));
   };
 
   const shownVeil: Veil | null = failed ? "failed" : ready ? veil : "opening";
@@ -261,6 +266,7 @@ function BrowserBodyImpl({ tab }: { tab: PaneBrowser }) {
           }}
         >
           <input
+            ref={urlRef}
             value={urlDraft}
             spellCheck={false}
             aria-label={t("Endereço")}

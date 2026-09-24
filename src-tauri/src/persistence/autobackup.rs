@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{DateTime, Local};
+use parking_lot::Mutex;
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
@@ -57,21 +58,25 @@ pub fn to_prune(names: &[String], keep: usize) -> Vec<String> {
 /// Writes one automatic copy and prunes the extra ones. `dir = None` means
 /// the `backups` folder of the data directory.
 pub fn run(
-    conn: &Connection,
+    db: &Mutex<Connection>,
     dir: Option<&Path>,
     keep: usize,
     now: DateTime<Local>,
 ) -> anyhow::Result<AutoBackupReport> {
-    run_in(&crate::paths::app_dir(), conn, dir, keep, now)
+    run_in(&crate::paths::app_dir(), db, dir, keep, now)
 }
 
 fn run_in(
     app_dir: &Path,
-    conn: &Connection,
+    db: &Mutex<Connection>,
     dir: Option<&Path>,
     keep: usize,
     now: DateTime<Local>,
 ) -> anyhow::Result<AutoBackupReport> {
+    // The whole run in one turn, as it was when the database lock covered it:
+    // a second run in the same minute waits, then overwrites a finished zip,
+    // and its pruning never races this one's.
+    let _turn = super::backup::TURN.lock();
     let dir: PathBuf = match dir {
         Some(d) => d.to_path_buf(),
         None => app_dir.join("backups"),
@@ -79,7 +84,7 @@ fn run_in(
     std::fs::create_dir_all(&dir)
         .map_err(|e| anyhow::anyhow!("nao consegui criar a pasta de backups {}: {e}", dir.display()))?;
     let dest = dir.join(file_name(now));
-    super::backup::export_in(app_dir, conn, &dest)?;
+    super::backup::export_in(app_dir, db, &dest)?;
     let bytes = std::fs::metadata(&dest)?.len();
 
     // Retention: only names this module wrote, sorted by their own stamp.
@@ -107,8 +112,9 @@ fn run_in(
 }
 
 /// The scheduled (or "Fazer agora") backup. Same lock discipline as
-/// `export_backup`: the connection stays locked for the whole export so no
-/// write lands between the WAL checkpoint and the copy.
+/// `export_backup`: the connection is locked for the WAL checkpoint and the
+/// copy of `app.db` only (see `backup::export_in`), so no write lands between
+/// the two, and none waits for the zip.
 #[tauri::command]
 pub async fn backup_auto_run(
     app: AppHandle,
@@ -117,9 +123,8 @@ pub async fn backup_auto_run(
 ) -> Result<AutoBackupReport, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<Arc<AppState>>();
-        let conn = state.db.lock();
         run(
-            &conn,
+            &state.db,
             dir.as_deref().filter(|d| !d.trim().is_empty()).map(Path::new),
             keep as usize,
             Local::now(),
@@ -148,15 +153,16 @@ mod tests {
         dir
     }
 
-    /// A WAL database left open, as the app holds it when the timer fires.
-    fn live_db(dir: &Path) -> Connection {
+    /// A WAL database left open, as the app holds it when the timer fires:
+    /// behind the mutex `AppState` keeps it in.
+    fn live_db(dir: &Path) -> Mutex<Connection> {
         let conn = Connection::open(dir.join("app.db")).unwrap();
         conn.pragma_update(None, "journal_mode", "WAL").unwrap();
         conn.execute_batch("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)")
             .unwrap();
         conn.execute("INSERT INTO kv(key, value) VALUES ('workspace_rev', '7')", [])
             .unwrap();
-        conn
+        Mutex::new(conn)
     }
 
     fn names(v: &[&str]) -> Vec<String> {
@@ -269,6 +275,54 @@ mod tests {
                 "yard-backup-2026-08-01.zip",
             ])
         );
+    }
+
+    /// The regression this locks down: the run used to be one turn because
+    /// the database lock covered all of it, export and pruning. With that lock
+    /// down to the copy, the run holds the backup turn itself until it has
+    /// measured its zip and pruned. A second backup (the timer's same-minute
+    /// zip asked for twice after a webview reload reset the front end's guard)
+    /// that got its turn as soon as the zip was written would rewrite and list
+    /// the folder while this run was still deleting from it.
+    #[test]
+    fn another_backup_gets_its_turn_only_after_the_run_has_pruned() {
+        use std::time::{Duration, Instant};
+        let app = temp_dir("turno");
+        let db = live_db(&app);
+        let dir = app.join("bk");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Enough old copies that the pruning takes a while: a turn handed over
+        // when the zip is written finds them still there.
+        let old: Vec<PathBuf> = (0..300u32)
+            .map(|i| dir.join(file_name(at(2026, 7, 1 + i / 24, i % 24, 30))))
+            .collect();
+        for p in &old {
+            touch(p);
+        }
+        let now = at(2026, 8, 26, 4, 17);
+        let dest = dir.join(file_name(now));
+
+        std::thread::scope(|s| {
+            let (app, db, dir) = (&app, &db, &dir);
+            let run = s.spawn(move || run_in(app, db, Some(dir), 1, now).unwrap());
+            // Plays the second backup: it takes turns like any export, and the
+            // first turn it gets once the zip exists must find the pruning done.
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let left = loop {
+                {
+                    let _turn = super::super::backup::TURN.lock();
+                    if dest.exists() {
+                        break old.iter().filter(|p| p.exists()).count();
+                    }
+                }
+                assert!(Instant::now() < deadline, "the run never wrote its zip");
+                std::thread::yield_now();
+            };
+            assert_eq!(left, 0, "{left} old copies still there when the turn came");
+            assert_eq!(run.join().unwrap().pruned.len(), old.len());
+        });
+        drop(db);
+        let _ = std::fs::remove_dir_all(&app);
     }
 
     #[test]

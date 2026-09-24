@@ -1,4 +1,4 @@
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "./confirmation";
 
 import { copyText } from "./clipboard";
 import { editorTabMenu } from "./editorTabMenu";

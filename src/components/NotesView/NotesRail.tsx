@@ -1,3 +1,4 @@
+import { createRailNotesSelector } from "../../lib/metadata";
 /**
  * The rail — where the notebook is organized: the everyday collections on
  * top, the notebook tree, the labels, and the trash at the bottom.
@@ -8,7 +9,7 @@
  * so organizing never needs a settings screen.
  */
 import { useMemo, useState, type ReactNode } from "react";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../lib/confirmation";
 import {
   BookOpen,
   ChevronDown,
@@ -63,8 +64,10 @@ function sameCollection(a: Collection, b: Collection): boolean {
   return true;
 }
 
+const selectRailNotes = createRailNotesSelector();
+
 export function NotesRail() {
-  const notes = useNotes((s) => s.notes);
+  const notes = useNotes(selectRailNotes);
   const notebooks = useNotes((s) => s.notebooks);
   const tags = useNotes((s) => s.tags);
   const collection = useNotes((s) => s.collection);

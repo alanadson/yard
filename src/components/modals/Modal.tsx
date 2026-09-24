@@ -12,7 +12,7 @@ import "./modal.css";
 
 import { useT } from "../../hooks/useT";
 import { isTopLayer } from "../../lib/layers";
-import { backdropPressExits, exitGesture, focusAfterTab } from "./modalGestures";
+import { backdropPressExits, exitGesture, focusAfterTab, isFrontDialog } from "./modalGestures";
 
 interface Props {
   title: string;
@@ -131,11 +131,12 @@ export function Modal({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const dialogs = [...document.querySelectorAll<HTMLDivElement>(".modal, .settings")];
+      if (!isTopLayer("modal") || !isFrontDialog(ref.current, dialogs)) return;
       if (e.key === "Escape") {
         // The editor and the diff also listen for `Escape` on the window;
         // without the layer check, a modal opened above them closed both at
         // once.
-        if (!isTopLayer("modal")) return;
         e.preventDefault();
         // With the form filled in, the first Esc warns instead of discarding
         // — the same rule as the other two gestures, now written in a single

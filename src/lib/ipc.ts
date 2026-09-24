@@ -6,9 +6,10 @@
  * becoming a silent `undefined` in production.
  */
 // i18n-scan: tables — string-literal unions and backend error names; nothing here is rendered.
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+import { createPtyStream } from "./ptyStream";
 import type { Surface } from "./surface";
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,23 @@ export interface AttachResult {
    * `repaintPty` instead of replaying it.
    */
   altScreen: boolean;
+}
+
+/**
+ * What the view will do with the history, said before it knows whether the
+ * process is alive (`pty::AttachWants`). Each field only lets the backend
+ * leave out what the view would not read; left out, `attach_pty` sends the
+ * whole history, as it always did.
+ */
+export interface AttachWants {
+  /** If the terminal is dead, its history is discarded (the view spawns on a clean screen). */
+  omitDeadHistory?: boolean;
+  /**
+   * If a live process is on the alternate screen, only `data.slice(-altTail)`
+   * is read. The backend then sends a suffix holding at least that many UTF-16
+   * units, so the same slice gives the same text.
+   */
+  altTail?: number;
 }
 
 export interface PtyProbe {
@@ -222,6 +240,11 @@ export interface ResourcesTick {
   systemAvailableMb: number;
   systemTotalMb: number;
   perPty: PtyResource[];
+}
+
+/** The main window was hidden/minimized (`false`) or came back (`true`). */
+export interface WindowShown {
+  shown: boolean;
 }
 
 // --- workspace -------------------------------------------------------------
@@ -1072,7 +1095,8 @@ export const ipc = {
   writePty: (id: string, data: string) => invoke<void>("write_pty", { id, data }),
   resizePty: (id: string, rows: number, cols: number) =>
     invoke<void>("resize_pty", { id, rows, cols }),
-  attachPty: (id: string) => invoke<AttachResult>("attach_pty", { id }),
+  attachPty: (id: string, wants?: AttachWants) =>
+    invoke<AttachResult>("attach_pty", { id, wants }),
   /**
    * Asks the console host to re-emit the frame the CLI has on screen right
    * now — the only way to repaint a full-screen CLI that a view rebuilt from
@@ -1080,6 +1104,12 @@ export const ipc = {
    */
   repaintPty: (id: string) => invoke<void>("repaint_pty", { id }),
   ptyProbe: (id: string) => invoke<PtyProbe>("pty_probe", { id }),
+  /**
+   * The `pty://activity` beat the backend would send right now (`null` with
+   * no live process). The heartbeat only goes out when it has something new
+   * to say, so a listener that registered late asks for this once.
+   */
+  ptyActivity: (id: string) => invoke<ActivityPayload | null>("pty_activity", { id }),
   ptyReadSince: (id: string, after: number, maxBytes: number) =>
     invoke<PtyDelta>("pty_read_since", { id, after, maxBytes }),
   ptyExists: (id: string) => invoke<boolean>("pty_exists", { id }),
@@ -1103,6 +1133,7 @@ export const ipc = {
     invoke<SaveResult>("save_workspace", { snapshot }),
   loadWorkspace: () => invoke<WorkspaceSnapshot>("load_workspace"),
   readPrefs: () => invoke<Record<string, string>>("read_prefs"),
+  writePrefs: (entries: [string, string][]) => invoke<void>("write_prefs", { entries }),
   writePref: (key: string, value: string) =>
     invoke<void>("write_pref", { key, value }),
   deletePref: (key: string) => invoke<void>("delete_pref", { key }),
@@ -1446,6 +1477,19 @@ export const ipc = {
   floorRunHook: (cwd: string, command: string, env: [string, string][]) =>
     invoke<HookResult>("floor_run_hook", { cwd, command, env }),
 
+  checkpointCreate: (root: string, taskId: string, taskLabel: string, label: string) =>
+    invoke<import("./checkpoints").Checkpoint>("checkpoint_create", { root, taskId, taskLabel, label }),
+  checkpointList: (root: string) => invoke<import("./checkpoints").Checkpoint[]>("checkpoint_list", { root }),
+  checkpointPreview: (root: string, id: string) => invoke<import("./checkpoints").CheckpointPreview>("checkpoint_preview", { root, id }),
+  checkpointCompare: (root: string, id: string, path: string) => invoke<import("./checkpoints").CheckpointComparison>("checkpoint_compare", { root, id, path }),
+  checkpointRestore: (root: string, id: string, token: string) => invoke<import("./checkpoints").Checkpoint>("checkpoint_restore", { root, id, token }),
+  checkpointDelete: (root: string, id: string) => invoke<void>("checkpoint_delete", { root, id }),
+
+  // Device portals share the existing connection boundary in the bridge.
+  deviceList: () => invoke<import("./devicePortal").AndroidDevice[]>("device_list"),
+  deviceAction: (serial: string, action: import("./devicePortal").DeviceAction) =>
+    invoke<string>("device_action", { serial, action }),
+
   // portals
   listBrowsers: (refresh = false) =>
     invoke<BrowserInfo[]>("list_browsers", { refresh }),
@@ -1581,15 +1625,16 @@ export interface BridgeResponse {
 // events
 // ---------------------------------------------------------------------------
 
+/**
+ * Event bus topics. A terminal's own events (output, exit, heartbeat, idle)
+ * are not among them: they come over the page's PTY channel (`ptyStream.ts`).
+ */
 export const topics = {
-  output: (id: string) => `pty://output/${id}`,
-  exit: (id: string) => `pty://exit/${id}`,
-  activity: (id: string) => `pty://activity/${id}`,
-  agentIdle: "pty://idle",
   agentsChanged: "agents://changed",
   sessionFeed: "session://feed",
   filesActivity: "files://activity",
   resourcesTick: "resources://tick",
+  windowShown: "window://shown",
   bridgeRequest: "bridge://request",
   usageUpdate: "usage://update",
   portalNav: "portal://nav",
@@ -1620,15 +1665,50 @@ export interface IdlePayload {
   idleMs: number;
 }
 
+/**
+ * This document's token for the backend (`pty/pages.rs`): a reload is a new
+ * document and a new token, and its first link closes the old page's. Kept on
+ * the window, not in this module, so a copy of this module swapped in by HMR
+ * still counts as the same page and its link lives next to the first.
+ */
+function pageToken(): string {
+  const page = globalThis as { __yardPtyPage?: string };
+  if (!page.__yardPtyPage) {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    page.__yardPtyPage = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  return page.__yardPtyPage;
+}
+
+/**
+ * Every terminal's output, exit, heartbeat and idle, over one ordered channel
+ * for this page (why one, and why not the bus: `pty/pages.rs`). Opened on the
+ * first subscription.
+ */
+const ptyStream = createPtyStream(
+  {
+    open: (deliver) => {
+      const channel = new Channel<unknown>();
+      channel.onmessage = deliver;
+      return invoke<number>("pty_events_open", { page: pageToken(), channel });
+    },
+    subscribe: (link, sub, topic) => invoke<void>("pty_events_subscribe", { link, sub, topic }),
+    unsubscribe: (link, sub) => invoke<void>("pty_events_unsubscribe", { link, sub }),
+    ack: (id, chunks) => invoke<void>("ack_pty_output", { id, chunks }),
+  },
+  // `console.error` reaches `yard.log` (`installErrorBridge`), as an uncaught
+  // throw in a bus listener did.
+  (error) => console.error("[yard] PTY channel:", error),
+);
+
 export const on = {
-  output: (id: string, cb: (p: OutputChunk) => void) =>
-    listen<OutputChunk>(topics.output(id), (e) => cb(e.payload)),
-  exit: (id: string, cb: (p: ExitPayload) => void) =>
-    listen<ExitPayload>(topics.exit(id), (e) => cb(e.payload)),
-  activity: (id: string, cb: (p: ActivityPayload) => void) =>
-    listen<ActivityPayload>(topics.activity(id), (e) => cb(e.payload)),
-  agentIdle: (cb: (p: IdlePayload) => void) =>
-    listen<IdlePayload>(topics.agentIdle, (e) => cb(e.payload)),
+  output: (id: string, cb: (p: OutputChunk) => void): Promise<UnlistenFn> =>
+    ptyStream.output(id, cb),
+  exit: (id: string, cb: (p: ExitPayload) => void): Promise<UnlistenFn> =>
+    ptyStream.exit(id, cb),
+  activity: (id: string, cb: (p: ActivityPayload) => void): Promise<UnlistenFn> =>
+    ptyStream.activity(id, cb),
+  agentIdle: (cb: (p: IdlePayload) => void): Promise<UnlistenFn> => ptyStream.idle(cb),
   agentsChanged: (cb: () => void) => listen(topics.agentsChanged, () => cb()),
   sessionFeed: (cb: (p: SessionFeed) => void) =>
     listen<SessionFeed>(topics.sessionFeed, (e) => cb(e.payload)),
@@ -1636,6 +1716,8 @@ export const on = {
     listen<FilesActivity>(topics.filesActivity, (e) => cb(e.payload)),
   resources: (cb: (p: ResourcesTick) => void) =>
     listen<ResourcesTick>(topics.resourcesTick, (e) => cb(e.payload)),
+  windowShown: (cb: (p: WindowShown) => void) =>
+    listen<WindowShown>(topics.windowShown, (e) => cb(e.payload)),
   bridgeRequest: (cb: (p: { id: number; request: BridgeRequest }) => void) =>
     listen<{ id: number; request: BridgeRequest }>(topics.bridgeRequest, (e) =>
       cb(e.payload),

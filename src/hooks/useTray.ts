@@ -15,6 +15,7 @@ import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import { ipc, on } from "../lib/ipc";
 import { uiLog } from "../lib/log";
 import { requestQuit } from "../lib/quit";
+import { ownRegistration } from "../lib/disposables";
 import { normalizeHotkey, sameStatus, trayStatus, type TrayStatus } from "../lib/tray";
 import { useTerminals } from "../stores/terminalsStore";
 import { useUI } from "../stores/uiStore";
@@ -51,8 +52,7 @@ export function useTray() {
   useEffect(() => {
     const accelerator = hotkey.trim() ? normalizeHotkey(hotkey) : null;
     if (!accelerator) return;
-    let registered = false;
-    register(accelerator, (event) => {
+    return ownRegistration(() => register(accelerator, (event) => {
       if (event.state !== "Pressed") return;
       ipc
         .windowSummon()
@@ -60,18 +60,15 @@ export function useTray() {
         .catch((e) => uiLog.warn(`atalho global: falha ao trazer a janela: ${e}`));
     })
       .then(() => {
-        registered = true;
         uiLog.info(`atalho global registrado: ${accelerator}`);
-      })
-      .catch((e) => {
+      }),
+      () => unregister(accelerator),
+      (e) => {
         // Taken by another app, or left behind by a reload: the hotkey then
         // fires nothing, and the log is where that shows.
         uiLog.warn(`atalho global ${accelerator} não registrado: ${e}`);
-      });
-    return () => {
-      if (!registered) return;
-      unregister(accelerator).catch(() => {});
-    };
+      },
+    );
   }, [hotkey]);
 
   // --- "Sair" from the tray menu ------------------------------------------

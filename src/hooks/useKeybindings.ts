@@ -24,6 +24,7 @@ import { useCosts } from "../stores/costsStore";
 import { useLive } from "../stores/liveStore";
 import { notesCenterVisible, useNotes } from "../stores/notesStore";
 import { reopenLastTab } from "../lib/reopenTab";
+import { shiftLetterChord } from "./shiftLetterChord";
 import { useProjects } from "../stores/projectsStore";
 import { useUI } from "../stores/uiStore";
 
@@ -121,106 +122,108 @@ export function useKeybindings() {
         return;
       }
 
-      // Ctrl+Shift+P — preferences
-      if (e.shiftKey && e.code === "KeyP") {
+      // Ctrl+Shift+<letter>, resolved through one table (`shiftLetterChord.ts`)
+      // so no chord can be claimed twice: Ctrl+Shift+T once had two branches
+      // here, and the editor's own reopen shadowed the one that also brings
+      // browser tabs back.
+      const chord = shiftLetterChord(e);
+      if (chord) {
         e.preventDefault();
-        useUI.getState().openModal("preferences");
-        return;
+        switch (chord) {
+          case "preferences":
+            useUI.getState().openModal("preferences");
+            return;
+          case "bench":
+            // Ctrl+Shift+B: bench (tasks & prompts), the mirror of the left side
+            if (projectPanelsOnScreen()) useBench.getState().toggle();
+            return;
+          case "reopenLastTab":
+            // Ctrl+Shift+T, reopen the last file or browser tab that was closed
+            // (`lib/reopenTab.ts`). Not CLIs: closing one is `Excluir CLI`, a
+            // confirmed destructive action, and "reopening" it would mean
+            // respawning a process, a different promise from restoring a tab.
+            void reopenLastTab();
+            return;
+          case "files":
+            // Ctrl+Shift+E: project file tree (the same key as VS Code). Already
+            // on the tab, it closes: this is a toggle.
+            if (projectPanelsOnScreen()) useBench.getState().openTab("files");
+            return;
+          case "scm":
+            // Ctrl+Shift+R: version control, in the bench. "R" for repository:
+            // the Ctrl+Shift+G VS Code uses is already "next group of the
+            // project" here, and stealing a shortcut that already exists is
+            // worse than teaching a new one.
+            if (projectPanelsOnScreen()) useBench.getState().openTab("scm");
+            return;
+          case "changes":
+            // Ctrl+Shift+D: files/changes panel
+            if (projectPanelsOnScreen()) useChanges.getState().toggle();
+            return;
+          case "attention":
+            // Ctrl+Shift+A: the next agent that is waiting on you. Works in
+            // any layout and cuts through a focused terminal on purpose: it is
+            // precisely from inside a CLI that one asks "who stopped?".
+            jumpToAttention();
+            return;
+          case "closeTab":
+            // Ctrl+Shift+W: closes the active tab of the focused bar. With
+            // Shift, because `Ctrl+W` deletes the previous word in bash and in
+            // PSReadLine: the house rule is not to steal a key the terminal uses.
+            closeActiveTab();
+            return;
+          case "shortcuts":
+            // Ctrl+Shift+H: shortcut map
+            useUI.getState().openModal("shortcuts");
+            return;
+          case "notes":
+            // Ctrl+Shift+N: Notes, the markdown notebook, summoned in the
+            // place it lives in (central toggle, or jump to its pane tab).
+            useNotes.getState().toggleView();
+            return;
+          case "find": {
+            // Ctrl+Shift+F: with a terminal in focus, find in its scrollback
+            // (the window event; only the focused pane listens). Anywhere else
+            // it is the key every IDE means by it: search the whole project.
+            const cli = useUI.getState().focusedTerminalId;
+            if (cli && useProjects.getState().terminal(cli)) {
+              window.dispatchEvent(new CustomEvent("yard:find"));
+            } else {
+              useBench.getState().openTab("search");
+            }
+            return;
+          }
+          case "nextGroup": {
+            // Ctrl+Shift+G: next group of the active project
+            const { activeProjectId, activeGroupId, groupsOf, setActiveGroup } =
+              useProjects.getState();
+            if (!activeProjectId) return;
+            const list = groupsOf(activeProjectId);
+            if (list.length < 2) return;
+            const idx = list.findIndex((g) => g.id === activeGroupId);
+            setActiveGroup(list[(idx + 1) % list.length].id);
+            return;
+          }
+          case "broadcast":
+            // Ctrl+Shift+U: keyboard broadcast to the active group
+            // (lib/broadcast.ts). Reachable from inside the terminal, like
+            // Ctrl+Shift+A.
+            toggleBroadcast();
+            return;
+          case "shoulder": {
+            // Ctrl+Shift+O: the Shoulder: what each agent of the group did
+            // while nobody was looking, read from the sessions on disk.
+            const groupId = useProjects.getState().activeGroupId;
+            if (groupId) useUI.getState().openModal("shoulder", { groupId });
+            return;
+          }
+        }
       }
 
       // Ctrl+B — toggle sidebar
       if (!e.shiftKey && e.code === "KeyB") {
         e.preventDefault();
         useUI.getState().toggleSidebar();
-        return;
-      }
-
-      // Ctrl+Shift+B — bench (tasks & prompts), the mirror of the left side
-      if (e.shiftKey && e.code === "KeyB") {
-        e.preventDefault();
-        if (projectPanelsOnScreen()) useBench.getState().toggle();
-        return;
-      }
-
-      // Ctrl+Shift+T — the tab you did not mean to close, back where it was
-      // (`lib/closedTabs.ts`).
-      if (e.shiftKey && e.code === "KeyT") {
-        e.preventDefault();
-        void useEditor.getState().reopenClosed();
-        return;
-      }
-
-      // Ctrl+Shift+E — project file tree (the same key as VS Code). Already
-      // on the tab, it closes: this is a toggle.
-      if (e.shiftKey && e.code === "KeyE") {
-        e.preventDefault();
-        if (projectPanelsOnScreen()) useBench.getState().openTab("files");
-        return;
-      }
-
-      // Ctrl+Shift+R — version control, in the bench. "R" for repository: the
-      // Ctrl+Shift+G VS Code uses is already "next group of the project" here,
-      // and stealing a shortcut that already exists is worse than teaching a
-      // new one.
-      if (e.shiftKey && e.code === "KeyR") {
-        e.preventDefault();
-        if (projectPanelsOnScreen()) useBench.getState().openTab("scm");
-        return;
-      }
-
-      // Ctrl+Shift+D — files/changes panel
-      if (e.shiftKey && e.code === "KeyD") {
-        e.preventDefault();
-        if (projectPanelsOnScreen()) useChanges.getState().toggle();
-        return;
-      }
-
-      // Ctrl+Shift+A — the next agent that is waiting on you.
-      // Works in any layout (it was canvas-only) and cuts through a focused
-      // terminal on purpose: it is precisely from inside a CLI that one asks
-      // "who stopped?". xterm does not complain about Ctrl+Shift+letter.
-      if (e.shiftKey && e.code === "KeyA") {
-        e.preventDefault();
-        jumpToAttention();
-        return;
-      }
-
-      // Ctrl+Shift+W — closes the active tab of the focused bar. With Shift,
-      // and not every browser's Ctrl+W, because `Ctrl+W` deletes the previous
-      // word in bash and in PSReadLine: the house rule is not to steal a key
-      // the terminal uses. It is also what Windows Terminal does.
-      if (e.shiftKey && e.code === "KeyW") {
-        e.preventDefault();
-        closeActiveTab();
-        return;
-      }
-
-      // Ctrl+Shift+H — shortcut map
-      if (e.shiftKey && e.code === "KeyH") {
-        e.preventDefault();
-        useUI.getState().openModal("shortcuts");
-        return;
-      }
-
-      // Ctrl+Shift+N — Notes, the markdown notebook, summoned in the
-      // place it lives in (central toggle, or jump to its pane tab).
-      if (e.shiftKey && e.code === "KeyN") {
-        e.preventDefault();
-        useNotes.getState().toggleView();
-        return;
-      }
-
-      // Ctrl+Shift+F — with a terminal in focus, find in its scrollback (the
-      // window event; only the focused pane listens). Anywhere else it is the
-      // key every IDE means by it: search the whole project, in the bench.
-      if (e.shiftKey && e.code === "KeyF") {
-        e.preventDefault();
-        const cli = useUI.getState().focusedTerminalId;
-        if (cli && useProjects.getState().terminal(cli)) {
-          window.dispatchEvent(new CustomEvent("yard:find"));
-        } else {
-          useBench.getState().openTab("search");
-        }
         return;
       }
 
@@ -273,47 +276,11 @@ export function useKeybindings() {
         return;
       }
 
-      // Ctrl+Shift+G — next group of the active project
-      if (e.shiftKey && e.code === "KeyG") {
-        e.preventDefault();
-        const { activeProjectId, activeGroupId, groupsOf, setActiveGroup } =
-          useProjects.getState();
-        if (!activeProjectId) return;
-        const list = groupsOf(activeProjectId);
-        if (list.length < 2) return;
-        const idx = list.findIndex((g) => g.id === activeGroupId);
-        setActiveGroup(list[(idx + 1) % list.length].id);
-      }
-      // Ctrl+Shift+U — keyboard broadcast to the active group (lib/broadcast.ts).
-      // Reachable from inside the terminal, like Ctrl+Shift+A: it is with the
-      // cursor in a CLI that one decides the next keystrokes go to all of them.
-      if (e.shiftKey && e.code === "KeyU") {
-        e.preventDefault();
-        toggleBroadcast();
-        return;
-      }
       // Ctrl+Alt+U — Custos e uso (tokens and estimated spend over time).
       // Alt, not Shift: Ctrl+Shift+U is the keyboard broadcast right above.
       if (e.altKey && !e.shiftKey && e.code === "KeyU") {
         e.preventDefault();
         void useCosts.getState().open();
-        return;
-      }
-      // Ctrl+Shift+T, reopen the last file or browser tab that was closed
-      // (`lib/reopen.ts`). Not CLIs: closing one is `Excluir CLI`, a confirmed
-      // destructive action, and "reopening" it would mean respawning a
-      // process, a different promise from restoring a tab.
-      if (e.shiftKey && e.code === "KeyT") {
-        e.preventDefault();
-        void reopenLastTab();
-        return;
-      }
-      // Ctrl+Shift+O — the Shoulder: what each agent of the group did while
-      // nobody was looking, read from the sessions on disk.
-      if (e.shiftKey && e.code === "KeyO") {
-        e.preventDefault();
-        const groupId = useProjects.getState().activeGroupId;
-        if (groupId) useUI.getState().openModal("shoulder", { groupId });
         return;
       }
     };

@@ -15,7 +15,7 @@
  * — those are the ones the composer reuses and the tests cover.
  */
 import { nanoid } from "nanoid";
-import { sendNotification } from "@tauri-apps/plugin-notification";
+import { notify } from "./notifications";
 
 import {
   ipc,
@@ -125,7 +125,6 @@ import { waitUntilSendable } from "./sendable";
 import { QUEUE_CAP } from "./queue";
 import { useQueue } from "../stores/queueStore";
 import { baseName } from "./terminals";
-import { pushOut } from "./notifyOut";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -1242,7 +1241,9 @@ function cmdNote(ctx: Ctx, args: string[], req: BridgeRequest): BridgeResponse {
         if (!note.text.includes(oldText)) {
           return err(`yard: o texto antigo não aparece na nota "${name}".\n`);
         }
-        nextText = note.text.replace(oldText, newText);
+        // A function replacement: a string one would expand `$$`, `$&` and
+        // friends, and the agent asked for the characters it typed.
+        nextText = note.text.replace(oldText, () => newText);
       }
 
       commitCanvas(ctx.groupId, (c) => patchItemOfType(c, note.id, "note", { text: nextText }));
@@ -1436,7 +1437,7 @@ async function cmdRecruit(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
   }));
 
   try {
-    await spawnCard(id, { program, args: cliArgs, cwd, kind, title: name });
+    await spawnCard(id, { program: born.program, args: born.args, cwd, kind, title: name });
   } catch (e) {
     return err(`yard: terminal "${name}" criado no canvas, mas o processo não subiu: ${e}\n`);
   }
@@ -1606,8 +1607,8 @@ async function recruitOnFloor(
 
   try {
     await spawnCard(id, {
-      program: plan.program,
-      args: plan.cliArgs,
+      program: born.program,
+      args: born.args,
       cwd,
       kind: plan.kind,
       title: plan.name,
@@ -2415,15 +2416,12 @@ async function cmdScore(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
 
 // --- notify / debug ---------------------------------------------------------
 
-function cmdNotify(ctx: Ctx, args: string[]): BridgeResponse {
+async function cmdNotify(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
   const msg = args[0];
   if (!msg) return err('uso: yard notify "mensagem"\n');
   try {
     const title = `Yard, ${ctx.nameOf.get(ctx.caller.id)}`;
-    sendNotification({ title, body: msg });
-    // An agent calling `yard notify` is asking for the user's attention, and
-    // the user may not be at the machine (`lib/notifyOut.ts`).
-    pushOut(title, msg, "notify");
+    await notify({ title, body: msg, event: "notify", checkPermission: false });
   } catch (e) {
     return err(`yard: notificação indisponível: ${e}\n`);
   }

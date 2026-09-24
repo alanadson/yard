@@ -39,7 +39,7 @@ fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
 }
 
-fn migrate(conn: &Connection) -> anyhow::Result<()> {
+pub(super) fn migrate(conn: &Connection) -> anyhow::Result<()> {
     quarantine_prototype(conn)?;
     ensure_added_columns(conn)?;
 
@@ -501,6 +501,19 @@ fn has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<
 
 #[cfg(test)]
 mod tests {
+    /// A failed preference batch must not leave a partially updated draft snapshot.
+    #[test]
+    fn preference_batch_rolls_back_when_one_value_is_rejected() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TRIGGER reject_bad BEFORE INSERT ON kv WHEN NEW.key = 'bad'
+            BEGIN SELECT RAISE(ABORT, 'rejected'); END;").unwrap();
+        super::kv_set(&conn, "draft", "before").unwrap();
+        assert!(super::kv_set_many(&conn, &[
+            ("draft".into(), "after".into()), ("bad".into(), "value".into()),
+        ]).is_err());
+        assert_eq!(super::kv_get(&conn, "draft").as_deref(), Some("before"));
+    }
     use super::*;
 
     fn conn() -> Connection {
@@ -790,6 +803,31 @@ mod tests {
             .unwrap();
         assert_eq!(n, 0);
     }
+
+    /// `kv_set` is the preference write every toggle goes through, and it
+    /// reuses one prepared statement across calls. Reusing it must not leak a
+    /// binding from the previous call: a new key is inserted, an existing one
+    /// is overwritten in place, and the keys nobody touched keep their value.
+    #[test]
+    fn kv_set_inserts_new_keys_overwrites_old_ones_and_leaves_the_rest_alone() {
+        let c = conn();
+        migrate(&c).unwrap();
+        kv_set(&c, "theme", "dark").unwrap();
+        kv_set(&c, "font", "Cascadia").unwrap();
+        kv_set(&c, "theme", "light").unwrap();
+
+        assert_eq!(kv_get(&c, "theme").as_deref(), Some("light"));
+        assert_eq!(kv_get(&c, "font").as_deref(), Some("Cascadia"));
+        let mut all = kv_all(&c).unwrap();
+        all.sort();
+        assert_eq!(
+            all,
+            vec![
+                ("font".to_string(), "Cascadia".to_string()),
+                ("theme".to_string(), "light".to_string()),
+            ]
+        );
+    }
 }
 
 // --- kv (preferences) -----------------------------------------------------
@@ -799,13 +837,24 @@ pub fn kv_get(conn: &Connection, key: &str) -> Option<String> {
         .ok()
 }
 
+/// Cached, not re-prepared: every preference toggle and every key of a
+/// `kv_set_many` batch lands here, and parsing the same upsert each time was
+/// the only real work the call did.
 pub fn kv_set(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
-    conn.execute(
+    conn.prepare_cached(
         "INSERT INTO kv(key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        [key, value],
-    )?;
+    )?
+    .execute([key, value])?;
     Ok(())
+}
+
+pub fn kv_set_many(conn: &Connection, entries: &[(String, String)]) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    for (key, value) in entries {
+        kv_set(&tx, key, value)?;
+    }
+    tx.commit()
 }
 
 pub fn kv_all(conn: &Connection) -> rusqlite::Result<Vec<(String, String)>> {

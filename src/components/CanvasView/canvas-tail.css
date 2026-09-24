@@ -2,6 +2,54 @@
 
 /* --- notes and text --- */
 
+.cv-item-maximize {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: rgb(var(--well) / 12%);
+  color: inherit;
+  cursor: pointer;
+}
+
+.cv-item-maximize:hover:not(:disabled) { background: rgb(var(--well) / 25%); }
+.cv-item-maximize:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cv-item-maximize:disabled { opacity: 0.4; cursor: default; }
+.cv-world > [data-maximized="true"] { z-index: 10; box-shadow: var(--cv-lift-hi); }
+.cv-note-size-action { position: absolute; top: 3px; right: 28px; z-index: 3; }
+.cv-note-size-action .cv-item-maximize { background: var(--bg-raised); color: var(--text); }
+.cv-group-head .cv-item-maximize { margin-left: auto; }
+.cv-flowcard-head .cv-item-maximize { order: 1; margin-left: auto; }
+
+.cv-vector-grips { overflow: visible; pointer-events: none; }
+.cv-vector-box { position: relative; width: 100%; height: 100%; }
+.cv-vector-box .cv-resize { pointer-events: auto; }
+
+/* Clip content inside the body so the external resize targets remain reachable. */
+.cv-world > :is(.cv-media, .cv-doc, .cv-binder, .cv-tree) { overflow: visible; }
+:is(.cv-media-head, .cv-doc-head, .cv-binder-head, .cv-tree-head) {
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+:is(.cv-media-body, .cv-doc-body, .cv-binder-tabs, .cv-tree-body) {
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+  overflow: hidden;
+}
+
+/* Visible corner targets use the same screen size at every canvas zoom. */
+.cv :is(.is-selected, .is-focused) > .cv-resize:is(.cv-resize--nw, .cv-resize--ne, .cv-resize--sw, .cv-resize--se)::after {
+  content: "";
+  position: absolute;
+  inset: 25%;
+  background: #f7f7f9;
+  border: calc(1px / var(--cv-z, 1)) solid #478fe8;
+  border-radius: calc(2px / var(--cv-z, 1));
+  pointer-events: none;
+}
+
 .cv-note {
   position: absolute;
   display: flex;
@@ -51,7 +99,7 @@
    shared rule in canvas.css. */
 
 .cv-note-head {
-  height: 10px;
+  height: 30px;
   border-radius: calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px) 0 0;
   opacity: 0.85;
   cursor: grab;
@@ -277,7 +325,7 @@
    user must see without hovering. */
 .cv-note-lock {
   position: absolute;
-  top: 12px;
+  top: 6px;
   right: 5px;
   display: grid;
   place-items: center;
@@ -856,6 +904,8 @@
   flex: 1;
   min-height: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   place-items: center;
   padding: 6px;
   cursor: grab;

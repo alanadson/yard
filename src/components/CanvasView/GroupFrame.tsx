@@ -21,6 +21,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 import { ResizeHandles } from "./ResizeHandles";
+import { ItemMaximizeButton } from "./ItemMaximizeButton";
 import { GROUP_HEAD, GROUP_NAME_MAX } from "../../lib/canvasGroups";
 import type { CanvasItem, ResizeDir } from "../../lib/canvas";
 import { useT } from "../../hooks/useT";
@@ -47,6 +48,7 @@ interface Props {
   onResizeStart: (e: React.PointerEvent, it: GroupData, dir: ResizeDir) => void;
   onResizeMove: (e: React.PointerEvent) => void;
   onResizeEnd: (e: React.PointerEvent) => void;
+  onMaximize: (id: string) => void;
 }
 
 function GroupFrameImpl({
@@ -68,6 +70,7 @@ function GroupFrameImpl({
   onResizeStart,
   onResizeMove,
   onResizeEnd,
+  onMaximize,
 }: Props) {
   const t = useT();
   const [draft, setDraft] = useState(it.name);
@@ -94,6 +97,7 @@ function GroupFrameImpl({
   return (
     <div
       className={`cv-group ${selected ? "is-selected" : ""}`}
+      data-maximized={!!it.restore}
       style={{
         left: it.x + dx,
         top: it.y + dy,
@@ -147,6 +151,7 @@ function GroupFrameImpl({
         ) : (
           <span className="cv-group-name">{it.name}</span>
         )}
+        <ItemMaximizeButton item={it} onMaximize={onMaximize} />
       </div>
 
       {/* The ring, and it is **decoration only** — `pointer-events: none`.

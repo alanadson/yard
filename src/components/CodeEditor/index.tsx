@@ -82,7 +82,7 @@ import { hunkActions, hunkPeek, showHunkPeek } from "./hunkPeek";
 import { minimalEdit, nextHunk, prevHunk, revertHunk } from "../../lib/hunks";
 import { copyText } from "../../lib/clipboard";
 import { DiffTab, isComparison } from "./DiffTab";
-import { MarkdownPreview } from "./MarkdownPreview";
+import { LiveMarkdownPreview, MarkdownCounts, MarkdownOutline } from "./MarkdownViews";
 import { MediaView } from "./MediaView";
 import { MarkdownToolbar } from "./MarkdownToolbar";
 import { fileMenu, mdBar, showSave } from "./chrome";
@@ -90,7 +90,7 @@ import { mdKeymap, runMd } from "./mdCommands";
 import { mdLive } from "./mdLive";
 import { openReplacePanel, yardSearch } from "./searchPanel";
 import { Outline } from "./Outline";
-import { observeVisibleLine } from "./surfaceCore";
+import { observeVisibleLine, ownSurface } from "./surfaceCore";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { useMarkdownNavigation } from "../../hooks/useMarkdownNavigation";
 import { isTopLayer } from "../../lib/layers";
@@ -99,7 +99,6 @@ import { applyBookmarks, bookmarkExt } from "./bookmarkGutter";
 import { foldEffectsFor, foldsOf } from "./foldMemory";
 import { parseRulers, rulers } from "./rulers";
 import { snippetCompletions } from "./snippets";
-import { outline as outlineOf, parseDoc, stats } from "../../lib/mddoc";
 import { blockOf, type BlockKind } from "../../lib/mdedit";
 import { openWebAddress } from "../../lib/openLink";
 import { fileSize, mediaKind } from "../../lib/media";
@@ -126,6 +125,7 @@ import { useProjects } from "../../stores/projectsStore";
 import { useExtensions } from "../../stores/extensionsStore";
 import { useUI } from "../../stores/uiStore";
 import { useT } from "../../hooks/useT";
+import { failureMessage, reasonOf } from "../../lib/loading";
 import { t as translate, tn } from "../../lib/i18n";
 
 /** The symbols rail with nothing to list — `Outline` translates it. */
@@ -259,24 +259,6 @@ export function EditorBody({ docId: id }: { docId: string }) {
   const md = doc ? isMarkdown(doc.path) && !doc.binary : false;
   const docRoot = doc?.root ?? "";
   const docPath = doc?.path ?? "";
-  const docText = doc?.text ?? "";
-
-  /**
-   * The text the *rendered* side reads, one beat behind the buffer.
-   *
-   * Parsing a 30 KB README costs a few milliseconds, and paying it on every
-   * keystroke of the split view is exactly how a preview turns into a
-   * stutter. `useDeferredValue` lets the letters land first and the page
-   * catch up, which is the order a person perceives anyway.
-   */
-  const previewText = useDeferredValue(docText);
-  const headings = useMemo(
-    () => (md && showOutline ? outlineOf(parseDoc(previewText)) : []),
-    [md, showOutline, previewText],
-  );
-  // Off the deferred text as well: the counters are for the eye, and nobody
-  // reads "1 217 palavras" tick over on every letter.
-  const counts = useMemo(() => (md ? stats(previewText) : null), [md, previewText]);
 
   // --- code symbols ---------------------------------------------------------
   //
@@ -540,7 +522,7 @@ export function EditorBody({ docId: id }: { docId: string }) {
       {
         toggleWrap: () => useEditor.getState().setWrap(!wrap),
         openExternal: () => {
-          void ipc.openExternal(osPath).catch((e) => showToast(String(e), "error"));
+          void ipc.openExternal(osPath).catch((e) => showToast(failureMessage(e), "error"));
         },
         compareHead: () =>
           useEditor.getState().openDiff(doc.path, {
@@ -656,7 +638,7 @@ export function EditorBody({ docId: id }: { docId: string }) {
                 data-tip={t("Salvar os {n} arquivos com alterações", { n: dirtyDocs })}
                 onClick={() => void useEditor.getState().saveAll()}
               >
-                Salvar tudo
+                {t("Salvar tudo")}
               </button>
             )}
             {/* The draft made visible: the button is there exactly while
@@ -727,8 +709,8 @@ export function EditorBody({ docId: id }: { docId: string }) {
                     // tabbed into, and a screen reader announces it as one.
                     tabIndex={0}
                   >
-                    <MarkdownPreview
-                      text={previewText}
+                    <LiveMarkdownPreview
+                      docId={id}
                       root={docRoot}
                       path={docPath}
                       onTask={toggleTask}
@@ -743,7 +725,7 @@ export function EditorBody({ docId: id }: { docId: string }) {
           </div>
 
           {md && showOutline && (
-            <Outline entries={headings} line={caret.line} onGo={goToLine} />
+            <MarkdownOutline docId={id} line={caret.line} onGo={goToLine} />
           )}
           {codeSymbolsOn && showOutline && (
             <Outline
@@ -768,24 +750,7 @@ export function EditorBody({ docId: id }: { docId: string }) {
             {isDirty(doc) && !isReadOnly(doc) && (
               <span className="editor-chip editor-chip--dirty">{t("não salvo")}</span>
             )}
-            {counts && (
-              <>
-                {counts.tasks.total > 0 && (
-                  <span data-tip={t("Tarefas concluídas neste arquivo")}>
-                    {t("{done}/{total} tarefas", {
-                      done: counts.tasks.done,
-                      total: counts.tasks.total,
-                    })}
-                  </span>
-                )}
-                <span data-tip={t("{n} caracteres", { n: counts.chars })}>
-                  {tn(counts.words, "{n} palavra", "{n} palavras")}
-                </span>
-                <span data-tip={t("Tempo de leitura, a 200 palavras por minuto")}>
-                  {counts.minutes} min
-                </span>
-              </>
-            )}
+            {md && <MarkdownCounts docId={id} />}
             {viewing ? (
               <>
                 <span>{fileSize(doc.size)}</span>
@@ -1133,7 +1098,7 @@ function ConflictBanner({ doc, conflict }: { doc: OpenDoc; conflict: boolean }) 
     void ipc
       .fsReadText(doc.root, doc.path)
       .then((f) => setDisk(f.text))
-      .catch((e) => setDiskError(String(e)));
+      .catch((e) => setDiskError(reasonOf(e)));
   };
 
   // A failed overwrite keeps `stale` (the disk is still ahead) *and* sets
@@ -1731,8 +1696,7 @@ function CmSurface({
     const host = hostRef.current;
     if (!host) return;
     const view = new EditorView({ state: makeState(doc), parent: host });
-    viewRef.current = view;
-    viewHolder.current = view;
+    const releaseSurface = ownSurface(view, [viewRef, viewHolder]);
     statesRef.current.remember(doc.id, view.state, null);
     configureLanguage(doc);
     restoreFolds(view, doc);
@@ -1750,9 +1714,7 @@ function CmSurface({
       stopScroll();
       // The window is going: hand the folds over before the state does.
       useEditor.getState().setFolds(idRef.current, foldsOf(view.state));
-      view.destroy();
-      viewRef.current = null;
-      viewHolder.current = null;
+      releaseSurface();
     };
     // Single mount: the switches are handled by the effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps

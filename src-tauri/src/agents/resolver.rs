@@ -7,6 +7,7 @@
 //! which rewrites the command to `cmd.exe /c <shim> <args>` when needed.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -278,13 +279,28 @@ pub(crate) fn probe_version(program: &str, version_args: &[&str]) -> Option<Stri
 /// Detects every agent in the catalog. Expensive (runs `--version` of each),
 /// so the result is cached on `AppState`.
 pub fn detect_all() -> Vec<AgentInfo> {
+    detect_all_with(|candidates, version_args| {
+        let bin = candidates.iter().find_map(|c| find_binary(c));
+        let version = bin
+            .as_ref()
+            .and_then(|_| probe_version(candidates[0], version_args));
+        (bin, version)
+    })
+}
+
+/// The catalog resolved through `probe`, which answers where an agent's
+/// binary is (from its candidate names) and its version. Every agent is
+/// probed at once (`probe_each`): each `--version` is a cold start of its
+/// CLI, most of them Node at 0.3 to 1.5 s, and one after the other the
+/// "Nova aba" grid waited for the sum of nine.
+fn detect_all_with(
+    probe: impl Fn(&[&str], &[&str]) -> (Option<PathBuf>, Option<String>) + Sync,
+) -> Vec<AgentInfo> {
+    let probed = probe_each(CATALOG, |spec| probe(spec.candidates, spec.version_args));
     CATALOG
         .iter()
-        .map(|spec| {
-            let bin = spec.candidates.iter().find_map(|c| find_binary(c));
-            let version = bin
-                .as_ref()
-                .and_then(|_| probe_version(spec.candidates[0], spec.version_args));
+        .zip(probed)
+        .map(|(spec, (bin, version))| {
             AgentInfo {
                 id: spec.id.to_string(),
                 name: spec.name.to_string(),
@@ -300,6 +316,99 @@ pub fn detect_all() -> Vec<AgentInfo> {
             }
         })
         .collect()
+}
+
+/// `probe` run on every item of `items` at once, one thread each, and the
+/// answers in the order of `items`. For catalogs of a handful of process
+/// launches, where the wait is the launches and not the CPU. A thread the OS
+/// refuses to start only means that item is probed here, after the others
+/// are under way: slower, never different.
+pub(crate) fn probe_each<T: Sync, R: Send>(items: &[T], probe: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let probe = &probe;
+    std::thread::scope(|scope| {
+        let started: Vec<_> = items
+            .iter()
+            .map(|item| {
+                std::thread::Builder::new()
+                    .name("yard-probe".into())
+                    .spawn_scoped(scope, move || probe(item))
+                    .map_err(|_| item)
+            })
+            .collect();
+        started
+            .into_iter()
+            .map(|handle| match handle {
+                Ok(handle) => handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+                Err(item) => probe(item),
+            })
+            .collect()
+    })
+}
+
+/// A detection that is slow and asked for from several places at once (at
+/// boot, the "Nova aba" grid, the MCP panel and the support bundle each used
+/// to find the cache empty and run the whole detection themselves).
+///
+/// The first caller runs it; whoever arrives while it runs waits for that
+/// run instead of starting another, and later callers read its result.
+/// `refresh` asks for a run that starts after the call (a CLI was just
+/// installed, and a run already under way may have looked before it was
+/// there); two refreshes during the same run share the one after it.
+pub struct SharedDetection<T> {
+    /// The last result. Held only to read or replace it, never across a
+    /// run, so `peek` does not wait for one.
+    value: parking_lot::Mutex<Option<T>>,
+    /// Held for the length of a run: runs happen one at a time.
+    running: parking_lot::Mutex<()>,
+    /// How many runs have started, to tell a run that started after a
+    /// refresh was asked from one that was already under way.
+    runs: AtomicU64,
+}
+
+impl<T: Clone> SharedDetection<T> {
+    pub const fn new() -> Self {
+        Self {
+            value: parking_lot::Mutex::new(None),
+            running: parking_lot::Mutex::new(()),
+            runs: AtomicU64::new(0),
+        }
+    }
+
+    /// The result, running `detect` only when nobody else's run will do.
+    pub fn get(&self, refresh: bool, detect: impl FnOnce() -> T) -> T {
+        let asked_at = self.runs.load(Ordering::Acquire);
+        if !refresh {
+            if let Some(found) = self.peek() {
+                return found;
+            }
+        }
+        let _running = self.running.lock();
+        // While this caller waited, someone else's run may have finished:
+        // any result does for a plain ask, and one from a run that started
+        // after the call does for a refresh.
+        if let Some(found) = self.peek() {
+            if !refresh || self.runs.load(Ordering::Acquire) > asked_at {
+                return found;
+            }
+        }
+        self.runs.fetch_add(1, Ordering::AcqRel);
+        let found = detect();
+        *self.value.lock() = Some(found.clone());
+        found
+    }
+
+    /// The last result, if there is one, without waiting for a run.
+    pub fn peek(&self) -> Option<T> {
+        self.value.lock().clone()
+    }
+}
+
+impl<T: Clone> Default for SharedDetection<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Builds the resume args of a session from the catalog template.
@@ -342,8 +451,148 @@ fn opencode_root(home: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    /// Counts the probes running at once and the most there ever were.
+    #[derive(Default)]
+    pub(crate) struct Gauge {
+        now: AtomicUsize,
+        entered: AtomicUsize,
+        max: AtomicUsize,
+    }
+
+    impl Gauge {
+        /// One probe: in, then held until `all` probes have come in (or the
+        /// deadline passed, which is what a one-at-a-time detection hits),
+        /// then out. Run side by side, every probe is in at once.
+        pub(crate) fn probe(&self, all: usize, deadline: Instant) {
+            let now = self.now.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max.fetch_max(now, Ordering::SeqCst);
+            self.entered.fetch_add(1, Ordering::SeqCst);
+            while self.entered.load(Ordering::SeqCst) < all && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            self.now.fetch_sub(1, Ordering::SeqCst);
+        }
+
+        pub(crate) fn max(&self) -> usize {
+            self.max.load(Ordering::SeqCst)
+        }
+    }
+
+    fn catalog_index(candidates: &[&str]) -> usize {
+        CATALOG
+            .iter()
+            .position(|spec| spec.candidates == candidates)
+            .expect("a catalog entry")
+    }
+
+    /// Nine `--version` runs, each a cold Node start of 0.3 to 1.5 s, one
+    /// after the other: the "Nova aba" grid waited for the sum. They run side
+    /// by side now, and the wait is the slowest one.
+    #[test]
+    fn detection_probes_every_agent_at_the_same_time() {
+        let gauge = Gauge::default();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let found = detect_all_with(|_, _| {
+            gauge.probe(CATALOG.len(), deadline);
+            (None, None)
+        });
+        assert_eq!(found.len(), CATALOG.len());
+        assert_eq!(gauge.max(), CATALOG.len(), "probes running at once");
+    }
+
+    /// Side by side, the probes finish in any order; the grid is the
+    /// catalog's order, whatever the machine's timing. Here each probe waits
+    /// for every later one to finish first.
+    #[test]
+    fn detection_keeps_the_catalog_order_whatever_order_the_probes_finish_in() {
+        let finished = parking_lot::Mutex::new(vec![false; CATALOG.len()]);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let found = detect_all_with(|candidates, _| {
+            let me = catalog_index(candidates);
+            while !finished.lock()[me + 1..].iter().all(|done| *done) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            finished.lock()[me] = true;
+            (
+                Some(PathBuf::from(format!("C:/bin/{}.cmd", candidates[0]))),
+                Some(format!("v{me}")),
+            )
+        });
+        let ids: Vec<&str> = found.iter().map(|a| a.id.as_str()).collect();
+        let catalog: Vec<&str> = CATALOG.iter().map(|spec| spec.id).collect();
+        assert_eq!(ids, catalog);
+        for (n, agent) in found.iter().enumerate() {
+            assert!(agent.installed);
+            assert_eq!(agent.version.as_deref(), Some(format!("v{n}").as_str()));
+        }
+    }
+
+    /// Two callers, the second arriving while the first one's detection runs
+    /// (it is held until `open` fires). Returns what each got and how many
+    /// detections ran; `refresh` is what the second asks for.
+    fn two_callers(refreshes: usize) -> (u32, Vec<u32>, usize) {
+        let shared = Arc::new(SharedDetection::<u32>::new());
+        let runs = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started) = std::sync::mpsc::channel();
+        let (open, gate) = std::sync::mpsc::channel::<()>();
+        let first = {
+            let (shared, runs) = (shared.clone(), runs.clone());
+            std::thread::spawn(move || {
+                shared.get(false, || {
+                    runs.fetch_add(1, Ordering::SeqCst);
+                    let _ = started_tx.send(());
+                    let _ = gate.recv_timeout(Duration::from_secs(5));
+                    7
+                })
+            })
+        };
+        started
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the first detection started");
+        let later: Vec<_> = (0..refreshes.max(1))
+            .map(|_| {
+                let (shared, runs) = (shared.clone(), runs.clone());
+                std::thread::spawn(move || {
+                    shared.get(refreshes > 0, || {
+                        runs.fetch_add(1, Ordering::SeqCst);
+                        8
+                    })
+                })
+            })
+            .collect();
+        // The later callers have had their chance to start runs of their own.
+        let deadline = Instant::now() + Duration::from_millis(200);
+        while runs.load(Ordering::SeqCst) < 2 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        open.send(()).unwrap();
+        let first = first.join().unwrap();
+        let later = later.into_iter().map(|t| t.join().unwrap()).collect();
+        (first, later, runs.load(Ordering::SeqCst))
+    }
+
+    /// The grid, the MCP panel and the support bundle all ask for the
+    /// detection, and at boot they ask at once: each one used to find the
+    /// cache empty and run all nine probes itself. A caller that arrives
+    /// while a detection runs waits for that one.
+    #[test]
+    fn callers_that_arrive_during_a_detection_share_it() {
+        assert_eq!(two_callers(0), (7, vec![7], 1));
+    }
+
+    /// "Atualizar" after installing a CLI must not be answered by a detection
+    /// that started before the click: a refresh gets a run of its own. Two
+    /// clicks during the same run share the one that follows it.
+    #[test]
+    fn a_refresh_asked_during_a_detection_gets_a_run_that_started_after_it() {
+        assert_eq!(two_callers(2), (7, vec![8, 8], 2));
+    }
 
     #[test]
     fn resume_args_substitutes_the_id() {

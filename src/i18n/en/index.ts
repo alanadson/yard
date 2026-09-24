@@ -18,6 +18,7 @@ import notes from "./notes";
 import settings from "./settings";
 import shell from "./shell";
 import stores from "./stores";
+import checkpoints from "./checkpoints";
 
 export const AREAS = {
   shell,
@@ -29,6 +30,7 @@ export const AREAS = {
   notes,
   lib,
   stores,
+  checkpoints,
 } as const;
 
 const EN: Readonly<Record<string, string>> = Object.freeze(

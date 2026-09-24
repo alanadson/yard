@@ -18,8 +18,8 @@ minimize, maximize, close), dark theme, `tracing` writing to
   character is kept for the next read.
 - **Scrollback**: 4 MB ring in memory + an append-only `.bin` that receives only
   the delta every 250 ms, compacted down to the last 4 MB once it passes 8 MB.
-- **Coalescing**: ~16 ms/32 KB while the pane is visible, 450 ms while it's
-  hidden; payloads sliced at 256 KB; 2 MB ceiling on the emit buffer with a
+- **Coalescing**: ~16 ms/32 KB while the pane is visible, 450 ms while it or
+  the window is hidden; payloads sliced at 256 KB; 2 MB ceiling on the emit buffer with a
   visible warning when output is too fast to display.
 - **Job Objects** (`KILL_ON_JOB_CLOSE`) attached at spawn — `kill` takes down the
   whole tree, and a Yard crash makes the OS do it on its behalf. Fallback to a
@@ -68,7 +68,9 @@ entry on it — and **Configurações → Interface** hides it; the Busca action
 
 **F3 — Persistence.** SQLite with WAL and versioned migrations; `save_workspace`
 with a **monotonic revision guard** (a lagging UI doesn't overwrite newer state);
-debounced autosave; projects/groups/layout restored on launch; suspend a
+debounced autosave that writes only the rows that changed (the tables end up
+exactly as the old delete-everything-and-reinsert left them, which a test keeps
+as an oracle); projects/groups/layout restored on launch; suspend a
 terminal or a whole group while preserving scrollback; `.zip` backup
 export/import; confirmation on exit while terminals are alive.
 
@@ -341,6 +343,13 @@ mistakes, not against an adversarial agent: the caller identifies itself by the
 `YARD_PTY_ID` in its environment, and a child process can rewrite its
 environment (details in
 [`docs/specs/02-architecture.md` §4.1](./docs/specs/02-architecture.md)).
+The client behind the shims is a small native exe (`src-tauri/src/yard_cli.rs`,
+built by `build.rs`), about 20 ms a call where the Windows PowerShell hop it
+replaced cost 0.5 to 0.7 s under every hook; where that exe cannot run (an
+antivirus, Smart App Control), a startup probe keeps the PowerShell shims and
+remembers it for that build (tried again a day later, not at every start). If
+the exe disappears mid-session (quarantined after the probe), the shims answer
+through `yard.ps1` on their own.
 
 - `list` / `ask` / `check` — talk to connected agents (`--file`/`--stdin` for
   multi-line prompts, since `cmd.exe`'s `%*` eats line breaks).
@@ -843,7 +852,8 @@ minute after boot and then once an hour the app asks one pure question —
 `backupDue`, in `src/lib/autoBackup.ts` — and, when the period has elapsed
 since the stamp kept in the kv (`backup.lastAutoAt`), writes
 `yard-auto-<date-time>.zip` through the same path as the manual export (same
-WAL checkpoint, same database lock) and then prunes the oldest **automatic**
+WAL checkpoint, and the database locked only for the checkpoint and a copy of
+`app.db`, never while the zip is compressed) and then prunes the oldest **automatic**
 copies beyond the retention. Manual exports and anything else in that folder
 are never touched: the retention rule only matches names it wrote itself
 (`persistence/autobackup.rs`). Success is silent, a failure is an error toast
@@ -858,7 +868,10 @@ same trail the session list reads — Claude Code's `~/.claude/projects/**/*.jso
 `~/.codex/sessions/**/*.jsonl` (`token_count` events, the turn's
 `last_token_usage`, the model from the preceding `turn_context`) — and buckets
 it by **local day × agent × project × model** (`src-tauri/src/costs.rs`; each
-file parsed once per `(len, mtime)` and cached). Three windows (Hoje · 7 dias ·
+file parsed once per `(len, mtime)` and cached, a file that grew parsed only
+from where its complete lines ended, `agents/bookmark.rs`, and each line read
+into the few fields the scan needs rather than a whole JSON tree,
+`agents/usage_line.rs`). Three windows (Hoje · 7 dias ·
 30 dias), a totals strip, one bar per day (cost, or tokens when nothing in the
 window has a price) and three tables: por projeto, por agente, por modelo. The
 folding is pure in `src/lib/costs.ts` and carries the honesty rule of the
@@ -986,7 +999,9 @@ a PTY and killed on exit, so no `rust-analyzer` outlives the window — and
 the Rust side only decodes the `Content-Length` framing; every message is
 handed to the frontend as bare JSON (`lsp://message`), where
 `@codemirror/lsp-client` owns initialization, capabilities and requests.
-One client per (project root, server) is shared by every file of that
+That library, and the CodeMirror it brings along, is fetched only when the
+first server starts (alongside its spawn), so it stays out of the startup
+chunk. One client per (project root, server) is shared by every file of that
 root the server takes (`src/stores/lspStore.ts`); a server that fails to
 start or dies is reported once and left alone until "Procurar de novo",
 and a root with no file open loses its servers after thirty seconds.
@@ -1263,7 +1278,13 @@ verify F1's acceptance criteria: output reaches the scrollback and the UI,
 preserves history, `restart` reuses the id, and 6 MB of output don't overflow
 the ring. `bridge::tests` pins the pipe name (it goes into every PTY's
 environment — changing it would break terminals already open) and guarantees
-the three shims + the absence of PowerShell 7 syntax in the `.ps1`.
+the three shims + the absence of PowerShell 7 syntax in the `.ps1`. It also runs
+the native `yard` client `build.rs` compiles (`bridge::cli` for its pure rules):
+the probe, the messages and exit codes, UTF-8 in and out (piped input that is
+not UTF-8 read in the console's code page, as `yard.ps1` read it), the fallback
+to the PowerShell shims when the exe cannot run, and the same request
+`yard.ps1` sends for the same raw command line, checked against a real Windows
+PowerShell.
 
 Tests in vitest, over the promises the CLI makes to agents: name dedup
 (`claude (2)`), note chains, the connection gate, the note name derived from the

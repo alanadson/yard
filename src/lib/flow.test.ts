@@ -16,6 +16,7 @@ import {
   flowAgents,
   flowsOf,
   FLOW_MSG_TAG,
+  prepareFlowStages,
   stageLabelOf,
   wireOfPair,
   type FlowItem,
@@ -45,6 +46,32 @@ function flowItem(id: string, name: string, labels: string[]): FlowItem {
 function canvas(items: CanvasItem[] = []): CanvasData {
   return { ...EMPTY_CANVAS, viewport: { ...EMPTY_CANVAS.viewport }, items };
 }
+
+describe("preparing a flow draft", () => {
+  it("refuses the whole save when any stage has no prompt", () => {
+    expect(
+      prepareFlowStages([
+        { label: "Planejar", prompt: "  Leia o pedido.  " },
+        { label: "QA", prompt: "   " },
+      ]),
+    ).toEqual({ valid: false, emptyIndexes: [1] });
+  });
+
+  it("trims every field only after all stages are valid", () => {
+    expect(
+      prepareFlowStages([
+        { label: " Planejar ", prompt: " Leia o pedido. " },
+        { label: "   ", prompt: " Verifique o resultado. " },
+      ]),
+    ).toEqual({
+      valid: true,
+      stages: [
+        { label: "Planejar", prompt: "Leia o pedido." },
+        { prompt: "Verifique o resultado." },
+      ],
+    });
+  });
+});
 
 describe("extractCarry", () => {
   it("hands over the final summary when the agent wrote one", () => {

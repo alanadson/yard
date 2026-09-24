@@ -70,6 +70,14 @@ jobs:
           # the other way.
           CARGO_PROFILE_RELEASE_LTO: thin
           CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+          # The same trade for codegen units: the local profile splits each
+          # crate into 16 so a rebuild codegens in parallel, and that split
+          # hides code from the optimizer (fewer inlining chances across the
+          # pieces). One unit makes only this tag build slower; the local 35 s
+          # loop never sees this variable. `opt-level` stays at the profile's
+          # 2: this line changes how each crate is split for codegen, not how
+          # hard each piece is optimized.
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
           # The updater's minisign key (`npx tauri signer generate`). Without
           # it `createUpdaterArtifacts` fails the build on purpose: an
           # unsigned installer can never become an update.

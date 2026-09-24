@@ -14,11 +14,70 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::SystemTime;
 
 use parking_lot::Mutex;
 use serde::Serialize;
+
+struct StatusRead {
+    full: bool,
+    value: OnceLock<Result<Arc<Vec<u8>>, String>>,
+}
+
+struct StatusReads {
+    full: crate::bounded_cache::BoundedCache<PathBuf, Weak<StatusRead>>,
+}
+
+impl StatusReads {
+    fn new() -> Self { Self { full: crate::bounded_cache::BoundedCache::new(128) } }
+
+    fn invalidate(&mut self, root: &Path) { self.full.remove(root); }
+
+    fn acquire(&mut self, root: &Path, untracked: bool) -> Arc<StatusRead> {
+        if let Some(read) = self.full.get(root).and_then(Weak::upgrade) { return read; }
+        let read = Arc::new(StatusRead { full: untracked, value: OnceLock::new() });
+        // Header-only reads keep their cheap -uno mode and cannot satisfy a file listing.
+        if untracked { self.full.insert(root.to_path_buf(), Arc::downgrade(&read)); }
+        read
+    }
+}
+
+static STATUS_READS: OnceLock<Mutex<StatusReads>> = OnceLock::new();
+
+/// The key a folder's status reads are stored under: its canonical path, so
+/// every spelling of the same folder shares one read, or the path as given
+/// when it cannot be canonicalized.
+pub(crate) fn status_key(cwd: &Path) -> PathBuf {
+    cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf())
+}
+
+pub(crate) fn invalidate_status(cwd: &Path) {
+    if STATUS_READS.get().is_some() {
+        invalidate_status_key(&status_key(cwd));
+    }
+}
+
+/// `invalidate_status` for a caller that already holds the key. The project
+/// watcher (`files.rs`) invalidates on every file event, and canonicalizing
+/// its root each time was an open of the root per event, on notify's thread,
+/// where it delays the next pass over the kernel's change buffer.
+pub(crate) fn invalidate_status_key(key: &Path) {
+    if let Some(reads) = STATUS_READS.get() {
+        reads.lock().invalidate(key);
+    }
+}
+
+/// Shares a pending full status with header consumers, retaining no completed snapshot.
+pub(crate) fn repository_status(cwd: &Path, untracked: bool) -> Result<Arc<Vec<u8>>, String> {
+    let root = status_key(cwd);
+    let read = STATUS_READS.get_or_init(|| Mutex::new(StatusReads::new())).lock().acquire(&root, untracked);
+    read.value.get_or_init(|| {
+        let output = run_git(cwd, &["status", "--porcelain=v2", "--branch", "-z", if read.full { "-uall" } else { "-uno" }])?;
+        if output.status.success() { Ok(Arc::new(output.stdout)) }
+        else { Err(String::from_utf8_lossy(&output.stderr).into_owned()) }
+    }).clone()
+}
 
 #[derive(Clone, Serialize, Default, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -84,7 +143,33 @@ const MAX_NEW_FILE_BYTES: usize = 512 * 1024;
 /// How many new files get their lines counted in the summary.
 const MAX_UNTRACKED_COUNTED: usize = 500;
 
+/// The git verb of an argument list, looking past the global options that
+/// can come before it (`-c key=val`, `-C path`, `--no-pager`...).
+fn git_verb<S: AsRef<str>>(args: &[S]) -> Option<&str> {
+    let mut it = args.iter().map(AsRef::as_ref);
+    while let Some(arg) = it.next() {
+        match arg {
+            "-c" | "-C" | "--git-dir" | "--work-tree" | "--namespace" => {
+                it.next();
+            }
+            a if a.starts_with('-') => {}
+            verb => return Some(verb),
+        }
+    }
+    None
+}
+
+/// Whether the command can change what `status` reports.
+fn is_mutation<S: AsRef<str>>(args: &[S]) -> bool {
+    matches!(git_verb(args), Some("add" | "reset" | "restore" | "checkout" |
+        "switch" | "commit" | "merge" | "revert" | "cherry-pick" | "rebase" | "fetch" | "pull" |
+        "push" | "stash" | "branch" | "worktree" | "tag" | "clean" | "rm" | "update-ref" | "config" |
+        "init" | "apply" | "mv" | "am"))
+}
+
 pub(crate) fn run_git(cwd: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    let mutation = is_mutation(args);
+    if mutation { invalidate_status(cwd); }
     let mut cmd = std::process::Command::new("git");
     cmd.args(args)
         .current_dir(cwd)
@@ -95,7 +180,9 @@ pub(crate) fn run_git(cwd: &Path, args: &[&str]) -> Result<std::process::Output,
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    cmd.output().map_err(|e| format!("falha ao rodar git: {e}"))
+    let output = cmd.output().map_err(|e| format!("falha ao rodar git: {e}"));
+    if mutation { invalidate_status(cwd); }
+    output
 }
 
 fn has_head(cwd: &Path) -> bool {
@@ -110,19 +197,13 @@ pub fn changes(cwd: &Path) -> Result<ChangesSummary, String> {
     // has its own fallback for `isRepo: false`.
     // `status` is the probe too. Running `rev-parse` first doubled the process
     // startup cost of the most frequent Git operation in the app.
-    let Ok(out) = run_git(
-        cwd,
-        &["status", "--porcelain=v2", "--branch", "-z", "-uall"],
-    ) else {
+    let Ok(status) = repository_status(cwd, true) else {
         return Ok(ChangesSummary::default());
     };
-    if !out.status.success() {
-        return Ok(ChangesSummary::default());
-    }
-    let (branch, mut files) = parse_status_v2(&out.stdout);
+    let (branch, mut files) = parse_status_v2(&status);
 
     // Changed lines per tracked file (staged + worktree in one go).
-    if status_has_head(&out.stdout) {
+    if status_has_head(&status) {
         if let Ok(o) = run_git(cwd, &["diff", "--numstat", "-z", "-M", "HEAD"]) {
             let stats = parse_numstat(&o.stdout);
             for f in &mut files {
@@ -279,7 +360,7 @@ pub fn file_diff(
         }
     };
 
-    if untracked || !has_head(cwd) {
+    if untracked {
         return synth_diff(&cwd.join(&rel), path, Synth::NewFile);
     }
 
@@ -292,7 +373,19 @@ pub fn file_diff(
     if let Some(orig) = orig_path {
         args.push(orig);
     }
-    let out = run_git(cwd, &args)?;
+    // With no commit there is no left side and the file is new. Asking
+    // `rev-parse` that before every diff cost one more process per file the
+    // viewer opened, and `git diff HEAD` already fails by itself without a
+    // commit, so the question waits for the answer to need it: a failure,
+    // or an empty diff. Empty because, with no git at all, the diff turns
+    // into an implicit `--no-index` against a file named `HEAD`, which
+    // succeeds with nothing to print when the two are equal.
+    let out = run_git(cwd, &args);
+    let answered = matches!(&out, Ok(o) if o.status.success() && !o.stdout.is_empty());
+    if !answered && !has_head(cwd) {
+        return synth_diff(&cwd.join(&rel), path, Synth::NewFile);
+    }
+    let out = out?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
@@ -330,9 +423,9 @@ pub fn head_text(cwd: &Path, rel: &str) -> Result<Option<String>, String> {
     // The same fence every editor path crosses. `rel` comes from an open
     // document, but nothing here should trust that.
     crate::explorer::resolve(cwd, rel)?;
-    if !has_head(cwd) {
-        return Ok(None);
-    }
+    // No `HEAD` question first: with no commit (or no git) `git show HEAD:…`
+    // fails by itself, and a failure is already `None` below. It was one more
+    // process every time the editor opened a file.
     // `./` makes the spec relative to `cwd` — right in a worktree whose root
     // is not the repository's.
     let spec = format!("HEAD:./{}", rel.replace('\\', "/"));
@@ -715,18 +808,31 @@ pub(crate) fn worktree_add_timeout(raw: Option<&str>) -> std::time::Duration {
 /// Runs an already configured command and kills it at the deadline.
 ///
 /// The command arrives whole because its stdio belongs to the caller; this
-/// owns only the waiting. A poll loop rather than a thread: there is one of
-/// these in flight at a time, and a blocked reader would be one more thing to
-/// join on the failure path.
+/// owns the waiting and the draining. Piped stdout/stderr are read on their
+/// own threads from the start: a child that prints more than the pipe buffer
+/// holds would otherwise block on its own output and only "finish" when the
+/// deadline killed it.
 pub(crate) fn run_bounded(
     mut cmd: std::process::Command,
     limit: std::time::Duration,
 ) -> Result<std::process::Output, String> {
+    use std::io::Read;
     let mut child = cmd.spawn().map_err(|e| format!("falha ao rodar git: {e}"))?;
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut bytes);
+            }
+            bytes
+        })
+    };
+    let stdout = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let stderr = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
     let deadline = std::time::Instant::now() + limit;
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) => break status,
             Ok(None) => {
                 if std::time::Instant::now() >= deadline {
                     let _ = child.kill();
@@ -740,10 +846,18 @@ pub(crate) fn run_bounded(
             }
             Err(e) => return Err(format!("falha ao esperar o git: {e}")),
         }
-    }
-    child
-        .wait_with_output()
-        .map_err(|e| format!("falha ao ler a saida do git: {e}"))
+    };
+    let stdout = stdout
+        .join()
+        .map_err(|_| "falha ao ler a saida do git".to_string())?;
+    let stderr = stderr
+        .join()
+        .map_err(|_| "falha ao ler a saida do git".to_string())?;
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 /// `run_git`, with a deadline. Same environment, same hidden console window.
@@ -752,6 +866,8 @@ fn run_git_bounded(
     args: &[String],
     limit: std::time::Duration,
 ) -> Result<std::process::Output, String> {
+    let mutation = is_mutation(args);
+    if mutation { invalidate_status(cwd); }
     let mut cmd = std::process::Command::new("git");
     cmd.args(args)
         .current_dir(cwd)
@@ -765,7 +881,9 @@ fn run_git_bounded(
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    run_bounded(cmd, limit)
+    let output = run_bounded(cmd, limit);
+    if mutation { invalidate_status(cwd); }
+    output
 }
 
 /// `run_git`, with something written to the command's stdin.
@@ -2236,6 +2354,70 @@ pub fn worktree_preflight(
 
 #[cfg(test)]
 mod tests {
+    /// Concurrent consumers share a full status, while a later refresh starts fresh.
+    #[test]
+    fn status_consumers_share_only_the_pending_repository_read() {
+        let mut reads = super::StatusReads::new();
+        let root = std::path::Path::new("C:/status-test");
+        let first = reads.acquire(root, true);
+        let second = reads.acquire(root, false);
+        let first_value = first.value.get_or_init(|| Ok(std::sync::Arc::new(b"same revision".to_vec())));
+        let second_value = second.value.get_or_init(|| panic!("a second Git process was started"));
+        assert_eq!(first_value.as_ref().unwrap().as_slice(), second_value.as_ref().unwrap().as_slice());
+        drop(first);
+        drop(second);
+        let fresh = reads.acquire(root, true);
+        assert!(fresh.value.get().is_none());
+    }
+
+    /// A write or watcher event must let the next reader bypass an older status process.
+    #[test]
+    fn status_invalidation_starts_a_new_read_while_the_previous_one_is_pending() {
+        let mut reads = super::StatusReads::new();
+        let root = std::path::Path::new("C:/status-mutation");
+        let old = reads.acquire(root, true);
+        reads.invalidate(root);
+        let fresh = reads.acquire(root, true);
+        old.value.set(Ok(std::sync::Arc::new(b"old".to_vec()))).unwrap();
+        assert!(fresh.value.get().is_none());
+    }
+
+    /// The project watcher works out the key of its root's status reads once,
+    /// when it starts, instead of canonicalizing the root again on every file
+    /// event. That key has to be the one a read made through any spelling of
+    /// the folder is stored under, or the events would silently stop
+    /// invalidating the status the Files panel shows.
+    #[test]
+    fn a_status_key_worked_out_once_invalidates_reads_made_through_any_spelling_of_the_root() {
+        let real = std::env::temp_dir().join(format!(
+            "yard-status-key-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let alias = real.with_extension("atalho");
+        let _ = std::fs::remove_dir_all(&real);
+        let _ = std::fs::remove_dir_all(&alias);
+        std::fs::create_dir_all(&real).unwrap();
+        assert!(crate::dir_entries::testing::link_dir(&real, &alias), "a junction needs no privilege");
+
+        let key = super::status_key(&alias);
+        assert_eq!(key, super::status_key(&real));
+        assert_eq!(key, real.canonicalize().unwrap());
+
+        let mut reads = super::StatusReads::new();
+        let pending = reads.acquire(&super::status_key(&real), true);
+        reads.invalidate(&key);
+        let fresh = reads.acquire(&super::status_key(&real), true);
+        pending.value.set(Ok(std::sync::Arc::new(b"old".to_vec()))).unwrap();
+        assert!(fresh.value.get().is_none(), "the event reached the read stored under the real path");
+
+        // A folder that cannot be canonicalized is keyed as it was given.
+        let missing = real.join("nao-existe");
+        assert_eq!(super::status_key(&missing), missing);
+
+        let _ = std::fs::remove_dir_all(&alias);
+        let _ = std::fs::remove_dir_all(&real);
+    }
     use super::*;
 
     #[test]
@@ -2547,6 +2729,230 @@ worktree C:/solto\nHEAD 123\ndetached\n";
                 Ok(_) => panic!("a file outside every opened root should be refused"),
             }
         }
+    }
+
+    // -- the HEAD question, asked only when the answer needs it -------------
+    //
+    // `file_diff` and `head_text` used to ask `rev-parse --verify HEAD` before
+    // doing anything, one more ~35 ms process on Windows for every file the
+    // viewer or the editor's gutter opened. The real command already fails
+    // when there is no commit, so the question moved behind that failure.
+    // These lock down that the move is invisible: a repository with no
+    // commit, one with a detached HEAD, one whose HEAD tree git cannot read
+    // and a folder with no git at all answer exactly as before.
+
+    /// A temp folder torn down with the test; `repo` makes it a repository
+    /// with one commit of `a.txt` (or `None` when there is no usable git).
+    struct Scratch {
+        root: std::path::PathBuf,
+    }
+
+    impl Scratch {
+        fn new(tag: &str) -> Scratch {
+            let root = std::env::temp_dir().join(format!(
+                "yard-git-head-{tag}-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            Scratch { root }
+        }
+
+        fn empty_repo(tag: &str) -> Option<Scratch> {
+            let s = Scratch::new(tag);
+            if !init_repo(&s.root) {
+                return None;
+            }
+            let _ = run_git(&s.root, &["config", "core.autocrlf", "false"]);
+            Some(s)
+        }
+
+        fn repo(tag: &str, first: &str) -> Option<Scratch> {
+            let s = Scratch::empty_repo(tag)?;
+            s.write("a.txt", first);
+            commit_all(&s.root, "inicial").then_some(s)
+        }
+
+        fn write(&self, rel: &str, text: &str) {
+            std::fs::write(self.root.join(rel), text).unwrap();
+        }
+
+        /// Deletes the loose object of `HEAD`'s tree: the commit (and so the
+        /// HEAD) is still there, but git can compare nothing with it.
+        fn lose_the_head_tree(&self) -> bool {
+            let Ok(out) = run_git(&self.root, &["rev-parse", "HEAD^{tree}"]) else {
+                return false;
+            };
+            let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !out.status.success() || id.len() < 3 {
+                return false;
+            }
+            let object = self.root.join(".git").join("objects").join(&id[..2]).join(&id[2..]);
+            // git writes its objects read-only, and Windows refuses to delete those.
+            if let Ok(meta) = std::fs::metadata(&object) {
+                let mut perms = meta.permissions();
+                #[allow(clippy::permissions_set_readonly_false)]
+                perms.set_readonly(false);
+                let _ = std::fs::set_permissions(&object, perms);
+            }
+            std::fs::remove_file(&object).is_ok()
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn is_synthesized_new_file(d: &FileDiff) -> bool {
+        d.text.starts_with("--- /dev/null\n")
+    }
+
+    #[test]
+    fn a_changed_file_diffs_against_head_in_gits_own_words() {
+        let Some(s) = Scratch::repo("diff-muda", "um\n") else { return };
+        s.write("a.txt", "um\ndois\n");
+        let d = file_diff(&s.root, "a.txt", false, None, None).unwrap();
+        assert!(d.text.starts_with("diff --git a/a.txt b/a.txt\n"), "{}", d.text);
+        assert!(d.text.contains("+dois"), "{}", d.text);
+        assert!(!d.is_binary && !d.truncated && !d.external);
+    }
+
+    /// Git's empty answer is the answer: the file is what `HEAD` has. It is
+    /// not turned into a new file just because there was nothing to print.
+    #[test]
+    fn an_unchanged_file_has_an_empty_diff_not_a_synthesized_one() {
+        let Some(s) = Scratch::repo("diff-igual", "um\n") else { return };
+        let d = file_diff(&s.root, "a.txt", false, None, None).unwrap();
+        assert_eq!(d.text, "");
+        assert!(!d.is_binary && !d.external);
+    }
+
+    #[test]
+    fn with_no_commit_a_tracked_file_diffs_as_all_added() {
+        let Some(s) = Scratch::empty_repo("diff-vazio") else { return };
+        s.write("a.txt", "um\ndois\n");
+        let _ = run_git(&s.root, &["add", "a.txt"]);
+        let d = file_diff(&s.root, "a.txt", false, None, None).unwrap();
+        assert_eq!(d.text, "--- /dev/null\n+++ b/a.txt\n@@ -0,0 +1,2 @@\n+um\n+dois\n");
+        assert!(!d.external);
+    }
+
+    #[test]
+    fn on_a_detached_head_the_diff_is_against_the_detached_commit() {
+        let Some(s) = Scratch::repo("diff-solta", "um\n") else { return };
+        s.write("a.txt", "um\ndois\n");
+        if !commit_all(&s.root, "segundo") {
+            return;
+        }
+        let _ = run_git(&s.root, &["checkout", "-q", "--detach", "HEAD~1"]);
+        s.write("a.txt", "um\ntres\n");
+        let d = file_diff(&s.root, "a.txt", false, None, None).unwrap();
+        assert!(d.text.starts_with("diff --git"), "{}", d.text);
+        assert!(d.text.contains("+tres") && !d.text.contains("dois"), "{}", d.text);
+    }
+
+    /// With no git, `git diff HEAD -- a.txt` becomes an implicit `--no-index`
+    /// comparison of a file called `HEAD` with `a.txt`, and it *succeeds*,
+    /// empty, when the two are equal. The file must still come back as new.
+    #[test]
+    fn outside_a_repository_the_file_is_all_added_even_next_to_a_file_named_head() {
+        let s = Scratch::new("diff-solto");
+        s.write("a.txt", "igual\n");
+        let plain = file_diff(&s.root, "a.txt", false, None, None).unwrap();
+        assert_eq!(plain.text, "--- /dev/null\n+++ b/a.txt\n@@ -0,0 +1,1 @@\n+igual\n");
+
+        s.write("HEAD", "igual\n");
+        let beside = file_diff(&s.root, "a.txt", false, None, None).unwrap();
+        assert_eq!(beside.text, plain.text);
+        s.write("HEAD", "diferente\n");
+        let different = file_diff(&s.root, "a.txt", false, None, None).unwrap();
+        assert_eq!(different.text, plain.text);
+    }
+
+    /// A rename source that is not in the repository is git's refusal to
+    /// show when there is a HEAD, and irrelevant when there is none.
+    #[test]
+    fn a_rename_source_git_refuses_is_its_error_with_a_head_and_ignored_without() {
+        let Some(s) = Scratch::repo("diff-orig", "um\n") else { return };
+        s.write("a.txt", "um\ndois\n");
+        match file_diff(&s.root, "a.txt", false, Some("../../fora.txt"), None) {
+            Err(e) => assert!(e.starts_with("fatal:"), "{e}"),
+            Ok(d) => panic!("expected git's refusal, got {}", d.text),
+        }
+
+        let Some(empty) = Scratch::empty_repo("diff-orig-vazio") else { return };
+        empty.write("a.txt", "um\n");
+        let d = file_diff(&empty.root, "a.txt", false, Some("../../fora.txt"), None).unwrap();
+        assert!(is_synthesized_new_file(&d), "{}", d.text);
+    }
+
+    #[test]
+    fn with_a_head_whose_tree_cannot_be_read_the_diff_is_gits_error() {
+        let Some(s) = Scratch::repo("diff-arvore", "um\n") else { return };
+        if !s.lose_the_head_tree() {
+            return;
+        }
+        s.write("a.txt", "um\ndois\n");
+        match file_diff(&s.root, "a.txt", false, None, None) {
+            Err(e) => assert!(e.starts_with("error:") || e.starts_with("fatal:"), "{e}"),
+            Ok(d) => panic!("expected git's error, got {}", d.text),
+        }
+    }
+
+    /// The gutter compares the editor's text with `HEAD`'s, so both have to
+    /// be read the same way: `\n` line ends, no BOM.
+    #[test]
+    fn head_text_is_the_committed_content_with_lf_and_no_bom() {
+        let Some(s) = Scratch::repo("head-texto", "\u{feff}um\r\ndois\r\n") else { return };
+        s.write("a.txt", "mexido no disco\n");
+        assert_eq!(head_text(&s.root, "a.txt"), Ok(Some("um\ndois\n".into())));
+    }
+
+    #[test]
+    fn on_a_detached_head_the_head_text_is_the_detached_commits() {
+        let Some(s) = Scratch::repo("head-solta", "um\n") else { return };
+        s.write("a.txt", "dois\n");
+        if !commit_all(&s.root, "segundo") {
+            return;
+        }
+        let _ = run_git(&s.root, &["checkout", "-q", "--detach", "HEAD~1"]);
+        assert_eq!(head_text(&s.root, "a.txt"), Ok(Some("um\n".into())));
+    }
+
+    /// No commit, no git, a file git never saw, a HEAD whose tree is gone:
+    /// each is "nothing to compare against", which the gutter draws as no
+    /// marks at all.
+    #[test]
+    fn there_is_no_head_text_without_a_committed_copy_to_read() {
+        if let Some(empty) = Scratch::empty_repo("head-vazio") {
+            empty.write("a.txt", "um\n");
+            let _ = run_git(&empty.root, &["add", "a.txt"]);
+            assert_eq!(head_text(&empty.root, "a.txt"), Ok(None));
+        }
+
+        let loose = Scratch::new("head-solto");
+        loose.write("a.txt", "um\n");
+        loose.write("HEAD", "um\n");
+        assert_eq!(head_text(&loose.root, "a.txt"), Ok(None));
+
+        let Some(s) = Scratch::repo("head-novo", "um\n") else { return };
+        s.write("novo.txt", "recem-criado\n");
+        assert_eq!(head_text(&s.root, "novo.txt"), Ok(None));
+        if s.lose_the_head_tree() {
+            assert_eq!(head_text(&s.root, "a.txt"), Ok(None));
+        }
+    }
+
+    #[test]
+    fn a_head_text_path_that_climbs_out_is_refused_before_git() {
+        let s = Scratch::new("head-fora");
+        assert_eq!(
+            head_text(&s.root, "../fora.txt"),
+            Err("caminho fora da pasta do projeto".into())
+        );
     }
 
     /// The regression this locks: the branch name went to `git worktree add`
@@ -3784,6 +4190,52 @@ worktree C:/solto\nHEAD 123\ndetached\n";
             started.elapsed() < std::time::Duration::from_secs(10),
             "the deadline is what makes this a bound and not a wish"
         );
+    }
+
+    /// The verb used to be `args[0]`: a `-c core.editor=true rebase` read as
+    /// a harmless `-c`, and the cached status survived the rebase. `init`,
+    /// `apply`, `mv` and `am` were missing from the list as well.
+    #[test]
+    fn the_mutation_check_looks_past_global_options_to_the_verb() {
+        assert!(is_mutation(&["-c", "core.editor=true", "rebase", "main"]));
+        assert!(is_mutation(&["-C", "C:/repo", "-c", "x=y", "pull"]));
+        assert!(!is_mutation(&["-c", "core.editor=true", "status", "--porcelain"]));
+        for verb in ["init", "apply", "mv", "am"] {
+            assert!(is_mutation(&[verb]), "{verb} changes the working tree");
+        }
+        assert!(!is_mutation(&["status"]));
+        assert!(!is_mutation::<&str>(&[]));
+        assert!(!is_mutation(&["-c"]));
+    }
+
+    /// The child's output was only read after it exited: anything past the
+    /// pipe buffer blocked the child, which then sat there until the deadline
+    /// killed it. Both pipes are drained while it runs.
+    ///
+    /// The child runs with no console at all (`DETACHED_PROCESS`). Attached
+    /// to one, `cmd.exe` waits on the console host on every turn of the loop
+    /// even with its output on a pipe, so its pace followed the machine's
+    /// load instead of the draining under test: 0.2 s alone, past the 5 s
+    /// deadline in every full parallel run (and alone too, next to a
+    /// CPU-bound process). Detached it still blocks on a pipe nobody drains.
+    #[cfg(windows)]
+    #[test]
+    fn a_child_that_prints_more_than_the_pipe_buffer_finishes_before_the_deadline() {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        let mut cmd = std::process::Command::new("cmd.exe");
+        cmd.args([
+            "/c",
+            "for /L %i in (1,1,4000) do @echo 0123456789012345678901234567890123456789",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .creation_flags(DETACHED_PROCESS);
+        let limit = std::time::Duration::from_secs(5);
+        let out = run_bounded(cmd, limit).expect("the child was killed at the deadline");
+        assert!(out.status.success());
+        assert!(out.stdout.len() > 128 * 1024, "got {} bytes", out.stdout.len());
     }
 
     /// The escape hatch, and its floor: a repository that genuinely takes

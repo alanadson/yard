@@ -3,7 +3,7 @@
  * App and the Dados section of Preferences — one wording, one behaviour,
  * wherever the warning is answered.
  */
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "./confirmation";
 
 import { useUI } from "../stores/uiStore";
 import { t } from "./i18n";

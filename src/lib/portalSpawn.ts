@@ -23,6 +23,7 @@ import { useBrowsers } from "../stores/browsersStore";
 import { parseLayout, useProjects } from "../stores/projectsStore";
 
 export interface PortalSpawn {
+  deviceSerial?: string;
   id: string;
   url: string;
   engine?: string;
@@ -44,6 +45,7 @@ export interface PortalSpawn {
 
 /** Boots the native webview behind a portal card. */
 export async function openPortalEngine(p: PortalSpawn): Promise<void> {
+  if (p.deviceSerial) return;
   const projects = useProjects.getState();
   const projectId = p.groupId
     ? (projects.projectOfGroup(p.groupId)?.id ?? null)
@@ -119,9 +121,13 @@ export async function spawnPortalNear(opts: {
   // A portal only exists on the canvas, so its neighbours are the cards.
   const terminals = projects.terminalsOn(opts.groupId, "canvas");
 
+  // A terminal that is not a card (a pane) has no slot on the canvas: -1 fed
+  // to the grid gave a negative x, off the board. It counts as no anchor.
+  const anchorIndex = opts.nearTerminalId
+    ? terminals.findIndex((t) => t.id === opts.nearTerminalId)
+    : -1;
   const near = opts.nearTerminalId
-    ? (canvas?.nodes?.[opts.nearTerminalId] ??
-      autoNodeRect(terminals.findIndex((t) => t.id === opts.nearTerminalId)))
+    ? (canvas?.nodes?.[opts.nearTerminalId] ?? (anchorIndex >= 0 ? autoNodeRect(anchorIndex) : null))
     : null;
   // No anchor: drop it where a new card would land, so it never covers one.
   const base = near ?? autoNodeRect(terminals.length + (canvas?.items.length ?? 0));

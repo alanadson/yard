@@ -29,8 +29,12 @@
 import { describe, expect, it } from "vitest";
 
 import mcpSrc from "./Settings/sections/Mcp.tsx?raw";
+import contextMenuSrc from "./ContextMenu/index.tsx?raw";
+import projectSidebarSrc from "./ProjectSidebar/index.tsx?raw";
 import onboardingSrc from "./modals/OnboardingModal.tsx?raw";
+import newTerminalSrc from "./modals/NewTerminalModal.tsx?raw";
 import scoresSrc from "./modals/ScoresModal.tsx?raw";
+import workspaceGridSrc from "./WorkspaceGrid/index.tsx?raw";
 
 /** Every `disabled={…}` expression in a source, brace-balanced. */
 function disabledExpressions(source: string): string[] {
@@ -110,4 +114,43 @@ describe("how a panel says it is working", () => {
       expect(bare, `${name} still has a mute \`disabled={busy}\``).toEqual([]);
     });
   }
+});
+
+describe("the activation path", () => {
+  it("asks for the first project before cataloguing optional CLIs and shortcuts", () => {
+    expect(onboardingSrc.indexOf('aria-labelledby="onb-projeto"')).toBeLessThan(
+      onboardingSrc.indexOf('aria-labelledby="onb-clis"'),
+    );
+    expect(onboardingSrc.indexOf('aria-labelledby="onb-clis"')).toBeLessThan(
+      onboardingSrc.indexOf('aria-labelledby="onb-atalhos"'),
+    );
+  });
+
+  it("offers one prominent action from an empty group", () => {
+    expect(workspaceGridSrc).toContain("Abrir agente ou shell");
+    expect(workspaceGridSrc).toMatch(/btn btn--primary[\s\S]{0,240}Abrir agente ou shell/);
+  });
+});
+
+describe("assistive navigation", () => {
+  it("announces the active context-menu item and uses a checkable menu role", () => {
+    expect(contextMenuSrc).toContain("aria-activedescendant");
+    expect(contextMenuSrc).toContain(
+      'role={entry.checked === undefined ? "menuitem" : "menuitemcheckbox"}',
+    );
+  });
+
+  it("keeps the tree row as the only Tab stop", () => {
+    const nestedControls = (projectSidebarSrc.match(/<button[\s\S]*?>/g) ?? []).filter(
+      (button) => button.includes("data-tree-control"),
+    );
+    expect(nestedControls.length).toBe(10);
+    expect(nestedControls.every((button) => button.includes("tabIndex={-1}"))).toBe(true);
+  });
+
+  it("groups terminal choices and announces detection failures", () => {
+    expect(newTerminalSrc).toContain('role="group"');
+    expect(newTerminalSrc).toContain('aria-labelledby={`quick-grid-section-${fi}`}');
+    expect(newTerminalSrc.match(/hint hint--error" role="alert"/g)?.length).toBe(2);
+  });
 });

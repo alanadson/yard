@@ -83,12 +83,14 @@ type CtxSlice = Pick<
 
 /**
  * Who the caller reaches: its direct neighbours, and past them only through
- * notes and portals (the same walk `bridgeCore` does for `note read`).
+ * notes, portals and binders (the same hops `bridgeCore` walks for `note
+ * read`; the two gates have to agree, or a note `yard note` reads is one
+ * `yard canvas` refuses to move).
  */
 function reachSet(ctx: CtxSlice): Set<string> {
   const hops = new Set<string>(
     ctx.canvas.items
-      .filter((i) => i.type === "note" || i.type === "portal")
+      .filter((i) => i.type === "note" || i.type === "portal" || i.type === "binder")
       .map((i) => i.id),
   );
   const out = new Set<string>([ctx.caller.id]);

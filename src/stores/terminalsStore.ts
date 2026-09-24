@@ -73,8 +73,17 @@ const EMPTY: TerminalRuntime = {
   cpu: 0,
 };
 
+/**
+ * A memory reading as the screen prints it: whole MB, and nothing at all
+ * while the process reports none (the cards, the sidebar HUD and the status
+ * bar all read `mb > 0` and `mb.toFixed(0)`).
+ */
+function shownMb(mb: number): string {
+  return mb > 0 ? mb.toFixed(0) : "";
+}
+
 /** Is the process up (or on its way up)? The check every pane makes. */
-export function isLive(rt?: TerminalRuntime | null): boolean {
+export function isLive(rt?: Pick<TerminalRuntime, "state"> | null): boolean {
   return rt?.state === "running" || rt?.state === "starting";
 }
 
@@ -327,19 +336,23 @@ export const useTerminals = create<TerminalsState>((set, get) => ({
 
   applyResources: (perPty, totals) =>
     set((s) => {
-      // The tick fires on a timer for every PTY at once; between two ticks an
-      // idle process reports the same numbers, so rebuilding its entry would
-      // re-render its card for nothing.
+      // The tick fires on a timer for every PTY at once, and a busy process
+      // never reports the same float twice. An entry is only rebuilt when its
+      // printed MB moves: rebuilding it re-renders its card, and nothing
+      // paints `cpu` (it rides along whenever the entry is rebuilt anyway).
       let byId = s.byId;
       for (const r of perPty) {
         const cur = byId[r.id] ?? EMPTY;
-        if (cur.rssMb === r.rssMb && cur.cpu === r.cpu && byId[r.id]) continue;
+        if (byId[r.id] && shownMb(cur.rssMb) === shownMb(r.rssMb)) continue;
         if (byId === s.byId) byId = { ...s.byId };
         byId[r.id] = { ...cur, rssMb: r.rssMb, cpu: r.cpu };
       }
+      // The CLIs' total is printed whole as well; the machine's free and
+      // total memory feed the meter's `scaleX` and the spawn gate, which read
+      // them at full precision.
       const same =
         byId === s.byId &&
-        s.totalRssMb === totals.totalRssMb &&
+        shownMb(s.totalRssMb) === shownMb(totals.totalRssMb) &&
         s.systemAvailableMb === totals.availableMb &&
         s.systemTotalMb === totals.totalMb;
       if (same) return s;

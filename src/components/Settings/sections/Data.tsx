@@ -7,7 +7,7 @@ import { Download, FolderOpen, RefreshCw, RotateCw, Upload } from "lucide-react"
 import { getVersion } from "@tauri-apps/api/app";
 
 import { cancelBackupRestore, restartIntoBackup } from "../../../lib/backupFlow";
-import { LOADING, load, type LoadState } from "../../../lib/loading";
+import { failureMessage, LOADING, load, reasonOf, type LoadState } from "../../../lib/loading";
 import { locale, t, tn } from "../../../lib/i18n";
 import { ipc, type AppPaths } from "../../../lib/ipc";
 import { useT } from "../../../hooks/useT";
@@ -98,7 +98,7 @@ export function SecData() {
         t("Pacote gerado ({kb} KB).", { kb: Math.max(1, Math.round(summary.bytes / 1024)) }),
       );
     } catch (e) {
-      setSupportError(String(e));
+      setSupportError(reasonOf(e));
     }
   };
 
@@ -349,7 +349,7 @@ export function SecData() {
               if (paths.state !== "pronto") return;
               void ipc
                 .revealPath(paths.data.appDir)
-                .catch((e) => showToast(String(e), "error"));
+                .catch((e) => showToast(failureMessage(e), "error"));
             }}
           >
             <FolderOpen size={13} /> {t("Abrir pasta")}

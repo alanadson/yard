@@ -15,6 +15,7 @@ import { ipc } from "../ipc";
 import { uiLog } from "../log";
 import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
+import { useWorktrees } from "../../stores/worktreesStore";
 import { t } from "../i18n";
 import { reconcile, type FrontRecord, type Reconciliation } from "./reconcile";
 
@@ -41,7 +42,12 @@ export async function reconcileProject(
   projectPath: string,
 ): Promise<Reconciliation | null> {
   const fronts = frontsOf(projectId);
-  const worktrees = await ipc.worktreeList(projectPath).catch(() => []);
+  // Through the store, not straight to git: the tree lists every project at
+  // this same moment, and one listing answers both.
+  const worktrees = await useWorktrees
+    .getState()
+    .list(projectPath)
+    .catch(() => []);
   if (fronts.length === 0 && worktrees.length <= 1) return null;
 
   const paths = [...new Set([projectPath, ...fronts.map((f) => f.path), ...worktrees.map((w) => w.path)])];
@@ -63,16 +69,26 @@ export async function reconcileProject(
  */
 export async function reconcileFronts(): Promise<void> {
   const projects = useProjects.getState().projects;
+  // Every project at once: each reading waits on git and the disk, and none
+  // of them needs another. What they found is still said in project order
+  // below, so the toast reads the same whatever order git answers in.
+  const outcomes = await Promise.all(
+    projects.map((project) =>
+      reconcileProject(project.id, project.path).then(
+        (reading) => ({ reading }),
+        (error: unknown) => ({ error }),
+      ),
+    ),
+  );
   const hurt: string[] = [];
 
-  for (const project of projects) {
-    let reading: Reconciliation | null;
-    try {
-      reading = await reconcileProject(project.id, project.path);
-    } catch (e) {
-      uiLog.warn(`não consegui reconciliar as frentes de "${project.name}": ${e}`); // i18n-ok: log line
+  for (const [i, project] of projects.entries()) {
+    const outcome = outcomes[i];
+    if ("error" in outcome) {
+      uiLog.warn(`não consegui reconciliar as frentes de "${project.name}": ${outcome.error}`); // i18n-ok: log line
       continue;
     }
+    const { reading } = outcome;
     if (!reading) continue;
 
     if (reading.unregistered.length) {

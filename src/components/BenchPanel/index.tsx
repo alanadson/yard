@@ -40,7 +40,7 @@ import {
 } from "react";
 import "./bench.css";
 import "../CodeEditor/editor.css";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../lib/confirmation";
 import {
   BookMarked,
   CircleAlert,
@@ -82,6 +82,9 @@ import { useLsp } from "../../stores/lspStore";
 import { SearchPane } from "./SearchPane";
 import { Resizer } from "../Resizer";
 import { injectPrompt } from "../../lib/inject";
+import { prepareTaskCheckpoint } from "../../lib/taskCheckpoint";
+import { useCheckpoints } from "../../stores/checkpointsStore";
+import { checkpointScope } from "../../lib/checkpoints";
 import { sendability } from "../../lib/sendable";
 import { copyText } from "../../lib/clipboard";
 import {
@@ -136,7 +139,6 @@ export function BenchPanel() {
 
   const width = useUI((s) => s.prefs.benchWidth);
   const setPref = useUI((s) => s.setPref);
-  const setPrefLocal = useUI((s) => s.setPrefLocal);
 
   // Each increment tells the active tab to focus its input field — fired by a
   // deliberate open (shortcut/button) and by clicking the tabs.
@@ -166,10 +168,13 @@ export function BenchPanel() {
   );
   const changedCount = scmSummary?.isRepo ? scmSummary.files.length : 0;
   // What the language servers have found across the project (`lspStore`).
-  const problems = useLsp((st) => st.problems);
-  const problemCounts = useMemo(() => countBySeverity(problems), [problems]);
-  const problemErrors = problemCounts.errors;
-  const problemCount = problemErrors + problemCounts.warnings + problemCounts.other;
+  // Three numbers, not the map: a republish that moves no count leaves the
+  // bench alone.
+  const problemErrors = useLsp((st) => countBySeverity(st.problems).errors);
+  const problemWarnings = useLsp((st) => countBySeverity(st.problems).warnings);
+  const problemOther = useLsp((st) => countBySeverity(st.problems).other);
+  const problemCounts = { errors: problemErrors, warnings: problemWarnings, other: problemOther };
+  const problemCount = problemErrors + problemWarnings + problemOther;
   const heading = benchHeading(tab, {
     pending: tasks.reduce(
       (n, t) => n + (!t.done && taskInScope(t, scope, activeProjectId) ? 1 : 0),
@@ -183,7 +188,7 @@ export function BenchPanel() {
     scm: scmSummary
       ? {
           isRepo: scmSummary.isRepo,
-          branch: scmSummary.branch ?? "sem branch",
+          branch: scmSummary.branch ?? t("sem branch"),
           changes: scmSummary.files.length,
         }
       : null,
@@ -203,7 +208,6 @@ export function BenchPanel() {
         max={BENCH_MAX}
         defaultWidth={DEFAULT_PREFS.benchWidth}
         label={t("Largura da bancada")}
-        onResize={(w) => setPrefLocal("benchWidth", w)}
         onCommit={(w) => setPref("benchWidth", w)}
       />
 
@@ -400,7 +404,7 @@ function fromDateField(value: string): number | null {
  * when it cannot. Shared by the prompt cards and the task menu — both mean
  * the same thing by "enviar": the focused terminal, via bracketed paste.
  */
-async function injectIntoFocused(text: string): Promise<boolean> {
+async function injectIntoFocused(text: string, task?: BenchTask): Promise<boolean> {
   const showToast = useUI.getState().showToast;
   const targetId = useUI.getState().focusedTerminalId;
   const target = useProjects.getState().terminals.find((t) => t.id === targetId);
@@ -421,7 +425,7 @@ async function injectIntoFocused(text: string): Promise<boolean> {
     return false;
   }
   try {
-    await injectPrompt(targetId, text);
+    await injectPrompt(targetId, text, { checkpoint: await prepareTaskCheckpoint(targetId, task) });
   } catch (e) {
     showToast(tl("Falha ao enviar: {e}", { e: String(e) }), "error");
     return false;
@@ -912,7 +916,17 @@ function taskMenu(
       label: tl("Enviar ao terminal em foco"),
       icon: <Send size={13} />,
       disabled: !hasTarget,
-      onSelect: () => void injectIntoFocused(t.text),
+      onSelect: () => void injectIntoFocused(t.text, t),
+    },
+    {
+      id: "checkpoints",
+      label: tl("Checkpoints na pasta do terminal em foco"),
+      disabled: !hasTarget,
+      onSelect: () => {
+        const workspace = useProjects.getState();
+        const terminal = workspace.terminals.find((row) => row.id === useUI.getState().focusedTerminalId);
+        if (terminal) void useCheckpoints.getState().open(checkpointScope(terminal, workspace.groups.find((group) => group.id === terminal.groupId), t));
+      },
     },
     {
       id: "composer",

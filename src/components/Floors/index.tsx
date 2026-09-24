@@ -49,6 +49,7 @@ import { isLive, useTerminals } from "../../stores/terminalsStore";
 import { useUI } from "../../stores/uiStore";
 import { runFloorHooks } from "../../lib/floorHooks";
 import { useOccluder } from "../../hooks/useOccluder";
+import { isolatedBranchSignature } from "./branchSignature";
 import { useT } from "../../hooks/useT";
 
 function hookEnvFor(
@@ -198,6 +199,9 @@ function FloorsPopover({
    * Silent when `gh` is missing or the branch has none.
    */
   const [prs, setPrs] = useState<Record<string, PullRequest | null>>({});
+  // `groups` is a new array on every layout write (a pan, a tab switch); the
+  // signature only moves when a branch appears, leaves or is renamed.
+  const branchSig = isolatedBranchSignature(ofProject.map((g) => g.layoutJson));
   useEffect(() => {
     let alive = true;
     const branches = ofProject
@@ -218,9 +222,9 @@ function FloorsPopover({
     return () => {
       alive = false;
     };
-    // The branch list only changes with the group list.
+    // The branch list is exactly what `branchSig` spells.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups, project.path]);
+  }, [branchSig, project.path]);
 
   /** The floor's cards on a board wear this colour (`lib/floorColor.ts`). */
   const setFloorColor = (g: GroupRow, floor: FloorMeta, color: string | null) => {

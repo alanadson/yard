@@ -10,7 +10,7 @@
  */
 import { useEffect, useState } from "react";
 import "./scores.css";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../lib/confirmation";
 import { Download, FolderOpen, Save, Trash2 } from "lucide-react";
 
 import { Modal } from "./Modal";

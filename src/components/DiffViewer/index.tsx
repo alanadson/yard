@@ -13,7 +13,7 @@
  *
  * Process state stays in the backend; here it is only a projection (§4.3).
  */
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../lib/confirmation";
 import {
   useCallback,
   useEffect,
@@ -53,6 +53,7 @@ import { Select } from "../Select";
 import { injectAndConfirm } from "../../lib/inject";
 
 import { useT } from "../../hooks/useT";
+import { reasonOf } from "../../lib/loading";
 import { locale, tn } from "../../lib/i18n";
 
 const HIGHLIGHT_MAX_BYTES = 320_000;
@@ -126,6 +127,7 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
   // repo the panel is showing, not necessarily from the ground.
   const root = useChanges((s) => s.watched[projectId]) ?? project?.path;
   const git = useChanges((s) => s.gitByProject[projectId]);
+  const diffRevision = useChanges((s) => s.diffRevisionByProject[projectId] ?? 0);
   const mode = useChanges((s) => s.viewerMode);
   const whole = useChanges((s) => s.viewerWhole);
   const wrap = useChanges((s) => s.viewerWrap);
@@ -160,6 +162,11 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
   const [copied, setCopied] = useState(false);
 
   useDialogFocus(dialogRef, true, "viewer");
+  // `ViewerInner` is keyed by file, so Alt+arrow remounts it; without this
+  // the keyboard stayed on whatever was focused behind the dialog.
+  useEffect(() => {
+    dialogRef.current?.focus();
+  }, []);
 
   // --- review annotations --------------------------------------------------
   const allComments = useReview((s) => s.comments);
@@ -243,7 +250,7 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
       setError(null);
     } catch (e) {
       if (seq !== loadSeq.current) return;
-      setError(String(e));
+      setError(reasonOf(e));
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
@@ -254,7 +261,7 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
   // is what keeps the diff alive while the agent keeps editing.
   useEffect(() => {
     void load();
-  }, [load, git]);
+  }, [load, git, diffRevision]);
 
   const nav = useCallback(
     (delta: number) => {
@@ -414,6 +421,7 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
         className="viewer"
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
         aria-label={t("Diff de {path}", { path: file.path })}
         onMouseDown={(e) => e.stopPropagation()}
         onContextMenu={openMenu}
@@ -433,7 +441,7 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
             </span>
             {file.origPath && (
               <span className="viewer-orig" data-tip={file.origPath}>
-                era {file.origPath}
+                {t("era {path}", { path: file.origPath })}
               </span>
             )}
             <span className="viewer-chips">
@@ -462,7 +470,7 @@ function ViewerInner({ target }: { target: ViewerTarget }) {
                   )}
                 </span>
               )}
-              {loading && diff && <span className="viewer-updating">atualizando…</span>}
+              {loading && diff && <span className="viewer-updating">{t("atualizando…")}</span>}
             </span>
           </div>
 
@@ -1442,4 +1450,3 @@ function lineText(ln: DiffLine, chunks?: ShineChunk[]): ReactNode {
     </>
   );
 }
-

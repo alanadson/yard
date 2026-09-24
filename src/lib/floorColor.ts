@@ -88,3 +88,42 @@ export function frontBadge(
   if (board) return cardFront;
   return groupFront && groupFront.id === cardFront.id ? null : cardFront;
 }
+
+/** What a card's badge paints: the front it names and the colour it wears. */
+export interface CardBadge {
+  id: string;
+  name: string;
+  color: string;
+}
+
+/**
+ * The badge of every card that wears one, keyed by the card's id.
+ *
+ * `prev` is the map this returned last time. A badge whose id, name and
+ * colour came out the same is handed back as that very object: the fronts
+ * are rebuilt from every group on each layout write (a pan settling, a note
+ * being typed), and a fresh object on every card would break the memo of
+ * every terminal card on the board for a badge that did not change.
+ */
+export function cardBadges(
+  cards: readonly { id: string; cwd: string }[],
+  fronts: readonly FrontRef[],
+  groupFront: FrontRef | null,
+  board: boolean,
+  prev: ReadonlyMap<string, CardBadge> = new Map(),
+): Map<string, CardBadge> {
+  const out = new Map<string, CardBadge>();
+  for (const card of cards) {
+    const badge = frontBadge(frontOfPath(card.cwd, fronts), groupFront, board);
+    if (!badge) continue;
+    const color = frontColor(badge);
+    const old = prev.get(card.id);
+    out.set(
+      card.id,
+      old && old.id === badge.id && old.name === badge.name && old.color === color
+        ? old
+        : { id: badge.id, name: badge.name, color },
+    );
+  }
+  return out;
+}

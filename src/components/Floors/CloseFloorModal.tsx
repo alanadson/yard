@@ -18,6 +18,7 @@ import { parseLayout } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
 import { ipc, type GroupRow, type ProjectRow } from "../../lib/ipc";
 import { useT } from "../../hooks/useT";
+import { failureMessage } from "../../lib/loading";
 
 export interface CloseFloorPayload {
   project: ProjectRow;
@@ -87,7 +88,7 @@ export function CloseFloorModal() {
     } catch (e) {
       // Uncommitted work (the most common refusal) arrives here as an error:
       // the dialog stays open for the user to sort it out and try again.
-      showToast(String(e), "error");
+      showToast(failureMessage(e), "error");
     } finally {
       setBusy(false);
     }

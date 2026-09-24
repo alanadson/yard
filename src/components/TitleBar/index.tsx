@@ -17,7 +17,7 @@
  * `<input>`, anything with an interactive `role` — keep blocking the drag on
  * their own, no markup needed.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   FileDiff,
@@ -43,16 +43,21 @@ import { ContextMenu, type MenuAnchor } from "../ContextMenu";
 import { titleBarMenu } from "../../lib/titleBarMenu";
 import { groundBranchOf } from "../../lib/destination";
 import { GROUND_FLOOR, groupLabel } from "../../lib/floors";
-import { parseLayout, useProjects, type LayoutMode } from "../../stores/projectsStore";
+import { useProjects, type LayoutMode } from "../../stores/projectsStore";
 import { NO_WORKTREES, useWorktrees } from "../../stores/worktreesStore";
 import { useUI } from "../../stores/uiStore";
-import {
-  layoutControlsState,
-  paneSwitchVisible,
-  projectPanelsShown,
-} from "../../lib/layoutControls";
+import { paneSwitchVisible, projectPanelsShown } from "../../lib/layoutControls";
+import { browserTimer, coalesce } from "./coalesce";
+import { titleBarSelector } from "./view";
 
 const appWindow = getCurrentWindow();
+
+/**
+ * How long a burst of resize events is folded into one `isMaximized` ask.
+ * Three frames: short enough that the glyph settles before the eye looks for
+ * it, long enough to turn a drag's hundred asks a second into twenty.
+ */
+const RESIZE_ASK_MS = 50;
 
 /**
  * The shapes of the pane grid. Canvas is deliberately **not** here: the
@@ -89,11 +94,13 @@ export function TitleBar() {
   const toggleSidebar = useUI((s) => s.toggleSidebar);
   const sidebarOpen = useUI((s) => s.sidebarOpen);
   const openModal = useUI((s) => s.openModal);
-  const activeGroupId = useProjects((s) => s.activeGroupId);
-  const groupBeforeBoard = useProjects((s) => s.groupBeforeBoard);
-  const groups = useProjects((s) => s.groups);
+  // The crumb and the pane switch, as one small view that keeps its identity
+  // while nothing painted here changes (`view.ts`). It used to be the whole
+  // `groups` array, which every canvas keystroke, viewport pan and tab click
+  // in the workspace rewrites.
+  const selectView = useMemo(() => titleBarSelector(), []);
+  const { group, project, floor, controls, layout } = useProjects(selectView);
   const updateLayout = useProjects((s) => s.updateLayout);
-  const projectOfGroup = useProjects((s) => s.projectOfGroup);
   const changesOpen = useChanges((s) => s.open);
   const toggleChanges = useChanges((s) => s.toggle);
   const benchOpen = useBench((s) => s.open);
@@ -118,20 +125,9 @@ export function TitleBar() {
   const changesDoor = dockToggle("changes", { open: changesOpen, changed: changedCount });
   const benchDoor = dockToggle("bench", { open: benchOpen, due });
 
-  const group = groups.find((g) => g.id === activeGroupId);
-  const project = activeGroupId ? projectOfGroup(activeGroupId) : undefined;
-  const activeLayout = group ? parseLayout(group.layoutJson) : null;
   // A board belongs to no project: it is the canvas as its own container, and
   // the breadcrumb names it in the project's place.
   const board = group && group.projectId === null ? group : null;
-  const controls = layoutControlsState({
-    activeGroupId,
-    activeProjectId,
-    groupBeforeBoard,
-    groups,
-  });
-  const controlGroup = groups.find((candidate) => candidate.id === controls?.groupId);
-  const layout = controlGroup ? parseLayout(controlGroup.layoutJson) : null;
   // With a board in front the pane switch has no screen to describe, and it
   // leaves the bar (`lib/layoutControls.ts`). The way in and out of the
   // canvas is the sidebar's row, which is the same toggle.
@@ -141,7 +137,6 @@ export function TitleBar() {
   // behind them leave too (`App`).
   const canvasSide = useProjects((s) => s.canvasSide);
   const projectPanels = projectPanelsShown({ canvasSide });
-  const floor = activeLayout?.floor;
   // The ground is called by the branch checked out at the project root, the
   // same name the sidebar prints for it.
   const worktreesOfProject = useWorktrees((s) =>
@@ -151,16 +146,19 @@ export function TitleBar() {
 
   useEffect(() => {
     const subscription = new AsyncDisposer();
-    void appWindow.isMaximized().then((value) => {
-      if (!subscription.disposed) setMaximized(value);
-    });
-    void subscription.add(
-      appWindow.onResized(() => {
-        void appWindow.isMaximized().then((value) => {
-          if (!subscription.disposed) setMaximized(value);
-        });
-      }),
-    );
+    const ask = () => {
+      void appWindow.isMaximized().then((value) => {
+        if (!subscription.disposed) setMaximized(value);
+      });
+    };
+    ask();
+    // A drag on the window's edge fires a resize per mouse move, and each one
+    // was an IPC round trip. A lone resize is still asked about at once; a
+    // burst is folded into one ask per window, and the last resize of it is
+    // always followed by one, so the glyph ends on the real state.
+    const resized = coalesce(ask, RESIZE_ASK_MS, browserTimer);
+    subscription.keep(() => resized.dispose());
+    void subscription.add(appWindow.onResized(() => resized.poke()));
     return () => subscription.dispose();
   }, []);
 

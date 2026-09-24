@@ -9,49 +9,15 @@
  */
 import { useSyncExternalStore } from "react";
 
-interface Ticker {
-  now: number;
-  handle: ReturnType<typeof setInterval> | null;
-  listeners: Set<() => void>;
-}
+import { createTicker } from "./clockTicker";
 
-const tickers = new Map<number, Ticker>();
+const tickers = new Map<number, ReturnType<typeof createTicker>>();
 
-function tickerFor(periodMs: number): Ticker {
-  let t = tickers.get(periodMs);
-  if (!t) {
-    t = { now: Date.now(), handle: null, listeners: new Set() };
-    tickers.set(periodMs, t);
-  }
-  return t;
-}
-
-/**
- * Current time, refreshed every `periodMs`.
- *
- * The value only changes on a tick, which is what keeps the snapshot stable
- * between renders — returning `Date.now()` directly would make
- * `useSyncExternalStore` loop.
- */
 export function useNow(periodMs: number): number {
-  const ticker = tickerFor(periodMs);
-  return useSyncExternalStore(
-    (onChange) => {
-      ticker.listeners.add(onChange);
-      if (!ticker.handle) {
-        ticker.handle = setInterval(() => {
-          ticker.now = Date.now();
-          for (const fn of ticker.listeners) fn();
-        }, periodMs);
-      }
-      return () => {
-        ticker.listeners.delete(onChange);
-        if (ticker.listeners.size === 0 && ticker.handle) {
-          clearInterval(ticker.handle);
-          ticker.handle = null;
-        }
-      };
-    },
-    () => ticker.now,
-  );
+  let ticker = tickers.get(periodMs);
+  if (!ticker) {
+    ticker = createTicker(periodMs, Date.now);
+    tickers.set(periodMs, ticker);
+  }
+  return useSyncExternalStore(ticker.subscribe, ticker.read);
 }

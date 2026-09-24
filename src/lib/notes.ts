@@ -413,7 +413,7 @@ export interface RailCounts {
 }
 
 export function railCounts(
-  notes: readonly Note[],
+  notes: readonly Pick<Note, "notebookId" | "tags" | "status" | "deletedAt">[],
   notebooks: readonly Notebook[],
 ): RailCounts {
   const byStatus: Record<NoteStatus, number> = {

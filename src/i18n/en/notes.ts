@@ -8,6 +8,10 @@
 export default {
   // Palette — the status bar row
   "agentes, branch, fluxos e memória no rodapé": "agents, branch, flows and memory in the footer",
+  "Tema, ícones e recursos do editor…": "Theme, icons and editor features…",
+  "tema de cor, tema de ícones, minimapa, Prettier, Mermaid": "color theme, icon theme, minimap, Prettier, Mermaid",
+  "fonte, renderer, scrollback, avisos, atalhos, recursos": "font, renderer, scrollback, notices, shortcuts, features",
+  "Juntei o rascunho solto ao texto de {name}.": "Merged the loose draft into the text of {name}.",
   // --- the notebook: places, top bar --------------------------------------
   Anotações: "Notes",
   "Onde o caderno abre": "Where the notebook opens",

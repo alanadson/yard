@@ -11,11 +11,14 @@
  * are going to reach this particular CLI, which changes with the CLI. See
  * `lib/roles.ts` for why there are two ways.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 
 import { Select } from "../Select";
+import { ask } from "../../lib/confirmation";
+import { roleDraftError } from "../../lib/roleDraft";
 import { useT } from "../../hooks/useT";
+import { useDraftExit } from "../../hooks/useDraftExit";
 import { commitCanvasExternal } from "../../lib/canvasWrite";
 import { CANVAS_COLORS, ROLE_NAME_MAX, type RolePreset } from "../../lib/canvas";
 import { setEntry } from "../../lib/canvasOps";
@@ -25,6 +28,7 @@ import {
   mergeRoles,
   readGlobalRoles,
   writeGlobalRole,
+  roleNameConflict,
   type RolePick,
   type RoleScope,
   type SavedRole,
@@ -42,6 +46,7 @@ interface Props {
   hint: string;
   value: RolePick | null;
   onChange: (pick: RolePick | null) => void;
+  onDraftChange?: (active: boolean) => void;
 }
 
 /** The option that stands for a role that is set but not in the library. */
@@ -57,15 +62,34 @@ interface Draft {
   color: string | null;
 }
 
-export function RoleField({ groupId, hint, value, onChange }: Props) {
+export function RoleField({ groupId, hint, value, onChange, onDraftChange }: Props) {
   const t = useT();
   const canvas = useProjects((s) => (groupId ? s.layoutOf(groupId).canvas : undefined));
   const [global, setGlobal] = useState<Record<string, RolePreset>>({});
   const [draft, setDraft] = useState<Draft | null>(null);
   const [err, setError] = useState<string | null>(null);
+  const errorId = useId();
+  const [invalidField, setInvalidField] = useState<"name" | "text" | null>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const textRef = useRef<HTMLTextAreaElement>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const discardDraft = useDraftExit(!!draft, () => setDraft(null));
+  useEffect(() => { onDraftChange?.(!!draft); }, [!!draft, onDraftChange]);
 
-  const reload = () => void readGlobalRoles().then(setGlobal);
-  useEffect(reload, []);
+  const reload = async () => {
+    setLoading(true);
+    setLoadFailed(false);
+    try {
+      setGlobal(await readGlobalRoles());
+      setError(null);
+    } catch (e) {
+      setLoadFailed(true);
+      setError(t("Não consegui carregar os papéis: {e}", { e: String(e) }));
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { void reload(); }, []);
 
   const lib = useMemo(
     () => mergeRoles(groupRoles(canvas), global),
@@ -136,24 +160,33 @@ export function RoleField({ groupId, hint, value, onChange }: Props) {
   };
 
   const save = async () => {
-    if (!draft) return;
+    if (!draft || saving || loading || (draft.scope === "global" && loadFailed)) return;
     const name = draft.name.trim();
     const text = draft.text.trim();
-    if (!name) return setError(t("Dê um nome ao papel — é o que aparece no cartão."));
-    if (name.length > ROLE_NAME_MAX) {
-      return setError(t("O nome passa de {max} caracteres.", { max: ROLE_NAME_MAX }));
+    const invalid = roleDraftError(name, text);
+    setInvalidField(invalid?.field ?? null);
+    if (invalid) {
+      setError(invalid.message);
+      (invalid.field === "name" ? nameRef.current : textRef.current)?.focus();
+      return;
     }
-    if (!text) return setError(t("Sem instruções não há o que dizer ao agente."));
 
     const preset: RolePreset = draft.color ? { text, color: draft.color } : { text };
+    setSaving(true);
     try {
+      const destination = draft.scope === "global" ? await readGlobalRoles() : groupRoles(canvas);
+      const conflict = roleNameConflict(destination, name, draft.originalScope === draft.scope ? draft.original : null);
+      if (conflict && !(await ask(t('Já existe um papel chamado "{name}" neste local. Substituir suas instruções? Para manter ambos, cancele e escolha outro nome.', { name: conflict }), {
+        title: t("Substituir papel"), kind: "warning", okLabel: t("Substituir"), cancelLabel: t("Escolher outro nome"),
+      }))) return;
       if (draft.scope === "current" && groupId) {
         commitCanvasExternal(groupId, (c) => ({
           ...c,
-          rolePresets: { ...(c.rolePresets ?? {}), [name]: preset },
+          rolePresets: { ...setEntry(c.rolePresets, conflict ?? name, undefined), [name]: preset },
         }));
       } else {
         await writeGlobalRole(name, preset);
+        if (conflict && conflict !== name) await deleteGlobalRole(conflict);
       }
       // A rename (or a move between scopes) would otherwise leave the previous
       // entry behind, and the list would offer the same role twice.
@@ -165,8 +198,10 @@ export function RoleField({ groupId, hint, value, onChange }: Props) {
       // The global library is a row in SQLite: a failed write must say so
       // here, not leave the dialog looking like it saved.
       return setError(t("Não consegui salvar: {e}", { e: String(e) }));
+    } finally {
+      setSaving(false);
     }
-    reload();
+    void reload();
     onChange({ role: { name, text }, color: draft.color ?? undefined });
     setDraft(null);
     setError(null);
@@ -178,24 +213,32 @@ export function RoleField({ groupId, hint, value, onChange }: Props) {
    * simply becomes the "(não salvo)" entry until it is saved again.
    */
   const remove = async () => {
-    if (!selected) return;
+    if (!selected || saving || loading) return;
+    setSaving(true);
     try {
       if (selected.scope === "current") removeFromGroup(selected.name);
       else await deleteGlobalRole(selected.name);
     } catch (e) {
       return setError(t("Não consegui excluir: {e}", { e: String(e) }));
+    } finally {
+      setSaving(false);
     }
-    reload();
+    void reload();
     setDraft(null);
   };
 
   return (
-    <section className="role-field">
+    <section className="role-field" aria-busy={loading || saving}>
+      {loading && <p className="hint" role="status">{t("Carregando papéis…")}</p>}
+      {err && <p id={errorId} className="hint hint--error" role="alert">{err}</p>}
+      {loadFailed && <button type="button" className="btn" onClick={() => void reload()}>{t("Tentar novamente")}</button>}
+      <fieldset className="form-fieldset" disabled={loading || saving}>
       <div className="role-field-row">
         <label className="grow">
           {t("Papel do agente")}
           <Select
             value={selectValue}
+            disabled={!!draft}
             options={options}
             placeholder={t("Sem papel")}
             onChange={choose}
@@ -207,6 +250,7 @@ export function RoleField({ groupId, hint, value, onChange }: Props) {
           data-tip={t("Novo papel")}
           aria-label={t("Novo papel")}
           onClick={next}
+          disabled={!!draft}
         >
           <Plus size={13} />
         </button>
@@ -215,7 +259,7 @@ export function RoleField({ groupId, hint, value, onChange }: Props) {
           className="icon-btn"
           data-tip={t("Editar este papel")}
           aria-label={t("Editar este papel")}
-          disabled={!value}
+          disabled={!value || !!draft}
           onClick={edit}
         >
           <Pencil size={13} />
@@ -225,7 +269,7 @@ export function RoleField({ groupId, hint, value, onChange }: Props) {
           className="icon-btn icon-btn--danger"
           data-tip={t("Excluir da biblioteca")}
           aria-label={t("Excluir da biblioteca")}
-          disabled={!selected}
+          disabled={!selected || !!draft}
           onClick={() => void remove()}
         >
           <Trash2 size={13} />
@@ -245,9 +289,12 @@ export function RoleField({ groupId, hint, value, onChange }: Props) {
             <input
               autoFocus
               value={draft.name}
+              ref={nameRef}
+              aria-invalid={invalidField === "name" || undefined}
+              aria-describedby={err ? errorId : undefined}
               maxLength={ROLE_NAME_MAX}
               placeholder={t("ex.: Revisora de PR")}
-              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+              onChange={(e) => { setDraft({ ...draft, name: e.target.value }); setInvalidField(null); setError(null); }}
             />
           </label>
           <label>
@@ -255,8 +302,11 @@ export function RoleField({ groupId, hint, value, onChange }: Props) {
             <textarea
               rows={5}
               value={draft.text}
+              ref={textRef}
+              aria-invalid={invalidField === "text" || undefined}
+              aria-describedby={err ? errorId : undefined}
               placeholder={t("O que este agente cuida, o que evita, como responde…")}
-              onChange={(e) => setDraft({ ...draft, text: e.target.value })}
+              onChange={(e) => { setDraft({ ...draft, text: e.target.value }); setInvalidField(null); setError(null); }}
             />
           </label>
           <div className="role-editor-row">
@@ -308,22 +358,23 @@ export function RoleField({ groupId, hint, value, onChange }: Props) {
             </div>
           </div>
 
-          {err && <p className="hint hint--error">{err}</p>}
 
           <div className="role-editor-foot">
-            <button type="button" className="btn" onClick={() => setDraft(null)}>
+            <button type="button" className="btn" onClick={discardDraft}>
               {t("Cancelar")}
             </button>
             <button
               type="button"
               className="btn btn--primary"
+              disabled={draft.scope === "global" && loadFailed}
               onClick={() => void save()}
             >
-              {t("Salvar papel")}
+              {saving ? t("Salvando…") : t("Salvar papel")}
             </button>
           </div>
         </div>
       )}
+      </fieldset>
     </section>
   );
 }

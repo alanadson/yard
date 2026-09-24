@@ -22,7 +22,7 @@
  *   4.5 s timer) is the accelerator, and only counts when it landed AFTER
  *   the stage began — the flag alone is a latch left armed by past turns.
  */
-import { sendNotification } from "@tauri-apps/plugin-notification";
+import { notify as deliverNotice } from "./notifications";
 
 import {
   buildStagePrompt,
@@ -43,7 +43,6 @@ import { isLive, useTerminals } from "../stores/terminalsStore";
 import { useProjects } from "../stores/projectsStore";
 import { useUI } from "../stores/uiStore";
 import { t } from "./i18n";
-import { pushOut } from "./notifyOut";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -74,12 +73,7 @@ function toast(message: string, kind: "info" | "error" = "info") {
 /** Native notice, only when the user asked to be notified at all. */
 function notify(body: string) {
   if (!useUI.getState().prefs.notifyOnFinish) return;
-  try {
-    sendNotification({ title: t("Yard — Fluxo"), body });
-    pushOut(t("Yard, Fluxo"), body, "flow");
-  } catch {
-    // Lacking notification permission is not a flow error.
-  }
+  void deliverNotice({ title: t("Yard, Fluxo"), body, event: "flow", checkPermission: false }).catch(() => {});
 }
 
 /**
@@ -354,9 +348,13 @@ async function waitReady(
         );
         notify(t('Fluxo "{name}" precisa de você.', { name: run?.name ?? "" }));
       }
-      deadline = Date.now() + READY_TIMEOUT_MS;
     } else {
       useFlows.getState().setStage(flowId, index, "waiting");
+    }
+    // Busy and blocked both re-arm: a CLI still answering is not a broken
+    // pipeline. The deadline only catches a terminal that stopped reporting.
+    if (sb.reason === "busy" || sb.reason === "blocked") {
+      deadline = Date.now() + READY_TIMEOUT_MS;
     }
     if (Date.now() >= deadline) {
       return t("a CLI nunca ficou pronta para receber a etapa (ocupada por muito tempo).");

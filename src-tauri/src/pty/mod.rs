@@ -15,6 +15,7 @@
 
 pub mod emit;
 pub mod job;
+pub mod pages;
 pub mod reader;
 pub mod scrollback;
 pub mod teardown;
@@ -31,6 +32,7 @@ use parking_lot::Mutex;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 
+use crate::agents::resolver::SharedDetection;
 use crate::events;
 use crate::state::AppState;
 use emit::PtyEvents;
@@ -114,10 +116,14 @@ pub struct PtyMeta {
     pub env: Vec<(String, String)>,
 }
 
+/// The terminal's input pipe, shared so a write can happen with the
+/// `PtyHandle` lock already released (see `write_through`).
+pub(crate) type SharedWriter = Arc<Mutex<Box<dyn Write + Send>>>;
+
 pub struct PtyHandle {
     pub meta: PtyMeta,
     master: Box<dyn MasterPty + Send>,
-    writer: Mutex<Box<dyn Write + Send>>,
+    writer: SharedWriter,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     pub pid: Option<u32>,
     job: Option<JobHandle>,
@@ -127,6 +133,14 @@ pub struct PtyHandle {
     pub started_at: i64,
     pub rows: u16,
     pub cols: u16,
+}
+
+impl PtyHandle {
+    /// Every process of this terminal's tree, from its Job Object, or `None`
+    /// without one (the tree is then found by walking the process table).
+    pub fn job_pids(&self) -> Option<Vec<u32>> {
+        self.job.as_ref().and_then(JobHandle::pids)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -164,6 +178,54 @@ pub struct AttachResult {
     /// of incremental redraws and **not** a screen the UI can repaint (see
     /// `reader::scan_screen_mode`). The UI asks for a `repaint` instead.
     pub alt_screen: bool,
+}
+
+/// What the view will do with the history, said before it knows whether the
+/// process is alive: it only learns that from the answer, so each use is a
+/// condition ("if dead, I throw it away"). Everything is off by default, and
+/// an attach that states nothing gets the whole history, as it always did.
+///
+/// This is what spares a restart its biggest waste: every terminal that was
+/// running comes back dead with auto-start, and each one used to read up to
+/// 4 MB from disk, turn every ESC into `\u001b` and ship it over IPC for a
+/// view that discards it before painting anything.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AttachWants {
+    /// A dead terminal's history is discarded: the view spawns a new process
+    /// on a clean screen (`freshBoot` in `XTermView`).
+    pub omit_dead_history: bool,
+    /// On a live alternate screen the view reads only the last this-many
+    /// UTF-16 code units of the history (`data.slice(-altTail)`, for the URL
+    /// scanner and the blocked detector); the screen comes from a repaint.
+    pub alt_tail: Option<usize>,
+}
+
+/// How much of the history an attach sends back (see `history_cut`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryCut {
+    /// None of it. For a dead terminal the `.bin` is not even opened.
+    Nothing,
+    Whole,
+    /// A suffix that still holds the last this-many UTF-16 code units
+    /// (`Scrollback::tail_utf16`).
+    Utf16Tail(usize),
+}
+
+/// The part of the history the view will actually use, given the state the
+/// attach found and what the view said about each state.
+pub fn history_cut(alive: bool, alt_screen: bool, wants: AttachWants) -> HistoryCut {
+    if !alive {
+        return if wants.omit_dead_history {
+            HistoryCut::Nothing
+        } else {
+            HistoryCut::Whole
+        };
+    }
+    match (alt_screen, wants.alt_tail) {
+        (true, Some(units)) => HistoryCut::Utf16Tail(units),
+        _ => HistoryCut::Whole,
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -223,6 +285,11 @@ pub fn spawn(
     if is_agent {
         wait_for_memory(state);
     }
+    // Any terminal can run `yard`, and cmd.exe re-reads a batch file as it
+    // runs it: once a terminal exists the shims stay as they are (a launcher
+    // choice still in flight is abandoned, never waited for; see
+    // `bridge::LauncherGate`).
+    crate::bridge::seal_launchers();
 
     // npm `.cmd`/`.ps1` shims are not executables for CreateProcess —
     // the resolver rewrites that as `cmd.exe /c ...` (§9.3).
@@ -289,10 +356,11 @@ pub fn spawn(
                 crate::bridge::help_path().to_string_lossy().as_ref(),
             );
         }
-        let (key, value) = std::env::vars()
-            .find(|(k, _)| k.eq_ignore_ascii_case("PATH"))
-            .unwrap_or_else(|| ("PATH".into(), String::new()));
-        cmd.env(key, format!("{};{}", bin.display(), value));
+        let (key, value) = inherited_path(std::env::vars_os());
+        let mut path = std::ffi::OsString::from(bin.as_os_str());
+        path.push(";");
+        path.push(value);
+        cmd.env(key, path);
     }
     // Color is this terminal's decision, not that of whoever launched the app.
     // A Yard opened from inside another terminal/agent (some terminal hosts
@@ -306,10 +374,8 @@ pub fn spawn(
     // the inherited markers would make the nested claude think it is a
     // "child session" and turn off transcript recording — meaning no session
     // to resume later.
-    for (k, _) in std::env::vars() {
-        if k == "CLAUDECODE" || k.starts_with("CLAUDE_CODE_") {
-            cmd.env_remove(&k);
-        }
+    for k in claude_session_markers(std::env::vars_os()) {
+        cmd.env_remove(&k);
     }
     for (k, v) in &opts.env {
         cmd.env(k, v);
@@ -362,7 +428,7 @@ pub fn spawn(
     } else {
         Scrollback::fresh(&opts.id)
     }));
-    let shared = PtyShared::new(is_agent);
+    let shared = PtyShared::with_window(is_agent, state.window_shown.clone());
     let intent = Arc::new(AtomicU8::new(INTENT_NONE));
 
     let title = if opts.title.is_empty() {
@@ -381,7 +447,7 @@ pub fn spawn(
             env: opts.env.clone(),
         },
         master: pair.master,
-        writer: Mutex::new(writer),
+        writer: Arc::new(Mutex::new(writer)),
         killer: Mutex::new(killer),
         pid,
         job,
@@ -465,6 +531,7 @@ fn finish(
         std::thread::sleep(Duration::from_millis(25));
     }
     shared.stopping.store(true, Ordering::Release);
+    shared.wake_pump();
 
     let reason = match intent.load(Ordering::Acquire) {
         INTENT_KILLED => ExitReason::Killed,
@@ -473,9 +540,16 @@ fn finish(
         _ => ExitReason::Normal,
     };
 
-    if let Some(handle) = state.ptys.lock().remove(id) {
+    // Its own statement on purpose: inside an `if let` the registry guard
+    // would live for the whole block, and the flush plus the ConPTY/Job
+    // teardown (the `drop` of the last handle) would run with every other
+    // terminal locked out.
+    let handle = state.ptys.lock().remove(id);
+    if let Some(handle) = handle {
         let scrollback = handle.lock().scrollback.clone();
-        let _ = scrollback.lock().flush();
+        // Closed as well: a dead terminal keeps no `.bin` open.
+        let _ = scrollback.lock().flush_and_close();
+        drop(handle);
     }
     state.statuses.lock().insert(
         id.to_string(),
@@ -492,6 +566,34 @@ fn finish(
         code,
         reason: reason.as_str().to_string(),
     });
+}
+
+/// The inherited `PATH` pair in its original spelling (on Windows a
+/// duplicated `PATH`/`Path` has undefined resolution), or `PATH` and empty
+/// when there is none. Over `vars_os` on purpose: `std::env::vars()` panics
+/// on the first variable that is not Unicode, whatever its name.
+pub(crate) fn inherited_path<I>(vars: I) -> (std::ffi::OsString, std::ffi::OsString)
+where
+    I: IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+{
+    vars.into_iter()
+        .find(|(k, _)| k.to_string_lossy().eq_ignore_ascii_case("PATH"))
+        .unwrap_or_else(|| ("PATH".into(), std::ffi::OsString::new()))
+}
+
+/// The variables Claude Code uses to recognise a nested session, exactly as
+/// spelled in the environment so `env_remove` hits them.
+pub(crate) fn claude_session_markers<I>(vars: I) -> Vec<std::ffi::OsString>
+where
+    I: IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+{
+    vars.into_iter()
+        .map(|(k, _)| k)
+        .filter(|k| {
+            let name = k.to_string_lossy();
+            name == "CLAUDECODE" || name.starts_with("CLAUDE_CODE_")
+        })
+        .collect()
 }
 
 fn snapshot_of(id: &str, h: &PtyHandle) -> PtySnapshot {
@@ -537,9 +639,21 @@ fn wait_for_memory(state: &AppState) {
 
 pub fn write(state: &AppState, id: &str, data: &str) -> Result<(), String> {
     let handle = live_handle(state, id)?;
-    let h = handle.lock();
-    let mut w = h.writer.lock();
-    w.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+    write_through(&handle, |h| h.writer.clone(), data.as_bytes())
+}
+
+/// Takes the writer out from under the handle's lock, releases that lock,
+/// and only then writes. A child that stops draining its stdin blocks the
+/// write; with the handle locked across it, terminate/resize/attach and the
+/// resources supervisor would all wedge behind one stuck terminal.
+pub(crate) fn write_through<T>(
+    handle: &Mutex<T>,
+    writer_of: impl FnOnce(&T) -> SharedWriter,
+    data: &[u8],
+) -> Result<(), String> {
+    let writer = writer_of(&handle.lock());
+    let mut w = writer.lock();
+    w.write_all(data).map_err(|e| e.to_string())?;
     w.flush().map_err(|e| e.to_string())
 }
 
@@ -579,12 +693,53 @@ pub fn set_visible(state: &AppState, id: &str, visible: bool) {
     if let Some(handle) = handle {
         let h = handle.lock();
         h.shared.visible.store(visible, Ordering::Release);
+        h.shared.wake_pump();
+    }
+}
+
+/// The main window came on screen or left it (hidden to the tray, minimized).
+/// Every pump reads the flag (`reader::emit_period`); when the window comes
+/// back each one is woken, so output held at the hidden pace goes out now
+/// instead of at the end of its 450 ms wait. Returns whether that changed
+/// anything, so the caller tells the page only about a real change.
+pub fn set_window_shown(state: &AppState, shown: bool) -> bool {
+    if state.window_shown.swap(shown, Ordering::AcqRel) == shown {
+        return false;
+    }
+    if shown {
+        let handles: Vec<_> = state.ptys.lock().values().cloned().collect();
+        for handle in handles {
+            let shared = handle.lock().shared.clone();
+            shared.wake_pump();
+        }
+    }
+    true
+}
+
+/// The page drained `chunks` chunks of `id`'s output: the pump may send that
+/// many again (`PtyShared::ack`). `ptyStream.ts` batches these, one call per
+/// terminal once 4 chunks are owed or 32 ms after the first owed one, so a
+/// single call can settle several chunks. Nothing to do for a terminal that is
+/// gone.
+pub fn ack_output(state: &AppState, id: &str, chunks: u32) {
+    let handle = state.ptys.lock().get(id).cloned();
+    if let Some(handle) = handle {
+        handle.lock().shared.ack(chunks);
     }
 }
 
 /// Entry point of the golden rule (§4.3): the UI mounts an `XTermView`,
 /// calls this, and only spawns if `alive == false` and there is nothing to resume.
+///
+/// The whole history, whatever the state: `attach_with` is the one that sends
+/// only what the view said it will use.
 pub fn attach(state: &AppState, id: &str) -> AttachResult {
+    attach_with(state, id, AttachWants::default())
+}
+
+/// `attach`, with the history cut to what the view will use (`history_cut`).
+/// Everything else in the answer is the same.
+pub fn attach_with(state: &AppState, id: &str, wants: AttachWants) -> AttachResult {
     let handle = state.ptys.lock().get(id).cloned();
     if let Some(handle) = handle {
         let h = handle.lock();
@@ -593,9 +748,17 @@ pub fn attach(state: &AppState, id: &str) -> AttachResult {
         let (rows, cols) = (h.rows, h.cols);
         let alt_screen = h.shared.alt_screen.load(Ordering::Acquire);
         drop(h);
+        let data = {
+            let sb = scrollback.lock();
+            match history_cut(true, alt_screen, wants) {
+                HistoryCut::Nothing => String::new(),
+                HistoryCut::Whole => sb.snapshot(),
+                HistoryCut::Utf16Tail(units) => sb.tail_utf16(units),
+            }
+        };
         return AttachResult {
             alive: true,
-            data: scrollback.lock().snapshot(),
+            data,
             exit: None,
             pid,
             rows,
@@ -615,7 +778,13 @@ pub fn attach(state: &AppState, id: &str) -> AttachResult {
 
     AttachResult {
         alive: false,
-        data: Scrollback::read_from_disk(id),
+        data: match history_cut(false, false, wants) {
+            // Not even opened: the view spawns on a clean screen.
+            HistoryCut::Nothing => String::new(),
+            // Dead is never on the alternate screen; a tail would be the whole
+            // `.bin` tail anyway.
+            HistoryCut::Whole | HistoryCut::Utf16Tail(_) => Scrollback::read_from_disk(id),
+        },
         exit,
         pid: None,
         rows: 0,
@@ -674,6 +843,21 @@ pub fn probe(state: &AppState, id: &str) -> PtyProbe {
             total_bytes: 0,
         },
     }
+}
+
+/// The `activity` heartbeat the pump would send right now, or `None`
+/// with no live process. The pump only speaks when it has something new to
+/// say, so a listener that registered after the last beat (a webview reload)
+/// asks for this once instead of waiting for a beat that may never come.
+pub fn activity(state: &AppState, id: &str) -> Option<events::ActivityPayload> {
+    let handle = state.ptys.lock().get(id).cloned()?;
+    let shared = handle.lock().shared.clone();
+    let (last_byte_at, idle_ms) = reader::activity_now(&shared);
+    Some(events::ActivityPayload {
+        id: id.to_string(),
+        last_byte_at,
+        idle_ms,
+    })
 }
 
 /// Returns at most `max_bytes` written after a monotonic output cursor.
@@ -857,7 +1041,16 @@ fn live_handle(state: &AppState, id: &str) -> Result<Arc<Mutex<PtyHandle>>, Stri
 }
 
 /// Default Windows shell: `pwsh` if it exists, otherwise `powershell` (§9.2).
+///
+/// Looked up once per run: `which` walks the whole PATH with every PATHEXT,
+/// and a dead network share on PATH makes that walk wait on it. The answer
+/// only changes when a shell is installed.
 pub fn default_shell() -> String {
+    static FOUND: SharedDetection<String> = SharedDetection::new();
+    FOUND.get(false, find_default_shell)
+}
+
+fn find_default_shell() -> String {
     for candidate in ["pwsh.exe", "pwsh"] {
         if let Ok(p) = which::which(candidate) {
             return p.to_string_lossy().into_owned();
@@ -889,7 +1082,13 @@ pub struct ShellOption {
     pub available: bool,
 }
 
+/// Looked up once per run, like `default_shell`.
 pub fn list_shells() -> Vec<ShellOption> {
+    static FOUND: SharedDetection<Vec<ShellOption>> = SharedDetection::new();
+    FOUND.get(false, find_shells)
+}
+
+fn find_shells() -> Vec<ShellOption> {
     let mut out = Vec::new();
 
     let pwsh = which::which("pwsh.exe")
@@ -941,4 +1140,105 @@ pub fn list_shells() -> Vec<ShellOption> {
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    //! What an attach sends back is decided by what the view said it will use.
+    //! The view learns "alive" only from this answer, so it states its uses as
+    //! conditions ("if dead, I throw the history away"), and this rule is the
+    //! half that turns them into bytes not read, not encoded and not sent. Get
+    //! it wrong in one direction and a restart pays for megabytes nobody paints;
+    //! in the other, a pane opens without the history it would have shown.
+    use super::*;
+
+    /// What `XTermView` asks for when it will spawn on a dead terminal.
+    fn view_that_auto_starts() -> AttachWants {
+        AttachWants {
+            omit_dead_history: true,
+            alt_tail: Some(65_536),
+        }
+    }
+
+    /// What `XTermView` asks for when a dead terminal waits for "Retomar".
+    fn view_that_waits_for_resume() -> AttachWants {
+        AttachWants {
+            omit_dead_history: false,
+            alt_tail: Some(65_536),
+        }
+    }
+
+    #[test]
+    fn a_dead_terminal_about_to_start_again_sends_no_history() {
+        assert_eq!(
+            history_cut(false, false, view_that_auto_starts()),
+            HistoryCut::Nothing
+        );
+    }
+
+    #[test]
+    fn a_dead_terminal_waiting_for_resume_sends_its_whole_history() {
+        assert_eq!(
+            history_cut(false, false, view_that_waits_for_resume()),
+            HistoryCut::Whole
+        );
+    }
+
+    /// The screen of a live full-screen CLI comes from a repaint; the history
+    /// only feeds the URL scanner and the blocked detector, which read its end.
+    #[test]
+    fn a_live_alternate_screen_sends_only_the_tail_the_view_reads() {
+        for wants in [view_that_auto_starts(), view_that_waits_for_resume()] {
+            assert_eq!(
+                history_cut(true, true, wants),
+                HistoryCut::Utf16Tail(65_536)
+            );
+        }
+    }
+
+    /// "Omit the dead history" is a condition on death: a live shell's history
+    /// is the screen the view rebuilds, whatever else the view said.
+    #[test]
+    fn a_live_ordinary_screen_always_sends_its_whole_history() {
+        for wants in [view_that_auto_starts(), view_that_waits_for_resume()] {
+            assert_eq!(history_cut(true, false, wants), HistoryCut::Whole);
+        }
+    }
+
+    /// A caller that states nothing (an older front end, a test, a future
+    /// consumer) keeps getting everything, in every state.
+    #[test]
+    fn an_attach_that_states_nothing_sends_the_whole_history_as_before() {
+        let wants: AttachWants = serde_json::from_str("{}").expect("empty wants");
+        assert_eq!(wants, AttachWants::default());
+        for (alive, alt_screen) in [(false, false), (true, false), (true, true)] {
+            assert_eq!(
+                history_cut(alive, alt_screen, wants),
+                HistoryCut::Whole,
+                "{alive} {alt_screen}"
+            );
+        }
+    }
+
+    /// The names the front end sends (`ipc.attachPty`) are the ones read here.
+    #[test]
+    fn the_wants_arrive_under_the_names_the_front_end_sends() {
+        let wants: AttachWants =
+            serde_json::from_str(r#"{"omitDeadHistory":true,"altTail":65536}"#).expect("wants");
+        assert_eq!(wants, view_that_auto_starts());
+    }
+
+    /// The window is reported from several places (every `Resized` of a drag,
+    /// every focus change, the tray, the 2 s resources tick), and each report
+    /// that changes something goes to the page as `window://shown`. Only a
+    /// real change may say so: a drag must not become a stream of events.
+    #[test]
+    fn only_a_change_of_the_window_is_reported() {
+        let db = rusqlite::Connection::open_in_memory().expect("in-memory sqlite");
+        let state = AppState::new(db);
+        assert!(!set_window_shown(&state, true), "the window starts on screen");
+        assert!(set_window_shown(&state, false), "hidden to the tray");
+        assert!(!set_window_shown(&state, false), "still hidden");
+        assert!(set_window_shown(&state, true), "back on screen");
+    }
 }

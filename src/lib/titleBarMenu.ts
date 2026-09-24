@@ -91,6 +91,7 @@ export function titleBarMenu(
       shortcut: "Ctrl+Shift+H",
       onSelect: () => act.openModal("shortcuts"),
     },
+    { id: "notifications", label: t("Histórico de notificações"), onSelect: () => act.openModal("notifications") },
     { kind: "sep" },
     {
       id: "maximize",

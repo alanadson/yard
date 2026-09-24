@@ -3,13 +3,19 @@
  *
  * Sits absolutely on the pane edge (so the parent must be
  * `position: relative`), captures the pointer so the drag is not lost when
- * it crosses the xterm, and only writes the preference on release —
- * dragging would write dozens of kv rows per second.
+ * it crosses the xterm, and only reaches the store on release. During the
+ * drag the width goes straight to the pane's DOM (the parent, which renders
+ * `style={{ width }}`): writing the store on every pointermove re-rendered
+ * the whole pane, the sidebar's project tree included, dozens of times per
+ * second, and the persisted preference would have been dozens of kv rows.
  *
  * Also responds to the keyboard: when focused, arrows adjust 16 px at a
- * time (48 with Shift). Double-click returns to the default.
+ * time (48 with Shift). Double-click returns to the default. The arithmetic
+ * lives in `size.ts`.
  */
 import { useRef, useState, type PointerEvent, type KeyboardEvent } from "react";
+
+import { dragWidth, keyWidth } from "./size";
 
 interface Props {
   /** Which pane edge the divider lives on. */
@@ -19,10 +25,21 @@ interface Props {
   max: number;
   defaultWidth: number;
   label: string;
-  /** During the drag — updates the screen without persisting. */
-  onResize: (width: number) => void;
-  /** On release — persists. */
+  /**
+   * On release (and on each arrow key or double-click): the one write to the
+   * store, which persists. During a drag the width lives only in the DOM.
+   */
   onCommit: (width: number) => void;
+}
+
+/**
+ * Writes a width on the pane this divider sits on, and on the divider's own
+ * `aria-valuenow`, without going through React.
+ */
+function paint(divider: HTMLElement, width: number) {
+  const pane = divider.parentElement;
+  if (pane) pane.style.width = `${width}px`;
+  divider.setAttribute("aria-valuenow", String(width));
 }
 
 export function Resizer({
@@ -32,20 +49,20 @@ export function Resizer({
   max,
   defaultWidth,
   label,
-  onResize,
   onCommit,
 }: Props) {
   const [dragging, setDragging] = useState(false);
   const origin = useRef({ x: 0, width: 0 });
 
-  const clamp = (w: number) => Math.round(Math.min(max, Math.max(min, w)));
-
-  // A right-side divider grows as the mouse moves right; a left-side one,
-  // the opposite.
-  const widthAt = (clientX: number) => {
-    const delta = clientX - origin.current.x;
-    return clamp(origin.current.width + (side === "right" ? delta : -delta));
-  };
+  const widthAt = (clientX: number) =>
+    dragWidth({
+      side,
+      startX: origin.current.x,
+      startWidth: origin.current.width,
+      clientX,
+      min,
+      max,
+    });
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -57,22 +74,25 @@ export function Resizer({
 
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
     if (!dragging) return;
-    onResize(widthAt(e.clientX));
+    paint(e.currentTarget, widthAt(e.clientX));
   };
 
   const finish = (e: PointerEvent<HTMLDivElement>) => {
     if (!dragging) return;
     setDragging(false);
     (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+    // Hand the DOM back as React last rendered it before the commit: if the
+    // store settles on the width it already had (a drag that came back, a
+    // clamp), React sees no change and would otherwise leave the painted one.
+    paint(e.currentTarget, width);
     onCommit(widthAt(e.clientX));
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const step = (e.shiftKey ? 48 : 16) * (e.key === "ArrowLeft" ? -1 : 1);
-    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-      e.preventDefault();
-      onCommit(clamp(width + (side === "right" ? step : -step)));
-    }
+    const next = keyWidth({ side, width, key: e.key, shift: e.shiftKey, min, max });
+    if (next === null) return;
+    e.preventDefault();
+    onCommit(next);
   };
 
   return (

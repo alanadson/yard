@@ -19,6 +19,7 @@ import { ChevronDown, ChevronRight, GitBranch, RefreshCw } from "lucide-react";
 import { InlineRename } from "../ContextMenu/InlineRename";
 
 import { ResizeHandles } from "./ResizeHandles";
+import { ItemMaximizeButton } from "./ItemMaximizeButton";
 import { FileGlyph } from "../FileGlyph";
 import { ipc, type ChangedFile, type DirEntryInfo, type ScmCommit } from "../../lib/ipc";
 import { laneCount, layoutCommits, type GraphRow } from "../../lib/gitGraph";
@@ -35,6 +36,7 @@ import {
 } from "../../lib/treeNode";
 import type { ResizeDir } from "../../lib/canvas";
 import { useT } from "../../hooks/useT";
+import { reasonOf } from "../../lib/loading";
 
 interface Props {
   it: TreeItem;
@@ -55,6 +57,7 @@ interface Props {
   onResizeStart: (e: React.PointerEvent, it: TreeItem, dir: ResizeDir) => void;
   onResizeMove: (e: React.PointerEvent) => void;
   onResizeEnd: (e: React.PointerEvent) => void;
+  onMaximize: (id: string) => void;
   /** The in-place rename is open on this card (the board owns which one). */
   renaming: boolean;
   onRenameStart: (id: string) => void;
@@ -87,6 +90,7 @@ function TreeCardImpl({
   onResizeStart,
   onResizeMove,
   onResizeEnd,
+  onMaximize,
   renaming,
   onRenameStart,
   onRenameEnd,
@@ -125,7 +129,7 @@ function TreeCardImpl({
           .fsListDir(root, path)
           .then((listing) => [path, listing.entries] as const)
           .catch((e) => {
-            if (path === it.path) setError(String(e));
+            if (path === it.path) setError(reasonOf(e));
             return [path, [] as DirEntryInfo[]] as const;
           }),
       ),
@@ -150,7 +154,7 @@ function TreeCardImpl({
     ipc
       .gitChanges(root)
       .then((summary) => alive && setChanges(summary.files))
-      .catch((e) => alive && setError(String(e)));
+      .catch((e) => alive && setError(reasonOf(e)));
     return () => {
       alive = false;
     };
@@ -162,7 +166,7 @@ function TreeCardImpl({
     ipc
       .scmLog(root, { limit: TREE_LOG_LIMIT })
       .then((commits) => alive && setLog(commits))
-      .catch((e) => alive && setError(String(e)));
+      .catch((e) => alive && setError(reasonOf(e)));
     return () => {
       alive = false;
     };
@@ -205,6 +209,7 @@ function TreeCardImpl({
   return (
     <div
       className={`cv-tree ${selected ? "is-selected" : ""} ${connectClass}`}
+      data-maximized={!!it.restore}
       style={{ left: it.x + dx, top: it.y + dy, width: w, height: h, opacity: faded ? 0.22 : 1 }}
     >
       <div
@@ -237,6 +242,7 @@ function TreeCardImpl({
         )}
         {/* Up one folder — the only navigation the card needs, since going
             down is what clicking a folder already does. */}
+        <ItemMaximizeButton item={it} onMaximize={onMaximize} />
         {it.path && (
           <button
             className="cv-tree-btn"

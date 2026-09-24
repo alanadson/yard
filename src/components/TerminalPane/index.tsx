@@ -56,6 +56,7 @@ import { FileGlyph } from "../FileGlyph";
 import { BrowserBody, browserLabel, browserMenuItems } from "../BrowserPane";
 import { ExitBanner } from "../ExitBanner";
 import type { XTermHandle } from "../XTermView";
+import { loadXTermView } from "../XTermView/load";
 import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
 import { InlineRename } from "../ContextMenu/InlineRename";
 import { closeDocTab, docTabMenu } from "../../lib/editorActions";
@@ -83,8 +84,12 @@ import { useLive } from "../../stores/liveStore";
 import { useProjects } from "../../stores/projectsStore";
 import { isLive, useTerminals } from "../../stores/terminalsStore";
 import { useUI } from "../../stores/uiStore";
+import { terminalPanelProps } from "./panelVisibility";
+import { paneViewCallbacks, type PaneNow } from "./viewCallbacks";
 
-const XTermView = lazy(() => import("../XTermView"));
+// The same promise the boot starts (`XTermView/load.ts`), so the chunk is
+// usually here before the first pane asks for it.
+const XTermView = lazy(loadXTermView);
 const DocBody = lazy(() =>
   import("../CodeEditor").then((module) => ({ default: module.DocBody })),
 );
@@ -241,6 +246,22 @@ export function TerminalPane({
     entries: MenuEntry[];
   } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
+
+  /**
+   * The `ref`, focus and right click each terminal gets, made once per id so
+   * the memoized `XTermView` is not re-rendered by every render of the pane
+   * (`viewCallbacks.ts`). They read the pane through `paneNow`, which each
+   * commit points at the render it just put on screen: exactly what inline
+   * arrows made by that render would have seen.
+   */
+  const paneNow = useRef<PaneNow>({ groupId, slot, setActiveTab, focusTerminal, setTabMenu });
+  useLayoutEffect(() => {
+    paneNow.current = { groupId, slot, setActiveTab, focusTerminal, setTabMenu };
+  });
+  const [viewCallbacks] = useState(() => paneViewCallbacks(paneNow, handles));
+  useEffect(() => {
+    viewCallbacks.retain(terminals.map((row) => row.id));
+  }, [viewCallbacks, terminals]);
 
   /**
    * The document on screen, when the selected tab is a file. It wins over the
@@ -1119,6 +1140,7 @@ export function TerminalPane({
         {terminals.map((t) => {
           const visible = t.id === active?.id;
           const r = runtimes[t.id];
+          const view = viewCallbacks.of(t.id);
           return (
             <div
               key={t.id}
@@ -1126,17 +1148,9 @@ export function TerminalPane({
               id={`panel-${t.id}`}
               role="tabpanel"
               aria-labelledby={`tab-${t.id}`}
-              // Hidden tabs stay mounted (that is what keeps the attach
-              // stable), so the inactive panels have to be hidden from
-              // assistive tech explicitly — `visibility: hidden` does that for
-              // the eye but `aria-hidden` is what does it for a screen reader.
-              aria-hidden={!visible}
-              // `visibility` (and not `display: none`): the host keeps its
-              // real size even when hidden, so the back-tab xterm can
-              // measure font/cell and fit works. With display none the
-              // renderer opens in a 0x0 host and explodes from the inside
-              // ("reading 'dimensions'") on the first write.
-              style={{ visibility: visible ? "visible" : "hidden" }}
+              // Hidden from the eye and from a screen reader, in place and at
+              // full size: why each half matters is in `panelVisibility.ts`.
+              {...terminalPanelProps(visible)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -1156,9 +1170,7 @@ export function TerminalPane({
               />
               <Suspense fallback={<div className="xterm-host" aria-hidden />}>
                 <XTermView
-                  ref={(h) => {
-                    handles.current[t.id] = h;
-                  }}
+                  ref={view.ref}
                   id={t.id}
                   program={t.program}
                   args={t.args}
@@ -1167,15 +1179,15 @@ export function TerminalPane({
                   title={t.title || t.program}
                   autoStart={t.alive}
                   visible={visible}
-                  onFocus={() => focusTerminal(t.id, slot)}
+                  // The hidden panels sit out of the viewport, where xterm
+                  // stops painting; this repaints the tab that comes back
+                  // inside its first frame (`panelVisibility.ts`).
+                  resumeOnShow
+                  onFocus={view.onFocus}
                   // Over the terminal itself the right click never becomes a
                   // React event (it is stopped before xterm can act on it), so
                   // the panel's own handler above only covers the frame.
-                  onContextMenu={(e) => {
-                    setActiveTab(groupId, slot, t.id);
-                    focusTerminal(t.id, slot);
-                    setTabMenu({ id: t.id, anchor: { x: e.clientX, y: e.clientY } });
-                  }}
+                  onContextMenu={view.onContextMenu}
                 />
               </Suspense>
             </div>

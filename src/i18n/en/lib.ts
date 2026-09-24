@@ -6,6 +6,12 @@
  * read by agents, not by the user. Key = the PT-BR sentence as written.
  */
 export default {
+  "Dê um nome ao papel para identificá-lo no cartão.": "Name the role so it can be identified on the card.",
+  "Use no máximo {max} caracteres no nome.": "Use at most {max} characters in the name.",
+  "Escreva as instruções que este agente deve seguir.": "Write the instructions this agent should follow.",
+  "A biblioteca de papéis está corrompida. Restaure um backup antes de salvar.": "The role library is corrupt. Restore a backup before saving.",
+  "Não foi possível concluir esta ação: {reason}. Tente novamente.":
+    "This action could not be completed: {reason}. Try again.",
   // --- lib/destination: where a CLI is born inside a project
   "Sem nome": "Unnamed",
   "Chão": "Ground",
@@ -51,6 +57,8 @@ export default {
   "Orçamento do dia em {pct}%: US$ {spent} de US$ {limit}.":
     "The day's budget is at {pct}%: US$ {spent} of US$ {limit}.",
   "Yard, orçamento": "Yard, budget",
+  "Yard, gatilho": "Yard, trigger",
+  "Yard, Fluxo": "Yard, Flow",
   "Limpar a fila ({n})": "Clear the queue ({n})",
   'A fila não conseguiu escrever em "{target}": {reason}.':
     'The queue could not write to "{target}": {reason}.',

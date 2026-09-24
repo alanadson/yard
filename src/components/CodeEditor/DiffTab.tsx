@@ -7,9 +7,11 @@
  * file's menu behind it, the comparison named right after it, and on the
  * right only how to look at it. What makes it a *tab* and not a snapshot is
  * that it follows the repository: a working-tree or index comparison re-reads
- * itself every time the Source Control tab writes (`ScmRepo.version`) and
- * every time a new `git status` lands — the agent keeps editing, the diff
- * keeps up. A commit's diff is history and is read once.
+ * itself every time the Source Control tab writes (`ScmRepo.version`), every
+ * time `git status` changes this file's entry and every time the file itself
+ * is written (the agent keeps editing, the diff keeps up), and not when
+ * another file of the project moves. A commit's diff is history and is read
+ * once.
  *
  * The document itself (`OpenDoc.diff`) is the store's; this file only draws
  * it. It keeps no state the tab bar or the next boot would need.
@@ -23,6 +25,7 @@ import { ContextMenu, type MenuAnchor } from "../ContextMenu";
 import { Split, Unified, diffProfileOf, type HunkRefs } from "../DiffViewer";
 import { fileMenu } from "./chrome";
 import { useT } from "../../hooks/useT";
+import { reasonOf } from "../../lib/loading";
 import { loadSupport } from "./languages";
 import { docTabMenu } from "../../lib/editorActions";
 import { t, tn, locale } from "../../lib/i18n";
@@ -32,7 +35,8 @@ import { ipc, type FileDiff } from "../../lib/ipc";
 import { splitOsPath, toOsPath } from "../../lib/paths";
 import { sameRoot } from "../../lib/roots";
 import { unifiedDiff } from "../../lib/unified";
-import { WHOLE_FILE_CONTEXT, useChanges } from "../../stores/changesStore";
+import { entrySignature } from "../../lib/diffFreshness";
+import { WHOLE_FILE_CONTEXT, diffRevisionOf, useChanges } from "../../stores/changesStore";
 import { useEditor, type OpenDoc } from "../../stores/editorStore";
 import { useScm } from "../../stores/scmStore";
 import { useUI } from "../../stores/uiStore";
@@ -90,11 +94,19 @@ export function DiffTab({ doc }: { doc: ComparisonDoc }) {
   const mode = useChanges((s) => s.viewerMode);
   const wrap = useChanges((s) => s.viewerWrap);
   const whole = useChanges((s) => s.viewerWhole);
-  // The two things that tell a live comparison to re-read itself: a write
-  // made from the Source Control tab, and a fresh `git status` (the agent's
-  // edits). A commit's diff listens to neither.
+  // What tells a live comparison to re-read itself: a write made from the
+  // Source Control tab, a `git status` that changed *this file's* entry, and a
+  // write to this file (the agent's edits). All primitives, so a write to
+  // another file of the project, or another file's new line counts, leave the
+  // tab alone. A commit's diff listens to none of them.
   const version = useScm((s) => (live ? s.repoOf(doc.root).version : 0));
-  const git = useChanges((s) => (live && doc.projectId ? s.gitByProject[doc.projectId] : undefined));
+  const origPath = spec.source === "tree" ? spec.origPath : null;
+  const gitEntry = useChanges((s) =>
+    live && doc.projectId ? entrySignature(s.gitByProject[doc.projectId], doc.path, origPath) : "",
+  );
+  const diffRevision = useChanges((s) =>
+    live && doc.projectId ? diffRevisionOf(s, doc.projectId, doc.path, origPath) : 0,
+  );
   const showToast = useUI((s) => s.showToast);
   /**
    * A draft comparison follows the buffer the way a live one follows the
@@ -161,14 +173,15 @@ export function DiffTab({ doc }: { doc: ComparisonDoc }) {
         setError(null);
       })
       .catch((e) => {
-        if (mine === seq.current) setError(String(e));
+        if (mine === seq.current) setError(reasonOf(e));
       })
       .finally(() => {
         if (mine === seq.current) setLoading(false);
       });
-    // `git` is the subscription, not a value read here: a new summary means a
-    // new comparison, and that is the whole reason the tab stays alive.
-  }, [doc.root, doc.path, spec, whole, version, git, draft]);
+    // `gitEntry` and `diffRevision` are subscriptions, not values read here:
+    // either one moving means a new comparison, and that is the whole reason
+    // the tab stays alive.
+  }, [doc.root, doc.path, spec, whole, version, gitEntry, draft, diffRevision]);
 
   const profile = useMemo(() => diffProfileOf(diff), [diff]);
   const parsed = useMemo(() => {

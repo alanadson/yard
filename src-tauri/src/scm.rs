@@ -285,6 +285,39 @@ pub(crate) fn has_head(cwd: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Runs `aside` on a thread of its own while `here` runs on this one, and
+/// hands back both answers, `aside`'s first.
+///
+/// For git calls that do not depend on each other: every `git` is ~35 ms of
+/// process start on Windows before it does any work, and side by side they
+/// cost the slowest of them instead of the sum. Nothing else may change, so a
+/// panic in `aside` reaches the caller as that same panic (not as a `join`
+/// error that names nothing), and a thread the OS refuses to create only
+/// means `aside` runs here, after `here`: slower, never different.
+pub(crate) fn concurrently<A: Send, B>(
+    aside: impl FnOnce() -> A + Send,
+    here: impl FnOnce() -> B,
+) -> (A, B) {
+    // The closure waits in a slot because `spawn_scoped` drops what it could
+    // not start, and the fallback below still needs it.
+    let slot = parking_lot::Mutex::new(Some(aside));
+    let run = || {
+        let f = slot.lock().take();
+        f.map(|f| f())
+    };
+    std::thread::scope(|s| {
+        let side = std::thread::Builder::new().spawn_scoped(s, run);
+        let b = here();
+        let a = match side {
+            Ok(handle) => handle
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+            Err(_) => run(),
+        };
+        (a.expect("`aside` runs exactly once, on its thread or here"), b)
+    })
+}
+
 // ---------------------------------------------------------------------------
 // where we are
 // ---------------------------------------------------------------------------
@@ -293,42 +326,28 @@ pub(crate) fn has_head(cwd: &Path) -> bool {
 /// with no git — or outside a repository — comes back `isRepo: false`, which
 /// is the state the panel draws its "iniciar um repositório" face from.
 pub fn info(cwd: &Path) -> Result<ScmInfo, String> {
-    let Ok(out) = run_git(cwd, &["status", "--porcelain=v2", "--branch", "-z", "-uno"]) else {
+    let Ok(status) = crate::git::repository_status(cwd, false) else {
         return Ok(ScmInfo::default());
     };
-    if !out.status.success() {
-        return Ok(ScmInfo::default());
-    }
-    let head = parse_branch_header(&out.stdout);
+    let head = parse_branch_header(&status);
 
     // A single probe for the three path/HEAD questions. Every `git` costs
     // ~35 ms on Windows before it does anything, and `info` runs on every
     // write and on every beat of the watcher — that was three processes where
-    // one will do.
-    let probe = run_git(
+    // one will do. The probe, the stash count and the remotes wait on nothing
+    // but themselves, so they also run side by side: one process start of
+    // wall time instead of three. The status above stays first and alone,
+    // because it is what says there is a repository to ask at all. The stash
+    // count and the remotes are asked again only when the files they come
+    // from changed (`HeaderCache`).
+    let (probe, stashes, remotes) = header_cache().header(
         cwd,
-        &[
-            "rev-parse",
-            "--show-toplevel",
-            "--absolute-git-dir",
-            "--short",
-            "HEAD",
-        ],
-    )
-    .map(|o| parse_head_probe(&String::from_utf8_lossy(&o.stdout)))
-    .unwrap_or_default();
+        || head_probe(cwd),
+        || stash_count(cwd),
+        || remotes(cwd),
+    );
     let root = probe.root.clone();
     let short = probe.short.clone();
-    let stashes = run_git(cwd, &["stash", "list"])
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .filter(|l| !l.trim().is_empty())
-                .count() as u32
-        })
-        .unwrap_or(0);
 
     Ok(ScmInfo {
         is_repo: true,
@@ -339,11 +358,189 @@ pub fn info(cwd: &Path) -> Result<ScmInfo, String> {
         upstream: head.upstream,
         ahead: head.ahead,
         behind: head.behind,
-        remotes: remotes(cwd),
+        remotes,
         stashes,
         has_head: short.is_some(),
         head: short,
     })
+}
+
+/// What a file looked like the last time: its length and mtime, or `None`
+/// when it did not exist (a repository with no stash has no stash reflog).
+type Stamp = Option<(u64, std::time::SystemTime)>;
+
+fn stamp(path: &Path) -> Stamp {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()?))
+}
+
+/// The files the stash count and the remote list are read from, in the
+/// repository's common dir: `git stash push`/`drop`/`clear` rewrite the
+/// stash reflog, and `git remote add`/`remove`/`set-url` rewrite `config`.
+fn extras_stamps(common: &Path) -> [Stamp; 2] {
+    [
+        stamp(&common.join("logs").join("refs").join("stash")),
+        stamp(&common.join("config")),
+    ]
+}
+
+/// The common dir of the repository whose git dir is `git_dir`: where the
+/// refs and the config live. A linked worktree (every floor) has a git dir of
+/// its own under `.git/worktrees/<name>`, with a `commondir` file naming the
+/// shared one, relative to it; any other git dir is its own common dir. The
+/// rule git itself follows.
+fn common_dir(git_dir: &str) -> std::path::PathBuf {
+    let git_dir = Path::new(git_dir);
+    match std::fs::read_to_string(git_dir.join("commondir")) {
+        Ok(text) if !text.trim().is_empty() => git_dir.join(text.trim()),
+        _ => git_dir.to_path_buf(),
+    }
+}
+
+/// The last stash count and remote list of one folder, and what their files
+/// looked like just before they were read.
+#[derive(Clone)]
+struct Extras {
+    common: std::path::PathBuf,
+    stamps: [Stamp; 2],
+    stashes: u32,
+    remotes: Vec<RemoteInfo>,
+}
+
+/// The header's two answers that almost never change (how many stashes, which
+/// remotes), remembered per folder and read again only when the stash reflog
+/// or `config` changed length or mtime. Two `git` processes of the four
+/// `info` ran on every write and on every watcher beat.
+///
+/// The files are looked at *before* the reads, so a change that lands while
+/// git is reading leaves a stale look behind and the next call reads again,
+/// never the other way round.
+pub(crate) struct HeaderCache {
+    folders: parking_lot::Mutex<crate::bounded_cache::BoundedCache<std::path::PathBuf, Extras>>,
+}
+
+/// Folders remembered at once: projects and floors open in one session.
+const HEADER_FOLDERS: usize = 64;
+
+fn header_cache() -> &'static HeaderCache {
+    static CACHE: std::sync::OnceLock<HeaderCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(HeaderCache::new)
+}
+
+impl HeaderCache {
+    pub(crate) fn new() -> Self {
+        Self {
+            folders: parking_lot::Mutex::new(crate::bounded_cache::BoundedCache::new(HEADER_FOLDERS)),
+        }
+    }
+
+    /// The probe of `cwd` with its stash count and remotes: `probe`, `stashes`
+    /// and `remotes` are the three git questions, asked only as needed.
+    pub(crate) fn header(
+        &self,
+        cwd: &Path,
+        probe: impl FnOnce() -> HeadProbe + Send,
+        stashes: impl FnOnce() -> u32 + Send,
+        remotes: impl FnOnce() -> Vec<RemoteInfo> + Send,
+    ) -> (HeadProbe, u32, Vec<RemoteInfo>) {
+        let known = self.folders.lock().get(cwd).cloned();
+        let Some(known) = known else {
+            // First look at this folder: where its files are comes from the
+            // probe, so the probe goes first this once.
+            let probe = probe();
+            let (stashes, remotes) = self.read(cwd, probe.git_dir.as_deref(), stashes, remotes);
+            return (probe, stashes, remotes);
+        };
+        let stamps = extras_stamps(&known.common);
+        if stamps != known.stamps {
+            // Changed: the three side by side, as before there was a cache.
+            let (probe, (stashes, remotes)) = concurrently(probe, || concurrently(stashes, remotes));
+            let common = probe.git_dir.as_deref().map(common_dir);
+            if common.as_ref() == Some(&known.common) {
+                self.remember(cwd, known.common, stamps, stashes, remotes.clone());
+            } else {
+                self.folders.lock().remove(cwd);
+            }
+            return (probe, stashes, remotes);
+        }
+        let probe = probe();
+        if probe.git_dir.as_deref().map(common_dir).as_ref() == Some(&known.common) {
+            return (probe, known.stashes, known.remotes);
+        }
+        // The folder is in another repository now (re-created, or a floor
+        // that moved): what was remembered is someone else's.
+        let (stashes, remotes) = self.read(cwd, probe.git_dir.as_deref(), stashes, remotes);
+        (probe, stashes, remotes)
+    }
+
+    /// Reads both extras of the repository at `git_dir` and remembers them.
+    fn read(
+        &self,
+        cwd: &Path,
+        git_dir: Option<&str>,
+        stashes: impl FnOnce() -> u32 + Send,
+        remotes: impl FnOnce() -> Vec<RemoteInfo> + Send,
+    ) -> (u32, Vec<RemoteInfo>) {
+        let Some(common) = git_dir.map(common_dir) else {
+            self.folders.lock().remove(cwd);
+            return concurrently(stashes, remotes);
+        };
+        let stamps = extras_stamps(&common);
+        let (stashes, remotes) = concurrently(stashes, remotes);
+        self.remember(cwd, common, stamps, stashes, remotes.clone());
+        (stashes, remotes)
+    }
+
+    fn remember(
+        &self,
+        cwd: &Path,
+        common: std::path::PathBuf,
+        stamps: [Stamp; 2],
+        stashes: u32,
+        remotes: Vec<RemoteInfo>,
+    ) {
+        self.folders.lock().insert(
+            cwd.to_path_buf(),
+            Extras {
+                common,
+                stamps,
+                stashes,
+                remotes,
+            },
+        );
+    }
+}
+
+/// `git rev-parse --show-toplevel --absolute-git-dir --short HEAD`, read by
+/// `parse_head_probe`. Its stdout is read even on a failed exit: with no
+/// commit the third question fails and the first two still answer.
+fn head_probe(cwd: &Path) -> HeadProbe {
+    run_git(
+        cwd,
+        &[
+            "rev-parse",
+            "--show-toplevel",
+            "--absolute-git-dir",
+            "--short",
+            "HEAD",
+        ],
+    )
+    .map(|o| parse_head_probe(&String::from_utf8_lossy(&o.stdout)))
+    .unwrap_or_default()
+}
+
+/// How many entries `git stash list` has; `0` when git could not say.
+fn stash_count(cwd: &Path) -> u32 {
+    run_git(cwd, &["stash", "list"])
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .count() as u32
+        })
+        .unwrap_or(0)
 }
 
 /// stdout of a git call that answers with one line, `None` when it failed or
@@ -566,11 +763,17 @@ pub fn commit(cwd: &Path, message: &str, opts: CommitOpts) -> Result<CommitResul
 /// The full message of the last commit — subject **and** body. It is what the
 /// amend button pre-fills the box with, and dropping the body there is how a
 /// typo fix silently deletes four paragraphs of context.
+///
+/// With no commit `git log -1` fails on its own, so `HEAD` is only asked
+/// about when it does: that failure is "nothing to reuse" when there is no
+/// HEAD, and git's own error when there is one. A process fewer on every
+/// amend in a repository that has commits, the only place amend exists.
 pub fn last_message(cwd: &Path) -> Result<Option<String>, String> {
-    if !has_head(cwd) {
-        return Ok(None);
-    }
-    let out = git_out(cwd, &["log", "-1", "--format=%B"])?;
+    let out = match git_out(cwd, &["log", "-1", "--format=%B"]) {
+        Ok(out) => out,
+        Err(_) if !has_head(cwd) => return Ok(None),
+        Err(e) => return Err(e),
+    };
     let text = out.trim_end_matches(['\n', '\r']).to_string();
     Ok((!text.trim().is_empty()).then_some(text))
 }
@@ -632,10 +835,41 @@ pub struct CommitDetail {
 
 pub fn log(cwd: &Path, query: LogQuery) -> Result<Vec<CommitInfo>, String> {
     // A repository with no commit is not an error here: it is the state the
-    // "primeiro commit" face of the panel is drawn from.
-    if !has_head(cwd) {
+    // "primeiro commit" face of the panel is drawn from. And it is decided
+    // before the query is even looked at, so a malformed one still answers
+    // empty there.
+    let args = match log_args(&query) {
+        Ok(args) => args,
+        Err(_) if !has_head(cwd) => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
+    // Asking for `HEAD` first cost one more process on every page of the
+    // history. A plain walk starts at `HEAD` and fails by itself without one,
+    // so the question can wait for that failure. `--all` and a named start
+    // cannot wait: on an orphan branch they find the other branches' commits
+    // while `HEAD` has none, and the panel shows none there. For those the
+    // question runs beside the walk instead of before it.
+    let (out, head) = if query.all || query.rev.is_some() {
+        let (head, out) = concurrently(|| has_head(cwd), || run_git(cwd, &refs));
+        (out, Some(head))
+    } else {
+        (run_git(cwd, &refs), None)
+    };
+    let walked = matches!(&out, Ok(o) if o.status.success());
+    if !head.unwrap_or_else(|| walked || has_head(cwd)) {
         return Ok(Vec::new());
     }
+    let out = out?;
+    if !out.status.success() {
+        return Err(check(out).unwrap_err());
+    }
+    Ok(parse_log(&out.stdout))
+}
+
+/// The argv of `log`, with the query's revision and path fenced.
+fn log_args(query: &LogQuery) -> Result<Vec<String>, String> {
     let limit = if query.limit == 0 {
         DEFAULT_LOG_LIMIT
     } else {
@@ -670,12 +904,7 @@ pub fn log(cwd: &Path, query: LogQuery) -> Result<Vec<CommitInfo>, String> {
         args.push("--".into());
         args.push(fenced[0].clone());
     }
-    let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let out = run_git(cwd, &refs)?;
-    if !out.status.success() {
-        return Err(check(out).unwrap_err());
-    }
-    Ok(parse_log(&out.stdout))
+    Ok(args)
 }
 
 /// `-z` makes git write one NUL-terminated record per commit; `%x1f` splits
@@ -1502,10 +1731,16 @@ pub fn diff(
         "head" => &["HEAD"],
         other => return Err(format!("lado desconhecido: {other}")),
     };
-    if !has_head(cwd) && side != "worktree" {
-        // Nothing to compare against yet: everything prepared is new.
-        return crate::git::file_diff(cwd, rel, true, None, context);
-    }
+    // Nothing to compare against yet: everything prepared is new.
+    let new_file = || crate::git::file_diff(cwd, rel, true, None, context);
+
+    // The rename source is fenced only once there is a comparison to make:
+    // with no commit, the sides that need one never look at it.
+    let orig = match orig_path.map(|o| rel_paths(&[o.to_string()])).transpose() {
+        Ok(orig) => orig.map(|mut o| o.remove(0)),
+        Err(_) if side != "worktree" && !has_head(cwd) => return new_file(),
+        Err(e) => return Err(e),
+    };
 
     let ctx = context.map(|n| format!("-U{n}"));
     let mut args: Vec<&str> = vec!["diff", "--no-color", "-M"];
@@ -1515,25 +1750,48 @@ pub fn diff(
     args.extend(base.iter().copied());
     args.push("--");
     args.push(rel.as_str());
-    if let Some(orig) = orig_path {
-        let orig = rel_paths(&[orig.to_string()])?;
-        // Borrowing from a temporary would not outlive the call; the vector
-        // does, and the pathspec needs both sides for `-M` to see the rename.
-        let mut owned = args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        owned.push(orig[0].clone());
-        let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
-        return finish_diff(cwd, &refs, rel, context);
+    // The pathspec needs both sides for `-M` to see the rename.
+    if let Some(orig) = orig.as_deref() {
+        args.push(orig);
     }
-    finish_diff(cwd, &args, rel, context)
+
+    // Asking for `HEAD` before every diff was one more ~35 ms process per
+    // file opened. Each side needs that answer differently:
+    let out = match side {
+        // the index against the disk exists with or without a commit;
+        "worktree" => run_git(cwd, &args),
+        // with no commit `git diff --cached` still answers, against the empty
+        // tree, with the *staged* copy, while the panel draws the file on
+        // disk as new. The answer alone cannot tell, so the question runs
+        // beside the diff instead of before it;
+        "index" => {
+            let (head, out) = concurrently(|| has_head(cwd), || run_git(cwd, &args));
+            if !head {
+                return new_file();
+            }
+            out
+        }
+        // and `git diff HEAD` fails by itself with no commit, so the question
+        // waits for that failure. (With no git at all it can also succeed,
+        // empty, as an implicit `--no-index` against a file named `HEAD`;
+        // an empty diff already becomes the same new file below.)
+        _ => {
+            let out = run_git(cwd, &args);
+            if !matches!(&out, Ok(o) if o.status.success()) && !has_head(cwd) {
+                return new_file();
+            }
+            out
+        }
+    };
+    finish_diff(cwd, out?, rel, context)
 }
 
 fn finish_diff(
     cwd: &Path,
-    args: &[&str],
+    out: Output,
     rel: &str,
     context: Option<u32>,
 ) -> Result<crate::git::FileDiff, String> {
-    let out = run_git(cwd, args)?;
     if !out.status.success() {
         return Err(check(out).unwrap_err());
     }
@@ -1632,6 +1890,153 @@ mod tests {
                 .map(|f| (f.index.clone(), f.worktree.clone()))
                 .unwrap_or_else(|| ("clean".into(), "clean".into()))
         }
+    }
+
+    // -- the header's slow extras ------------------------------------------
+    //
+    // `info` runs on every write and on every beat of the watcher, and it
+    // spent two of its four `git` processes on answers that almost never
+    // change: how many stashes, which remotes. They come from two files of the
+    // repository's common dir (the stash reflog and `config`), so they are
+    // read again only when one of those files changed.
+
+    /// A git dir with the two files the extras come from, and nothing else:
+    /// the probe, the stash count and the remotes are stand-ins that count.
+    struct FakeRepo {
+        git_dir: std::path::PathBuf,
+        reads: std::sync::atomic::AtomicUsize,
+    }
+
+    impl FakeRepo {
+        fn new(tag: &str) -> FakeRepo {
+            let git_dir = std::env::temp_dir()
+                .join(format!("yard-scm-extras-{tag}-{}", std::process::id()))
+                .join(".git");
+            let _ = std::fs::remove_dir_all(&git_dir);
+            std::fs::create_dir_all(&git_dir).unwrap();
+            std::fs::write(git_dir.join("config"), "[core]\n").unwrap();
+            FakeRepo {
+                git_dir,
+                reads: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn ask(&self, cache: &HeaderCache) -> (u32, Vec<RemoteInfo>) {
+            use std::sync::atomic::Ordering;
+            let git_dir = self.git_dir.to_string_lossy().replace('\\', "/");
+            let (_, stashes, remotes) = cache.header(
+                self.git_dir.parent().unwrap(),
+                || HeadProbe {
+                    root: None,
+                    git_dir: Some(git_dir),
+                    short: None,
+                },
+                || {
+                    self.reads.fetch_add(1, Ordering::SeqCst);
+                    3
+                },
+                || {
+                    self.reads.fetch_add(1, Ordering::SeqCst);
+                    Vec::new()
+                },
+            );
+            (stashes, remotes)
+        }
+
+        fn reads(&self) -> usize {
+            self.reads.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        fn append(&self, rel: &str, text: &str) {
+            use std::io::Write;
+            let path = self.git_dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .unwrap();
+            f.write_all(text.as_bytes()).unwrap();
+        }
+    }
+
+    impl Drop for FakeRepo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(self.git_dir.parent().unwrap());
+        }
+    }
+
+    #[test]
+    fn stashes_and_remotes_are_read_again_only_when_their_files_changed() {
+        let repo = FakeRepo::new("contagem");
+        let cache = HeaderCache::new();
+        repo.ask(&cache);
+        let first = repo.reads();
+        assert_eq!(first, 2, "the first look reads both");
+        repo.ask(&cache);
+        assert_eq!(repo.reads(), first, "nothing changed and they were read again");
+
+        // A first stash creates the reflog (missing is a state too).
+        repo.append("logs/refs/stash", "0000 1111 Yard <t@yard.test> 1 +0000\tWIP\n");
+        repo.ask(&cache);
+        assert_eq!(repo.reads(), first + 2, "a new stash was not seen");
+        repo.ask(&cache);
+        assert_eq!(repo.reads(), first + 2);
+
+        // `git remote add` rewrites `config`.
+        repo.append("config", "[remote \"origin\"]\n\turl = https://x.dev/r.git\n");
+        repo.ask(&cache);
+        assert_eq!(repo.reads(), first + 4, "a new remote was not seen");
+    }
+
+    /// The cache must never outlive what it describes: `git stash push`
+    /// between two looks is counted, whatever the cache held.
+    #[test]
+    fn a_stash_pushed_between_two_looks_is_counted() {
+        let Some(repo) = Repo::new("extras-stash") else { return };
+        repo.write("a.txt", "um\n");
+        if !repo.commit("c1") {
+            return;
+        }
+        assert_eq!(info(&repo.root).unwrap().stashes, 0);
+        assert_eq!(info(&repo.root).unwrap().stashes, 0);
+        repo.write("a.txt", "dois\n");
+        assert!(repo.git(&["stash", "push", "-q"]));
+        assert_eq!(info(&repo.root).unwrap().stashes, 1);
+    }
+
+    #[test]
+    fn a_remote_added_between_two_looks_is_listed() {
+        let Some(repo) = Repo::new("extras-remote") else { return };
+        assert!(info(&repo.root).unwrap().remotes.is_empty());
+        assert!(info(&repo.root).unwrap().remotes.is_empty());
+        assert!(repo.git(&["remote", "add", "origin", "https://x.dev/r.git"]));
+        let remotes = info(&repo.root).unwrap().remotes;
+        assert_eq!(remotes.len(), 1);
+        assert_eq!(remotes[0].url, "https://x.dev/r.git");
+    }
+
+    /// Every floor is a linked worktree, whose git dir is not where the stash
+    /// and the config live: a stash made in the main checkout is the floor's
+    /// stash too, and the floor's header has to see it.
+    #[test]
+    fn a_worktree_sees_a_stash_made_in_the_main_checkout() {
+        let Some(repo) = Repo::new("extras-andar") else { return };
+        repo.write("a.txt", "um\n");
+        if !repo.commit("c1") {
+            return;
+        }
+        let floor = repo.root.with_file_name(format!("{}-andar", repo.root_name()));
+        let _ = std::fs::remove_dir_all(&floor);
+        if !repo.git(&["worktree", "add", "-q", "-b", "andar", &floor.to_string_lossy()]) {
+            return;
+        }
+        assert_eq!(info(&floor).unwrap().stashes, 0);
+        repo.write("a.txt", "dois\n");
+        assert!(repo.git(&["stash", "push", "-q"]));
+        assert_eq!(info(&floor).unwrap().stashes, 1);
+        let _ = repo.git(&["worktree", "remove", "--force", &floor.to_string_lossy()]);
+        let _ = std::fs::remove_dir_all(&floor);
     }
 
     // -- the header probe ---------------------------------------------------
@@ -2747,5 +3152,438 @@ C:/novo/.git
         let root = std::path::Path::new("C:/proj");
         assert!(diff(root, "a.txt", "inventado", None, None).is_err());
         assert!(diff(root, "../fora.txt", "worktree", None, None).is_err());
+    }
+
+    // -- fewer processes, the same answers ---------------------------------
+    //
+    // Every `git` costs ~35 ms on Windows before it does any work, so the
+    // header's probes run side by side and the "is there a HEAD?" question is
+    // asked only when the real command's own answer cannot settle it. What
+    // these lock down is that none of that is visible: a repository with no
+    // commit, one with a detached HEAD, one on an orphan branch and a folder
+    // with no git at all answer exactly what they answered when every probe
+    // ran first and one after the other.
+
+    /// A folder with no repository anywhere above it, torn down with the test.
+    struct Loose {
+        root: std::path::PathBuf,
+    }
+
+    impl Loose {
+        fn new(tag: &str) -> Loose {
+            let root = std::env::temp_dir().join(format!(
+                "yard-scm-loose-{tag}-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            Loose { root }
+        }
+
+        fn write(&self, rel: &str, text: &str) {
+            std::fs::write(self.root.join(rel), text).unwrap();
+        }
+    }
+
+    impl Drop for Loose {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    impl Repo {
+        /// Two commits on `main`, then `HEAD` detached at the first one.
+        fn detached(tag: &str) -> Option<Repo> {
+            let repo = Repo::new(tag)?;
+            repo.write("a.txt", "um\n");
+            if !repo.git(&["add", "-A"])
+                || !repo.git(&["commit", "-q", "-m", "primeiro", "-m", "corpo do primeiro"])
+            {
+                return None;
+            }
+            repo.write("a.txt", "um\ndois\n");
+            if !repo.commit("segundo") || !repo.git(&["checkout", "-q", "--detach", "HEAD~1"]) {
+                return None;
+            }
+            Some(repo)
+        }
+
+        /// A commit on `main`, then an orphan branch checked out: commits
+        /// exist, but the current branch has none, so there is no `HEAD`.
+        fn orphan(tag: &str) -> Option<Repo> {
+            let repo = Repo::new(tag)?;
+            repo.write("a.txt", "um\n");
+            if !repo.commit("em main") || !repo.git(&["checkout", "-q", "--orphan", "sem-pai"]) {
+                return None;
+            }
+            Some(repo)
+        }
+
+        fn root_name(&self) -> String {
+            self.root.file_name().unwrap().to_string_lossy().into_owned()
+        }
+
+        /// Deletes the loose object `rev` names. With `HEAD^{tree}` the
+        /// commit is still there (so there *is* a HEAD) but nothing can be
+        /// compared with it; with `HEAD` the branch still points at a commit
+        /// git can no longer read. `rev-parse --verify HEAD` says yes to both.
+        fn lose(&self, rev: &str) -> bool {
+            let Ok(out) = crate::git::run_git(&self.root, &["rev-parse", rev]) else {
+                return false;
+            };
+            let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !out.status.success() || id.len() < 3 {
+                return false;
+            }
+            let object = self.root.join(".git").join("objects").join(&id[..2]).join(&id[2..]);
+            // git writes its objects read-only, and Windows refuses to delete those.
+            if let Ok(meta) = std::fs::metadata(&object) {
+                let mut perms = meta.permissions();
+                #[allow(clippy::permissions_set_readonly_false)]
+                perms.set_readonly(false);
+                let _ = std::fs::set_permissions(&object, perms);
+            }
+            std::fs::remove_file(&object).is_ok()
+        }
+    }
+
+    /// The header's probes are three processes that wait on nothing but
+    /// themselves, so they overlap. The rendezvous is what proves they really
+    /// do: each half waits for a word from the other, and two halves run one
+    /// after the other can never both hear it before the deadline.
+    #[test]
+    fn the_two_halves_run_at_the_same_time_and_each_answer_comes_back_in_its_place() {
+        let (to_here, from_aside) = std::sync::mpsc::channel();
+        let (to_aside, from_here) = std::sync::mpsc::channel();
+        let deadline = std::time::Duration::from_secs(10);
+        let (aside, here) = concurrently(
+            move || {
+                let _ = to_here.send("aside");
+                from_here.recv_timeout(deadline).map(|w| format!("aside heard {w}"))
+            },
+            move || {
+                let heard = from_aside.recv_timeout(deadline);
+                let _ = to_aside.send("here");
+                heard.map(|w| format!("here heard {w}"))
+            },
+        );
+        assert_eq!(aside, Ok("aside heard here".to_string()));
+        assert_eq!(here, Ok("here heard aside".to_string()));
+    }
+
+    /// Run inline, a panic in a probe reached the caller with its own
+    /// message. Moved to another thread it must still arrive as that panic,
+    /// not as a `join` error that says nothing.
+    #[test]
+    fn a_panic_on_the_side_reaches_the_caller_as_it_would_have_inline() {
+        let caught = std::panic::catch_unwind(|| {
+            concurrently(|| -> u32 { panic!("a sonda quebrou") }, || 1u32)
+        });
+        let payload = caught.expect_err("the panic has to reach the caller");
+        assert_eq!(payload.downcast_ref::<&str>(), Some(&"a sonda quebrou"));
+    }
+
+    /// The three probes `info` gathers besides the status (where we are, how
+    /// many stashes, which remotes) each land in their own field.
+    #[test]
+    fn info_counts_the_stashes_lists_the_remotes_and_finds_the_root() {
+        let Some(repo) = Repo::new("info-sondas") else { return };
+        repo.write("a.txt", "um\n");
+        if !repo.commit("inicial") {
+            return;
+        }
+        for n in ["dois", "tres"] {
+            repo.write("a.txt", &format!("um\n{n}\n"));
+            if !repo.git(&["stash", "push", "-q"]) {
+                return;
+            }
+        }
+        let _ = repo.git(&["remote", "add", "zeta", "https://z.dev/z.git"]);
+        let _ = repo.git(&["remote", "add", "alpha", "git@a.dev:a.git"]);
+
+        let got = info(&repo.root).unwrap();
+        assert_eq!(got.stashes, 2);
+        assert_eq!(
+            got.remotes,
+            vec![
+                RemoteInfo { name: "alpha".into(), url: "git@a.dev:a.git".into() },
+                RemoteInfo { name: "zeta".into(), url: "https://z.dev/z.git".into() },
+            ]
+        );
+        let root = got.root.expect("a repository has a root");
+        assert!(!root.contains('\\'), "the root comes with `/`: {root}");
+        assert!(root.ends_with(&repo.root_name()), "{root}");
+        assert_eq!(got.state, "clean");
+        assert!(got.has_head);
+        assert!(got.head.is_some_and(|h| h.len() >= 7));
+    }
+
+    /// With no commit the `rev-parse` probe fails on its third question and
+    /// still answers the first two: the root and the remotes are there, the
+    /// head is not.
+    #[test]
+    fn with_no_commit_info_still_finds_the_root_and_the_remotes() {
+        let Some(repo) = Repo::new("info-vazio-sondas") else { return };
+        let _ = repo.git(&["remote", "add", "origin", "https://x.dev/r.git"]);
+
+        let got = info(&repo.root).unwrap();
+        assert!(got.is_repo);
+        assert!(!got.has_head);
+        assert!(got.head.is_none());
+        assert_eq!(got.stashes, 0);
+        assert_eq!(got.remotes.len(), 1);
+        assert_eq!(got.remotes[0].url, "https://x.dev/r.git");
+        assert!(got.root.is_some_and(|r| r.ends_with(&repo.root_name())));
+        assert_eq!(got.state, "clean");
+    }
+
+    #[test]
+    fn on_a_detached_head_info_still_counts_the_stashes_and_the_remotes() {
+        let Some(repo) = Repo::detached("info-solta") else { return };
+        repo.write("a.txt", "mexido\n");
+        if !repo.git(&["stash", "push", "-q"]) {
+            return;
+        }
+        let _ = repo.git(&["remote", "add", "origin", "https://x.dev/r.git"]);
+
+        let got = info(&repo.root).unwrap();
+        assert!(got.detached);
+        assert!(got.has_head);
+        assert_eq!(got.stashes, 1);
+        assert_eq!(got.remotes.len(), 1);
+        assert!(got.root.is_some());
+    }
+
+    #[test]
+    fn a_folder_without_git_has_no_stash_no_remote_and_no_root() {
+        let dir = Loose::new("info");
+        let got = info(&dir.root).unwrap();
+        assert!(!got.is_repo);
+        assert!(!got.has_head);
+        assert!(got.root.is_none() && got.head.is_none());
+        assert!(got.remotes.is_empty());
+        assert_eq!(got.stashes, 0);
+    }
+
+    #[test]
+    fn on_a_detached_head_the_last_message_is_the_detached_commits() {
+        let Some(repo) = Repo::detached("msg-solta") else { return };
+        assert_eq!(
+            last_message(&repo.root).unwrap().as_deref(),
+            Some("primeiro\n\ncorpo do primeiro")
+        );
+    }
+
+    /// Commits exist, just not on the branch we are on: amending has nothing
+    /// to rewrite, so there is nothing to pre-fill.
+    #[test]
+    fn on_an_orphan_branch_there_is_no_message_to_reuse() {
+        let Some(repo) = Repo::orphan("msg-orfa") else { return };
+        assert_eq!(last_message(&repo.root), Ok(None));
+    }
+
+    #[test]
+    fn outside_a_repository_there_is_no_message_to_reuse() {
+        let dir = Loose::new("msg");
+        assert_eq!(last_message(&dir.root), Ok(None));
+    }
+
+    /// A branch pointing at a commit git cannot read has a HEAD all the same:
+    /// that is an error to show in git's words, not "nothing to reuse".
+    #[test]
+    fn a_head_whose_commit_cannot_be_read_is_an_error_not_an_empty_message() {
+        let Some(repo) = Repo::new("msg-perdido") else { return };
+        repo.write("a.txt", "um\n");
+        if !repo.commit("inicial") || !repo.lose("HEAD") {
+            return;
+        }
+        let err = last_message(&repo.root).unwrap_err();
+        assert!(err.starts_with("fatal:"), "{err}");
+    }
+
+    #[test]
+    fn on_a_detached_head_the_log_starts_at_the_detached_commit() {
+        let Some(repo) = Repo::detached("log-solta") else { return };
+        let got = log(&repo.root, LogQuery::default()).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].subject, "primeiro");
+
+        let every = log(&repo.root, LogQuery { all: true, ..Default::default() }).unwrap();
+        assert_eq!(every.len(), 2, "`all` walks `main` too");
+    }
+
+    /// The "primeiro commit" face is drawn from an empty log, and it is the
+    /// branch we are on that decides it: `--all` or a named branch would find
+    /// the commits of `main`, and the panel has never shown them here.
+    #[test]
+    fn on_an_orphan_branch_the_log_is_empty_even_for_every_branch_or_a_named_one() {
+        let Some(repo) = Repo::orphan("log-orfa") else { return };
+        assert_eq!(log(&repo.root, LogQuery::default()), Ok(Vec::new()));
+        assert_eq!(
+            log(&repo.root, LogQuery { all: true, ..Default::default() }),
+            Ok(Vec::new())
+        );
+        assert_eq!(
+            log(&repo.root, LogQuery { rev: Some("main".into()), ..Default::default() }),
+            Ok(Vec::new())
+        );
+    }
+
+    #[test]
+    fn outside_a_repository_the_log_is_an_empty_list_not_an_error() {
+        let dir = Loose::new("log");
+        assert_eq!(log(&dir.root, LogQuery::default()), Ok(Vec::new()));
+        assert_eq!(
+            log(&dir.root, LogQuery { all: true, ..Default::default() }),
+            Ok(Vec::new())
+        );
+    }
+
+    /// With no commit the log answers empty before it looks at the query at
+    /// all; with one, a revision shaped like an option or a path climbing out
+    /// is refused, and a revision git does not know comes back in git's words.
+    #[test]
+    fn a_bad_query_is_refused_only_when_there_is_a_head_to_walk_from() {
+        let Some(empty) = Repo::new("log-consulta-vazio") else { return };
+        let bad_rev = LogQuery { rev: Some("--output=x".into()), ..Default::default() };
+        let bad_path = LogQuery { path: Some("../fora.txt".into()), ..Default::default() };
+        let unknown = LogQuery { rev: Some("nao-existe".into()), ..Default::default() };
+        assert_eq!(log(&empty.root, bad_rev.clone()), Ok(Vec::new()));
+        assert_eq!(log(&empty.root, bad_path.clone()), Ok(Vec::new()));
+        assert_eq!(log(&empty.root, unknown.clone()), Ok(Vec::new()));
+
+        let Some(repo) = Repo::new("log-consulta") else { return };
+        repo.write("a.txt", "um\n");
+        if !repo.commit("inicial") {
+            return;
+        }
+        assert!(log(&repo.root, bad_rev).is_err());
+        assert_eq!(
+            log(&repo.root, bad_path),
+            Err("caminho fora do repositório: ../fora.txt".into())
+        );
+        let err = log(&repo.root, unknown).unwrap_err();
+        assert!(err.contains("nao-existe"), "git's own message: {err}");
+    }
+
+    /// With a HEAD, a walk git cannot finish is an error in git's words, for
+    /// the plain log and for the file history alike, never an empty list.
+    #[test]
+    fn a_head_git_cannot_walk_is_an_error_not_an_empty_log() {
+        let Some(repo) = Repo::new("log-perdido") else { return };
+        repo.write("a.txt", "um\n");
+        if !repo.commit("inicial") || !repo.lose("HEAD^{tree}") {
+            return;
+        }
+        let history = LogQuery { path: Some("a.txt".into()), ..Default::default() };
+        let err = log(&repo.root, history).unwrap_err();
+        assert!(err.starts_with("fatal:"), "{err}");
+
+        if !repo.lose("HEAD") {
+            return;
+        }
+        for query in [LogQuery::default(), LogQuery { all: true, ..Default::default() }] {
+            let err = log(&repo.root, query).unwrap_err();
+            assert!(err.starts_with("fatal:"), "{err}");
+        }
+    }
+
+    fn is_synthesized_new_file(d: &crate::git::FileDiff) -> bool {
+        d.text.starts_with("--- /dev/null\n")
+    }
+
+    /// With no commit there is no `HEAD` to compare against, so both sides
+    /// that need one draw the file **on disk** as all-new. Git itself would
+    /// answer the prepared side with the staged copy (`--cached` against the
+    /// empty tree); the panel has never shown that one.
+    #[test]
+    fn with_no_commit_the_prepared_and_head_sides_are_the_file_on_disk_all_added() {
+        let Some(repo) = Repo::new("diff-vazio") else { return };
+        repo.write("a.txt", "preparado\n");
+        stage(&repo.root, &["a.txt".into()]).unwrap();
+        repo.write("a.txt", "no disco\n");
+
+        for side in ["index", "head"] {
+            let d = diff(&repo.root, "a.txt", side, None, None).unwrap();
+            assert!(is_synthesized_new_file(&d), "{side}: {}", d.text);
+            assert!(d.text.contains("+no disco"), "{side}: {}", d.text);
+            assert!(!d.text.contains("preparado"), "{side}: {}", d.text);
+            assert!(!d.external);
+        }
+    }
+
+    /// The rename source is fenced only once there is a comparison to make.
+    #[test]
+    fn a_rename_source_outside_the_root_is_refused_only_when_there_is_a_head() {
+        let Some(empty) = Repo::new("diff-orig-vazio") else { return };
+        empty.write("a.txt", "um\n");
+        for side in ["index", "head"] {
+            let d = diff(&empty.root, "a.txt", side, Some("../fora.txt"), None).unwrap();
+            assert!(is_synthesized_new_file(&d), "{side}: {}", d.text);
+        }
+
+        let Some(repo) = Repo::new("diff-orig") else { return };
+        repo.write("a.txt", "um\n");
+        if !repo.commit("inicial") {
+            return;
+        }
+        for side in ["index", "head"] {
+            assert_eq!(
+                diff(&repo.root, "a.txt", side, Some("../fora.txt"), None).err().as_deref(),
+                Some("caminho fora do repositório: ../fora.txt")
+            );
+        }
+    }
+
+    #[test]
+    fn on_a_detached_head_each_side_compares_against_the_detached_commit() {
+        let Some(repo) = Repo::detached("diff-solta") else { return };
+        repo.write("a.txt", "um\nprep\n");
+        stage(&repo.root, &["a.txt".into()]).unwrap();
+        repo.write("a.txt", "um\nprep\ndisco\n");
+
+        let staged = diff(&repo.root, "a.txt", "index", None, None).unwrap();
+        assert!(staged.text.starts_with("diff --git"), "{}", staged.text);
+        assert!(staged.text.contains("+prep") && !staged.text.contains("+disco"));
+        let whole = diff(&repo.root, "a.txt", "head", None, None).unwrap();
+        assert!(whole.text.contains("+prep") && whole.text.contains("+disco"));
+        assert!(!whole.text.contains("dois"), "the detached commit has no `dois`");
+    }
+
+    /// A folder with no git turns `git diff HEAD -- a.txt` into an implicit
+    /// `--no-index` comparison of a file called `HEAD` with `a.txt`, which
+    /// *succeeds* when the two are equal. The answer must stay the file drawn
+    /// as new, as it always was.
+    #[test]
+    fn outside_a_repository_both_sides_are_the_file_all_added_even_next_to_a_file_named_head() {
+        let dir = Loose::new("diff");
+        dir.write("a.txt", "igual\n");
+        dir.write("HEAD", "igual\n");
+        for side in ["index", "head"] {
+            let d = diff(&dir.root, "a.txt", side, None, None).unwrap();
+            assert!(is_synthesized_new_file(&d), "{side}: {}", d.text);
+            assert!(d.text.contains("+igual"), "{side}: {}", d.text);
+        }
+    }
+
+    /// A `HEAD` that exists but whose tree git cannot read: the diff fails
+    /// for a reason that is not "no commit yet", and that failure has to reach
+    /// the panel in git's words instead of being papered over as a new file.
+    #[test]
+    fn with_a_head_a_diff_git_cannot_make_comes_back_in_gits_words() {
+        let Some(repo) = Repo::new("diff-arvore") else { return };
+        repo.write("a.txt", "um\n");
+        if !repo.commit("inicial") || !repo.lose("HEAD^{tree}") {
+            return;
+        }
+        repo.write("a.txt", "um\ndois\n");
+        for side in ["index", "head"] {
+            let err = match diff(&repo.root, "a.txt", side, None, None) {
+                Err(e) => e,
+                Ok(d) => panic!("{side}: expected git's error, got {}", d.text),
+            };
+            assert!(err.starts_with("fatal:") || err.starts_with("error:"), "{side}: {err}");
+        }
     }
 }

@@ -15,7 +15,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { load, isEmpty, reasonOf, type LoadState } from "./loading";
+import { failureMessage, load, isEmpty, readableMessage, reasonOf, type LoadState } from "./loading";
 
 describe("carregar", () => {
   it("a read that succeeded arrives as `pronto`, with the data", async () => {
@@ -55,6 +55,26 @@ describe("motivoDe", () => {
 
   it("a strange object becomes text instead of `[object Object]`", () => {
     expect(reasonOf({ message: "sem espaço em disco" })).toBe("sem espaço em disco");
+  });
+});
+
+describe("a message already carrying context", () => {
+  it("keeps the action and removes the technical Error prefix", () => {
+    expect(readableMessage("Não consegui abrir: Error: acesso negado")).toBe(
+      "Não consegui abrir: acesso negado",
+    );
+  });
+
+  it("does not expose an object string as an explanation", () => {
+    expect(readableMessage("[object Object]")).toBe("falha desconhecida");
+  });
+});
+
+describe("an unlabelled operation failure", () => {
+  it("turns a thrown value into a recovery-oriented sentence", () => {
+    expect(failureMessage(new Error("acesso negado"))).toBe(
+      "Não foi possível concluir esta ação: acesso negado. Tente novamente.",
+    );
   });
 });
 

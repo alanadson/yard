@@ -19,6 +19,7 @@ import { useEffect } from "react";
 
 import { t } from "../lib/i18n";
 import { injectPrompt } from "../lib/inject";
+import { takeCheckpointedTask } from "../lib/taskCheckpoint";
 import { uiLog } from "../lib/log";
 import { dueItems } from "../lib/queue";
 import { canSend } from "../lib/sendable";
@@ -47,21 +48,21 @@ export function useQueueRunner() {
         for (const head of due) {
           // Taken, not read: between the decision and the write there is an
           // await, and the queue must not offer the same item to anything else.
-          const item = useQueue.getState().take(head.terminalId);
-          if (!item) continue;
           try {
+            const item = await takeCheckpointedTask(head, canSend);
+            if (!item) continue;
             await injectPrompt(item.terminalId, item.text);
             uiLog.info(
               `fila: item entregue em ${item.terminalId} (origem ${item.source})`,
             );
           } catch (e) {
-            uiLog.error(`fila: entrega falhou em ${item.terminalId}: ${e}`);
-            const row = useProjects.getState().terminal(item.terminalId);
+            uiLog.error(`fila: entrega falhou em ${head.terminalId}: ${e}`);
+            const row = useProjects.getState().terminal(head.terminalId);
             useUI
               .getState()
               .showToast(
                 t('A fila não conseguiu escrever em "{target}": {reason}.', {
-                  target: row ? baseName(row) : item.terminalId,
+                  target: row ? baseName(row) : head.terminalId,
                   reason: String(e),
                 }),
                 "error",

@@ -8,6 +8,7 @@ import { Bot, FileText, Play, RefreshCw } from "lucide-react";
 import { Modal } from "./Modal";
 import { BrandIcon } from "../BrandIcon";
 import { useT } from "../../hooks/useT";
+import { reasonOf } from "../../lib/loading";
 import { brandById } from "../../lib/brands";
 import { AsyncDisposer } from "../../lib/disposables";
 import { compactCount, kb, truncate } from "../../lib/format";
@@ -60,7 +61,7 @@ export function SessionsModal({ projectPath }: { projectPath: string }) {
       // reaction is to try again.
       if (generation === loadGeneration.current) {
         setSessions([]);
-        setError(String(e));
+        setError(reasonOf(e));
       }
     } finally {
       if (generation === loadGeneration.current) setLoading(false);

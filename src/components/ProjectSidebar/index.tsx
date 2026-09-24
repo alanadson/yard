@@ -17,7 +17,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../lib/confirmation";
 import {
   ArrowDown,
   ArrowUp,
@@ -53,15 +53,18 @@ import { goToTerminal, toggleCanvas } from "../../lib/navigate";
 import { projectIcon } from "../../lib/projectStyle";
 import { ramPressure } from "../../lib/ramPressure";
 import { canvasAction, notesAction, searchAction, settingsAction } from "./actions";
+import { worktreeRefreshPlan } from "./worktreeRefresh";
 import { canvasDoor } from "../../lib/layoutControls";
 import {
   cardOrigin,
   groupBranch,
   groundWithoutGit,
   sectionsFor,
+  tabStop,
   treeRows,
   type TreeKind,
 } from "./rows";
+import { sidebarGroupsSelector } from "./groupsView";
 import { groundBranchOf } from "../../lib/destination";
 import { GROUND_FLOOR, groupLabel, isBranchNamed } from "../../lib/floors";
 import { terminalActionEntries } from "../../lib/terminalMenu";
@@ -69,6 +72,7 @@ import { baseName } from "../../lib/terminals";
 import { useAction } from "../../hooks/useAction";
 import { unsavedWarning } from "../../stores/editorStore";
 import { useT } from "../../hooks/useT";
+import { failureMessage } from "../../lib/loading";
 import { t } from "../../lib/i18n";
 import { parseLayout, useProjects } from "../../stores/projectsStore";
 import { useWorktrees } from "../../stores/worktreesStore";
@@ -98,7 +102,12 @@ export function ProjectSidebar() {
   // which fires on every keystroke inside a canvas note. Zustand's actions
   // are stable references, so subscribing to them costs nothing.
   const projects = useProjects((s) => s.projects);
-  const groups = useProjects((s) => s.groups);
+  // Not the raw `groups` array: that one is rewritten by every canvas,
+  // viewport and active-tab write, none of which the tree paints. This keeps
+  // the previous array until a field the tree does paint changes
+  // (`groupsView.ts`).
+  const selectGroups = useMemo(() => sidebarGroupsSelector(), []);
+  const groups = useProjects(selectGroups);
   const addBoard = useProjects((s) => s.addBoard);
   /**
    * Which sections the bar paints. The canvas is the boards, so on the canvas
@@ -132,23 +141,23 @@ export function ProjectSidebar() {
    * listing answers the tree and both dialogs; see `stores/worktreesStore`.
    */
   const worktreesByProject = useWorktrees((s) => s.byProject);
-  /**
-   * Refreshed when the projects change and when a group is born or closed,
-   * which is exactly when a front (and therefore a worktree) appears or goes
-   * away. `groups.length` is the cheap signal for both.
-   */
+  // Track group membership per project without reacting to layout changes.
   const projectKey = projects.map((p) => `${p.id}>${p.path}`).join("|");
-  const groupCount = groups.length;
+  const groupKey = JSON.stringify(groups.map((group) => [group.id, group.projectId]));
+  const worktreeScopes = useRef(new Map<string, string>());
   useEffect(() => {
     const worktrees = useWorktrees.getState();
-    const live = new Set(useProjects.getState().projects.map((p) => p.id));
-    for (const id of Object.keys(worktrees.byProject)) {
-      if (!live.has(id)) worktrees.forget(id);
+    const state = useProjects.getState();
+    const previous = worktreeScopes.current;
+    const plan = worktreeRefreshPlan(previous, state.projects, state.groups);
+    worktreeScopes.current = plan.scopes;
+    for (const id of new Set([...Object.keys(worktrees.byProject), ...plan.forget])) {
+      if (!plan.scopes.has(id)) worktrees.forget(id);
     }
-    for (const p of useProjects.getState().projects) {
-      void worktrees.refresh(p.id, p.path);
+    for (const project of plan.refresh) {
+      void worktrees.refresh(project.id, project.path, previous.has(project.id));
     }
-  }, [projectKey, groupCount]);
+  }, [projectKey, groupKey]);
   // The notebook is a place, not a panel of this bar: the row summons it
   // wherever the user left it (overlay, tab or centre) and lights up while
   // it is on screen.
@@ -172,7 +181,6 @@ export function ProjectSidebar() {
   const focusedTerminalId = useUI((s) => s.focusedTerminalId);
   const width = useUI((s) => s.prefs.sidebarWidth);
   const setPref = useUI((s) => s.setPref);
-  const setPrefLocal = useUI((s) => s.setPrefLocal);
   // CPU/RAM changes belong to `ResourceFooter`; the tree itself only paints
   // lifecycle badges. A compact primitive keeps a 2 s resource tick from
   // reconciling hundreds of project/group/terminal nodes.
@@ -280,11 +288,12 @@ export function ProjectSidebar() {
     [sections, boards, projects, groupsByProject, terminalsByGroup, collapsed],
   );
 
-  /** Only one row is reachable by Tab; the arrows move between them. */
-  const tabIndexOf = (id: string) =>
-    (focusId && flatRows.some((r) => r.id === focusId) ? focusId === id : flatRows[0]?.id === id)
-      ? 0
-      : -1;
+  /**
+   * Only one row is reachable by Tab; the arrows move between them. The stop
+   * is one answer for the tree, worked out once here and not once per row.
+   */
+  const tabStopId = useMemo(() => tabStop(flatRows, focusId), [flatRows, focusId]);
+  const tabIndexOf = (id: string) => (id === tabStopId ? 0 : -1);
 
   const moveFocus = (from: string, delta: number) => {
     const i = flatRows.findIndex((r) => r.id === from);
@@ -644,7 +653,7 @@ export function ProjectSidebar() {
           onSelect: () =>
             void ipc
               .revealPath(project.path)
-              .catch((e) => showToast(String(e), "error")),
+              .catch((e) => showToast(failureMessage(e), "error")),
         },
         {
           id: "sessions",
@@ -857,6 +866,8 @@ export function ProjectSidebar() {
                               ) : null}
                               <button
                                 className="icon-btn"
+                                data-tree-control=""
+                                tabIndex={-1}
                                 data-tip-at="right" data-tip={t("Mais ações")}
                                 aria-label={t("Mais ações de {name}", { name: label })}
                                 onClick={(e) => {
@@ -986,6 +997,8 @@ export function ProjectSidebar() {
                 {cards.length > 0 ? (
                   <button
                     className="tree-toggle"
+                    data-tree-control=""
+                    tabIndex={-1}
                     aria-expanded={!boardCollapsed}
                     aria-label={
                       boardCollapsed
@@ -1025,6 +1038,8 @@ export function ProjectSidebar() {
                 )}
                 <button
                   className="icon-btn"
+                  data-tree-control=""
+                  tabIndex={-1}
                   data-tip-at="right" data-tip={t("Nova CLI neste quadro")}
                   aria-label={t("Nova CLI em {name}", { name: board.name })}
                   onClick={(e) => {
@@ -1036,6 +1051,8 @@ export function ProjectSidebar() {
                 </button>
                 <button
                   className="icon-btn"
+                  data-tree-control=""
+                  tabIndex={-1}
                   data-tip-at="right" data-tip={t("Mais ações")}
                   aria-label={t("Mais ações de {name}", { name: board.name })}
                   onClick={(e) => openMenu(e, "board", board.id, true)}
@@ -1135,6 +1152,8 @@ export function ProjectSidebar() {
               >
                 <button
                   className="tree-toggle"
+                  data-tree-control=""
+                  tabIndex={-1}
                   aria-expanded={!isCollapsed}
                   aria-label={
                     isCollapsed
@@ -1175,6 +1194,8 @@ export function ProjectSidebar() {
                 )}
                 <button
                   className="icon-btn"
+                  data-tree-control=""
+                  tabIndex={-1}
                   data-tip-at="right"
                   data-tip={t("Abrir frente: escolha a branch, o worktree e o agente — e leia o plano antes de criar")}
                   aria-label={t("Nova frente em {name}", { name: project.name })}
@@ -1184,6 +1205,8 @@ export function ProjectSidebar() {
                 </button>
                 <button
                   className="icon-btn"
+                  data-tree-control=""
+                  tabIndex={-1}
                   data-tip-at="right" data-tip={t("Mais ações")}
                   aria-label={t("Mais ações de {name}", { name: project.name })}
                   onClick={(e) => openMenu(e, "project", project.id, true)}
@@ -1246,6 +1269,8 @@ export function ProjectSidebar() {
                         {groupTerminals.length > 0 ? (
                           <button
                             className="tree-toggle"
+                            data-tree-control=""
+                            tabIndex={-1}
                             aria-expanded={!groupCollapsed}
                             aria-label={
                               groupCollapsed
@@ -1332,6 +1357,8 @@ export function ProjectSidebar() {
                         )}
                         <button
                           className="icon-btn"
+                          data-tree-control=""
+                          tabIndex={-1}
                           data-tip-at="right" data-tip={t("Nova aba neste grupo")}
                           aria-label={t("Nova aba em {name}", { name: label })}
                           onClick={(e) => {
@@ -1343,6 +1370,8 @@ export function ProjectSidebar() {
                         </button>
                         <button
                           className="icon-btn"
+                          data-tree-control=""
+                          tabIndex={-1}
                           data-tip-at="right" data-tip={t("Mais ações")}
                           aria-label={t("Mais ações de {name}", { name: label })}
                           onClick={(e) => {
@@ -1382,7 +1411,6 @@ export function ProjectSidebar() {
         max={SIDEBAR_MAX}
         defaultWidth={DEFAULT_PREFS.sidebarWidth}
         label={t("Largura da barra lateral")}
-        onResize={(w) => setPrefLocal("sidebarWidth", w)}
         onCommit={(w) => setPref("sidebarWidth", w)}
       />
 

@@ -74,6 +74,18 @@ export function treeRows(world: {
 }
 
 /**
+ * The one row Tab lands on (roving tabindex): the row that last had focus
+ * while it is still in the tree, else the first row, else nobody.
+ *
+ * One answer for the whole tree, computed once per render. It used to be
+ * asked per row, and each asking scanned every row: rows x rows per render.
+ */
+export function tabStop(rows: readonly TreeRow[], focusId: string | null): string | null {
+  if (focusId && rows.some((r) => r.id === focusId)) return focusId;
+  return rows[0]?.id ?? null;
+}
+
+/**
  * Which project a working directory sits in, by name — `null` when it sits in
  * none (a folder the user picked by hand, a worktree of a closed project).
  *

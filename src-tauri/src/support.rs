@@ -60,8 +60,9 @@ pub async fn support_bundle(app: AppHandle, dest: String) -> Result<SupportSumma
         // The cache `detect_agents` fills is the same list the "Nova aba"
         // grid shows; a cold cache means paying for the detection once.
         let state = app.state::<Arc<AppState>>();
-        let cached = state.agents_cache.lock().clone();
-        let agents = cached.unwrap_or_else(crate::agents::resolver::detect_all);
+        let agents = state
+            .agents_cache
+            .get(false, crate::agents::resolver::detect_all);
         let today = chrono::Local::now().date_naive();
         bundle_in(&crate::paths::app_dir(), Path::new(&dest), today, &agents)
             .map_err(|e| e.to_string())

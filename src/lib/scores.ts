@@ -31,6 +31,8 @@ import {
   type CardRole,
 } from "./canvas";
 import { useProjects } from "../stores/projectsStore";
+import { copyWireRouting } from "./wireClamps";
+import { undockCopy } from "./canvasDock";
 
 export const SCORE_VERSION = 1;
 
@@ -182,7 +184,7 @@ export function applyScore(
   const nodes: Record<string, CanvasNode> = {};
   for (const [oldId, rect] of Object.entries(score.canvas.nodes)) {
     const newValue = idMap.get(oldId);
-    if (newValue) nodes[newValue] = { ...rect, x: rect.x + dx };
+    if (newValue) nodes[newValue] = { ...undockCopy(rect), x: rect.x + dx };
   }
 
   const items: CanvasItem[] = [];
@@ -196,7 +198,7 @@ export function applyScore(
       continue;
     }
     // Only on the X axis: the score lands beside what exists, same height.
-    items.push(dx === 0 ? { ...it, id } : translateItem({ ...it, id }, dx, 0));
+    items.push(undockCopy(dx === 0 ? { ...it, id } : translateItem({ ...it, id }, dx, 0)));
   }
 
   const roles: Record<string, CardRole> = {};
@@ -223,7 +225,7 @@ export function applyScore(
   commitCanvasExternal(groupId, (c) => ({
     ...c,
     nodes: { ...c.nodes, ...nodes },
-    items: [...c.items, ...items],
+    items: [...c.items, ...copyWireRouting(items, dx, 0, () => nanoid(8))],
     roles: { ...(c.roles ?? {}), ...roles },
     routines: [...(c.routines ?? []), ...routines],
     rolePresets: { ...(c.rolePresets ?? {}), ...(score.canvas.rolePresets ?? {}) },
@@ -231,4 +233,3 @@ export function applyScore(
 
   return { terminals: score.terminals.length, items: items.length };
 }
-

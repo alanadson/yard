@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import type { ChangesSummary, TerminalRow } from "../../lib/ipc";
 import type { FlowRun } from "../../stores/flowStore";
 import type { TerminalRuntime } from "../../stores/terminalsStore";
-import { agentSegments, agentsCaption, flowChip, gitChip } from "./statusBar";
+import { agentSegments, agentsCaption, agentsSignature, flowChip, gitChip } from "./statusBar";
 
 const row = (id: string): TerminalRow => ({
   id,
@@ -106,6 +106,49 @@ describe("agentsCaption — the chip's words, with someone to count or with nobo
       b: rt({}),
     });
     expect(agentsCaption(segments)).toBe("Agentes: 1 esperando você, 1 rodando");
+  });
+});
+
+/**
+ * The agents chip reads every runtime of the workspace, and the runtimes are
+ * replaced every two seconds by the resources tick (memory, CPU). Subscribed
+ * to the whole map, the chip re-rendered on every tick to paint the same
+ * words. It subscribes to `agentsSignature` instead: text that changes
+ * exactly when the chip's words do.
+ */
+describe("agentsSignature: the chip re-renders when its words change, not on a tick", () => {
+  it("stays equal when only memory and CPU move", () => {
+    const rows = [row("a"), row("b")];
+    const before = agentsSignature(rows, { a: rt({ rssMb: 100, cpu: 1 }), b: rt({ blocked: true, finished: true }) });
+    const after = agentsSignature(rows, { a: rt({ rssMb: 180, cpu: 7 }), b: rt({ blocked: true, finished: true, rssMb: 50 }) });
+    expect(after).toBe(before);
+  });
+
+  it("stays equal for a change the chip does not count (unread output, a dead terminal's exit)", () => {
+    const rows = [row("a"), row("b")];
+    const before = agentsSignature(rows, { a: rt({}), b: rt({ state: "exited", pid: null }) });
+    const after = agentsSignature(rows, {
+      a: rt({ unread: true }),
+      b: rt({ state: "exited", pid: null, exit: { code: 1, reason: "normal", at: 5 } }),
+    });
+    expect(after).toBe(before);
+  });
+
+  it("changes when an agent starts waiting, finishes, starts or stops", () => {
+    const rows = [row("a")];
+    const running = agentsSignature(rows, { a: rt({}) });
+    expect(agentsSignature(rows, { a: rt({ blocked: true, finished: true }) })).not.toBe(running);
+    expect(agentsSignature(rows, { a: rt({ finished: true }) })).not.toBe(running);
+    expect(agentsSignature(rows, { a: rt({ state: "exited", pid: null }) })).not.toBe(running);
+    expect(agentsSignature([row("a"), row("b")], { a: rt({}), b: rt({}) })).not.toBe(running);
+  });
+
+  it("two equal signatures always paint the same chip", () => {
+    const rows = [row("a"), row("b"), row("c")];
+    const one = { a: rt({}), b: rt({ finished: true }), c: rt({ blocked: true, finished: true }) };
+    const two = { a: rt({ finished: true }), b: rt({ rssMb: 9 }), c: rt({ blocked: true, finished: true }) };
+    expect(agentsSignature(rows, one)).toBe(agentsSignature(rows, two));
+    expect(agentSegments(rows, one)).toEqual(agentSegments(rows, two));
   });
 });
 

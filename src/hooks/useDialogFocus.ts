@@ -14,6 +14,7 @@
 import { useEffect, type RefObject } from "react";
 
 import { isTopLayer, type Layer } from "../lib/layers";
+import { isFrontDialog } from "../components/modals/modalGestures";
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]),' +
@@ -38,6 +39,7 @@ export function useDialogFocus(
       if (!isTopLayer(layer)) return;
       const root = ref.current;
       if (!root) return;
+      if (layer === "modal" && !isFrontDialog(root, [...document.querySelectorAll<HTMLElement>(".modal, .settings")])) return;
 
       const items = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
         (el) => el.offsetParent !== null,

@@ -17,6 +17,7 @@
  *   commit an agent made a second ago.
  */
 import { ipc } from "../ipc";
+import { uiLog } from "../log";
 import { floorHookEnv, type FloorHooks, type FloorMeta, type FloorTask } from "../floors";
 import { runFloorHooks } from "../floorHooks";
 import { closeTerminal, startTerminalProcess } from "../lifecycle";
@@ -147,6 +148,20 @@ export function yardEffects(input: EffectsInput): ProvisionEffects {
         args: launch.args,
         cwd: at.path,
       });
+      const executable = born.program.replaceAll("\\", "/").split("/").pop() ?? "";
+      // Best effort, and only where there is a repository to snapshot: the
+      // plan accepts a plain folder as a floor, and a snapshot that cannot
+      // be taken must not cost the user the agent they just provisioned.
+      if (item.prompt.trim() && !/^(ssh|wsl)(\.exe)?$/i.test(executable)) {
+        try {
+          if ((await ipc.scmInfo(at.path)).isRepo) {
+            await ipc.checkpointCreate(at.path, input.task?.id ?? groupId, input.task?.prompt ?? item.prompt,
+              item.prompt.trim().split(/\r?\n/)[0].slice(0, 160));
+          }
+        } catch (e) {
+          uiLog.warn(`não consegui salvar o checkpoint inicial em ${at.path}: ${e}`);
+        }
+      }
       const terminalId = store().addTerminal({
         groupId,
         title: titleFor(defaults.defaults, item.agentId, label),

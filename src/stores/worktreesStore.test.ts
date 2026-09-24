@@ -31,6 +31,70 @@ beforeEach(() => {
 });
 
 describe("the worktrees of a project", () => {
+  it("does not restore a forgotten project when its first listing finishes", async () => {
+    let finish!: (value: typeof ENTRIES) => void;
+    worktreeList.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = useWorktrees.getState().refresh("p1", "C:/Workspace/yard");
+    useWorktrees.getState().forget("p1");
+    finish(ENTRIES);
+    await pending;
+    expect(useWorktrees.getState().listed("p1")).toBe(false);
+  });
+
+  // A mutation needs a read newer than the one already in progress.
+  it("publishes the forced refresh instead of an older pending listing", async () => {
+    let finish!: (value: typeof ENTRIES) => void;
+    const newer = [{ ...ENTRIES[0], branch: "updated" }];
+    worktreeList
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+      .mockResolvedValue(newer);
+    const older = useWorktrees.getState().refresh("p1", "C:/Workspace/yard");
+    const current = useWorktrees.getState().refresh("p1", "C:/Workspace/yard", true);
+    finish(ENTRIES);
+    await Promise.all([older, current]);
+    expect(useWorktrees.getState().of("p1")).toEqual(newer);
+  });
+
+  it("shares simultaneous reads of the same project worktrees", async () => {
+    worktreeList.mockResolvedValue(ENTRIES);
+    await Promise.all([
+      useWorktrees.getState().refresh("p1", "C:/Workspace/yard"),
+      useWorktrees.getState().refresh("p1", "c:/workspace/yard/"),
+    ]);
+    expect(useWorktrees.getState().of("p1")).toEqual(ENTRIES);
+    expect(worktreeList).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The boot reconciles every project's fronts while the tree lists the same
+   * projects, and each listing is two git processes. A caller that needs the
+   * entries rides a listing already on the wire instead of starting another.
+   */
+  it("hands a caller who needs the entries the listing the tree already started", async () => {
+    const waiting: ((value: typeof ENTRIES) => void)[] = [];
+    worktreeList.mockImplementation(() => new Promise((resolve) => { waiting.push(resolve); }));
+    const refreshing = useWorktrees.getState().refresh("p1", "C:/Workspace/yard");
+    await Promise.resolve();
+    const reading = useWorktrees.getState().list("C:/Workspace/yard");
+    for (const finish of waiting) finish(ENTRIES);
+    await expect(reading).resolves.toEqual(ENTRIES);
+    await refreshing;
+    expect(worktreeList).toHaveBeenCalledTimes(1);
+  });
+
+  /** The boot's order: the reconciliation asks first, the tree mounts after. */
+  it("lets the tree ride a listing that a caller who needed the entries started", async () => {
+    const waiting: ((value: typeof ENTRIES) => void)[] = [];
+    worktreeList.mockImplementation(() => new Promise((resolve) => { waiting.push(resolve); }));
+    const reading = useWorktrees.getState().list("C:/Workspace/yard");
+    await Promise.resolve();
+    const refreshing = useWorktrees.getState().refresh("p1", "C:/Workspace/yard");
+    for (const finish of waiting) finish(ENTRIES);
+    await Promise.all([reading, refreshing]);
+    expect(useWorktrees.getState().of("p1")).toEqual(ENTRIES);
+    expect(worktreeList).toHaveBeenCalledTimes(1);
+  });
+
   it("are what git listed, keyed by project", async () => {
     worktreeList.mockResolvedValue(ENTRIES);
     await useWorktrees.getState().refresh("p1", "C:/Workspace/yard");

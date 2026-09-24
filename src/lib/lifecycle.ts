@@ -5,7 +5,7 @@
  * the tree is another story: with no owner in the UI, the PTY becomes an
  * orphan. That is why deleting a group, project, or tab goes through here.
  */
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "./confirmation";
 
 import { removeNodeAndEdges } from "./canvasOps";
 import { commitCanvasExternal } from "./canvasWrite";

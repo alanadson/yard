@@ -65,7 +65,7 @@ export async function openHandoffFor(terminalId: string): Promise<void> {
   ui.setComposerDraft(COMPOSER_SCRATCH, text);
   ui.setComposerOpen(true);
   ui.showToast(
-    t("Bastão montado a partir de {name} — escolha quem assume e revise antes de enviar.", {
+    t("Bastão montado a partir de {name}, escolha quem assume e revise antes de enviar.", {
       name: baseName(term),
     }),
   );

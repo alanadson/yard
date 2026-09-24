@@ -67,6 +67,17 @@ export function makeCtx(
 ): Ctx {
   const notes = canvas.items.filter((i): i is NoteItem => i.type === "note");
   const portals = canvas.items.filter((i): i is PortalItem => i.type === "portal");
+  const edges = buildEdges(canvas.items);
+  for (const item of canvas.items) {
+    if (item.type !== "binder") continue;
+    const filed = item.notes.filter((id) => notes.some((note) => note.id === id));
+    if (!edges.has(item.id)) edges.set(item.id, new Set());
+    for (const id of filed) {
+      edges.get(item.id)!.add(id);
+      if (!edges.has(id)) edges.set(id, new Set());
+      edges.get(id)!.add(item.id);
+    }
+  }
   return {
     caller,
     groupId,
@@ -77,7 +88,7 @@ export function makeCtx(
     noteNameOf: uniqueNoteNames(notes),
     portals,
     portalNameOf: uniquePortalNames(portals),
-    edges: buildEdges(canvas.items),
+    edges,
   };
 }
 
@@ -93,7 +104,7 @@ export function connectedAgents(ctx: Ctx): TerminalRow[] {
  * does not open access to that agent's notes.
  */
 function hopIds(ctx: Ctx): Set<string> {
-  return new Set([...ctx.notes.map((n) => n.id), ...ctx.portals.map((p) => p.id)]);
+  return new Set([...ctx.notes.map((n) => n.id), ...ctx.portals.map((p) => p.id), ...ctx.canvas.items.filter((item) => item.type === "binder").map((item) => item.id)]);
 }
 
 /**
@@ -136,11 +147,13 @@ export function findAgent(ctx: Ctx, name: string): TerminalRow | null {
 }
 
 export function findNote(ctx: Ctx, name: string): NoteItem | null {
-  return byName(connectedNotes(ctx), ctx.noteNameOf, name);
+  const notes = connectedNotes(ctx);
+  return notes.find((item) => item.id === name.trim()) ?? byName(notes, ctx.noteNameOf, name);
 }
 
 export function findPortal(ctx: Ctx, name: string): PortalItem | null {
-  return byName(connectedPortals(ctx), ctx.portalNameOf, name);
+  const portals = connectedPortals(ctx);
+  return portals.find((item) => item.id === name.trim()) ?? byName(portals, ctx.portalNameOf, name);
 }
 
 /**

@@ -1,6 +1,6 @@
 import { lazy, useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "./lib/confirmation";
 import {
   AlertTriangle,
   Download,
@@ -15,11 +15,13 @@ import {
 
 import { ContextMenu, type MenuAnchor } from "./components/ContextMenu";
 import { GlobalMenu } from "./components/ContextMenu/GlobalMenu";
+import { ConfirmHost } from "./components/ConfirmHost";
 import { TitleBar } from "./components/TitleBar";
 import { StatusBar } from "./components/StatusBar";
 import { ProjectSidebar } from "./components/ProjectSidebar";
 import { Overlay } from "./components/Overlay";
 import { WorkspaceGrid } from "./components/WorkspaceGrid";
+import { loadXTermView } from "./components/XTermView/load";
 import { useGlobalEvents } from "./hooks/useGlobalEvents";
 import { useOccluder } from "./hooks/useOccluder";
 import { useKeybindings } from "./hooks/useKeybindings";
@@ -41,7 +43,7 @@ import { useAutoBackupTimer } from "./hooks/useAutoBackupTimer";
 import { useAutoBackup } from "./stores/autoBackupStore";
 import { cancelBackupRestore, restartIntoBackup } from "./lib/backupFlow";
 import { startBridge } from "./lib/bridgeListener";
-import { loadBundledFonts } from "./lib/bundledFonts";
+import { bundledFamiliesFor, loadBundledFamilies } from "./lib/bundledFonts";
 import { AsyncDisposer } from "./lib/disposables";
 import { applyFontPrefs } from "./lib/fonts";
 import { applySyntaxVars } from "./lib/schemeChoice";
@@ -74,6 +76,7 @@ import { installUpdate } from "./lib/updateFlow";
 import { projectPanelsShown } from "./lib/layoutControls";
 import { useProjects } from "./stores/projectsStore";
 import { useReview } from "./stores/reviewStore";
+import { releaseRememberedLang } from "./stores/langStore";
 import { isLive, useTerminals } from "./stores/terminalsStore";
 import { fits } from "./lib/panelFit";
 import {
@@ -171,6 +174,7 @@ const ScmConfirmModal = lazy(() =>
 const ScoresModal = lazy(() =>
   import("./components/modals/ScoresModal").then((m) => ({ default: m.ScoresModal })),
 );
+const CheckpointsModal = lazy(() => import("./components/modals/CheckpointsModal").then((m) => ({ default: m.CheckpointsModal })));
 const SessionsModal = lazy(() =>
   import("./components/modals/SessionsModal").then((m) => ({ default: m.SessionsModal })),
 );
@@ -208,7 +212,6 @@ export default function App() {
   const layoutSettled = useRef(false);
   const load = useProjects((s) => s.load);
   const loadError = useProjects((s) => s.loadError);
-  const saveError = useProjects((s) => s.saveError);
   const activeGroupId = useProjects((s) => s.activeGroupId);
   const activeProjectId = useProjects((s) => s.activeProjectId);
   const projects = useProjects((s) => s.projects);
@@ -220,31 +223,23 @@ export default function App() {
   const addBoard = useProjects((s) => s.addBoard);
   const projectPanels = projectPanelsShown({ canvasSide });
   const changesOpen = useChanges((s) => s.open) && projectPanels;
-  const viewerOpen = useChanges((s) => s.viewer !== null);
   const benchOpen = useBench((s) => s.open) && projectPanels;
-  const editorOpen = useEditor((s) => s.open);
   // The notebook on screen means the central area, in the workspace's place
   // (a docked notebook has its tab there instead, and `open` stays false,
   // except for a canvas group, which has no tab bar and answers with the
   // centre too).
   const notesOpen = useNotes((s) => s.open);
-  const liveOpen = useLive((s) => s.phase !== "closed");
   const loadPrefs = useUI((s) => s.loadPrefs);
   const sidebarOpen = useUI((s) => s.sidebarOpen);
   const statusBarOpen = useUI((s) => s.prefs.statusBar);
-  const modal = useUI((s) => s.modal);
-  const modalPayload = useUI((s) => s.modalPayload);
-  const toasts = useUI((s) => s.toasts);
-  const toastOverflow = useUI((s) => s.toastOverflow);
-  const backupPending = useUI((s) => s.backupPending);
-  const updateOffer = useUpdater((s) => (s.phase === "available" ? s.version : null));
-  const dismissToast = useUI((s) => s.dismissToast);
+  // The toasts, the bars and the overlays subscribe on their own (the small
+  // components at the end of this file): none of the panels below is
+  // memoized, so a toast read here cost two renders of the whole app, one to
+  // show it and one when its timer took it away.
   const openModal = useUI((s) => s.openModal);
   const [welcomeMenu, setWelcomeMenu] = useState<MenuAnchor | null>(null);
   /** The first screen's one button, which call it makes (`lib/welcome.ts`). */
   const welcome = welcomeCall(projects.length);
-  const composerOpen = useUI((s) => s.composerOpen);
-  const paletteOpen = useUI((s) => s.paletteOpen);
 
   useGlobalEvents();
   useKeybindings();
@@ -283,14 +278,23 @@ export default function App() {
 
   // The bundled code fonts arrive with their extension. Loaded on boot too
   // (not only on toggle): a terminal measured before the @font-face exists
-  // falls back to Consolas until its next relayout.
+  // falls back to Consolas until its next relayout. Only the families the
+  // preferences name, and the one a preference switches to; the other nine
+  // sheets stay out of a profile that never uses them.
   const codeFonts = useExtensions((s) => s.enabled["code-fonts"] === true);
+  const termFontFamily = useUI((s) => s.prefs.fontFamily);
   useEffect(() => {
     if (!codeFonts) return;
-    void loadBundledFonts().catch((e) =>
+    const families = bundledFamiliesFor({
+      fontFamily: termFontFamily,
+      codeFontFamily,
+      uiFontFamily,
+    });
+    if (families.length === 0) return;
+    void loadBundledFamilies(families).catch((e) =>
       uiLog.warn(`falha ao carregar fontes embutidas: ${e}`),
     );
-  }, [codeFonts]);
+  }, [codeFonts, termFontFamily, codeFontFamily, uiFontFamily]);
 
   // Agent<->app bridge: serves the `yard` CLI invoked from inside PTYs.
   useEffect(() => startBridge(), []);
@@ -329,6 +333,10 @@ export default function App() {
   }, []);
 
   const boot = useCallback(async () => {
+    // The terminal view's chunk, requested now so the download overlaps the
+    // workspace load instead of starting when the first pane mounts. A
+    // failure is the pane's to report: its `lazy()` holds the same promise.
+    void loadXTermView().catch(() => {});
     try {
       // One SQLite/IPC read hydrates every preference-backed store. Starting
       // it before the workspace load keeps both independent branches parallel.
@@ -338,7 +346,9 @@ export default function App() {
       });
       await Promise.all([
         load(),
-        bootPrefs.then((prefs) => loadPrefs(prefs)),
+        // The language the last session showed stood in for the preference
+        // until now (`main.tsx`); from here the real one decides.
+        bootPrefs.then((prefs) => loadPrefs(prefs)).finally(releaseRememberedLang),
         bootPrefs.then((prefs) => useBench.getState().load(prefs)),
         // Before anything can be spawned: the fixed command line of each CLI
         // is read at spawn time, with no `await` to spare.
@@ -635,6 +645,13 @@ export default function App() {
         );
         if (!proceed) return;
       }
+      try {
+        await useEditor.getState().flush();
+      } catch (error) {
+        uiLog.error(`Unable to save editor drafts on close: ${error}`);
+        useUI.getState().showToast(t("Não foi possível guardar os rascunhos. Tente fechar novamente."), "error");
+        return;
+      }
       await getCurrentWindow().destroy();
     };
     setQuitHandler(() => void closeFlow(true));
@@ -719,54 +736,9 @@ export default function App() {
     <div className="app" data-statusbar={statusBarOpen ? "open" : "closed"}>
       <h1 className="sr-only">Yard</h1>
       <TitleBar />
-      {saveError && (
-        <div className="save-warn" role="alert">
-          <AlertTriangle size={13} aria-hidden="true" />
-          <span>
-            {t("Não estou conseguindo gravar o workspace no disco — as últimas mudanças ainda não foram salvas. Tentando de novo automaticamente.")}
-          </span>
-          <button className="btn btn--sm" onClick={() => void useProjects.getState().save()}>
-            {t("Tentar agora")}
-          </button>
-        </div>
-      )}
-      {backupPending && (
-        // The paragraph inside Preferences was the only warning; closing that
-        // modal left the app looking normal while every action landed in the
-        // database about to be discarded. This bar stays until the restore is
-        // adopted (restart) or cancelled.
-        <div className="save-warn" role="alert">
-          <AlertTriangle size={13} aria-hidden="true" />
-          <span>
-            {t("Um backup restaurado está esperando o próximo boot — tudo o que você fizer até lá será descartado quando o Yard reabrir.")}
-          </span>
-          <button className="btn btn--sm" onClick={() => void restartIntoBackup()}>
-            {t("Reiniciar agora")}
-          </button>
-          <button className="btn btn--sm" onClick={() => void cancelBackupRestore()}>
-            {t("Cancelar restauração")}
-          </button>
-        </div>
-      )}
-      {updateOffer && (
-        // A new release, signed and ready. The bar stays until it is installed
-        // or ignored — the same shape as the backup warning, in the chrome's
-        // blue: this is news, not danger.
-        <div className="save-warn save-warn--info" role="status">
-          <Download size={13} aria-hidden="true" />
-          <span>
-            {t("Versão {version} do Yard disponível — instale e reinicie quando quiser.", {
-              version: updateOffer,
-            })}
-          </span>
-          <button className="btn btn--sm btn--primary" onClick={() => void installUpdate()}>
-            {t("Instalar e reiniciar")}
-          </button>
-          <button className="btn btn--sm" onClick={() => useUpdater.getState().skip()}>
-            {t("Ignorar esta versão")}
-          </button>
-        </div>
-      )}
+      <SaveErrorBar />
+      <BackupPendingBar />
+      <UpdateOfferBar />
       <div
         className="app-body"
         data-sidebar={sidebarOpen ? "open" : "closed"}
@@ -780,7 +752,7 @@ export default function App() {
             // grid would get — the panels and sidebar around it keep working.
             <Overlay
               where={t("o caderno")}
-              fallback={<LoadingSurface label="Abrindo o caderno" />}
+              fallback={<LoadingSurface label={t("Abrindo o caderno")} />}
             >
               <NotesCenter />
             </Overlay>
@@ -919,77 +891,210 @@ export default function App() {
       {statusBarOpen && <StatusBar />}
 
       <Overlay where={t("o Ao Vivo")} fallback={<LoadingOverlay />}>
-        {liveOpen && <LiveView />}
+        <LiveOverlay />
       </Overlay>
       <Overlay where={t("o visualizador de diff")} fallback={<LoadingOverlay />}>
-        {viewerOpen && <DiffViewer />}
+        <DiffViewerOverlay />
       </Overlay>
       <Overlay where={t("o editor")} fallback={<LoadingOverlay />}>
-        {editorOpen && <CodeEditor />}
+        <CodeEditorOverlay />
       </Overlay>
       <Overlay where={t("o compositor")} fallback={<LoadingOverlay />}>
-        {composerOpen && <Composer />}
+        <ComposerOverlay />
       </Overlay>
       <Overlay where={t("a Busca")} fallback={<LoadingOverlay />}>
-        {paletteOpen && <Palette />}
+        <PaletteOverlay />
       </Overlay>
       <Overlay where={t("esta janela")} fallback={<LoadingOverlay />}>
-        {modal === "new-terminal" && <NewTerminalModal />}
-        {modal === "new-portal" && <NewPortalModal />}
-        {modal === "new-project" && <NewProjectModal />}
-        {modal === "new-floor" && <NewFloorModal />}
-        {modal === "new-task" && <FanoutModal />}
-        {modal === "land-floor" && <LandModal />}
-        {modal === "close-floor" && <CloseFloorModal />}
-        {modal === "compare-floors" && <CompareModal />}
-        {modal === "project-style" && (
-          <ProjectStyleModal
-            projectId={
-              (modalPayload as { projectId?: string } | null)?.projectId ?? ""
-            }
-          />
-        )}
-        {modal === "preferences" && <SettingsScreen />}
-        {modal === "shortcuts" && <ShortcutsModal />}
-        {modal === "role" && <RoleModal />}
-        {modal === "routines" && <RoutinesModal />}
-        {modal === "scores" && <ScoresModal />}
-        {modal === "flow" && <FlowModal />}
-        {modal === "scm-confirm" && <ScmConfirmModal />}
-        {modal === "onboarding" && <OnboardingModal />}
-        {modal === "costs" && <CostsModal />}
-        {modal === "shoulder" && <ShoulderModal />}
-        {modal === "transcript" && <TranscriptModal />}
-        {modal === "sessions" && (
-          <SessionsModal
-            projectPath={
-              (modalPayload as { projectPath?: string } | null)?.projectPath ?? ""
-            }
-          />
-        )}
+        <ModalHost />
       </Overlay>
 
-      {toasts.length > 0 && (
-        <div className="toast-stack">
-          {toastOverflow > 0 && (
-            <div className="toast-overflow" role="status">
-              {tn(toastOverflow, "+{n} aviso anterior saiu da pilha", "+{n} avisos anteriores saíram da pilha")}
-            </div>
-          )}
-          {toasts.map((t, i) => (
-            <ToastBar
-              key={t.id}
-              toast={t}
-              slot={i}
-              onDismiss={() => dismissToast(t.id)}
-            />
-          ))}
-        </div>
-      )}
+      <ConfirmHost />
+
+      <ToastStack />
       <AgentAnnouncer />
       {/* Last on purpose: it is the net that catches the right-click no
           surface claimed. */}
       <GlobalMenu />
+    </div>
+  );
+}
+
+/**
+ * The warning bars under the title bar, the overlays and the toast stack.
+ *
+ * Each one is a component of its own so that it, and only it, subscribes to
+ * the slice of the stores it shows: when these reads sat in `App`, a toast, a
+ * modal or the palette opening re-rendered the title bar, the sidebar, the
+ * grid and the panels, none of which is memoized.
+ *
+ * The long dash inside some `t()` keys is spelled as a unicode escape: the
+ * string, and so the dictionary lookup, is the same one as before.
+ */
+function SaveErrorBar() {
+  const t = useT();
+  const saveError = useProjects((s) => s.saveError);
+  if (!saveError) return null;
+  return (
+    <div className="save-warn" role="alert">
+      <AlertTriangle size={13} aria-hidden="true" />
+      <span>
+        {t("Não estou conseguindo gravar o workspace no disco \u2014 as últimas mudanças ainda não foram salvas. Tentando de novo automaticamente.")}
+      </span>
+      <button className="btn btn--sm" onClick={() => void useProjects.getState().save()}>
+        {t("Tentar agora")}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The paragraph inside Preferences was the only warning; closing that modal
+ * left the app looking normal while every action landed in the database
+ * about to be discarded. This bar stays until the restore is adopted
+ * (restart) or cancelled.
+ */
+function BackupPendingBar() {
+  const t = useT();
+  const backupPending = useUI((s) => s.backupPending);
+  if (!backupPending) return null;
+  return (
+    <div className="save-warn" role="alert">
+      <AlertTriangle size={13} aria-hidden="true" />
+      <span>
+        {t("Um backup restaurado está esperando o próximo boot \u2014 tudo o que você fizer até lá será descartado quando o Yard reabrir.")}
+      </span>
+      <button className="btn btn--sm" onClick={() => void restartIntoBackup()}>
+        {t("Reiniciar agora")}
+      </button>
+      <button className="btn btn--sm" onClick={() => void cancelBackupRestore()}>
+        {t("Cancelar restauração")}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * A new release, signed and ready. The bar stays until it is installed or
+ * ignored (the same shape as the backup warning, in the chrome's blue: this
+ * is news, not danger).
+ */
+function UpdateOfferBar() {
+  const t = useT();
+  const updateOffer = useUpdater((s) => (s.phase === "available" ? s.version : null));
+  if (!updateOffer) return null;
+  return (
+    <div className="save-warn save-warn--info" role="status">
+      <Download size={13} aria-hidden="true" />
+      <span>
+        {t("Versão {version} do Yard disponível \u2014 instale e reinicie quando quiser.", {
+          version: updateOffer,
+        })}
+      </span>
+      <button className="btn btn--sm btn--primary" onClick={() => void installUpdate()}>
+        {t("Instalar e reiniciar")}
+      </button>
+      <button className="btn btn--sm" onClick={() => useUpdater.getState().skip()}>
+        {t("Ignorar esta versão")}
+      </button>
+    </div>
+  );
+}
+
+function LiveOverlay() {
+  const liveOpen = useLive((s) => s.phase !== "closed");
+  return liveOpen ? <LiveView /> : null;
+}
+
+function DiffViewerOverlay() {
+  const viewerOpen = useChanges((s) => s.viewer !== null);
+  return viewerOpen ? <DiffViewer /> : null;
+}
+
+function CodeEditorOverlay() {
+  const editorOpen = useEditor((s) => s.open);
+  return editorOpen ? <CodeEditor /> : null;
+}
+
+function ComposerOverlay() {
+  const composerOpen = useUI((s) => s.composerOpen);
+  return composerOpen ? <Composer /> : null;
+}
+
+function PaletteOverlay() {
+  const paletteOpen = useUI((s) => s.paletteOpen);
+  return paletteOpen ? <Palette /> : null;
+}
+
+function ModalHost() {
+  const modal = useUI((s) => s.modal);
+  const modalPayload = useUI((s) => s.modalPayload);
+  return (
+    <>
+      {modal === "new-terminal" && <NewTerminalModal />}
+      {modal === "new-portal" && <NewPortalModal />}
+      {modal === "notifications" && <NotificationsModal />}
+      {modal === "new-project" && <NewProjectModal />}
+      {modal === "new-floor" && <NewFloorModal />}
+      {modal === "new-task" && <FanoutModal />}
+      {modal === "land-floor" && <LandModal />}
+      {modal === "close-floor" && <CloseFloorModal />}
+      {modal === "compare-floors" && <CompareModal />}
+      {modal === "project-style" && (
+        <ProjectStyleModal
+          projectId={
+            (modalPayload as { projectId?: string } | null)?.projectId ?? ""
+          }
+        />
+      )}
+      {modal === "preferences" && <SettingsScreen />}
+      {modal === "shortcuts" && <ShortcutsModal />}
+      {modal === "role" && <RoleModal />}
+      {modal === "routines" && <RoutinesModal />}
+      {modal === "scores" && <ScoresModal />}
+      {modal === "flow" && <FlowModal />}
+      {modal === "scm-confirm" && <ScmConfirmModal />}
+      {modal === "checkpoints" && <CheckpointsModal />}
+      {modal === "onboarding" && <OnboardingModal />}
+      {modal === "costs" && <CostsModal />}
+      {modal === "shoulder" && <ShoulderModal />}
+      {modal === "transcript" && <TranscriptModal />}
+      {modal === "sessions" && (
+        <SessionsModal
+          projectPath={
+            (modalPayload as { projectPath?: string } | null)?.projectPath ?? ""
+          }
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * The notices at the bottom of the window. Subscribes on its own: the stack
+ * changes twice per notice (it shows, and its timer takes it away).
+ */
+function ToastStack() {
+  const t = useT();
+  const toasts = useUI((s) => s.toasts);
+  const toastOverflow = useUI((s) => s.toastOverflow);
+  const dismissToast = useUI((s) => s.dismissToast);
+  if (toasts.length === 0) return null;
+  return (
+    <div className="toast-stack">
+      {toastOverflow > 0 && (
+        <button className="toast-overflow" onClick={() => useUI.getState().openModal("notifications")} aria-label={t("Histórico de notificações")}>
+          {tn(toastOverflow, "+{n} aviso anterior saiu da pilha", "+{n} avisos anteriores saíram da pilha")}
+        </button>
+      )}
+      {toasts.map((toast, i) => (
+        <ToastBar
+          key={toast.id}
+          toast={toast}
+          slot={i}
+          onDismiss={() => dismissToast(toast.id)}
+        />
+      ))}
     </div>
   );
 }
@@ -1125,3 +1230,4 @@ function ToastBar({
     </div>
   );
 }
+import { NotificationsModal } from "./components/modals/NotificationsModal";

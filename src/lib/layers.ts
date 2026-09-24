@@ -23,6 +23,7 @@ import { useChanges } from "../stores/changesStore";
 import { useEditor } from "../stores/editorStore";
 import { useLive } from "../stores/liveStore";
 import { useUI } from "../stores/uiStore";
+import { confirmationSnapshot, subscribeConfirmations } from "./confirmation";
 
 export type Layer = "busca" | "modal" | "compositor" | "editor" | "viewer" | "live";
 
@@ -43,6 +44,11 @@ const LAYERS: ReadonlyArray<LayerEntry> = [
   // The Busca paints above everything else: it is the surface that *takes you
   // somewhere*, so while it is up it owns `Esc` no matter what is underneath.
   { layer: "busca", isOpen: () => useUI.getState().paletteOpen, store: useUI },
+  {
+    layer: "modal",
+    isOpen: () => confirmationSnapshot() !== null,
+    store: { subscribe: subscribeConfirmations },
+  },
   { layer: "modal", isOpen: () => useUI.getState().modal !== null, store: useUI },
   // The composer stopped being a box in the corner and became a dialog in the
   // middle of the window, so it belongs in this list — under a modal, which

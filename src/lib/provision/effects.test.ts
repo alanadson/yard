@@ -13,6 +13,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const ipcMock = vi.hoisted(() => ({
+  checkpointCreate: vi.fn(),
+  scmInfo: vi.fn(async () => ({ isRepo: true })),
+  ptyProbe: vi.fn(),
   worktreeProvision: vi.fn(),
   worktreeRemove: vi.fn(),
   branchDeleteIfUnchanged: vi.fn(),
@@ -62,6 +65,10 @@ function item(over: Partial<PlannedItem> = {}): PlannedItem {
 }
 
 beforeEach(() => {
+  ipcMock.checkpointCreate.mockReset();
+  ipcMock.scmInfo.mockResolvedValue({ isRepo: true });
+  ipcMock.ptyProbe.mockReset();
+  ipcMock.ptyProbe.mockResolvedValueOnce({ alive: true }).mockResolvedValue({ alive: false });
   ipcMock.worktreeProvision.mockReset();
   ipcMock.worktreeRemove.mockReset();
   ipcMock.branchDeleteIfUnchanged.mockReset();
@@ -73,6 +80,39 @@ beforeEach(() => {
     baseOid: "abc",
   });
   ipcMock.branchDeleteIfUnchanged.mockResolvedValue(true);
+});
+
+describe("the initial checkpoint of a front task", () => {
+  /**
+   * The regression: `plan.ts` accepts a plain folder as a floor, but the
+   * checkpoint was asked for without looking for a repository, and the agent
+   * never started on one.
+   */
+  it("is not asked for in a folder that is not a git repository, and the agent still launches", async () => {
+    const projectId = freshProject();
+    const groupId = useProjects.getState().groups[0].id;
+    const fx = yardEffects({ projectId, projectPath: PROJECT, agentBin: () => "claude.exe" });
+    ipcMock.scmInfo.mockResolvedValue({ isRepo: false });
+    const terminalId = await fx.launchAgent(item({ agentId: "claude", prompt: "Fix login" }), groupId, { path: PROJECT, branch: "main", headOid: "abc" });
+    expect(ipcMock.checkpointCreate).not.toHaveBeenCalled();
+    expect(terminalId).not.toBeNull();
+    expect(useProjects.getState().terminals).toHaveLength(1);
+  });
+
+  /**
+   * The snapshot is best effort: a repo over the snapshot limits must not
+   * cost the user the floor they just provisioned.
+   */
+  it("failing to save does not stop the agent from launching", async () => {
+    const projectId = freshProject();
+    const groupId = useProjects.getState().groups[0].id;
+    const fx = yardEffects({ projectId, projectPath: PROJECT, agentBin: () => "claude.exe" });
+    ipcMock.checkpointCreate.mockRejectedValue(new Error("Checkpoint storage full"));
+    const terminalId = await fx.launchAgent(item({ agentId: "claude", prompt: "Fix login" }), groupId, { path: PROJECT, branch: "main", headOid: "abc" });
+    expect(ipcMock.checkpointCreate).toHaveBeenCalledTimes(1);
+    expect(terminalId).not.toBeNull();
+    expect(useProjects.getState().terminals).toHaveLength(1);
+  });
 });
 
 describe("creating the worktree the plan described", () => {

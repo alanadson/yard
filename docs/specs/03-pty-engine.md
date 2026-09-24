@@ -32,10 +32,27 @@ overflow) **plus** a `Vec<u8> pending` holding what has not yet gone to disk.
 Every 250 ms (or on close), **only the `pending`** is written, appended to
 `scrollback/{id}.bin` — never the whole ring. Without that, a mere agent
 spinner (a few bytes/s) would force a 4 MB rewrite on every flush (~16 MB/s of
-I/O per terminal). When the `.bin` exceeds 8 MB, only the 4 MB tail is
-rewritten atomically (`.bin.tmp` → rename). On `attach_pty`: if the PTY is
+I/O per terminal). The 250 ms tick is armed only while there is something
+pending, so a quiet terminal neither writes nor wakes; the `.bin` stays open
+for appending between flushes (every close after a write can make the
+antivirus scan the file) and is closed by the terminal's last flush. When the
+`.bin` exceeds 8 MB, only the 4 MB tail is rewritten atomically (`.bin.tmp`
+written and fsynced, then renamed over it). That tail is the ring itself (right
+after a flush it is byte for byte the file's tail), and the pump's flush hands
+the rewrite to its own thread instead of doing it under the lock the reader
+takes on every read: the output keeps flowing, waits in `pending` and is
+appended to the new file once the rename lands (past 4 MB of it, the flush
+waits for the rewrite, so memory stays bounded). On `attach_pty`: if the PTY is
 alive, return the in-memory ring; if it is dead/suspended, read the tail of
-the `.bin`. Acceptance: a spinner running all night must not generate more
+the `.bin`. The view says first what it will read (`AttachWants`, decided by
+`XTermView/attachPlan.ts`, cut by `pty::history_cut`): a dead terminal set to
+auto-start spawns on a clean screen, so its `.bin` is not even opened (after a
+restart, that is every terminal that was running); a live alternate screen
+gets its frame from a repaint and only scans the end of the history, so it
+receives a suffix holding the last `altTail` UTF-16 units
+(`Scrollback::tail_utf16`: three bytes per unit, cut back to a character
+start, so the view's own `slice` lands on the same text). Asking nothing
+returns everything, as before. Acceptance: a spinner running all night must not generate more
 than ~KB/s of I/O.
 
 ## 3. Reading: UTF-8 and coalescing
@@ -46,12 +63,47 @@ The reader thread keeps a `carry: Vec<u8>`. On each `read()`:
 emit only `carry[..valid]` and keep the tail (0–3 bytes of a character split
 by the buffer boundary — without this, the UI fills up with `�`). Coalescing:
 accumulate and emit every ~8–16 ms **or** at ≥ 32 KB, whichever comes first —
-one IPC event per byte kills the WebView. Hidden pane (`set_pty_visible(false)`
-coming from the UI): downgrade to 1 emission/450 ms while keeping the ring
-always up to date, and keep emitting `pty://activity/{id}` for the "agent
-finished" detector. Payloads are sliced into 256 KB pieces, with a 2 MB cap on
-the emission buffer and a visible warning when the output is too fast to
-display.
+one IPC message per byte kills the WebView. The messages go to the pages over
+one ordered IPC channel each (`pty/pages.rs`, [architecture §4](./02-architecture.md#4-ipc-contract-commands--events)):
+a chunk of 1 KiB or more as its own bytes, fetched as an `ArrayBuffer`, not as
+JSON pasted into a script. Every chunk is whole characters, so the page
+decodes each one on its own. Hidden pane (`set_pty_visible(false)`
+coming from the UI), or a main window hidden to the tray or minimized (one
+flag for the whole app, `AppState::window_shown`, kept by `window_state.rs`
+and the resources tick): downgrade to 1 emission/450 ms while keeping the ring
+always up to date. The window coming back wakes every pump. The "agent finished" detector does not depend on what
+reaches the page: it runs inside the pump (§7), hidden or not. Payloads are
+sliced into 256 KB pieces, with a 2 MB cap on the emission buffer and a
+visible warning when the output is too fast to display.
+
+The page answers for each chunk it takes off the channel (`ack_pty_output`),
+and the pump sends at most `INFLIGHT_CAP` (8, so 2 MB) per terminal that it
+has not answered for. Tauri parks every chunk sent until the page's JS
+fetches it, with no bound of its own, so without the window a page stalled
+for ten seconds under an agent printing 20 MB/s left 200 MB in the bridge.
+While the page owes, the output waits in the emission buffer, which drops
+its oldest bytes past the cap with the same warning; an answer that never
+comes (a page reloaded with chunks on their way) is written off after 3 s,
+so a terminal nobody is watching is never silenced by the window.
+
+The bytes are not copied more than that needs. When nothing is carried (nearly
+always) the read buffer itself goes out and only the split tail is copied; the
+alternate-screen scan walks the chunk once, back from its end, and joins only
+the few bytes around the read boundary; and a payload that fits in one message
+becomes that message's text in place (its bytes, on the raw path).
+
+The `activity` heartbeat (`{ id, lastByteAt, idleMs }`, a message on the same
+page channel as the output) ticks every
+450 ms but only goes out when it has news: a `lastByteAt` the front end has not
+been told, or `idleMs` under a second (the "still writing" window
+`ptyWatch.ts` uses to clear a stale "blocked"; the backend's `WRITING_MS` is
+the same second). Everything the front end reads from it is either
+`lastByteAt` itself or that window, so the beats that stopped going out changed
+nothing anyone reads. A listener that registers after the last beat (a webview
+reload) asks `pty_activity` once for the current one. The pump's own timers
+follow the same rule: armed only while there is a frame to paint, bytes to
+flush, a beat with news or an agent's silence still being timed, and resumed on
+their old phase when armed again, so a quiet terminal costs no wakeups at all.
 
 ## 4. RAM gate on spawn
 
@@ -102,9 +154,10 @@ terminal in the group at once — it is the app's RAM relief valve.
 Without an API from the agents, the heuristic that works: if a PTY marked
 `kind='agent'` has gone ≥ 4.5 s without emitting bytes **after** a period of
 activity, fire a native notification ("Claude terminou em api-server" —
-"Claude finished in api-server") + a badge on the pane. The 450 ms
-`pty://activity/{id}` event exists precisely so this works with the pane in
-the background.
+"Claude finished in api-server") + a badge on the pane. The detector runs in
+the pump, on the same 450 ms tick as the `activity` heartbeat, so it
+works with the pane in the background; for an agent the tick stays armed until
+that one event has fired, and only then does its pump go quiet.
 
 ## Appendix: ConPTY's `ESC[6n`
 

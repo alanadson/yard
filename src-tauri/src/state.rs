@@ -11,7 +11,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 
-use crate::agents::resolver::AgentInfo;
+use crate::agents::resolver::{AgentInfo, SharedDetection};
 use crate::browsers::BrowserInfo;
 use crate::files::WatchHandle;
 use crate::process_tree::ProcSnapshot;
@@ -32,8 +32,9 @@ pub struct AppState {
     pub procs: Mutex<ProcSnapshot>,
     /// SQLite. `Connection` is Send but not Sync — the Mutex takes care of it.
     pub db: Mutex<Connection>,
-    /// Result of agent CLI detection (expensive: runs `--version`).
-    pub agents_cache: Mutex<Option<Vec<AgentInfo>>>,
+    /// Result of agent CLI detection (expensive: runs `--version`), shared
+    /// by every caller, including the ones that arrive while it runs.
+    pub agents_cache: SharedDetection<Vec<AgentInfo>>,
     /// Result of browser detection (cheap path lookup + optional `--version`).
     pub browsers_cache: Mutex<Option<Vec<BrowserInfo>>>,
     /// File watchers per project ("live" feed of the Files panel).
@@ -43,6 +44,10 @@ pub struct AppState {
     /// Latest project-search stop flag per root. A newer query cancels the
     /// blocking disk walk that the superseded frontend result no longer needs.
     pub search_stops: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// Whether the main window is on screen (not hidden to the tray, not
+    /// minimized). Every terminal's pump reads it (`pty::set_window_shown`),
+    /// and the resources tick and the usage poller skip their work without it.
+    pub window_shown: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -53,11 +58,12 @@ impl AppState {
             statuses: Mutex::new(HashMap::new()),
             procs: Mutex::new(ProcSnapshot::default()),
             db: Mutex::new(db),
-            agents_cache: Mutex::new(None),
+            agents_cache: SharedDetection::new(),
             browsers_cache: Mutex::new(None),
             file_watchers: Mutex::new(HashMap::new()),
             session_tails: Mutex::new(HashMap::new()),
             search_stops: Mutex::new(HashMap::new()),
+            window_shown: Arc::new(AtomicBool::new(true)),
         }
     }
 

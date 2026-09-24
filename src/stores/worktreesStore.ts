@@ -15,6 +15,33 @@ import { create } from "zustand";
 
 import { ipc, type WorktreeEntry } from "../lib/ipc";
 import { uiLog } from "../lib/log";
+import { ReadCoordinator } from "../lib/readCoordinator";
+import { rootKey } from "../lib/roots";
+
+const reads = new ReadCoordinator();
+
+/**
+ * Listings still on the wire, by folder. Each one is two git processes, and
+ * at boot the tree and the reconciliation of fronts ask about the same
+ * projects within moments of each other.
+ */
+const onTheWire = new Map<string, Promise<WorktreeEntry[]>>();
+
+/**
+ * One `git worktree list` of a folder. A caller that only needs a listing
+ * from now on rides the one already running; a `fresh` one never does,
+ * because it exists to see something that changed after that one began.
+ */
+function listing(projectPath: string, fresh: boolean): Promise<WorktreeEntry[]> {
+  const key = rootKey(projectPath);
+  const running = onTheWire.get(key);
+  if (running && !fresh) return running;
+  const started: Promise<WorktreeEntry[]> = ipc.worktreeList(projectPath).finally(() => {
+    if (onTheWire.get(key) === started) onTheWire.delete(key);
+  });
+  onTheWire.set(key, started);
+  return started;
+}
 
 /** One frozen empty list: a fresh `[]` per call re-renders every subscriber. */
 export const NO_WORKTREES: readonly WorktreeEntry[] = Object.freeze([]);
@@ -36,7 +63,13 @@ interface WorktreesState {
    * say the project has no git.
    */
   listed: (projectId: string) => boolean;
-  refresh: (projectId: string, projectPath: string) => Promise<void>;
+  refresh: (projectId: string, projectPath: string, force?: boolean) => Promise<void>;
+  /**
+   * The entries themselves, for a caller that reasons about them instead of
+   * drawing them (the boot's reconciliation of fronts). It rejects when git
+   * does, and it writes nothing: the cache stays the tree's.
+   */
+  list: (projectPath: string) => Promise<readonly WorktreeEntry[]>;
   forget: (projectId: string) => void;
 }
 
@@ -47,9 +80,13 @@ export const useWorktrees = create<WorktreesState>((set, get) => ({
 
   listed: (projectId) => projectId in get().byProject,
 
-  refresh: async (projectId, projectPath) => {
-    try {
-      const list = await ipc.worktreeList(projectPath);
+  refresh: (projectId, projectPath, force = false) => {
+    if (force) reads.invalidate(projectId);
+    return reads.run(
+    projectId,
+    rootKey(projectPath),
+    () => listing(projectPath, force),
+    (list) => {
       // The tree refreshes every project on every group born or closed; an
       // equal list written back would hand each subscriber a new identity and
       // repaint the sidebar for nothing.
@@ -59,15 +96,20 @@ export const useWorktrees = create<WorktreesState>((set, get) => ({
       // says about a folder with no repository. It gets written like any
       // other, which is what lets `listed` tell that apart from silence.
       set((s) => ({ byProject: { ...s.byProject, [projectId]: Object.freeze(list) } }));
-    } catch (e) {
+    },
+    (e) => {
       // The last good answer stays. Emptying the cache here would take the
       // branch off every row of the tree and read as "this project has no
       // branches", which is not what a failed `git worktree list` means.
       uiLog.warn(`git worktree list falhou em ${projectPath}: ${e}`);
-    }
+    },
+    );
   },
 
+  list: (projectPath) => listing(projectPath, false),
+
   forget: (projectId) => {
+    reads.invalidate(projectId);
     if (!(projectId in get().byProject)) return;
     set((s) => {
       const byProject = { ...s.byProject };

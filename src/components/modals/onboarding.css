@@ -27,7 +27,7 @@
   align-items: baseline;
   gap: 8px;
   margin: 0 0 8px;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -47,6 +47,22 @@
 
 .onb-section .hint--error {
   margin-top: 8px;
+}
+
+.onb-missing-toggle {
+  margin-top: 8px;
+}
+
+.onb-shortcuts > summary {
+  min-height: 24px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.onb-shortcuts[open] > summary {
+  margin-bottom: 8px;
 }
 
 .onb-agents {

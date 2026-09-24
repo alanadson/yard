@@ -20,10 +20,11 @@
  * Right-click opens the same map the title bar offers — with the bar's own
  * entry on it, which is how it comes back once hidden from Settings.
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Bot,
+  Bell,
   GitBranch,
   GitPullRequest,
   Keyboard,
@@ -55,11 +56,12 @@ import { useUI } from "../../stores/uiStore";
 import { FloorsControl } from "../Floors";
 import { showsFloorsControl } from "../Floors/place";
 import { StatusChip } from "./StatusChip";
-import { agentSegments, agentsCaption, flowChip, gitChip } from "./statusBar";
+import { agentSegments, agentsCaption, agentsSignature, flowChip, gitChip } from "./statusBar";
 
 const appWindow = getCurrentWindow();
 
 export function StatusBar() {
+  const t = useT();
   const [menu, setMenu] = useState<(MenuAnchor & { maximized: boolean }) | null>(null);
   const setComposerOpen = useUI((s) => s.setComposerOpen);
   const openModal = useUI((s) => s.openModal);
@@ -94,6 +96,7 @@ export function StatusBar() {
             the size of a control; here they stand with the other gauges. */}
         <StatusChip />
         <RamChip />
+        <button className="sb-btn" data-tip={t("Histórico de notificações")} aria-label={t("Histórico de notificações")} onClick={() => openModal("notifications")}><Bell size={13} aria-hidden="true" /></button>
         <button
           className="sb-btn"
           data-tip="Compositor de prompts (Ctrl+Enter)"
@@ -127,8 +130,16 @@ export function StatusBar() {
 function AgentsChip() {
   const t = useT();
   const rows = useProjects((s) => s.terminals);
-  const byId = useTerminals((s) => s.byId);
-  const segments = agentSegments(rows, byId);
+  // The chip's caption as text, not the runtime map: the resources tick
+  // replaces every runtime each two seconds, and the chip only changes when
+  // a count does (`agentsSignature`). The segments are then read once per
+  // change of that text.
+  const signature = useTerminals((s) => agentsSignature(rows, s.byId));
+  const segments = useMemo(
+    () => agentSegments(rows, useTerminals.getState().byId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, signature],
+  );
   const waiting = segments.find((s) => s.tone === "waiting");
   const quiet = segments.length === 0;
   // Quiet, the caption is the chip's name, a word the dictionary carries;

@@ -12,11 +12,7 @@
  * not the failure.
  */
 import { useEffect } from "react";
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
+import { notify as deliverNotice } from "../lib/notifications";
 
 import { commitCanvasExternal } from "../lib/canvasWrite";
 import { findFlow } from "../lib/flow";
@@ -24,7 +20,6 @@ import { startFlow } from "../lib/flowRun";
 import { t } from "../lib/i18n";
 import { injectPrompt } from "../lib/inject";
 import { uiLog } from "../lib/log";
-import { pushOut } from "../lib/notifyOut";
 import { waitUntilSendable } from "../lib/sendable";
 import { baseName } from "../lib/terminals";
 import {
@@ -45,10 +40,7 @@ const inFlight = new Set<string>();
 async function notifyUser(body: string): Promise<void> {
   useUI.getState().showToast(body);
   try {
-    let ok = await isPermissionGranted();
-    if (!ok) ok = (await requestPermission()) === "granted";
-    if (ok) sendNotification({ title: t("Yard — gatilho"), body });
-    pushOut(t("Yard, gatilho"), body, "trigger");
+    await deliverNotice({ title: t("Yard, gatilho"), body, event: "trigger" });
   } catch (e) {
     // Lacking notification permission is not a trigger failure: the toast landed.
     uiLog.warn(`gatilho: notificação indisponível: ${e}`);

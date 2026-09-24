@@ -183,16 +183,21 @@ export function reduceFeed(
 
         // per-file aggregate
         if (ev.path && (ev.op === "edit" || ev.op === "write" || ev.op === "read")) {
-          const f = files[ev.path] ?? {
-            path: ev.path,
-            edits: 0,
-            writes: 0,
-            reads: 0,
-            added: 0,
-            removed: 0,
-            lastAt: 0,
-            lastOp: ev.op,
-          };
+          // Copy on write: the map was copied, the entry inside it was not,
+          // and bumping it in place counted this edit on `base` as well.
+          const prev = files[ev.path];
+          const f: LiveFile = prev
+            ? { ...prev }
+            : {
+                path: ev.path,
+                edits: 0,
+                writes: 0,
+                reads: 0,
+                added: 0,
+                removed: 0,
+                lastAt: 0,
+                lastOp: ev.op,
+              };
           if (ev.op === "edit") f.edits++;
           else if (ev.op === "write") f.writes++;
           else f.reads++;

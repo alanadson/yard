@@ -8,6 +8,8 @@
  */
 import { decodeEscapes } from "./bridgeCore";
 import { ipc } from "./ipc";
+import { uiLog } from "./log";
+import type { CheckpointScope } from "./checkpoints";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -19,11 +21,22 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function injectPrompt(
   terminalId: string,
   text: string,
-  opts?: { raw?: boolean; submit?: boolean },
+  opts?: { raw?: boolean; submit?: boolean; checkpoint?: CheckpointScope },
 ): Promise<void> {
   if (opts?.raw) {
     await ipc.writePty(terminalId, decodeEscapes(text));
     return;
+  }
+  if (opts?.checkpoint) {
+    // Best effort: the snapshot is a convenience, the prompt is the work. A
+    // repo over the snapshot limits (or a transient failure) must not swallow
+    // what the user asked for.
+    const scope = opts.checkpoint;
+    try {
+      await ipc.checkpointCreate(scope.root, scope.taskId, scope.taskLabel, text.split(/\r?\n/)[0].slice(0, 160));
+    } catch (e) {
+      uiLog.warn(`não consegui salvar o checkpoint de ${scope.taskLabel} em ${scope.root}: ${e}`);
+    }
   }
   if (text.includes("\n")) {
     await ipc.writePty(terminalId, `\x1b[200~${text}\x1b[201~`);

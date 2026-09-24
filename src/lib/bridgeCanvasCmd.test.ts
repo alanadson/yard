@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { makeCtx } from "./bridgeCore";
+import { findNote, makeCtx } from "./bridgeCore";
 import { EMPTY_CANVAS, NODE_MIN_W, type CanvasData } from "./canvas";
 import type { TerminalRow } from "./ipc";
 import { boardElements, runCanvasCommand } from "./bridgeCanvasCmd";
@@ -100,6 +100,26 @@ describe("yard canvas move / resize", () => {
     const r = run(["move", "Stranger", "0", "0"]);
     expect(r.ok).toBe(false);
     expect(r.output).toContain("conectado");
+  });
+
+  /**
+   * The regression: `bridgeCore` walks through binders (a note wired to a
+   * binder wired to the caller is readable with `yard note read`), but this
+   * gate hopped only through notes and portals, so the same note answered
+   * `yard canvas move` with "não está conectado a você". One reach, two gates.
+   */
+  it("reaches a note through a connected binder, the same way `yard note` does", () => {
+    const c = canvas();
+    c.items.push(
+      { id: "b1", type: "binder", x: 0, y: 900, w: 300, h: 200, notes: [], color: "#fff" },
+      { id: "n2", type: "note", x: 400, y: 900, w: 230, h: 170, text: "Anexo", color: "#fff" },
+      { id: "w3", type: "connection", from: "me", to: "b1", color: "#fff" },
+      { id: "w4", type: "connection", from: "b1", to: "n2", color: "#fff" },
+    );
+    expect(findNote(ctxOf(c), "Anexo")?.id).toBe("n2");
+    const r = run(["move", "Anexo", "500", "900"], c);
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.canvas?.items.find((i) => i.id === "n2")).toMatchObject({ x: 500, y: 900 });
   });
 
   it("refuses an unknown name and says so", () => {

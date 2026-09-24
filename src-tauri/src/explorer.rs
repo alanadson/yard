@@ -298,9 +298,12 @@ pub fn list_dir(root: &Path, rel: &str) -> Result<DirListing, String> {
         else {
             continue;
         };
-        let symlink = std::fs::symlink_metadata(&path)
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false);
+        // The same metadata answers "is it a link": it does not follow links
+        // either. A second `symlink_metadata` here was one more open per
+        // entry, up to `MAX_ENTRIES` of them, to learn what the listing had
+        // already said (on Windows `DirEntry::metadata` is the enumeration's
+        // own record and costs no system call).
+        let symlink = link_meta.file_type().is_symlink();
         entries.push(DirEntryInfo {
             name: item.file_name().to_string_lossy().into_owned(),
             path: relative(root, &path),
@@ -315,18 +318,24 @@ pub fn list_dir(root: &Path, rel: &str) -> Result<DirListing, String> {
         });
     }
 
-    entries.sort_by(|a, b| {
-        b.dir
-            .cmp(&a.dir)
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-            .then_with(|| a.name.cmp(&b.name))
-    });
+    tree_order(&mut entries);
 
     Ok(DirListing {
         path: rel.replace('\\', "/"),
         entries,
         dropped,
     })
+}
+
+/// The order the tree draws one folder in: folders first, then names
+/// compared case-insensitively, and names equal but for case in byte order.
+///
+/// The key is built once per entry: a comparator that lowercased both names
+/// on every comparison allocated two strings per comparison, `n log n` of
+/// them for a folder of up to `MAX_ENTRIES`. `!dir` sorts folders first
+/// (`false < true`), exactly as `b.dir.cmp(&a.dir)` did.
+fn tree_order(entries: &mut [DirEntryInfo]) {
+    entries.sort_by_cached_key(|e| (!e.dir, e.name.to_lowercase(), e.name.clone()));
 }
 
 /// A file's contents as text, already normalized to `\n`.
@@ -749,30 +758,7 @@ pub fn delete_entry(root: &Path, rel: &str) -> Result<(), String> {
 /// Folders no search answer lives in: dependencies and build output. A fixed
 /// list rather than `.gitignore` — parsing ignore files across nested repos is
 /// a project of its own, and this covers what actually burns the walk.
-const SKIP_DIRS: &[&str] = &[
-    ".git",
-    "node_modules",
-    "target",
-    "dist",
-    "build",
-    "out",
-    ".next",
-    ".nuxt",
-    ".svelte-kit",
-    ".venv",
-    "venv",
-    "__pycache__",
-    ".cache",
-    ".turbo",
-    ".gradle",
-    ".idea",
-    ".vs",
-    "obj",
-    "vendor",
-    "Pods",
-    ".dart_tool",
-    "coverage",
-];
+use crate::file_policy::{excluded_directory, DirectoryUse};
 
 /// Files bigger than this are skipped by the content search — a minified
 /// bundle matches everything and answers nothing.
@@ -899,8 +885,10 @@ pub struct FileIndex {
 }
 
 /// Walks every file under the root, depth-first, folders in alphabetical
-/// order — the same order the tree shows. `visit` returns `false` to stop the
-/// whole walk (a cap was hit). Returns whether the walk ran to the end.
+/// order (the same order the tree shows). `visit` gets each file with the
+/// size the *listing* reported, which is free but can lag behind the file (see
+/// `read_capped`); it returns `false` to stop the whole walk (a cap was hit).
+/// Returns whether the walk ran to the end.
 fn walk_files(root: &Path, visit: &mut dyn FnMut(&Path, u64) -> bool) -> bool {
     fn recurse(dir: &Path, depth: usize, visit: &mut dyn FnMut(&Path, u64) -> bool) -> bool {
         if depth > MAX_WALK_DEPTH {
@@ -914,10 +902,13 @@ fn walk_files(root: &Path, visit: &mut dyn FnMut(&Path, u64) -> bool) -> bool {
         let mut dirs: Vec<PathBuf> = Vec::new();
         for item in reader.flatten() {
             let path = item.path();
-            // `symlink_metadata`: never follow links — a junction pointing at
-            // the parent turns the walk into a loop, and one pointing outside
-            // the root would leak files `resolve` was built to fence off.
-            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            // Never follow links: a junction pointing at the parent turns the
+            // walk into a loop, and one pointing outside the root would leak
+            // files `resolve` was built to fence off. `DirEntry::metadata`
+            // does not follow them, like the `symlink_metadata` it replaces,
+            // and on Windows it is the enumeration's own record: no open per
+            // entry, for a walk that lists up to `MAX_INDEX_FILES` of them.
+            let Ok(meta) = item.metadata() else {
                 continue;
             };
             if meta.file_type().is_symlink() {
@@ -925,7 +916,7 @@ fn walk_files(root: &Path, visit: &mut dyn FnMut(&Path, u64) -> bool) -> bool {
             }
             if meta.is_dir() {
                 let name = item.file_name().to_string_lossy().to_lowercase();
-                if SKIP_DIRS.iter().any(|s| *s == name) {
+                if excluded_directory(&name, DirectoryUse::Index) {
                     continue;
                 }
                 dirs.push(path);
@@ -933,9 +924,11 @@ fn walk_files(root: &Path, visit: &mut dyn FnMut(&Path, u64) -> bool) -> bool {
                 files.push((path, meta.len()));
             }
         }
+        // Cached: a plain key lowercased both names again on every comparison.
+        // Same stable order either way.
         let fold = |p: &PathBuf| p.file_name().map(|n| n.to_string_lossy().to_lowercase());
-        files.sort_by_key(|(p, _)| fold(p));
-        dirs.sort_by_key(fold);
+        files.sort_by_cached_key(|(p, _)| fold(p));
+        dirs.sort_by_cached_key(fold);
         for (path, size) in files {
             if !visit(&path, size) {
                 return false;
@@ -949,6 +942,82 @@ fn walk_files(root: &Path, visit: &mut dyn FnMut(&Path, u64) -> bool) -> bool {
         true
     }
     recurse(root, 0, visit)
+}
+
+/// What the search or the replace gets of one walked file.
+enum Capped {
+    /// Not a candidate: past the size cap, or gone before it could be asked.
+    Skipped,
+    /// A candidate (it counts as scanned) whose bytes could not be read.
+    Unreadable,
+    Bytes(Vec<u8>),
+}
+
+/// Reads a walked file unless it is past `cap`, judged by its **real** size.
+///
+/// `listed` is what the directory listing said, and the listing can be
+/// stale: NTFS updates a directory entry's size when the writer closes the
+/// file, so a log an agent is still appending to can list as 0 bytes while it
+/// is already megabytes long. The walk used to `symlink_metadata` every file
+/// for that reason; now the listing only decides how to ask:
+///
+/// - it says "past the cap" (rare): the same stat-only `symlink_metadata`
+///   confirms it before anything is read, and no read access is ever asked of
+///   an 800 MB file;
+/// - otherwise the file is opened for the read it was about to get anyway, and
+///   the open handle says how long it really is: no extra open at all.
+///
+/// Which files count, and which are read, is what the old stat-then-read
+/// decided, including for a file that cannot be opened.
+fn read_capped(path: &Path, listed: u64, cap: u64) -> Capped {
+    let stat_len = |path: &Path| std::fs::symlink_metadata(path).map(|m| m.len()).ok();
+    if listed > cap {
+        return match stat_len(path) {
+            Some(len) if len <= cap => match std::fs::read(path) {
+                Ok(bytes) => Capped::Bytes(bytes),
+                Err(_) => Capped::Unreadable,
+            },
+            _ => Capped::Skipped,
+        };
+    }
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return match stat_len(path) {
+            Some(len) if len <= cap => Capped::Unreadable,
+            _ => Capped::Skipped,
+        };
+    };
+    let Some(len) = file.metadata().map(|m| m.len()).ok().or_else(|| stat_len(path)) else {
+        return Capped::Skipped;
+    };
+    if len > cap {
+        return Capped::Skipped;
+    }
+    // Sized from the handle, as `fs::read` sizes its buffer.
+    let mut bytes = Vec::with_capacity(len as usize);
+    match file.read_to_end(&mut bytes) {
+        Ok(_) => Capped::Bytes(bytes),
+        Err(_) => Capped::Unreadable,
+    }
+}
+
+/// Whether a whole file can be passed over without reading it line by line:
+/// a **literal** query that matches nowhere in the text matches no line of it.
+///
+/// Most files of a project do not contain the query, and running the pattern
+/// once over the file is far cheaper than once per line. It gives the same
+/// answer because every line the search or the replace tests is a slice of
+/// the text, and what borders that slice in the text is a line break (`\n`,
+/// or the `\r` a CRLF line leaves behind) or the text's own start or end:
+/// never a word character. The only assertions a literal pattern holds are
+/// the ASCII word boundaries of whole-word mode, which look one character to
+/// each side, and that character is a non-word one whether the line stands
+/// alone or sits inside the file. So a match in a line is a match in the
+/// text, and no match in the text means none in any line.
+///
+/// A regex can hold `^` and `$`, whose meaning does change (a line's start is
+/// not the text's start), so a regex is always read line by line.
+fn no_line_can_match(pattern: &Regex, text: &str, literal: bool) -> bool {
+    literal && !pattern.is_match(text)
 }
 
 /// Is the byte before/after a match part of a word? (the whole-word test)
@@ -993,6 +1062,7 @@ pub fn search_text_cancellable(
 
     let pattern = compile(needle_raw, opts)?;
     let filters = Filters::build(opts);
+    let literal = !opts.regex;
 
     let mut hits: Vec<SearchHit> = Vec::new();
     let mut files_scanned = 0usize;
@@ -1016,18 +1086,28 @@ pub fn search_text_cancellable(
         if !filters.takes(&rel) {
             return true;
         }
-        if size > MAX_SEARCH_FILE_BYTES || known_binary(path) {
+        if known_binary(path) {
             return true;
         }
-        files_scanned += 1;
-        let Ok(bytes) = std::fs::read(path) else {
-            return true;
+        let bytes = match read_capped(path, size, MAX_SEARCH_FILE_BYTES) {
+            Capped::Skipped => return true,
+            Capped::Unreadable => {
+                files_scanned += 1;
+                return true;
+            }
+            Capped::Bytes(bytes) => {
+                files_scanned += 1;
+                bytes
+            }
         };
         // git's own binary heuristic: a NUL near the start means "not text".
         if bytes.iter().take(SNIFF_BYTES).any(|b| *b == 0) {
             return true;
         }
         let text = String::from_utf8_lossy(&bytes);
+        if no_line_can_match(&pattern, &text, literal) {
+            return true;
+        }
         let mut in_file = 0usize;
         for (i, line) in text.lines().enumerate() {
             if i & 0xff == 0 && cancelled() {
@@ -1129,10 +1209,10 @@ pub fn replace_text(
         if !filters.takes(&rel) {
             return true;
         }
-        if size > MAX_SEARCH_FILE_BYTES || known_binary(path) {
+        if known_binary(path) {
             return true;
         }
-        let Ok(bytes) = std::fs::read(path) else {
+        let Capped::Bytes(bytes) = read_capped(path, size, MAX_SEARCH_FILE_BYTES) else {
             return true;
         };
         if bytes.iter().take(SNIFF_BYTES).any(|b| *b == 0) {
@@ -1143,6 +1223,10 @@ pub fn replace_text(
         let Ok(text) = String::from_utf8(bytes) else {
             return true;
         };
+        // Nothing would change: skip building a copy of the file to learn it.
+        if no_line_can_match(&pattern, &text, literal) {
+            return true;
+        }
 
         let mut out = String::with_capacity(text.len());
         let mut here = 0usize;
@@ -2072,4 +2156,246 @@ mod tests {
         assert!(!index.truncated);
         let _ = std::fs::remove_dir_all(&root);
     }
+    // -- the walk, the size cap and the listing -----------------------------
+    //
+    // The walk used to open every entry it listed (`symlink_metadata`) to
+    // learn what the listing already knew. The tests below hold what the
+    // walk decides to the old answers where the two could drift apart: a
+    // link must still never be followed, and the size cap must still be
+    // judged by the file's real size, not by the listing's copy of it, which
+    // on NTFS stays stale while a writer holds the file open.
+
+    /// A file of exactly `len` bytes, text all the way, that says `agulha`
+    /// on its first line.
+    fn text_of_len(len: usize) -> Vec<u8> {
+        let mut bytes = b"agulha\n".to_vec();
+        while bytes.len() < len {
+            bytes.extend_from_slice(if bytes.len() % 80 == 79 { b"\n" } else { b"x" });
+        }
+        bytes.truncate(len);
+        bytes
+    }
+
+    #[test]
+    fn the_index_never_walks_through_a_folder_link() {
+        let root = temp_root("indice-link");
+        let outside = temp_root("indice-link-alvo");
+        std::fs::write(root.join("a.ts"), "x").unwrap();
+        std::fs::write(outside.join("fora.ts"), "x").unwrap();
+        assert!(link_dir(&outside, &root.join("atalho")), "a junction needs no privilege");
+
+        let index = index_files(&root).unwrap();
+        assert_eq!(index.paths, vec!["a.ts".to_string()]);
+
+        let out = search_text(&root, "x", &plain(false, false)).unwrap();
+        assert_eq!(out.files_scanned, 1, "the file behind the link is not even opened");
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn a_file_at_the_size_cap_is_searched_and_one_byte_over_is_not() {
+        let root = temp_root("busca-teto");
+        let cap = MAX_SEARCH_FILE_BYTES as usize;
+        std::fs::write(root.join("no-teto.txt"), text_of_len(cap)).unwrap();
+        std::fs::write(root.join("passou.txt"), text_of_len(cap + 1)).unwrap();
+
+        let out = search_text(&root, "agulha", &plain(false, false)).unwrap();
+        let paths: Vec<&str> = out.hits.iter().map(|h| h.path.as_str()).collect();
+        assert_eq!(paths, vec!["no-teto.txt"]);
+        assert_eq!(out.files_scanned, 1, "a skipped file does not count as scanned");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The listing's size of a file a writer still holds open lags (NTFS
+    /// updates the directory entry when the handle closes, so it can read 0
+    /// for a file that is already megabytes long). A log an agent is
+    /// appending to must be skipped for its real size, as it always was.
+    #[test]
+    fn a_file_still_being_written_past_the_size_cap_is_skipped() {
+        use std::io::Write;
+        let root = temp_root("busca-crescendo");
+        std::fs::write(root.join("pequeno.txt"), "agulha\n").unwrap();
+        let mut growing = std::fs::File::create(root.join("crescendo.log")).unwrap();
+        growing
+            .write_all(&text_of_len(MAX_SEARCH_FILE_BYTES as usize + 4096))
+            .unwrap();
+        growing.flush().unwrap();
+
+        let out = search_text(&root, "agulha", &plain(false, false)).unwrap();
+        let paths: Vec<&str> = out.hits.iter().map(|h| h.path.as_str()).collect();
+        assert_eq!(paths, vec!["pequeno.txt"]);
+        assert_eq!(out.files_scanned, 1);
+
+        drop(growing);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn replacing_leaves_files_past_the_size_cap_untouched_even_while_they_are_written() {
+        use std::io::Write;
+        let root = temp_root("substituir-teto");
+        let big = text_of_len(MAX_SEARCH_FILE_BYTES as usize + 1);
+        std::fs::write(root.join("grande.txt"), &big).unwrap();
+        std::fs::write(root.join("pequeno.txt"), "agulha\n").unwrap();
+        let mut growing = std::fs::File::create(root.join("crescendo.log")).unwrap();
+        growing.write_all(&big).unwrap();
+        growing.flush().unwrap();
+
+        let out = replace_text(&root, "agulha", "linha", &plain(false, false)).unwrap();
+        assert_eq!(out.files_changed, 1);
+        assert_eq!(std::fs::read(root.join("grande.txt")).unwrap(), big);
+        assert_eq!(std::fs::read(root.join("crescendo.log")).unwrap(), big);
+        assert_eq!(std::fs::read_to_string(root.join("pequeno.txt")).unwrap(), "linha\n");
+
+        drop(growing);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_listing_flags_folder_links_even_when_their_target_is_gone() {
+        let root = temp_root("lista-links");
+        let target = temp_root("lista-links-alvo");
+        let gone = temp_root("lista-links-sumiu");
+        std::fs::create_dir_all(root.join("pasta")).unwrap();
+        std::fs::write(root.join("a.txt"), "a").unwrap();
+        assert!(link_dir(&target, &root.join("atalho")), "a junction needs no privilege");
+        assert!(link_dir(&gone, &root.join("quebrado")), "a junction needs no privilege");
+        std::fs::remove_dir_all(&gone).unwrap();
+
+        let listing = list_dir(&root, "").unwrap();
+        let mut links: Vec<(&str, bool)> = listing
+            .entries
+            .iter()
+            .map(|e| (e.name.as_str(), e.symlink))
+            .collect();
+        links.sort();
+        // Every entry is there, a broken link included, and only links say so.
+        assert_eq!(
+            links,
+            vec![("a.txt", false), ("atalho", true), ("pasta", false), ("quebrado", true)]
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&target);
+    }
+
+    fn entry(name: &str, dir: bool) -> DirEntryInfo {
+        DirEntryInfo {
+            name: name.to_owned(),
+            path: name.to_owned(),
+            dir,
+            size: 0,
+            modified_at: 0,
+            symlink: false,
+        }
+    }
+
+    /// Folders first, then case-insensitive, and names that differ only in
+    /// case (a case-sensitive folder allows both) in byte order: the order
+    /// the tree has always drawn, whatever order the disk listed them in.
+    #[test]
+    fn the_tree_order_puts_folders_first_then_folds_case_then_breaks_ties_by_bytes() {
+        let mut entries = vec![
+            entry("b.txt", false),
+            entry("zeta", true),
+            entry("README", false),
+            entry("B.txt", false),
+            entry("Alpha", true),
+            entry("readme", false),
+            entry("alpha", true),
+            entry("a.txt", false),
+        ];
+        tree_order(&mut entries);
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["Alpha", "alpha", "zeta", "a.txt", "B.txt", "b.txt", "README", "readme"]
+        );
+    }
+
+    // -- what the search and the replace match --------------------------------
+    //
+    // A literal query is now tried against the whole file before the file
+    // is read line by line: no match anywhere means no line can match. These
+    // lock the cases where that shortcut could lie, the edges of a line and
+    // a regex anchor, which is why regex mode never takes it.
+
+    #[test]
+    fn files_without_a_match_still_count_as_scanned() {
+        let root = temp_root("busca-contagem");
+        std::fs::write(root.join("a.txt"), "agulha\n").unwrap();
+        std::fs::write(root.join("b.txt"), "palheiro\n").unwrap();
+        std::fs::write(root.join("c.txt"), "").unwrap();
+
+        let out = search_text(&root, "agulha", &plain(false, false)).unwrap();
+        assert_eq!(out.files_scanned, 3);
+        assert_eq!(out.files_hit, 1);
+        assert_eq!(out.hits.len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_whole_word_literal_matches_at_the_edges_of_crlf_lines() {
+        let root = temp_root("busca-bordas");
+        std::fs::write(
+            root.join("a.txt"),
+            "porta\r\nportal\r\nx porta\r\na-x b\r\n-x\r\nPORTA",
+        )
+        .unwrap();
+
+        let words = search_text(&root, "porta", &plain(false, true)).unwrap();
+        let lines: Vec<u32> = words.hits.iter().map(|h| h.line).collect();
+        assert_eq!(lines, vec![1, 3, 6]);
+        assert_eq!(words.hits[0].text, "porta", "the CR is not part of the line");
+
+        // A query that starts with a non-word character needs a word
+        // character before it to have a boundary, and a line start is none.
+        let dash = search_text(&root, "-x", &plain(false, true)).unwrap();
+        let lines: Vec<u32> = dash.hits.iter().map(|h| h.line).collect();
+        assert_eq!(lines, vec![4]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_literal_query_that_spans_two_lines_finds_nothing() {
+        let root = temp_root("busca-duas-linhas");
+        std::fs::write(root.join("a.txt"), "primeira\nsegunda\n").unwrap();
+
+        let out = search_text(&root, "primeira\nsegunda", &plain(false, false)).unwrap();
+        assert!(out.hits.is_empty(), "the search is line by line");
+        assert_eq!(out.files_hit, 0);
+        assert_eq!(out.files_scanned, 1);
+
+        let replaced =
+            replace_text(&root, "primeira\nsegunda", "x", &plain(false, false)).unwrap();
+        assert_eq!(replaced.files_changed, 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_regex_anchor_matches_at_the_start_of_every_line() {
+        let root = temp_root("busca-ancora");
+        std::fs::write(root.join("a.txt"), "x alvo\nalvo\nalvo fim\n").unwrap();
+        let opts = SearchOptions {
+            regex: true,
+            ..SearchOptions::default()
+        };
+
+        let out = search_text(&root, "^alvo", &opts).unwrap();
+        let lines: Vec<u32> = out.hits.iter().map(|h| h.line).collect();
+        assert_eq!(lines, vec![2, 3]);
+
+        let end = search_text(&root, "alvo$", &opts).unwrap();
+        let lines: Vec<u32> = end.hits.iter().map(|h| h.line).collect();
+        assert_eq!(lines, vec![1, 2]);
+
+        let replaced = replace_text(&root, "^alvo", "ALVO", &opts).unwrap();
+        assert_eq!(replaced.replacements, 2);
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.txt")).unwrap(),
+            "x alvo\nALVO\nALVO fim\n"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
 }

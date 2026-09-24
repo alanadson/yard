@@ -121,6 +121,7 @@
 }
 
 .modal-body {
+  min-height: 0;
   padding: 14px 18px;
   overflow-y: auto;
   flex: 1;
@@ -136,6 +137,7 @@
 
 .modal-foot-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: flex-end;
 }
@@ -145,8 +147,30 @@
   align-items: center;
 }
 
+.confirm-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  color: var(--text);
+}
+
+.confirm-body > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--yellow);
+}
+
+.confirm-body p {
+  margin: 0 0 10px;
+  white-space: pre-line;
+}
+
+.confirm-body p:last-child {
+  margin-bottom: 0;
+}
+
 .modal-foot-row .grow {
-  flex: 1;
+  flex: 1 1 220px;
   min-width: 0;
 }
 
@@ -548,7 +572,7 @@ label.checkbox input {
 .quick-grid-sect {
   grid-column: 1 / -1;
   margin-top: 3px;
-  font-size: 11px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.6px;
@@ -950,4 +974,25 @@ label.checkbox input {
   flex-shrink: 0;
   margin-top: 2px;
   color: var(--red);
+}
+.form-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.connection-list { list-style: none; padding: 0; }
+.connection-list li { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.connection-list li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.connection-list li > .select-trigger { flex: 0 0 120px; width: 120px; }
+.connection-list li > .btn { flex: none; }
+.notification-history { list-style: none; padding: 0; margin: 0; }
+.notification-history li { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.notification-history li > p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.notification-history-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.notification-history-head time { margin-left: auto; }
+.modal-foot-row > .btn { max-width: 100%; white-space: normal; }
+.modal-header h3 { min-width: 0; overflow-wrap: anywhere; }
+@media (max-height: 480px) {
+  .modal { max-height: calc(100dvh - 24px); }
 }

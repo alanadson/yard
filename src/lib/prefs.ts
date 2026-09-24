@@ -6,15 +6,23 @@ export type PrefsSnapshot = Record<string, string>;
 export interface PrefsTransport {
   readPrefs: () => Promise<PrefsSnapshot>;
   writePref: (key: string, value: string) => Promise<void>;
+  writePrefs?: (entries: [string, string][]) => Promise<void>;
 }
 
 const tauriTransport: PrefsTransport = {
   readPrefs: () => ipc.readPrefs(),
   writePref: (key, value) => ipc.writePref(key, value),
+  writePrefs: (entries) => ipc.writePrefs(entries),
 };
 
 let transport = tauriTransport;
 let initialRead: Promise<Record<string, string>> | null = null;
+
+/** Awaited atomic batches on the native transport, with adapter compatibility. */
+export async function writePrefs(entries: [string, string][]): Promise<void> {
+  if (transport.writePrefs) return transport.writePrefs(entries);
+  for (const [key, value] of entries) await transport.writePref(key, value);
+}
 
 /** Shares the boot-time KV read between every store hydrated by `App.boot`. */
 export function readInitialPrefs(): Promise<PrefsSnapshot> {

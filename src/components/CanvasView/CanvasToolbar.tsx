@@ -8,7 +8,7 @@
  * The keyboard shortcuts are unchanged, so the fast path never grew a click;
  * only the browsing path did, and that one was drowning.
  */
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
   Circle,
@@ -19,6 +19,7 @@ import {
   Pencil,
   Redo2,
   Spline,
+  List,
   Square,
   Globe,
   StickyNote,
@@ -157,9 +158,10 @@ interface Props {
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  onConnections?: () => void;
 }
 
-export function CanvasToolbar({
+function CanvasToolbarImpl({
   tool,
   onTool,
   color,
@@ -171,6 +173,7 @@ export function CanvasToolbar({
   canRedo,
   onUndo,
   onRedo,
+  onConnections,
 }: Props) {
   /** `(V)` after a label, or nothing when the tool has no key any more. */
   const keyTag = (id: Tool) => {
@@ -294,6 +297,7 @@ export function CanvasToolbar({
         );
       })}
 
+      {onConnections && <button className="icon-btn cv-tool-btn" onClick={onConnections} aria-label={t("Gerenciar conexões")} data-tip={t("Gerenciar conexões")} data-tip-side="right"><List size={14} /></button>}
       <div className="cv-toolbar-sep" />
 
       {/* Ink: one button wearing the current color at the current thickness. */}
@@ -373,3 +377,6 @@ export function CanvasToolbar({
     </div>
   );
 }
+
+/** Memoized: the board re-renders on every camera frame, the rail has no reason to. */
+export const CanvasToolbar = memo(CanvasToolbarImpl);

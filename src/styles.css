@@ -251,7 +251,7 @@
   --titlebar-h: 44px;
   /* The footer (`StatusBar`): caption-sized readouts and 22px controls need
      28px to breathe — 24px squeezed the chips against the contact shadow. */
-  --statusbar-h: 28px;
+  --statusbar-h: 30px;
 
   color-scheme: dark;
   font-family: var(--ui-font);
@@ -1374,7 +1374,7 @@ kbd {
   padding: 1px 7px;
   border-radius: 20px;
   background: rgb(var(--veil) / 7.5%);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -1385,7 +1385,7 @@ kbd {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: right;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: var(--text-dim);
 }
 
@@ -1620,7 +1620,7 @@ kbd {
   backdrop-filter: var(--blur-thin);
   border-top: 1px solid rgb(var(--well) / 35%);
   box-shadow: var(--hairline);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
   user-select: none;
@@ -1652,7 +1652,7 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 22px;
+  min-height: 26px;
   padding: 0 8px;
   border-radius: var(--r-sm);
   color: var(--text-dim);
@@ -2281,7 +2281,7 @@ button.sb-chip:active {
   align-items: center;
   gap: 6px;
   padding: 4px 6px 4px 8px;
-  min-height: 27px;
+  min-height: 32px;
   position: relative;
   cursor: default;
   user-select: none;
@@ -2290,8 +2290,8 @@ button.sb-chip:active {
 
 .tree-row .icon-btn {
   opacity: 0;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
 }
 
 .tree-row:hover .icon-btn,
@@ -2321,8 +2321,8 @@ button.sb-chip:active {
 .tree-toggle {
   display: grid;
   place-items: center;
-  width: 16px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
   border-radius: var(--r-sm);
   color: var(--text-dim);

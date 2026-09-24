@@ -16,7 +16,7 @@ import { Modal } from "./Modal";
 import { BrandIcon } from "../BrandIcon";
 import { useT } from "../../hooks/useT";
 import { brandById } from "../../lib/brands";
-import { FIRST_RUN_SHORTCUTS, agentRows } from "../../lib/onboarding";
+import { FIRST_RUN_SHORTCUTS, agentRows, visibleAgentRows } from "../../lib/onboarding";
 import { createProject, folderName } from "../../lib/projectCreate";
 import { useAgents } from "../../stores/agentsStore";
 import { useOnboarding } from "../../stores/onboardingStore";
@@ -37,6 +37,7 @@ export function OnboardingModal() {
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [showMissingAgents, setShowMissingAgents] = useState(false);
 
   // The catalog is read once at boot, off the critical path; the sheet may
   // come up before it arrives.
@@ -46,6 +47,8 @@ export function OnboardingModal() {
 
   const rows = agentRows(Object.values(agentsById));
   const found = rows.filter((r) => r.found).length;
+  const missing = rows.length - found;
+  const shownRows = visibleAgentRows(rows, showMissingAgents);
 
   const leave = () => {
     markDone();
@@ -124,47 +127,6 @@ export function OnboardingModal() {
         )}
       </p>
 
-      <section className="onb-section" aria-labelledby="onb-clis">
-        <h4 id="onb-clis">
-          {t("CLIs nesta máquina")}
-          {agentsLoaded && rows.length > 0 && (
-            <span className="onb-count">
-              {t("{found} de {total}", { found, total: rows.length })}
-            </span>
-          )}
-        </h4>
-        {!agentsLoaded ? (
-          <p className="hint onb-hint">{t("Procurando as CLIs instaladas…")}</p>
-        ) : (
-          <ul className="onb-agents">
-            {rows.map((r) => {
-              const brand = brandById(r.id);
-              return (
-                <li
-                  key={r.id}
-                  className={r.found ? "onb-agent" : "onb-agent onb-agent--missing"}
-                >
-                  <span className="onb-agent-mark" aria-hidden="true">
-                    {brand && <BrandIcon brand={brand} size={14} />}
-                  </span>
-                  <span className="onb-agent-name">{r.name}</span>
-                  <span className="onb-agent-version">
-                    {r.found ? (r.version ?? t("instalada")) : t("não encontrada")}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-        {agentsLoaded && found === 0 && (
-          <p className="hint onb-hint">
-            {t(
-              "Nenhuma CLI encontrada. Instale ao menos uma (Claude Code, Codex, OpenCode…) e o Yard passa a oferecê-la em “Nova aba”; até lá, os shells continuam funcionando.",
-            )}
-          </p>
-        )}
-      </section>
-
       <section className="onb-section" aria-labelledby="onb-projeto">
         <h4 id="onb-projeto">{t("O primeiro projeto")}</h4>
         {hasProjects ? (
@@ -206,24 +168,78 @@ export function OnboardingModal() {
         )}
       </section>
 
-      <section className="onb-section shortcut-group" aria-labelledby="onb-atalhos">
-        <h4 id="onb-atalhos">{t("Seis atalhos que valem o dia")}</h4>
-        {FIRST_RUN_SHORTCUTS.map(([keys, description]) => (
-          <div className="shortcut-row" key={description}>
-            <span>{t(description)}</span>
-            <span className="shortcut-keys">
-              {keys.map((key, i) => (
-                <span key={key}>
-                  {i > 0 && "+"} <kbd>{t(key)}</kbd>
-                </span>
-              ))}
+      <section className="onb-section" aria-labelledby="onb-clis">
+        <h4 id="onb-clis">
+          {t("CLIs nesta máquina")}
+          {agentsLoaded && rows.length > 0 && (
+            <span className="onb-count">
+              {t("{found} de {total}", { found, total: rows.length })}
             </span>
-          </div>
-        ))}
-        <p className="hint onb-hint">
-          {t("A lista completa fica em ")}
-          <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>H</kbd>.
-        </p>
+          )}
+        </h4>
+        {!agentsLoaded ? (
+          <p className="hint onb-hint">{t("Procurando as CLIs instaladas…")}</p>
+        ) : (
+          <ul className="onb-agents">
+            {shownRows.map((r) => {
+              const brand = brandById(r.id);
+              return (
+                <li
+                  key={r.id}
+                  className={r.found ? "onb-agent" : "onb-agent onb-agent--missing"}
+                >
+                  <span className="onb-agent-mark" aria-hidden="true">
+                    {brand && <BrandIcon brand={brand} size={14} />}
+                  </span>
+                  <span className="onb-agent-name">{r.name}</span>
+                  <span className="onb-agent-version">
+                    {r.found ? (r.version ?? t("instalada")) : t("não encontrada")}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {agentsLoaded && missing > 0 && (
+          <button
+            className="btn btn--sm onb-missing-toggle"
+            aria-expanded={showMissingAgents}
+            onClick={() => setShowMissingAgents((current) => !current)}
+          >
+            {showMissingAgents
+              ? t("Ocultar CLIs não encontradas")
+              : t("Mostrar {n} CLIs não encontradas", { n: missing })}
+          </button>
+        )}
+        {agentsLoaded && found === 0 && (
+          <p className="hint onb-hint">
+            {t(
+              "Nenhuma CLI encontrada. Instale ao menos uma (Claude Code, Codex, OpenCode…) e o Yard passa a oferecê-la em “Nova aba”; até lá, os shells continuam funcionando.",
+            )}
+          </p>
+        )}
+      </section>
+
+      <section className="onb-section" aria-labelledby="onb-atalhos">
+        <details className="onb-shortcuts shortcut-group">
+          <summary id="onb-atalhos">{t("Seis atalhos que valem o dia")}</summary>
+          {FIRST_RUN_SHORTCUTS.map(([keys, description]) => (
+            <div className="shortcut-row" key={description}>
+              <span>{t(description)}</span>
+              <span className="shortcut-keys">
+                {keys.map((key, i) => (
+                  <span key={key}>
+                    {i > 0 && "+"} <kbd>{t(key)}</kbd>
+                  </span>
+                ))}
+              </span>
+            </div>
+          ))}
+          <p className="hint onb-hint">
+            {t("A lista completa fica em ")}
+            <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>H</kbd>.
+          </p>
+        </details>
       </section>
     </Modal>
   );

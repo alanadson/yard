@@ -16,7 +16,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
-import { ask, save } from "@tauri-apps/plugin-dialog";
+import { save } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../lib/confirmation";
 import { Eye, EyeOff, ListChecks, Pin, Search, X } from "lucide-react";
 
 import { useVisibleNotes } from "./index";
@@ -43,6 +44,7 @@ import {
 import { useNotes } from "../../stores/notesStore";
 import { useUI } from "../../stores/uiStore";
 import { useT } from "../../hooks/useT";
+import { failureMessage } from "../../lib/loading";
 import { locale, t, tn } from "../../lib/i18n";
 
 // i18n-scan: tables
@@ -204,7 +206,7 @@ export function NoteList() {
       void ipc
         .noteExport(dest, noteAsMarkdown(note))
         .then(() => showToast(t("Nota exportada.")))
-        .catch((e) => showToast(String(e), "error"));
+        .catch((e) => showToast(failureMessage(e), "error"));
     });
   };
 

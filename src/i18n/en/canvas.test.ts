@@ -21,6 +21,10 @@ const MUST_HAVE = [
   "Nova nota neste fichário",
   "Formatação da nota",
   "Fechar portal",
+  "Origem",
+  "Excluir portal",
+  "Esquerda",
+  "Direita",
   // fronts
   "Frentes: cópias isoladas do repositório, cada uma com a própria branch e os próprios painéis",
   "Aterrissar esta frente no chão",

@@ -1,5 +1,5 @@
 /**
- * Backend PTY events, watched for **every terminal in the workspace** — not
+ * Backend PTY events, watched for **every terminal in the workspace**, not
  * only the ones with a pane mounted on screen.
  *
  * These two subscriptions used to live inside `XTermView`, which means they
@@ -9,7 +9,7 @@
  * - `pty://activity` feeds `markActivity`, which is what `sendability()` reads
  *   to answer "is this CLI busy?". With no view mounted the answer was always
  *   "free", so the composer, the bench, the diff review, the flow engine and —
- *   worst of all — the routine scheduler (built precisely for groups that are
+ *   worst of all, the routine scheduler (built precisely for groups that are
  *   *not* on screen) would push a prompt into an agent mid-task, or onto a
  *   `(y/N)` whose answer becomes the injected Enter.
  * - `pty://exit` feeds `markExited`, which decides the badge, the "N alive"
@@ -22,8 +22,15 @@
  * slows the *output* coalescing down to 450 ms when hidden), so the fix is
  * simply to listen from outside the view. The view keeps what is genuinely
  * about painting: the `[processo encerrado]` line it writes into the screen.
+ *
+ * The heartbeat only goes out when it has something to say (a new last byte,
+ * or "still writing"): a quiet terminal stays quiet on the bus. So a listener
+ * that registers after the last beat (a webview reload, a slow `listen`) asks
+ * for the current one once, and applies it exactly like a heartbeat, unless a
+ * real beat already arrived, which is at least as fresh.
  */
-import { on, type UnlistenFn } from "./ipc";
+import { ipc, on, type ActivityPayload } from "./ipc";
+import { AsyncDisposer } from "./disposables";
 import { forgetTyped } from "./flowIntercept";
 import { uiLog } from "./log";
 import { useAdvertised } from "../stores/advertisedStore";
@@ -32,8 +39,11 @@ import { clearTail, markActivity, useTerminals } from "../stores/terminalsStore"
 
 /**
  * Idle time below which the process counts as actively writing. The heartbeat
- * runs every 450 ms (`ACTIVITY_MS` in `pty/reader.rs`), so anything under a
- * second means bytes arrived between two beats.
+ * ticks every 450 ms (`ACTIVITY_MS` in `pty/reader.rs`), so anything under a
+ * second means bytes arrived between two beats. The backend keeps sending the
+ * beats inside this second even when the last byte did not move, and only
+ * those (`WRITING_MS` in `pty/reader.rs` is the same second): change one,
+ * change both.
  */
 const WRITING_MS = 1_000;
 
@@ -43,26 +53,31 @@ const WRITING_MS = 1_000;
  */
 export function startPtyWatch(): () => void {
   /** id -> the listeners being (or already) registered for it. */
-  const watches = new Map<string, Promise<UnlistenFn[]>>();
+  const watches = new Map<string, AsyncDisposer>();
   /** Signature of the id list, so a plain `updateTerminal` costs nothing. */
   let signature = "";
-  let stopped = false;
 
   const drop = (id: string) => {
-    const pending = watches.get(id);
+    watches.get(id)?.dispose();
     watches.delete(id);
-    if (!pending) return;
-    void pending
-      .then((fns) => fns.forEach((off) => off()))
-      .catch((e) => uiLog.warn(`falha ao soltar o watch de ${id}: ${e}`));
   };
 
   const add = (id: string) => {
     if (watches.has(id)) return;
-    const pending = Promise.all([
-      on.exit(id, (p) => {
+    const owner = new AsyncDisposer((e) => uiLog.warn(`Unable to watch terminal ${id}: ${e}`));
+    watches.set(id, owner);
+    let heard = false;
+    const beat = (p: ActivityPayload) => {
+      markActivity(id, p.lastByteAt, p.idleMs);
+      // Writing again means the question was answered, and the answer does
+      // not have to have come from the pane (`yard ask`, a routine, another
+      // agent). The heartbeat is the cheap place to notice.
+      if (p.idleMs < WRITING_MS) useTerminals.getState().clearBlocked(id);
+    };
+    void Promise.all([
+      owner.add(on.exit(id, (p) => {
         useTerminals.getState().markExited(id, p.code, p.reason);
-        // What it was serving died with it — except across a restart, where
+        // What it was serving died with it, except across a restart, where
         // the same server is about to print the same address again.
         if (p.reason !== "restarted") useAdvertised.getState().forget(id);
         // The tail goes on every exit, restart included: what the dead run
@@ -70,23 +85,25 @@ export function startPtyWatch(): () => void {
         clearTail(id);
         // The mirror of what was being typed dies with the process.
         forgetTyped(id);
-      }),
-      on.activity(id, (p) => {
-        markActivity(id, p.lastByteAt, p.idleMs);
-        // Writing again means the question was answered — and the answer does
-        // not have to have come from the pane (`yard ask`, a routine, another
-        // agent). The heartbeat is the cheap place to notice.
-        if (p.idleMs < WRITING_MS) useTerminals.getState().clearBlocked(id);
-      }),
-    ]);
-    watches.set(id, pending);
-    // The row may have been removed (or the app torn down) while the two
-    // listeners were still being registered.
-    void pending
-      .then((fns) => {
-        if (stopped || watches.get(id) !== pending) fns.forEach((off) => off());
-      })
-      .catch((e) => uiLog.warn(`falha ao observar o terminal ${id}: ${e}`));
+      })),
+      owner.add(on.activity(id, (p) => {
+        heard = true;
+        beat(p);
+      })),
+    ]).then((registered) => {
+      if (registered.some((ok) => !ok)) {
+        owner.dispose();
+        return;
+      }
+      // Asked only once the listener is in place, so nothing after the
+      // answer can be missed.
+      ipc.ptyActivity(id).then(
+        (p) => {
+          if (p && !heard && !owner.disposed) beat(p);
+        },
+        (e) => uiLog.warn(`Unable to read the activity of terminal ${id}: ${e}`),
+      );
+    });
   };
 
   const sync = () => {
@@ -103,7 +120,6 @@ export function startPtyWatch(): () => void {
   const unsubscribe = useProjects.subscribe(sync);
 
   return () => {
-    stopped = true;
     unsubscribe();
     for (const id of [...watches.keys()]) drop(id);
   };

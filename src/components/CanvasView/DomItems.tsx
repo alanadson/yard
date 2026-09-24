@@ -13,6 +13,7 @@ import { Lock, Unlock } from "lucide-react";
 
 import { NoteBody } from "./NoteBody";
 import { ResizeHandles } from "./ResizeHandles";
+import { ItemMaximizeButton } from "./ItemMaximizeButton";
 import type { NoteEditorApi } from "./NoteToolbar";
 import {
   clamp,
@@ -46,7 +47,7 @@ export const COMMIT_DEBOUNCE_MS = 250;
  * mid-sentence; its text shows up as soon as editing ends. Leaving edit,
  * blurring or unmounting always flushes: no keystroke is dropped.
  */
-function useDraftText(text: string, editing: boolean, commit: (t: string) => void) {
+export function useDraftText(text: string, editing: boolean, commit: (t: string) => void) {
   const [draft, setDraft] = useState(text);
   const pending = useRef<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -366,10 +367,12 @@ interface NoteItemProps extends CommonHandlers {
   registerEditor: (id: string, api: NoteEditorApi | null) => void;
   /** A checkbox ticked in the reading view, by source line. */
   onToggleTask: (id: string, line: number) => void;
+  onContentHidden: (id: string, hidden: boolean) => void;
   onOpenLink: (href: string) => void;
   onResizeStart: (e: React.PointerEvent, it: NoteData, dir: ResizeDir) => void;
   onResizeMove: (e: React.PointerEvent) => void;
   onResizeEnd: (e: React.PointerEvent) => void;
+  onMaximize: (id: string) => void;
 }
 
 /**
@@ -401,10 +404,12 @@ function NoteItemImpl({
   focusAtEnd,
   registerEditor,
   onToggleTask,
+  onContentHidden,
   onOpenLink,
   onResizeStart,
   onResizeMove,
   onResizeEnd,
+  onMaximize,
 }: NoteItemProps) {
   const t = useT();
   /**
@@ -552,6 +557,7 @@ function NoteItemImpl({
       className={`cv-note ${selected ? "is-selected" : ""} ${connectClass} ${
         it.locked ? "is-locked" : ""
       } ${ink ? `has-fill ink-${ink}` : ""}`}
+      data-maximized={!!it.restore}
       style={
         {
           left: it.x + dx,
@@ -587,6 +593,9 @@ function NoteItemImpl({
         onPointerMove={onItemMove}
         onPointerUp={onItemUp}
       />
+      <div className="cv-note-size-action">
+        <ItemMaximizeButton item={it} onMaximize={onMaximize} />
+      </div>
       <button
         className="cv-note-lock"
         aria-pressed={!!it.locked}
@@ -604,7 +613,9 @@ function NoteItemImpl({
       >
         {it.locked ? <Lock size={11} /> : <Unlock size={11} />}
       </button>
-      {editing ? (
+      {it.contentHidden ? (
+        <button className="cv-content-cover cv-content-cover--note" onClick={() => onContentHidden(it.id, false)}>{t("Mostrar conteúdo")}</button>
+      ) : editing ? (
         <textarea
           className="cv-note-text"
           value={draft}

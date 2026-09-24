@@ -15,6 +15,13 @@ import {
   type FileEventKind,
   type FilesActivity,
 } from "../lib/ipc";
+import {
+  changedEntryPaths,
+  contentRevisionOf,
+  fileFingerprint,
+  markContentChanged,
+  type ContentRevisions,
+} from "../lib/diffFreshness";
 import { uiLog } from "../lib/log";
 import { Lru } from "../lib/lru";
 import { rootKey, sameRoot } from "../lib/roots";
@@ -48,21 +55,63 @@ const gitTimers = new Map<
   { timer: ReturnType<typeof setTimeout>; root: string }
 >();
 
-// Diff cache shared by peek, inline expand, and the
-// viewer. Invalidated per project on every new `git status` — if the summary
-// changed, any stored diff may be stale.
+// File events and changed status entries invalidate affected paths. Explicit
+// repository refreshes, branch switches and overflowed batches invalidate the
+// whole project: they cover HEAD/index changes no single entry shows.
 const diffCache = new Lru<string, FileDiff>(120);
 const diffInFlight = new Map<string, Promise<FileDiff>>();
-const diffVersions = new Map<string, number>();
 
 const watchDesired = new Map<string, string>();
 const watchInFlight = new Map<string, Promise<void>>();
 const gitRequests = new Map<string, { root: string; rerun: boolean }>();
 const gitInFlight = new Map<string, Promise<void>>();
+/** Monotonic across projects: a file's revision only ever moves forward. */
+let contentTick = 0;
 
-function invalidateDiffs(projectId: string) {
-  diffVersions.set(projectId, (diffVersions.get(projectId) ?? 0) + 1);
-  diffCache.prune((key) => key.startsWith(`${projectId}|`));
+export function invalidateDiffs(projectId: string, paths?: readonly string[]): void {
+  if (paths?.length === 0) return;
+  const changed = paths?.map(rootKey);
+  const affected = (key: string) => {
+    if (!key.startsWith(`${projectId}|`)) return false;
+    if (!changed) return true;
+    const [, , path, original] = key.split("|");
+    return [path, original].some((file) =>
+      file && changed.some((candidate) => {
+        const normalized = rootKey(file);
+        return normalized === candidate || normalized.startsWith(`${candidate}/`);
+      }),
+    );
+  };
+  diffCache.prune(affected);
+  for (const key of diffInFlight.keys()) {
+    if (affected(key)) diffInFlight.delete(key);
+  }
+  const tick = ++contentTick;
+  useChanges.setState((state) => ({
+    diffRevisionByProject: {
+      ...state.diffRevisionByProject,
+      [projectId]: (state.diffRevisionByProject[projectId] ?? 0) + 1,
+    },
+    contentRevisionsByProject: {
+      ...state.contentRevisionsByProject,
+      [projectId]: markContentChanged(state.contentRevisionsByProject[projectId], tick, paths),
+    },
+  }));
+}
+
+/**
+ * The revision an open diff of one file follows: it moves when that file (or
+ * a folder holding it) is reported changed, and on a change that named no
+ * path. Unlike `diffRevisionByProject`, a write to another file leaves it
+ * alone.
+ */
+export function diffRevisionOf(
+  state: Pick<ChangesState, "contentRevisionsByProject">,
+  projectId: string,
+  path: string,
+  origPath?: string | null,
+): number {
+  return contentRevisionOf(state.contentRevisionsByProject[projectId], path, origPath);
 }
 
 /**
@@ -78,10 +127,7 @@ function invalidateDiffs(projectId: string) {
 function summaryFingerprint(summary: ChangesSummary | undefined): string {
   if (!summary) return "";
   return `${summary.isRepo}|${summary.branch ?? ""}|${summary.additions}|${summary.deletions}|${summary.files
-    .map(
-      (f) =>
-        `${f.path}\u0000${f.origPath ?? ""}\u0000${f.status}\u0000${f.index}\u0000${f.worktree}\u0000${f.conflict ?? ""}\u0000${f.additions ?? ""}\u0000${f.deletions ?? ""}\u0000${f.binary}`,
-    )
+    .map(fileFingerprint)
     .join("\u0001")}`;
 }
 
@@ -97,7 +143,6 @@ export async function fetchDiff(
   if (hit) return hit;
   const pending = diffInFlight.get(key);
   if (pending) return pending;
-  const version = diffVersions.get(projectId) ?? 0;
   const request = ipc
     .gitFileDiff(
       root,
@@ -107,10 +152,12 @@ export async function fetchDiff(
       whole ? WHOLE_FILE_CONTEXT : null,
     )
     .then((diff) => {
-      if ((diffVersions.get(projectId) ?? 0) === version) diffCache.set(key, diff);
+      if (diffInFlight.get(key) === request) diffCache.set(key, diff);
       return diff;
     })
-    .finally(() => diffInFlight.delete(key));
+    .finally(() => {
+      if (diffInFlight.get(key) === request) diffInFlight.delete(key);
+    });
   diffInFlight.set(key, request);
   return request;
 }
@@ -124,6 +171,10 @@ interface ChangesState {
   droppedByProject: Record<string, number>;
   gitByProject: Record<string, ChangesSummary | undefined>;
   gitLoading: Record<string, boolean>;
+  /** Content updates are independent of the Git status fingerprint. */
+  diffRevisionByProject: Record<string, number>;
+  /** The same updates per file; read through `diffRevisionOf`. */
+  contentRevisionsByProject: Record<string, ContentRevisions>;
 
   /** Large diff viewer (null = closed). */
   viewer: ViewerTarget | null;
@@ -144,7 +195,7 @@ interface ChangesState {
   /** Tear down watchers for projects that left the workspace. */
   syncWatches: (projects: { id: string; path: string }[]) => void;
   applyActivity: (p: FilesActivity) => void;
-  refreshGit: (projectId: string, root: string) => Promise<void>;
+  refreshGit: (projectId: string, root: string, invalidate?: boolean) => Promise<void>;
   scheduleGitRefresh: (projectId: string, root: string) => void;
   clearLive: (projectId: string) => void;
   /** Everything this store holds about a project that left the workspace. */
@@ -159,6 +210,8 @@ export const useChanges = create<ChangesState>((set, get) => ({
   droppedByProject: {},
   gitByProject: {},
   gitLoading: {},
+  diffRevisionByProject: {},
+  contentRevisionsByProject: {},
 
   viewer: null,
   viewerMode: "unified",
@@ -251,6 +304,7 @@ export const useChanges = create<ChangesState>((set, get) => ({
     // see and schedule `git status` on a folder that is no longer ours.
     const expectedRoot = watchDesired.get(p.projectId) ?? get().watched[p.projectId];
     if (!expectedRoot || !sameRoot(expectedRoot, p.root)) return;
+    invalidateDiffs(p.projectId, p.dropped ? undefined : p.events.map((event) => event.path));
     set((s) => {
       // A `Map` for the whole batch instead of find+filter per event: a burst
       // of 50 touched files against a 300-entry feed used to cost thousands of
@@ -302,13 +356,14 @@ export const useChanges = create<ChangesState>((set, get) => ({
       timer: setTimeout(() => {
         const latest = gitTimers.get(projectId);
         gitTimers.delete(projectId);
-        if (latest) void get().refreshGit(projectId, latest.root);
+        if (latest) void get().refreshGit(projectId, latest.root, false);
       }, GIT_REFRESH_MS),
     };
     gitTimers.set(projectId, entry);
   },
 
-  refreshGit: async (projectId, root) => {
+  refreshGit: async (projectId, root, invalidate = true) => {
+    if (invalidate) invalidateDiffs(projectId);
     const queued = gitRequests.get(projectId);
     if (queued) {
       queued.root = root;
@@ -321,24 +376,31 @@ export const useChanges = create<ChangesState>((set, get) => ({
     set((s) => ({ gitLoading: { ...s.gitLoading, [projectId]: true } }));
 
     const task = (async () => {
-      while (request.rerun) {
+      while (request.rerun && gitRequests.get(projectId) === request) {
         request.rerun = false;
         const target = request.root;
         try {
           const summary = await ipc.gitChanges(target);
           const expectedRoot = watchDesired.get(projectId) ?? get().watched[projectId];
-          if (!sameRoot(request.root, target) || (expectedRoot && !sameRoot(expectedRoot, target))) {
+          if (gitRequests.get(projectId) !== request ||
+              !sameRoot(request.root, target) || (expectedRoot && !sameRoot(expectedRoot, target))) {
             continue;
           }
           const previous = get().gitByProject[projectId];
           if (summaryFingerprint(previous) === summaryFingerprint(summary)) continue;
-          invalidateDiffs(projectId);
+          // Only the files whose entry moved: while an agent writes, the
+          // totals change on nearly every read, and a project-wide
+          // invalidation re-read every open diff with it.
+          invalidateDiffs(projectId, changedEntryPaths(previous, summary));
           set((s) => ({ gitByProject: { ...s.gitByProject, [projectId]: summary } }));
         } catch (e) {
-          if (sameRoot(request.root, target)) uiLog.warn(`git status falhou em ${target}: ${e}`);
+          if (gitRequests.get(projectId) === request && sameRoot(request.root, target)) {
+            uiLog.warn(`git status falhou em ${target}: ${e}`);
+          }
         }
       }
     })().finally(() => {
+      if (gitRequests.get(projectId) !== request) return;
       gitRequests.delete(projectId);
       gitInFlight.delete(projectId);
       set((s) => ({ gitLoading: { ...s.gitLoading, [projectId]: false } }));
@@ -367,7 +429,7 @@ export const useChanges = create<ChangesState>((set, get) => ({
    * rest of the session.
    *
    * The in-flight request is cancelled by dropping its entry: `refreshGit`
-   * checks the watched root before writing, and there is none any more.
+   * checks request ownership before publishing or clearing pending work.
    */
   dropProject: (projectId) => {
     const scheduled = gitTimers.get(projectId);
@@ -379,8 +441,7 @@ export const useChanges = create<ChangesState>((set, get) => ({
       .catch((e) => uiLog.warn(`nao consegui parar de observar ${projectId}: ${e}`));
     gitRequests.delete(projectId);
     gitInFlight.delete(projectId);
-    diffVersions.delete(projectId);
-    diffCache.prune((key) => key.startsWith(`${projectId}|`));
+    invalidateDiffs(projectId);
     set((s) => {
       const drop = <T,>(record: Record<string, T>): Record<string, T> => {
         if (!(projectId in record)) return record;
@@ -394,6 +455,8 @@ export const useChanges = create<ChangesState>((set, get) => ({
         droppedByProject: drop(s.droppedByProject),
         gitByProject: drop(s.gitByProject),
         gitLoading: drop(s.gitLoading),
+        diffRevisionByProject: drop(s.diffRevisionByProject),
+        contentRevisionsByProject: drop(s.contentRevisionsByProject),
         viewer: s.viewer?.projectId === projectId ? null : s.viewer,
       };
     });

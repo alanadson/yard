@@ -217,6 +217,8 @@ the `.gitignore`, worktree and diff tests survive git version changes.
 | Seam                                   | Where it lives                       | Used for                                            |
 | -------------------------------------- | ------------------------------------ | --------------------------------------------------- |
 | `PtyEvents` / `CollectingEvents`       | `src-tauri/src/pty/emit.rs`          | Seeing what the engine emitted without bringing up Tauri |
+| `PageLink` (a page that keeps messages) | `src-tauri/src/pty/pages.rs`        | Seeing exactly what a page would receive, byte for byte, without a webview |
+| `PtyPort` (a fake backend)             | `src/lib/ptyStream.test.ts`          | The page's channel, subscribe and unsubscribe as plain functions |
 | `YARD_DATA_DIR`                        | `paths.rs`, used in `engine_tests`   | Sending scrollback and `app.db` to a temporary folder |
 | `wait_until`                           | `pty/engine_tests.rs`                | Waiting on a process without a fixed `sleep`        |
 | `ps(script)`                           | `pty/engine_tests.rs`                | Short, `-NoProfile`, predictable PowerShell         |
@@ -225,6 +227,10 @@ the `.gitignore`, worktree and diff tests survive git version changes.
 | `vi.stubGlobal("window", …)`           | `src/lib/lifecycle.test.ts`          | The little DOM that is left in a node environment   |
 | Clock as a parameter (`clock`)         | `src/lib/bridgeCore.test.ts`         | Deterministic time                                  |
 | Local builders (`term`, `canvas`)      | several `*.test.ts`                  | Large input without repetition                      |
+| `PtyShared::with_window`               | `src-tauri/src/pty/reader.rs`        | A pump behind a hidden window, with the flag in the test's hands |
+| `detect_all_with` / `detect_with` + `Gauge` | `agents/resolver.rs`, `lsp.rs`  | Stand-in probes that count how many run at once     |
+| `SharedDetection`                      | `src-tauri/src/agents/resolver.rs`   | A detection held open by the test, to see who shares it |
+| `HeaderCache::header`                  | `src-tauri/src/scm.rs`               | The header's git questions as counting stand-ins    |
 
 Needed a new seam? It is born **together** with the test that asked for it,
 stays in production code only if it is genuinely useful there (like the
@@ -241,6 +247,14 @@ using it:
   already a test locking the name.
 - **The three `yard` CLI shims** and the absence of PowerShell 7 syntax in the
   `.ps1` — the user's machine may only have Windows PowerShell 5.1.
+- **The native `yard` client** (`src-tauri/src/yard_cli.rs`): it runs under
+  every agent hook, so it keeps `yard.ps1`'s contract (argument splitting,
+  `--timeout`, `--file`/`--stdin`, messages, exit codes), and
+  `the_native_client_sends_what_the_powershell_client_sends` runs both
+  against the same stand-in pipe (and
+  `text_in_the_console_code_page_on_stdin_arrives_as_the_powershell_client_read_it`
+  does the same for piped input that is not UTF-8). A change to one client is
+  a change to both.
 - **The CLI rules for agents** — name dedup, note/portal reach, the connection
   gate (`bridgeCore.ts`).
 - **`normalizeCanvas` / `normalizeFloor`** — they read JSON written by earlier

@@ -3,7 +3,7 @@
  * discard the others of the same task.
  */
 import { useEffect, useState } from "react";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../lib/confirmation";
 import { Columns2, GitMerge, RefreshCw } from "lucide-react";
 
 import { Modal } from "../modals/Modal";

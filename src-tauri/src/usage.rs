@@ -126,16 +126,18 @@ pub fn start(app: AppHandle) {
             ];
             let mut forced = true; // the first cycle fetches everything right away
             loop {
-                let now = Instant::now();
-                let mut changed = false;
-                for p in providers.iter_mut() {
-                    if !p.due(now, forced) {
-                        continue;
+                if cycle_runs(forced, window_on_screen(&app)) {
+                    let now = Instant::now();
+                    let mut changed = false;
+                    for p in providers.iter_mut() {
+                        if !p.due(now, forced) {
+                            continue;
+                        }
+                        changed |= p.fetch(&agent);
                     }
-                    changed |= p.fetch(&agent);
-                }
-                if changed || forced {
-                    publish(&app, &providers);
+                    if changed || forced {
+                        publish(&app, &providers);
+                    }
                 }
                 forced = match rx.recv_timeout(POLL_INTERVAL) {
                     Ok(()) => true,
@@ -148,6 +150,22 @@ pub fn start(app: AppHandle) {
             }
         })
         .expect("thread usage-poller");
+}
+
+/// Whether a cycle fetches at all. The timer's turn is skipped while the
+/// window is off screen (hidden to the tray, minimized): nobody sees the bar,
+/// and the page asks for a refresh the moment the window is focused again.
+/// A refresh someone asked for always runs.
+fn cycle_runs(forced: bool, window_shown: bool) -> bool {
+    forced || window_shown
+}
+
+/// The app-wide "window on screen" flag (`AppState::window_shown`).
+fn window_on_screen(app: &AppHandle) -> bool {
+    use tauri::Manager;
+    app.state::<std::sync::Arc<crate::state::AppState>>()
+        .window_shown
+        .load(std::sync::atomic::Ordering::Acquire)
 }
 
 fn publish(app: &AppHandle, providers: &[ProviderPoll]) {
@@ -670,4 +688,21 @@ fn fetch_grok(agent: &ureq::Agent) -> Result<ProviderUsage, FetchError> {
         error: None,
         updated_at: epoch_ms_now(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Three HTTPS requests a minute, all night, for a bar on a window hidden
+    /// to the tray: the timer skips its turn while the window is off screen.
+    /// A refresh someone asked for (the window coming back into focus, an
+    /// agent that went idle, the button) still goes, as it always did.
+    #[test]
+    fn the_timer_fetches_only_for_a_window_on_screen_and_an_asked_refresh_always_does() {
+        assert!(cycle_runs(false, true), "the timer, window on screen");
+        assert!(!cycle_runs(false, false), "the timer, window hidden");
+        assert!(cycle_runs(true, false), "an asked refresh, window hidden");
+        assert!(cycle_runs(true, true));
+    }
 }

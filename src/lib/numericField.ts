@@ -24,3 +24,21 @@ export function valueOnBlur(
   const n = Number(theText);
   return Number.isFinite(n) ? clamp(n) : current;
 }
+
+export type NumericDraftResult =
+  | { readonly valid: true; readonly value: number }
+  | { readonly valid: false; readonly reason: "not-a-number" | "outside-range" };
+
+/** Refuses any value the field would otherwise rewrite without explanation. */
+export function validateNumericDraft(
+  raw: string,
+  clamp: (n: number) => number,
+): NumericDraftResult {
+  const text = raw.trim();
+  if (!text) return { valid: false, reason: "not-a-number" };
+  const value = Number(text);
+  if (!Number.isFinite(value)) return { valid: false, reason: "not-a-number" };
+  return Object.is(clamp(value), value)
+    ? { valid: true, value }
+    : { valid: false, reason: "outside-range" };
+}

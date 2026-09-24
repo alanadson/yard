@@ -15,7 +15,12 @@ import {
   type TerminalRow,
   type PtyKind,
 } from "../lib/ipc";
-import { EMPTY_CANVAS, normalizeCanvas, type CanvasData } from "../lib/canvas";
+import {
+  canonicalCanvas,
+  EMPTY_CANVAS,
+  normalizeParsedCanvas,
+  type CanvasData,
+} from "../lib/canvas";
 import { extractBoards } from "../lib/boards";
 import { GROUND_FLOOR, normalizeFloor, type FloorMeta } from "../lib/floors";
 import { t } from "../lib/i18n";
@@ -86,8 +91,36 @@ export const DEFAULT_LAYOUT: GroupLayout = {
  * (the eraser queries items on every pointermove) and re-parsing the
  * whole JSON per call was expensive. It works because everyone treats the
  * parsed layout as immutable: writes go through spread + stringify.
+ *
+ * `updateLayout` also seeds it with what it just wrote (`seedParse`), so the
+ * read after a commit does not parse the whole board back.
  */
 const parseCache = new Lru<string, GroupLayout>(64);
+
+/**
+ * The layout out of an already-parsed JSON value, with its board already
+ * through `normalizeParsedCanvas` (or `canonicalCanvas`, which answers the same).
+ */
+function layoutFrom(parsed: Record<string, unknown>, canvas: CanvasData | undefined): GroupLayout {
+  // `mode` used to hold `"canvas"` as a fourth value; `splitLegacyMode`
+  // turns that back into the pair. An explicit `surface` (everything
+  // written after the split) always wins over what the mode implied.
+  const legacy = splitLegacyMode(parsed.mode);
+  const layout: GroupLayout = {
+    mode: legacy.mode,
+    surface: parsed.surface === undefined ? legacy.surface : normalizeSurface(parsed.surface),
+    panelCount: Math.min(6, Math.max(1, (parsed.panelCount as number | undefined) ?? 2)),
+    activeBySlot: (parsed.activeBySlot as GroupLayout["activeBySlot"] | undefined) ?? {},
+  };
+  const tabOrder = normalizeTabOrder(parsed.tabOrder);
+  if (tabOrder) layout.tabOrder = tabOrder;
+  // Absent `canvas` stays absent: groups that never entered canvas
+  // mode do not pay for the field in the persisted JSON.
+  if (canvas) layout.canvas = canvas;
+  const floor = normalizeFloor(parsed.floor);
+  if (floor) layout.floor = floor;
+  return layout;
+}
 
 export function parseLayout(json: string): GroupLayout {
   const hit = parseCache.get(json);
@@ -95,29 +128,40 @@ export function parseLayout(json: string): GroupLayout {
   let layout: GroupLayout;
   try {
     const parsed = JSON.parse(json || "{}");
-    // `mode` used to hold `"canvas"` as a fourth value; `splitLegacyMode`
-    // turns that back into the pair. An explicit `surface` (everything
-    // written after the split) always wins over what the mode implied.
-    const legacy = splitLegacyMode(parsed.mode);
-    layout = {
-      mode: legacy.mode,
-      surface: parsed.surface === undefined ? legacy.surface : normalizeSurface(parsed.surface),
-      panelCount: Math.min(6, Math.max(1, parsed.panelCount ?? 2)),
-      activeBySlot: parsed.activeBySlot ?? {},
-    };
-    const tabOrder = normalizeTabOrder(parsed.tabOrder);
-    if (tabOrder) layout.tabOrder = tabOrder;
-    // Absent `canvas` stays absent: groups that never entered canvas
-    // mode do not pay for the field in the persisted JSON.
-    const canvas = normalizeCanvas(parsed.canvas);
-    if (canvas) layout.canvas = canvas;
-    const floor = normalizeFloor(parsed.floor);
-    if (floor) layout.floor = floor;
+    layout = layoutFrom(parsed, normalizeParsedCanvas(parsed.canvas));
   } catch {
     layout = { ...DEFAULT_LAYOUT };
   }
   parseCache.set(json, layout);
   return layout;
+}
+
+/**
+ * Puts in the cache, under the `json` just written from `written`, what
+ * `parseLayout(json)` would build, so the read that follows every commit
+ * skips the parse. On a board that is the expensive part: every item used to
+ * come back as a new object, and the view compared every stroke point to get
+ * the old identities back; now an item nobody touched is the same object.
+ *
+ * Only an exact answer is written. The small fields go through the same JSON
+ * trip and the same `layoutFrom`; the board goes through `canonicalCanvas`,
+ * which refuses whenever it cannot give what the load would. A refusal, a
+ * throw, or a string the cache already holds leaves things as they were: the
+ * next read parses, or keeps the layout it already had.
+ */
+function seedParse(json: string, written: GroupLayout): void {
+  if (parseCache.get(json)) return;
+  const { canvas, ...rest } = written;
+  let board: CanvasData | undefined;
+  if (canvas !== undefined) {
+    board = canonicalCanvas(canvas);
+    if (!board) return;
+  }
+  try {
+    parseCache.set(json, layoutFrom(JSON.parse(JSON.stringify(rest)), board));
+  } catch {
+    // The parser answers when the layout is read.
+  }
 }
 
 interface ProjectsState {
@@ -368,7 +412,15 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     // The migration mark is only written **after** the new format has reached
     // the disk. Writing it first (as it used to) and dying in between left the
     // workspace unmigrated forever, with the mark claiming it had migrated.
-    if (changed) await get().save();
+    //
+    // `load` is also the recovery path of a refused `save`, and that save is
+    // still in flight while this runs: calling `save` then handed back the
+    // very promise waiting on us, and the await never resolved. The loop
+    // that is already running picks the request up on its next turn.
+    if (changed) {
+      if (saveInFlight) saveRequested = true;
+      else await get().save();
+    }
     if (needsMark) {
       void ipc.writePref(TABS_MIGRATION_KEY, "true").catch(() => {});
     }
@@ -682,22 +734,21 @@ export const useProjects = create<ProjectsState>((set, get) => ({
 
   updateLayout: (groupId, patch) => {
     set((s) => ({
-      groups: s.groups.map((g) =>
-        g.id === groupId
-          ? {
-              ...g,
-              layoutJson: JSON.stringify({
-                ...parseLayout(g.layoutJson),
-                ...patch,
-                // The surface is what the group is, never what the patch
-                // says: a board has no panes at all, and a project's group
-                // has no canvas. Enforced here, the only door layout writes
-                // go through.
-                surface: surfaceOf(g),
-              }),
-            }
-          : g,
-      ),
+      groups: s.groups.map((g) => {
+        if (g.id !== groupId) return g;
+        const written: GroupLayout = {
+          ...parseLayout(g.layoutJson),
+          ...patch,
+          // The surface is what the group is, never what the patch
+          // says: a board has no panes at all, and a project's group
+          // has no canvas. Enforced here, the only door layout writes
+          // go through.
+          surface: surfaceOf(g),
+        };
+        const layoutJson = JSON.stringify(written);
+        seedParse(layoutJson, written);
+        return { ...g, layoutJson };
+      }),
     }));
     get().scheduleSave();
   },
@@ -708,7 +759,8 @@ export const useProjects = create<ProjectsState>((set, get) => ({
       ...EMPTY_CANVAS,
       viewport: { ...EMPTY_CANVAS.viewport },
     };
-    get().updateLayout(groupId, { canvas: fn(current) });
+    const next = fn(current);
+    if (next !== current) get().updateLayout(groupId, { canvas: next });
   },
 
   setActiveTab: (groupId, slot, terminalId) => {

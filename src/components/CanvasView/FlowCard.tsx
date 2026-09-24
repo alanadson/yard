@@ -11,6 +11,7 @@ import { memo, useRef } from "react";
 import { Pencil, Workflow, X } from "lucide-react";
 
 import { ResizeHandles } from "./ResizeHandles";
+import { ItemMaximizeButton } from "./ItemMaximizeButton";
 import { cancelFlow } from "../../lib/flowRun";
 import { stageLabelOf, type FlowItem } from "../../lib/flow";
 import type { CanvasItem, ResizeDir } from "../../lib/canvas";
@@ -45,6 +46,7 @@ interface Props {
   ) => void;
   onResizeMove: (e: React.PointerEvent) => void;
   onResizeEnd: (e: React.PointerEvent) => void;
+  onMaximize: (id: string) => void;
 }
 
 function FlowCardImpl({
@@ -65,6 +67,7 @@ function FlowCardImpl({
   onResizeStart,
   onResizeMove,
   onResizeEnd,
+  onMaximize,
 }: Props) {
   const t = useT();
   const run = useFlows((s) => s.runs[it.id]);
@@ -76,6 +79,7 @@ function FlowCardImpl({
       className={`cv-flowcard ${selected ? "is-selected" : ""} ${connectClass} ${
         live ? "is-running" : ""
       }`}
+      data-maximized={!!it.restore}
       style={{
         left: it.x + dx,
         top: it.y + dy,
@@ -107,6 +111,7 @@ function FlowCardImpl({
       }}
     >
       <div className="cv-flowcard-head">
+        <ItemMaximizeButton item={it} onMaximize={onMaximize} />
         <Workflow size={12} aria-hidden="true" />
         <span className="cv-flowcard-name">{it.name}</span>
         {live ? (

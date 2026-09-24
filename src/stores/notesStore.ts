@@ -683,7 +683,12 @@ export const useNotes = create<NotesState>((set, get) => {
         updatedAt: now,
         deletedAt: null,
       };
-      const inHiddenCollection = collection.kind === "trash";
+      // A collection the new note cannot be seen in: the trash, and the
+      // resolved statuses, whose list shows only what is finished.
+      const inHiddenCollection =
+        collection.kind === "trash" ||
+        (collection.kind === "status" &&
+          (collection.status === "done" || collection.status === "dropped"));
       set({
         notes: [note, ...get().notes],
         activeId: note.id,

@@ -5,9 +5,9 @@
  * here and vice versa. The rules (which edge fires what, the loop guard, the
  * summary line) live in `lib/triggers.ts`; this file only draws them.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { nanoid } from "nanoid";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../lib/confirmation";
 import { Pause, Play, Plus, Trash2, Zap } from "lucide-react";
 
 import { NumberField } from "../NumberField";
@@ -42,9 +42,11 @@ const PLACEHOLDER: Record<Kind, string> = {
 export function TriggersSection({
   groupId,
   terminalId,
+  onDraftChange,
 }: {
   groupId: string;
   terminalId: string;
+  onDraftChange?: (dirty: boolean) => void;
 }) {
   const t = useT();
   const groups = useProjects((s) => s.groups);
@@ -82,6 +84,7 @@ export function TriggersSection({
   const [text, setText] = useState("");
   const [once, setOnce] = useState(false);
   const [cooldownSec, setCooldownSec] = useState(0);
+  useEffect(() => { onDraftChange?.(!!text); }, [text, onDraftChange]);
 
   const content = text.trim();
   const valid =

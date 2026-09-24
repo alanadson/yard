@@ -14,6 +14,11 @@
  * next to the table.
  */
 export default {
+  "Acessibilidade do terminal": "Terminal accessibility",
+  "Leitor de tela": "Screen reader",
+  "Expõe a saída do terminal para tecnologias assistivas. Pode aumentar o uso de memória.": "Exposes terminal output to assistive technology. May increase memory usage.",
+  "Contraste de texto acessível": "Accessible text contrast",
+  "Ajusta cores de texto para contraste mínimo de 4,5:1, preservando os fundos ANSI.": "Adjusts text colors to a minimum contrast of 4.5:1 while preserving ANSI backgrounds.",
   // -- the window and the menu (Settings/index.tsx, categories.ts) ---------
   Configurações: "Settings",
   Categorias: "Categories",

@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 
 import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../lib/confirmation";
 
 import { copyText } from "../../lib/clipboard";
 import { ipc } from "../../lib/ipc";
@@ -35,6 +35,8 @@ import { useEditor, parentDir } from "../../stores/editorStore";
 import { MIN_QUERY, outcomeIsCurrent, useSearch } from "../../stores/searchStore";
 import { useUI } from "../../stores/uiStore";
 import { useT } from "../../hooks/useT";
+import { failureMessage } from "../../lib/loading";
+import { searchAnnouncement } from "./searchAnnouncement";
 
 /** Typing pauses this long before the disk is walked. */
 const DEBOUNCE_MS = 350;
@@ -84,9 +86,10 @@ export function SearchPane({
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [query, caseSensitive, wholeWord]);
+  }, [query, caseSensitive, wholeWord, regex, include, exclude]);
 
   const fresh = outcomeIsCurrent({ root: outcomeRoot, outcome });
+  const announcement = searchAnnouncement(status, fresh, outcome ? { ...outcome, hits: outcome.hits.length } : null, error);
   const groups = useMemo(() => {
     if (!outcome || !fresh) return [];
     const byFile = new Map<string, typeof outcome.hits>();
@@ -142,7 +145,7 @@ export function SearchPane({
       label: t("Mostrar na pasta"),
       disabled: absolutePath === null,
       onSelect: () => {
-        if (absolutePath) void ipc.revealPath(absolutePath).catch((e) => showToast(String(e), "error"));
+        if (absolutePath) void ipc.revealPath(absolutePath).catch((e) => showToast(failureMessage(e), "error"));
       },
     });
     return entries;
@@ -211,7 +214,7 @@ export function SearchPane({
             }),
       );
     } catch (e) {
-      showToast(String(e), "error");
+      showToast(failureMessage(e), "error");
     }
   };
 
@@ -364,27 +367,14 @@ export function SearchPane({
       {root && query.trim().length > 0 && query.trim().length < MIN_QUERY && ( // i18n-ok
         <p className="bench-note">{t("Digite ao menos {n} caracteres.", { n: MIN_QUERY })}</p>
       )}
-      {status === "error" && error && (
-        <p className="bench-note bench-note--error">{error}</p>
-      )}
-      {status === "searching" && <p className="bench-note">{t("buscando…")}</p>}
-      {status === "done" && fresh && outcome && (
-        <p className="bench-note">
-          {outcome.hits.length === 0
-            ? t("Nada de “{query}” em {files} arquivos.", {
-                query: query.trim(),
-                files: outcome.filesScanned,
-              })
-            : t("{hits} linha(s) em {files} arquivo(s).", {
-                hits: outcome.hits.length,
-                files: outcome.filesHit,
-              })}
-          {outcome.truncated &&
-            ` ${t("A lista parou num limite — refine a busca para ver o resto.")}`}
-        </p>
-      )}
+      <div role="status" aria-live="polite" aria-atomic="true">
+        {status !== "error" && announcement && <p className="bench-note">{announcement}</p>}
+      </div>
+      <div role="alert" aria-atomic="true">
+        {status === "error" && announcement && <p className="bench-note bench-note--error">{announcement}</p>}
+      </div>
 
-      <div className="psearch-scroll">
+      <div className="psearch-scroll" aria-busy={status === "searching"}>
         {groups.map(([path, hits]) => {
           const closed = collapsed[path];
           return (

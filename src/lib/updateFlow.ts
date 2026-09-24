@@ -7,7 +7,7 @@
  * install asks first when something is running, in the same words the exit
  * confirmation uses; with nothing running there is nothing to ask.
  */
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "./confirmation";
 
 import { t } from "./i18n";
 import { useProjects } from "../stores/projectsStore";

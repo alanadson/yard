@@ -15,7 +15,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { backdropPressExits, focusAfterTab, exitGesture } from "./modalGestures";
+import { backdropPressExits, focusAfterTab, exitGesture, isFrontDialog } from "./modalGestures";
 
 describe("exitGesture", () => {
   it("with the form empty, any exit closes", () => {
@@ -54,6 +54,15 @@ describe("focusAfterTab", () => {
 
   it("a dialog with nothing focusable traps nobody", () => {
     expect(focusAfterTab([], null, false)).toBeNull();
+  });
+});
+
+describe("stacked dialogs", () => {
+  it("gives Escape and Tab only to the dialog painted last", () => {
+    const underlying = {};
+    const confirmation = {};
+    expect(isFrontDialog(underlying, [underlying, confirmation])).toBe(false);
+    expect(isFrontDialog(confirmation, [underlying, confirmation])).toBe(true);
   });
 });
 

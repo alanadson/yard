@@ -3,7 +3,7 @@
  * The page always runs inside Yard (WebView2). Chrome/Firefox/Edge in
  * the list only change the UA string — they never open a window on the PC.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { nanoid } from "nanoid";
 
 import { Modal } from "./Modal";
@@ -26,6 +26,8 @@ import { dropPointFor, unstack } from "../../lib/dropPoint";
 import { goToCanvasItem } from "../../lib/navigate";
 import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
+import { ipc } from "../../lib/ipc";
+import { devicePortalItem, type AndroidDevice } from "../../lib/devicePortal";
 
 export interface NewPortalPayload {
   groupId?: string;
@@ -57,6 +59,25 @@ export function NewPortalModal() {
   const [choiceId, setChoiceId] = useState("default");
   const [customUa, setCustomUa] = useState("");
   const [storage, setStorage] = useState<PortalStorage>("instance");
+  const [kind, setKind] = useState("browser");
+  const [devices, setDevices] = useState<AndroidDevice[]>([]);
+  const [serial, setSerial] = useState("");
+  const [deviceTick, setDeviceTick] = useState(0);
+  const [deviceError, setDeviceError] = useState("");
+  const [deviceLoading, setDeviceLoading] = useState(false);
+  useEffect(() => {
+    if (kind !== "android") return;
+    let current = true;
+    setDeviceLoading(true);
+    setDeviceError("");
+    void ipc.deviceList().then((found) => {
+      if (!current) return;
+      setDevices(found);
+      setSerial((selected) => found.some((d) => d.serial === selected && d.state === "device") ? selected : found.find((d) => d.state === "device")?.serial ?? "");
+    }).catch((e) => { if (current) { setDevices([]); setDeviceError(String(e)); } })
+      .finally(() => { if (current) setDeviceLoading(false); });
+    return () => { current = false; };
+  }, [kind, deviceTick]);
   /**
    * Error under the field, not in the footer: whoever is typing an address
    * looks at the address. The other two creation dialogs already did this.
@@ -89,6 +110,17 @@ export function NewPortalModal() {
   const create = () => {
     if (!groupId) {
       showToast(t("Abra um grupo em canvas antes de criar um portal."), "error");
+      return;
+    }
+    if (kind === "android") {
+      const device = devices.find((d) => d.serial === serial && d.state === "device");
+      if (!device || deviceLoading) return;
+      const id = nanoid(8);
+      const at = payload?.x !== undefined && payload.y !== undefined ? { x: payload.x, y: payload.y }
+        : dropPointFor(groupId, { w: 360, h: 700 }) ?? { x: 80, y: 80 };
+      commitCanvasExternal(groupId, (c) => ({ ...c, items: [...c.items, devicePortalItem(id, device, unstack(at, placedCorners(c)), name)] }));
+      goToCanvasItem(groupId, id);
+      closeModal();
       return;
     }
     // Asked before the card exists: the backend refuses anything that is not
@@ -167,16 +199,27 @@ export function NewPortalModal() {
           <button className="btn" onClick={closeModal}>
             {t("Cancelar")}
           </button>
-          <button className="btn btn--primary" onClick={create}>
+          <button className="btn btn--primary" onClick={create} disabled={kind === "android" && (deviceLoading || !serial || !!deviceError)}>
             {t("Criar")}
           </button>
         </div>
       }
     >
-      {/* The "Dispositivos" tab was an empty place that said "coming later" —
-          the product advertising from within what does not exist. Promises
-          are the roadmap's business; only what opens goes in here. */}
       <div className="form">
+        <label>{t("Tipo de portal")}<Select value={kind} options={[{ value: "browser", label: t("Navegador") }, { value: "android", label: t("Dispositivo Android") }]} onChange={setKind} /></label>
+        {kind === "android" ? <>
+          <p className="hint">{t("Conecte um aparelho com depuração USB ou inicie um emulador Android.")}</p>
+          <label>{t("Dispositivo Android")}
+            <select value={serial} onChange={(e) => setSerial(e.target.value)} disabled={deviceLoading}>
+              <option value="">{t("Selecione um dispositivo")}</option>
+              {devices.map((d) => <option key={d.serial} value={d.serial} disabled={d.state !== "device"}>{d.name} ({d.serial}){d.state === "unauthorized" ? `: ${t("Sem autorização")}` : d.state === "offline" ? `: ${t("Desconectado")}` : ""}</option>)}
+            </select>
+          </label>
+          <button className="btn" disabled={deviceLoading} onClick={() => setDeviceTick((value) => value + 1)}>{deviceLoading ? t("Buscando dispositivos…") : t("Buscar dispositivos")}</button>
+          {deviceError && <p className="hint hint--error" role="alert">{t("Não consegui acessar o dispositivo: {error}", { error: deviceError })}</p>}
+          {!deviceLoading && !deviceError && devices.length === 0 && <p className="hint">{t("Nenhum dispositivo Android encontrado.")}</p>}
+          <label>{t("Nome")}<input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("Opcional")} /></label>
+        </> : <>
         <label>
           URL
           <input
@@ -230,6 +273,7 @@ export function NewPortalModal() {
             onChange={(v) => setStorage(v as PortalStorage)}
           />
         </label>
+        </>}
       </div>
     </Modal>
   );

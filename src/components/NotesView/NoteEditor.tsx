@@ -19,7 +19,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { ask, save } from "@tauri-apps/plugin-dialog";
+import { save } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../lib/confirmation";
 import { basicSetup } from "codemirror";
 import { indentWithTab } from "@codemirror/commands";
 import { Compartment, EditorSelection, EditorState, Prec } from "@codemirror/state";
@@ -47,7 +48,7 @@ import { mdKeymap, runMd } from "../CodeEditor/mdCommands";
 import { mdLive } from "../CodeEditor/mdLive";
 import { syntaxFor } from "../CodeEditor/schemeSyntax";
 import { openReplacePanel, yardSearch } from "../CodeEditor/searchPanel";
-import { observeVisibleLine } from "../CodeEditor/surfaceCore";
+import { observeVisibleLine, ownSurface } from "../CodeEditor/surfaceCore";
 import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
 import { captureTextTarget, textMenuEntries } from "../../lib/textMenu";
 import { Select } from "../Select";
@@ -70,6 +71,7 @@ import { useExtensions } from "../../stores/extensionsStore";
 import { notesCenterVisible, useNotes, type NotesMdMode } from "../../stores/notesStore";
 import { useUI } from "../../stores/uiStore";
 import { useT } from "../../hooks/useT";
+import { failureMessage } from "../../lib/loading";
 import { locale, t } from "../../lib/i18n";
 
 /**
@@ -200,7 +202,7 @@ function OpenNote({ note }: { note: Note }) {
       void ipc
         .noteExport(dest, noteAsMarkdown(note))
         .then(() => showToast(t("Nota exportada.")))
-        .catch((e) => showToast(String(e), "error"));
+        .catch((e) => showToast(failureMessage(e), "error"));
     });
   };
 
@@ -709,8 +711,7 @@ function NoteSurface({
       state: stored.get(noteId) ?? makeState(noteId, body),
       parent: host,
     });
-    viewRef.current = view;
-    viewHolder.current = view;
+    const releaseSurface = ownSurface(view, [viewRef, viewHolder]);
     void loadLanguage("anotacao.md").then((ext) => {
       if (viewRef.current === view && ext) {
         view.dispatch({ effects: languageComp.reconfigure(ext) });
@@ -722,9 +723,7 @@ function NoteSurface({
     return () => {
       stopScroll();
       stored.set(noteId, view.state);
-      view.destroy();
-      viewRef.current = null;
-      viewHolder.current = null;
+      releaseSurface();
     };
     // One mount per note — the component is keyed by the note upstream.
     // eslint-disable-next-line react-hooks/exhaustive-deps

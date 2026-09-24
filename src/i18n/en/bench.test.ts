@@ -23,6 +23,10 @@ const VISIBLE = [
   "Histórico",
   "Arquivos",
   "Mostrar na pasta",
+  "Executando…",
+  "sem branch",
+  "lendo a pasta…",
+  "Lendo o estado do repositório…",
 ];
 
 describe("bench sentences in English", () => {

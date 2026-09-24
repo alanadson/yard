@@ -15,7 +15,16 @@ vi.mock("../lib/ipc", () => ({
   },
 }));
 
+import { setActiveLang } from "../lib/i18n";
 import { parseLayout, useProjects } from "./projectsStore";
+
+it("does not publish a canvas update that returns the current canvas", () => {
+  useProjects.setState({ groups: [{ id: "g", projectId: null, name: "board",
+    layoutJson: "{}", suspended: false, sort: 0 }] });
+  const before = useProjects.getState();
+  useProjects.getState().updateCanvas("g", (canvas) => canvas);
+  expect(useProjects.getState()).toBe(before);
+});
 
 describe("projectsStore persistence", () => {
   beforeEach(() => {
@@ -891,5 +900,216 @@ describe("tabOrder", () => {
     expect(
       parseLayout(JSON.stringify({ tabOrder: { 0: "cli", 1: [1, "page"] } })).tabOrder,
     ).toEqual({ 1: ["page"] });
+  });
+});
+
+describe("a save refused for a stale revision", () => {
+  beforeEach(() => {
+    saveWorkspace.mockReset();
+    loadWorkspace.mockReset();
+    readPrefs.mockResolvedValue({ layoutTabsMigrated: "true" });
+    useProjects.setState({
+      rev: 1,
+      loaded: true,
+      projects: [],
+      groups: [],
+      terminals: [],
+      activeProjectId: null,
+      activeGroupId: null,
+      groupBeforeBoard: null,
+      lastBoardId: null,
+      canvasSide: false,
+    });
+  });
+
+  /**
+   * The regression this locks down: the refused save reloaded from disk, the
+   * reload found a migration to write and called `save` again, which handed
+   * back the very promise that was waiting on it. That await never resolved,
+   * the in-flight marker never cleared, and nothing was persisted for the
+   * rest of the session.
+   */
+  it("whose reload needs a migration still finishes, writes the migrated state, and lets the next save through", async () => {
+    loadWorkspace.mockResolvedValue({
+      rev: 2,
+      projects: [{ id: "p1", name: "p1", path: "C:\p1", color: null, icon: null, sort: 0, createdAt: 0 }],
+      groups: [{ id: "panes", projectId: "p1", name: "panes", layoutJson: "{}", suspended: false, sort: 0 }],
+      // `surface: null` is a row from before the column: the load stamps it and has to save.
+      terminals: [{ id: "old-tab", groupId: "panes", slot: 0, kind: "shell", program: "pwsh", args: [], cwd: "C:\p1", sort: 0, alive: false, createdAt: 0, surface: null }],
+    });
+    saveWorkspace
+      .mockResolvedValueOnce({ accepted: false, rev: 2 })
+      .mockResolvedValue({ accepted: true, rev: 3 });
+
+    const outcome = await Promise.race([
+      useProjects.getState().save().then(() => "saved"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("hung"), 300)),
+    ]);
+    expect(outcome).toBe("saved");
+    expect(saveWorkspace).toHaveBeenCalledTimes(2);
+    expect(saveWorkspace.mock.calls[1][0]).toMatchObject({ rev: 2, terminals: [{ id: "old-tab", surface: "grid" }] });
+    expect(useProjects.getState().rev).toBe(3);
+
+    useProjects.setState({ groups: [{ id: "g2", projectId: "p1", name: "novo", layoutJson: "{}", suspended: false, sort: 1 }] });
+    await useProjects.getState().save();
+    expect(saveWorkspace).toHaveBeenCalledTimes(3);
+    expect(saveWorkspace.mock.calls[2][0]).toMatchObject({ rev: 3, groups: [{ id: "g2" }] });
+  });
+});
+
+/**
+ * A commit used to re-read the whole board it had just written: the new
+ * string missed the parse cache, so every item came back as a new object and
+ * the view compared every stroke point to get its identity back. The store now
+ * seeds the cache with what it wrote, which is only allowed if nobody could
+ * tell the seed from that re-read. `fresh` is the re-read; the padding makes a
+ * string the cache has never been seeded with (a seed is always exact
+ * `JSON.stringify` output), and JSON ignores it.
+ */
+describe("a layout commit read back through the parse cache", () => {
+  let pad = 0;
+  const fresh = (json: string) => parseLayout(json + " ".repeat(++pad));
+  const json = (id: string) => useProjects.getState().groups.find((g) => g.id === id)!.layoutJson;
+  /** Every key in visiting order: `toStrictEqual` does not look at the order. */
+  const shape = (v: unknown, path = "$"): string[] => {
+    if (Array.isArray(v)) return [path, ...v.flatMap((x, i) => shape(x, `${path}[${i}]`))];
+    if (v && typeof v === "object") {
+      return Object.entries(v).flatMap(([k, x]) => [`${path}.${k}`, ...shape(x, `${path}.${k}`)]);
+    }
+    return [];
+  };
+  const expectFreshParse = (id: string) => {
+    const read = useProjects.getState().layoutOf(id);
+    expect(read).toStrictEqual(fresh(json(id)));
+    expect(shape(read)).toEqual(shape(fresh(json(id))));
+  };
+
+  const board = {
+    viewport: { x: 0, y: 0, zoom: 1 },
+    nodes: { t1: { x: 0, y: 0, w: 640, h: 400 } },
+    items: [
+      { id: "s1", type: "stroke", color: "#fff", size: "m", points: [0, 0, 10, 10, 20, 5] },
+      { id: "n1", type: "note", color: "#fff", x: 0, y: 0, w: 200, h: 150, text: "a" },
+      { id: "p1", type: "portal", color: "#fff", x: 0, y: 0, w: 720, h: 480, url: "http://localhost:5173" },
+      { id: "f1", type: "flow", color: "#fff", x: 0, y: 0, w: 300, h: 200, name: `${"a".repeat(47)} b`, stages: [] },
+    ],
+    roles: { t1: "revisora" },
+  };
+
+  beforeEach(() => {
+    saveWorkspace.mockReset();
+    saveWorkspace.mockResolvedValue({ accepted: true, rev: 2 });
+    useProjects.setState({
+      rev: 1,
+      loaded: true,
+      projects: [{ id: "p", name: "p", path: "C:/p", color: null, icon: null, sort: 0, createdAt: 0 }],
+      groups: [
+        { id: "b", projectId: null, name: "quadro", layoutJson: JSON.stringify({ surface: "canvas", canvas: board }), suspended: false, sort: 0 },
+        { id: "g", projectId: "p", name: "panes", layoutJson: "{}", suspended: false, sort: 1 },
+      ],
+      terminals: [],
+      activeProjectId: "p",
+      activeGroupId: "g",
+    });
+  });
+
+  it("a canvas commit reads back exactly what a fresh parse of its JSON gives", () => {
+    const s = useProjects.getState();
+    s.updateCanvas("b", (c) => ({ ...c, viewport: { x: -0, y: 3.5, zoom: 99 } }));
+    expectFreshParse("b");
+    s.updateCanvas("b", (c) => ({
+      ...c,
+      items: [
+        ...c.items,
+        { id: "n2", type: "note", color: "#fff", x: 0, y: 0, w: 1, h: 1, text: "b", fontSize: 500 },
+        { id: "s2", type: "stroke", color: "#fff", size: "s", points: [-0, NaN, 1, 2] },
+        { id: "r1", type: "rect", color: "#fff", x: 0, y: 0, w: 5, h: 5, size: "s", seed: 1, pinned: false, restore: undefined },
+      ] as typeof c.items,
+    }));
+    expectFreshParse("b");
+    s.updateCanvas("b", (c) => ({ ...c, items: c.items.filter((i) => i.id !== "s1") }));
+    expectFreshParse("b");
+  });
+
+  it("a board saved with -0 or an overflowing number reads back, after a commit, as a fresh parse", () => {
+    // Only `JSON.stringify` never writes these; a board saved elsewhere
+    // (serde writes `-0.0`) can hold them, and JSON writes them back changed.
+    const saved = JSON.stringify({ surface: "canvas", canvas: board })
+      .replace('"points":[0,0,10', '"points":[-0.0,0,10')
+      .replace('"w":640', '"w":1e999');
+    useProjects.setState({ groups: [{ ...useProjects.getState().groups[0], layoutJson: saved }] });
+    const s = useProjects.getState();
+    expect(s.layoutOf("b").canvas!.items[0]).toMatchObject({ points: [-0, 0, 10, 10, 20, 5] });
+    s.updateCanvas("b", (c) => ({ ...c, viewport: { x: 1, y: 1, zoom: 1 } }));
+    expectFreshParse("b");
+  });
+
+  it("a panes commit reads back exactly what a fresh parse of its JSON gives", () => {
+    const s = useProjects.getState();
+    s.setActiveTab("g", 1, "cli");
+    expectFreshParse("g");
+    s.setTabOrder("g", 0, ["b", "a"]);
+    expectFreshParse("g");
+    s.updateLayout("g", { panelCount: 40, floor: { kind: "isolated", branch: "x", worktreePath: "C:/w", color: "red" } as never });
+    expectFreshParse("g");
+    s.updateLayout("g", { mode: "canvas" as never, surface: "canvas" });
+    expectFreshParse("g");
+  });
+
+  it("items a viewport-only commit did not touch keep their identity", () => {
+    const s = useProjects.getState();
+    s.updateCanvas("b", (c) => ({ ...c, viewport: { x: 1, y: 1, zoom: 1 } }));
+    const before = s.layoutOf("b").canvas!.items;
+    s.updateCanvas("b", (c) => ({ ...c, viewport: { x: 2, y: 2, zoom: 1 } }));
+    const after = useProjects.getState().layoutOf("b").canvas!.items;
+    expect(after[0]).toBe(before[0]);
+    expect(after[1]).toBe(before[1]);
+  });
+
+  it("a moved note comes back as the object the canvas wrote, and its neighbours keep theirs", () => {
+    const s = useProjects.getState();
+    s.updateCanvas("b", (c) => ({ ...c, viewport: { x: 1, y: 1, zoom: 1 } }));
+    const before = s.layoutOf("b").canvas!.items;
+    const moved = { ...before[1], x: 80 } as (typeof before)[number];
+    s.updateCanvas("b", (c) => ({ ...c, items: c.items.map((i) => (i.id === "n1" ? moved : i)) }));
+    const after = useProjects.getState().layoutOf("b").canvas!.items;
+    expect(after[1]).toBe(moved);
+    expect(after[0]).toBe(before[0]);
+    expectFreshParse("b");
+  });
+
+  it("an item the loader would fix up comes back fixed, not as the canvas wrote it", () => {
+    const s = useProjects.getState();
+    const loud = { id: "n9", type: "note" as const, color: "#fff", x: 0, y: 0, w: 1, h: 1, text: "", fontSize: 500 };
+    s.updateCanvas("b", (c) => ({ ...c, items: [...c.items, loud] }));
+    const read = useProjects.getState().layoutOf("b").canvas!.items.find((i) => i.id === "n9");
+    expect(read).not.toBe(loud);
+    expect(read).toMatchObject({ fontSize: 48 });
+  });
+
+  it("an unnamed group on the board is named in the language of the read", () => {
+    const s = useProjects.getState();
+    const blank = { id: "gr", type: "group" as const, color: "#fff", x: 0, y: 0, w: 400, h: 300, name: " " };
+    s.updateCanvas("b", (c) => ({ ...c, items: [...c.items, blank] }));
+    try {
+      setActiveLang("en");
+      expect(useProjects.getState().layoutOf("b").canvas!.items.find((i) => i.id === "gr")).toMatchObject({ name: "Group" });
+    } finally {
+      setActiveLang("pt-BR");
+    }
+  });
+
+  it("a commit that lands on a JSON already read keeps the layout the cache holds for it", () => {
+    const s = useProjects.getState();
+    // The flow's name loses its trailing space on the first re-read, so the
+    // board only writes the same JSON twice once that has settled.
+    s.updateCanvas("b", (c) => ({ ...c, viewport: { x: 0, y: 0, zoom: 1 } }));
+    s.updateCanvas("b", (c) => ({ ...c, viewport: { x: 1, y: 1, zoom: 1 } }));
+    const firstJson = json("b");
+    const first = useProjects.getState().layoutOf("b");
+    s.updateCanvas("b", (c) => ({ ...c, viewport: { x: 2, y: 2, zoom: 1 } }));
+    s.updateCanvas("b", (c) => ({ ...c, viewport: { x: 1, y: 1, zoom: 1 } }));
+    expect(json("b")).toBe(firstJson);
+    expect(useProjects.getState().layoutOf("b")).toBe(first);
   });
 });

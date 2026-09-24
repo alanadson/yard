@@ -1,3 +1,4 @@
+import { createTerminalSearchSelector, type TerminalSearchStatus } from "../../lib/metadata";
 import "./palette.css";
 
 /**
@@ -54,6 +55,7 @@ import {
   type EntryKind,
   type PaletteEntry,
 } from "./model";
+import { createComposer, Reuse } from "./compose";
 import { FileGlyph } from "../FileGlyph";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { noteName, portalName } from "../../lib/canvas";
@@ -150,7 +152,7 @@ function PaletteInner() {
   const terminals = useProjects((s) => s.terminals);
   const activeGroupId = useProjects((s) => s.activeGroupId);
   const activeProjectId = useProjects((s) => s.activeProjectId);
-  const runtimes = useTerminals((s) => s.byId);
+  const runtimes = useTerminals(selectTerminalSearch);
   const gitByProject = useChanges((s) => s.gitByProject);
   const liveByProject = useChanges((s) => s.liveByProject);
   const dirs = useEditor((s) => s.dirs);
@@ -173,26 +175,33 @@ function PaletteInner() {
     void useEditor.getState().ensureFileIndex();
   }, []);
 
+  // The memo still decides *when* the list is looked at again, over the same
+  // inputs as ever; the composer decides which domains that costs. It lives
+  // as long as the box is open (`createEntryComposer`).
+  const [compose] = useState(() => createEntryComposer());
   const entries = useMemo(
     () =>
-      buildEntries({
-        projects,
-        groups,
-        terminals,
-        activeGroupId,
-        activeProjectId,
-        runtimes,
-        gitByProject,
-        liveByProject,
-        dirs,
-        fileIndex,
-        prompts,
-        tasks,
-        served,
-        focusedTerminalId,
-        memos,
-        memoBooks,
-      }),
+      compose(
+        {
+          projects,
+          groups,
+          terminals,
+          activeGroupId,
+          activeProjectId,
+          runtimes,
+          gitByProject,
+          liveByProject,
+          dirs,
+          fileIndex,
+          prompts,
+          tasks,
+          served,
+          focusedTerminalId,
+          memos,
+          memoBooks,
+        },
+        lang,
+      ),
     [
       projects,
       groups,
@@ -578,13 +587,15 @@ const ICON: Record<EntryKind, JSX.Element> = {
 // entries
 // ---------------------------------------------------------------------------
 
-interface World {
+const selectTerminalSearch = createTerminalSearchSelector();
+
+export interface World {
   projects: ReturnType<typeof useProjects.getState>["projects"];
   groups: ReturnType<typeof useProjects.getState>["groups"];
   terminals: TerminalRow[];
   activeGroupId: string | null;
   activeProjectId: string | null;
-  runtimes: ReturnType<typeof useTerminals.getState>["byId"];
+  runtimes: Record<string, TerminalSearchStatus>;
   gitByProject: ReturnType<typeof useChanges.getState>["gitByProject"];
   liveByProject: ReturnType<typeof useChanges.getState>["liveByProject"];
   dirs: ReturnType<typeof useEditor.getState>["dirs"];
@@ -606,15 +617,114 @@ const W_WAITING = 120;
 const W_BLOCKED = 90;
 const W_RUNNING = 60;
 
-function buildEntries(world: World): PaletteEntry[] {
-  const out: PaletteEntry[] = [];
+/**
+ * Every row, built from nothing. A composer that has lived through any run of
+ * changes must still answer exactly this.
+ */
+export function buildEntries(world: World): PaletteEntry[] {
+  return createEntryComposer()(world, locale());
+}
+
+interface EntryInputs {
+  world: World;
+  /** The rows carry translated text, so the language is one of their inputs. */
+  lang: string;
+}
+
+/**
+ * The rows of the Busca, domain by domain, in the order the list has always
+ * had: with nothing typed the resting order breaks ties by position, so the
+ * domains are concatenated exactly as the single builder used to push them.
+ *
+ * Each domain keeps its rows until one of the inputs it reads moves
+ * (`compose.ts`). The ones that also read a store straight, or the clock,
+ * declare no inputs and are rebuilt on every compose: they stay as fresh as
+ * they were when the whole list was rebuilt on every change.
+ */
+export function createEntryComposer(): (world: World, lang: string) => PaletteEntry[] {
+  const files = fileRows();
+  const compose = createComposer<EntryInputs, PaletteEntry>([
+    {
+      // The role on each row comes from the group's layout, hence `groups`.
+      inputs: ({ world: w }) => [
+        w.terminals,
+        w.runtimes,
+        w.projects,
+        w.groups,
+        w.activeGroupId,
+        w.activeProjectId,
+      ],
+      rows: ({ world }) => terminalEntries(world),
+    },
+    {
+      inputs: ({ world: w, lang }) => [w.groups, w.projects, w.activeGroupId, w.activeProjectId, lang],
+      rows: ({ world }) => groupEntries(world),
+    },
+    {
+      inputs: ({ world: w }) => [w.projects, w.activeProjectId],
+      rows: ({ world }) => projectEntries(world),
+    },
+    {
+      inputs: ({ world: w, lang }) => [
+        w.terminals,
+        w.served,
+        w.projects,
+        w.groups,
+        w.activeGroupId,
+        w.activeProjectId,
+        lang,
+      ],
+      rows: ({ world }) => urlEntries(world),
+    },
+    {
+      inputs: ({ world: w, lang }) => [w.groups, w.projects, w.activeGroupId, w.activeProjectId, lang],
+      rows: ({ world }) => canvasEntries(world),
+    },
+    {
+      // Only the active project's slice of git and of the feed: an agent
+      // writing in another project moves neither.
+      inputs: ({ world: w }) => {
+        const id = w.activeProjectId;
+        return [
+          id,
+          id ? w.gitByProject[id] : undefined,
+          id ? w.liveByProject[id] : undefined,
+          w.dirs,
+          w.fileIndex,
+        ];
+      },
+      rows: ({ world }) => fileEntries(world, files),
+    },
+    {
+      inputs: ({ world: w, lang }) => [w.prompts, lang],
+      rows: ({ world }) => promptEntries(world),
+    },
+    {
+      // The deadline reads the clock ("hoje", "amanhã"), which no input carries.
+      inputs: null,
+      rows: ({ world }) => taskEntries(world),
+    },
+    {
+      inputs: ({ world: w, lang }) => [w.memos, w.memoBooks, lang],
+      rows: ({ world }) => memoEntries(world),
+    },
+    {
+      // Broadcast, canvas side and recorded sessions are read straight from
+      // their stores, not from the world.
+      inputs: null,
+      rows: ({ world }) => actions(world),
+    },
+  ]);
+  return (world, lang) => compose({ world, lang });
+}
+
+/** Where a group lives, as the rows print it, and what being there weighs. */
+function placesOf(world: World) {
   const projectById = new Map(world.projects.map((p) => [p.id, p]));
   const groupById = new Map(world.groups.map((g) => [g.id, g]));
-  const { layoutOf, floorOf } = useProjects.getState();
-
-  const localOf = (groupId: string) => {
+  return (groupId: string) => {
     const group = groupById.get(groupId);
-    // A board has no project — `label` then reads as just the board's name.
+    // A board has no project, so `label` then reads as just the board's name.
     const project = group?.projectId ? projectById.get(group.projectId) : undefined;
     return {
       group,
@@ -628,8 +738,14 @@ function buildEntries(world: World): PaletteEntry[] {
             : 0,
     };
   };
+}
 
-  // --- terminals -----------------------------------------------------------
+// --- terminals -------------------------------------------------------------
+
+function terminalEntries(world: World): PaletteEntry[] {
+  const out: PaletteEntry[] = [];
+  const localOf = placesOf(world);
+  const { layoutOf } = useProjects.getState();
   for (const term of world.terminals) {
     const local = localOf(term.groupId);
     const runtime = world.runtimes[term.id];
@@ -663,8 +779,15 @@ function buildEntries(world: World): PaletteEntry[] {
       run: () => goToTerminal(term),
     });
   }
+  return out;
+}
 
-  // --- groups and floors ---------------------------------------------------
+// --- groups and floors -----------------------------------------------------
+
+function groupEntries(world: World): PaletteEntry[] {
+  const out: PaletteEntry[] = [];
+  const projectById = new Map(world.projects.map((p) => [p.id, p]));
+  const { floorOf } = useProjects.getState();
   for (const g of world.groups) {
     const project = g.projectId ? projectById.get(g.projectId) : undefined;
     const floor = floorOf(g.id);
@@ -689,8 +812,13 @@ function buildEntries(world: World): PaletteEntry[] {
       run: () => useProjects.getState().setActiveGroup(g.id),
     });
   }
+  return out;
+}
 
-  // --- projects ------------------------------------------------------------
+// --- projects --------------------------------------------------------------
+
+function projectEntries(world: World): PaletteEntry[] {
+  const out: PaletteEntry[] = [];
   for (const p of world.projects) {
     out.push({
       id: `project:${p.id}`,
@@ -702,8 +830,14 @@ function buildEntries(world: World): PaletteEntry[] {
       run: () => useProjects.getState().setActiveProject(p.id),
     });
   }
+  return out;
+}
 
-  // --- addresses the terminals announced -----------------------------------
+// --- addresses the terminals announced -------------------------------------
+
+function urlEntries(world: World): PaletteEntry[] {
+  const out: PaletteEntry[] = [];
+  const localOf = placesOf(world);
   for (const term of world.terminals) {
     const local = localOf(term.groupId);
     for (const url of world.served[term.id] ?? []) {
@@ -727,8 +861,15 @@ function buildEntries(world: World): PaletteEntry[] {
       });
     }
   }
+  return out;
+}
 
-  // --- canvas: notes and portals ------------------------------------------
+// --- canvas: notes and portals ---------------------------------------------
+
+function canvasEntries(world: World): PaletteEntry[] {
+  const out: PaletteEntry[] = [];
+  const localOf = placesOf(world);
+  const { layoutOf } = useProjects.getState();
   for (const g of world.groups) {
     const items = layoutOf(g.id).canvas?.items;
     if (!items) continue;
@@ -820,39 +961,85 @@ function buildEntries(world: World): PaletteEntry[] {
       }
     }
   }
+  return out;
+}
 
-  // --- files ---------------------------------------------------------------
+// --- files -----------------------------------------------------------------
+
+function rowSources() {
+  return {
+    git: new Reuse<PaletteEntry>(),
+    feed: new Reuse<PaletteEntry>(),
+    dir: new Reuse<PaletteEntry>(),
+    index: new Reuse<PaletteEntry>(),
+  };
+}
+
+/**
+ * The file rows the previous build made, one `Reuse` per source. While an
+ * agent writes, the feed moves every 250 ms and git status right behind it,
+ * and each move touches a path or two out of thousands: every other path
+ * gets its very row back, icon element and all.
+ *
+ * Only within one project, though: a row's `run` holds the project whose file
+ * it opens, so a switch starts from nothing.
+ */
+function fileRows() {
+  let project: string | null = null;
+  let sources = rowSources();
+  return (projectId: string | null) => {
+    if (projectId !== project) {
+      project = projectId;
+      sources = rowSources();
+    }
+    return sources;
+  };
+}
+
+type FileRows = ReturnType<typeof fileRows>;
+
+function fileEntries(world: World, rowsOf: FileRows): PaletteEntry[] {
+  const out: PaletteEntry[] = [];
   const projectId = world.activeProjectId;
+  const rows = rowsOf(projectId);
   if (projectId) {
     const changed = new Set<string>();
     for (const file of world.gitByProject[projectId]?.files ?? []) {
       changed.add(file.path);
-      out.push({
-        id: `file:${file.path}`,
-        kind: "file",
-        title: fileName(file.path),
-        subtitle: file.path,
-        icon: <FileGlyph name={fileName(file.path)} size={14} />,
-        keywords: [file.status, "alterado git changed"], // i18n-ok
-        weight: W_GROUP,
-        run: () => openFile(projectId, file.path, true),
-      });
+      // The key is everything the row is made of: the status is in its keywords.
+      const key = `${file.status}\0${file.path}`;
+      out.push(
+        rows.git.take(key) ??
+          rows.git.keep(key, {
+            id: `file:${file.path}`,
+            kind: "file",
+            title: fileName(file.path),
+            subtitle: file.path,
+            icon: <FileGlyph name={fileName(file.path)} size={14} />,
+            keywords: [file.status, "alterado git changed"], // i18n-ok
+            weight: W_GROUP,
+            run: () => openFile(projectId, file.path, true),
+          }),
+      );
     }
     // What the agent touched in this session but git does not list (ignored
     // files, generated output): the feed is the only place they exist.
     for (const entry of (world.liveByProject[projectId] ?? []).slice(0, 60)) {
       if (changed.has(entry.path)) continue;
       changed.add(entry.path);
-      out.push({
-        id: `file:${entry.path}`,
-        kind: "file",
-        title: fileName(entry.path),
-        subtitle: entry.path,
-        icon: <FileGlyph name={fileName(entry.path)} size={14} />,
-        keywords: ["tocado recente feed touched recent"], // i18n-ok
-        weight: W_PROJECT,
-        run: () => openFile(projectId, entry.path, false),
-      });
+      out.push(
+        rows.feed.take(entry.path) ??
+          rows.feed.keep(entry.path, {
+            id: `file:${entry.path}`,
+            kind: "file",
+            title: fileName(entry.path),
+            subtitle: entry.path,
+            icon: <FileGlyph name={fileName(entry.path)} size={14} />,
+            keywords: ["tocado recente feed touched recent"], // i18n-ok
+            weight: W_PROJECT,
+            run: () => openFile(projectId, entry.path, false),
+          }),
+      );
     }
     // Whatever the tree already read from disk. It is lazy, so this is "what
     // you have browsed" — slightly warmer than the raw index below.
@@ -860,15 +1047,20 @@ function buildEntries(world: World): PaletteEntry[] {
       for (const info of listing) {
         if (info.dir || changed.has(info.path)) continue;
         changed.add(info.path);
-        out.push({
-          id: `file:${info.path}`,
-          kind: "file",
-          title: info.name,
-          subtitle: info.path,
-          icon: <FileGlyph name={info.name} size={14} />,
-          weight: 0,
-          run: () => openFile(projectId, info.path, false),
-        });
+        // The title is the listing's name, not one derived from the path.
+        const key = `${info.name}\0${info.path}`;
+        out.push(
+          rows.dir.take(key) ??
+            rows.dir.keep(key, {
+              id: `file:${info.path}`,
+              kind: "file",
+              title: info.name,
+              subtitle: info.path,
+              icon: <FileGlyph name={info.name} size={14} />,
+              weight: 0,
+              run: () => openFile(projectId, info.path, false),
+            }),
+        );
       }
     }
     // The whole project, from the quick-open index (`fs_index_files`): what
@@ -882,20 +1074,29 @@ function buildEntries(world: World): PaletteEntry[] {
         if (changed.has(path)) continue;
         changed.add(path);
         remaining -= 1;
-        out.push({
-          id: `file:${path}`,
-          kind: "file",
-          title: fileName(path),
-          subtitle: path,
-          icon: <FileGlyph name={fileName(path)} size={14} />,
-          weight: 0,
-          run: () => openFile(projectId, path, false),
-        });
+        out.push(
+          rows.index.take(path) ??
+            rows.index.keep(path, {
+              id: `file:${path}`,
+              kind: "file",
+              title: fileName(path),
+              subtitle: path,
+              icon: <FileGlyph name={fileName(path)} size={14} />,
+              weight: 0,
+              run: () => openFile(projectId, path, false),
+            }),
+        );
       }
     }
   }
+  for (const source of Object.values(rows)) source.settle();
+  return out;
+}
 
-  // --- bench ---------------------------------------------------------------
+// --- bench -----------------------------------------------------------------
+
+function promptEntries(world: World): PaletteEntry[] {
+  const out: PaletteEntry[] = [];
   for (const p of world.prompts) {
     out.push({
       id: `prompt:${p.id}`,
@@ -908,6 +1109,12 @@ function buildEntries(world: World): PaletteEntry[] {
       run: () => usePromptInComposer(p.id),
     });
   }
+  return out;
+}
+
+function taskEntries(world: World): PaletteEntry[] {
+  const out: PaletteEntry[] = [];
+  const projectById = new Map(world.projects.map((p) => [p.id, p]));
   for (const t of world.tasks) {
     if (t.done) continue;
     const owner = t.projectId ? projectById.get(t.projectId) : null;
@@ -931,8 +1138,13 @@ function buildEntries(world: World): PaletteEntry[] {
         useBench.getState().revealTask(t.id, useProjects.getState().activeProjectId),
     });
   }
+  return out;
+}
 
-  // --- the notebook (Anotações) --------------------------------------------
+// --- the notebook (Anotações) ----------------------------------------------
+
+function memoEntries(world: World): PaletteEntry[] {
+  const out: PaletteEntry[] = [];
   for (const memo of world.memos) {
     if (memo.deletedAt !== null) continue;
     const theNotebook = notebookPath(world.memoBooks, memo.notebookId);
@@ -952,8 +1164,6 @@ function buildEntries(world: World): PaletteEntry[] {
       run: () => useNotes.getState().openView(memo.id),
     });
   }
-
-  out.push(...actions(world));
   return out;
 }
 
@@ -1232,6 +1442,13 @@ function actions(world: World): PaletteEntry[] {
       keywords: ["teclas", "ajuda", "keybindings", "shortcuts", "keys", "help"],
       hint: "Ctrl+Shift+H",
       run: () => ui().openModal("shortcuts"),
+    },
+    {
+      id: "action:notifications",
+      kind: "action",
+      title: t("Histórico de notificações"),
+      keywords: ["avisos", "erros", "notifications", "history", "errors"],
+      run: () => ui().openModal("notifications"),
     },
     ...(hasGroup
       ? [

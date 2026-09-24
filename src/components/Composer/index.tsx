@@ -42,11 +42,16 @@ import "./composer.css";
  * the agent can simply open the file. Either way the image arrives.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BookmarkPlus, CornerDownLeft, ListPlus, Send, TerminalSquare, X } from "lucide-react";
+import { BookmarkPlus, CornerDownLeft, File, Globe, ListPlus, Paperclip, Send, StickyNote, TerminalSquare, X } from "lucide-react";
+import { open as openFiles } from "@tauri-apps/plugin-dialog";
 
 import { Select } from "../Select";
-import { composerContext } from "../../lib/bridge";
+import { EMPTY_CANVAS } from "../../lib/canvas";
+import { ipc } from "../../lib/ipc";
+import { AttachmentImage } from "./AttachmentImage";
+import { normalizeSurface } from "../../lib/surface";
 import { injectPrompt } from "../../lib/inject";
+import { prepareTaskCheckpoint } from "../../lib/taskCheckpoint";
 import { canSend, sendability } from "../../lib/sendable";
 import { isTopLayer } from "../../lib/layers";
 import {
@@ -54,7 +59,10 @@ import {
   saveClipboardImage,
   withPathAtCaret,
 } from "../../lib/clipboardImage";
-import { findMentions } from "../../lib/bridgeCore";
+import { makeCtx } from "../../lib/bridgeCore";
+import { composerMentions, composerReferences, fileReferences, referenceQuery, referenceText, type ComposerReference, type ReferenceQuery } from "./references";
+import { promptAttachments } from "./attachments";
+import { fold } from "../../lib/search";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { baseName } from "../../lib/terminals";
 import { useBench } from "../../stores/benchStore";
@@ -79,7 +87,9 @@ export function Composer() {
   const groups = useProjects((s) => s.groups);
 
   const [sending, setSending] = useState(false);
-  const [menu, setMenu] = useState<{ query: string; at: number } | null>(null);
+  const [menu, setMenu] = useState<ReferenceQuery | null>(null);
+  const [files, setFiles] = useState<{ root: string; paths: string[] }>({ root: "", paths: [] });
+  const [indexError, setIndexError] = useState("");
   const [highlight, setHighlight] = useState(0);
   const areaRef = useRef<HTMLTextAreaElement>(null);
   // `aria-modal` was declared without the behaviour: Tab escaped through the
@@ -139,18 +149,36 @@ export function Composer() {
 
   // Recalculated on every open/target switch: connections change on the
   // canvas all the time and a stale list would offer a mention the bridge would refuse.
-  const ctx = useMemo(
-    () => (target && open ? composerContext(target.id) : null),
-    // `terminals` is included on purpose: recruit/dismiss changes the connected set.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [target?.id, open, terminals],
-  );
+  const ctx = useMemo(() => {
+    if (!target || !open) return null;
+    const state = useProjects.getState();
+    const context = makeCtx(target, target.groupId,
+      state.layoutOf(target.groupId).canvas ?? EMPTY_CANVAS,
+      state.terminalsOn(target.groupId, normalizeSurface(target.surface)));
+    const references = composerReferences(context);
+    return { me: context.nameOf.get(target.id), references,
+      agents: references.filter((reference) => reference.kind === "agent") };
+  }, [target, open, terminals, groups]);
+
+  useEffect(() => {
+    if (!open || menu?.trigger !== "#" || !target?.cwd) return;
+    let current = true;
+    const root = target.cwd;
+    setFiles({ root, paths: [] });
+    setIndexError("");
+    void ipc.fsIndexFiles(root).then((index) => {
+      if (current) setFiles({ root, paths: index.paths });
+    }).catch((error) => {
+      if (current) setIndexError(String(error));
+    });
+    return () => { current = false; };
+  }, [open, menu?.trigger, target?.cwd]);
 
   /** Where the text being edited lives: the destination, or the scratch. */
   const slot = target?.id ?? COMPOSER_SCRATCH;
   const draft = drafts[slot] ?? "";
   const mentioned = useMemo(
-    () => (ctx ? findMentions(draft, ctx.agents.map((a) => a.name)) : []),
+    () => (ctx ? composerMentions(draft, ctx.agents.map((a) => a.name)) : []),
     [draft, ctx],
   );
 
@@ -202,7 +230,7 @@ export function Composer() {
     );
     ui.setComposerDraft(COMPOSER_SCRATCH, "");
     if (existing.trim()) {
-      showToast(`Juntei o rascunho solto ao texto de ${baseName(target)}.`);
+      showToast(t("Juntei o rascunho solto ao texto de {name}.", { name: baseName(target) }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, target?.id]);
@@ -210,27 +238,17 @@ export function Composer() {
   if (!open) return null;
 
   const running = runtimeState === "running" || runtimeState === "starting";
-  const suggestions =
-    menu && ctx
-      ? ctx.agents.filter((a) => a.name.toLowerCase().startsWith(menu.query.toLowerCase()))
-      : [];
+  const suggestions = menu?.trigger === "#"
+    ? fileReferences(files.root, files.paths, menu.query)
+    : menu && ctx ? ctx.references.filter((reference) => fold(reference.name).includes(fold(menu.query))) : [];
+  const attachments = promptAttachments(draft);
   menuRef.current = suggestions.length > 0;
 
   const onChange = (value: string) => {
     setDraft(slot, value);
-    // Mention menu: only while the most recent `@` is still being typed
-    // (no space after it) and only when it opens a word.
     const caret = areaRef.current?.selectionStart ?? value.length;
-    const before = value.slice(0, caret);
-    const at = before.lastIndexOf("@");
-    const opensWord = at === 0 || (at > 0 && /\s|[([{,;]/.test(before[at - 1]));
-    const snippet = at >= 0 ? before.slice(at + 1) : "";
-    if (at >= 0 && opensWord && !/[\n]/.test(snippet)) {
-      setMenu({ query: snippet, at });
-      setHighlight(0);
-    } else {
-      setMenu(null);
-    }
+    setMenu(referenceQuery(value, caret));
+    setHighlight(0);
   };
 
   /**
@@ -256,7 +274,7 @@ export function Composer() {
           currentValue,
           Math.min(start, currentValue.length),
           Math.min(end, currentValue.length),
-          path,
+          JSON.stringify(path.replace(/\\/g, "/")),
         );
         setDraft(slot, text);
         setMenu(null);
@@ -268,17 +286,34 @@ export function Composer() {
       .catch((err) => showToast(t("Não consegui colar a imagem: {err}", { err: String(err) }), "error"));
   };
 
-  const applyMention = (itemName: string) => {
+  const attachFiles = async () => {
+    try {
+      const paths = await openFiles({ multiple: true, directory: false });
+      if (!paths) return;
+      const current = useUI.getState().composerDrafts[slot] ?? "";
+      const area = areaRef.current;
+      const inserted = withPathAtCaret(current, area?.selectionStart ?? current.length,
+        area?.selectionEnd ?? current.length,
+        (Array.isArray(paths) ? paths : [paths]).map((path) => JSON.stringify(path.replace(/\\/g, "/"))).join(" "));
+      setDraft(slot, inserted.text);
+      area?.focus();
+    } catch (error) {
+      showToast(t("Não consegui anexar o arquivo: {error}", { error: String(error) }), "error");
+    }
+  };
+
+  const applyMention = (reference: ComposerReference) => {
     if (!menu) return;
     const before = draft.slice(0, menu.at);
     const caret = areaRef.current?.selectionStart ?? draft.length;
     const after = draft.slice(caret);
-    const fresh = `${before}@${itemName} ${after}`;
+    const inserted = referenceText(reference);
+    const fresh = `${before}${inserted} ${after}`;
     setDraft(slot, fresh);
     setMenu(null);
     setTimeout(() => {
       areaRef.current?.focus();
-      const pos = before.length + itemName.length + 2;
+      const pos = before.length + inserted.length + 1;
       areaRef.current?.setSelectionRange(pos, pos);
     }, 0);
   };
@@ -351,7 +386,7 @@ export function Composer() {
       // already received it, the draft stayed intact, and resending
       // duplicated it for them.
       const outcomes = await Promise.allSettled(
-        targets.map((recipient) => injectPrompt(recipient.id, theText)),
+        targets.map(async (recipient) => injectPrompt(recipient.id, theText, { checkpoint: await prepareTaskCheckpoint(recipient.id) })),
       );
       const failed = (i: number) => outcomes[i].status === "rejected";
       const primaryOk = !failed(0);
@@ -426,7 +461,7 @@ export function Composer() {
     }
     setSending(true);
     try {
-      await injectPrompt(target.id, text, { submit: false });
+      await injectPrompt(target.id, text, { submit: false, checkpoint: await prepareTaskCheckpoint(target.id) });
       setDraft(slot, "");
       setMenu(null);
       setOpen(false);
@@ -455,7 +490,7 @@ export function Composer() {
       }
       if (e.key === "Tab" || (e.key === "Enter" && !e.ctrlKey && !e.shiftKey)) {
         e.preventDefault();
-        applyMention(suggestions[highlight].name);
+        applyMention(suggestions[highlight % suggestions.length]);
         return;
       }
       // `Escape` with the menu up closes only the menu — handled on the window
@@ -524,8 +559,8 @@ export function Composer() {
           spellCheck={false}
           aria-label={t("Texto do prompt")}
           placeholder={
-            ctx?.agents.length
-              ? t("Prompt de várias linhas… use @ para mencionar um agente conectado.")
+            ctx?.references.length
+              ? t("Use @ para agentes, notas e portais conectados, ou # para arquivos.")
               : target
                 ? t("Prompt de várias linhas. Enter quebra linha; nada sai daqui sozinho.")
                 : t("Escreva o prompt à vontade — escolha o destino lá em cima quando for entregar.")
@@ -544,18 +579,30 @@ export function Composer() {
                   className={i === highlight ? "is-active" : ""}
                   onMouseDown={(e) => {
                     e.preventDefault();
-                    applyMention(a.name);
+                    applyMention(a);
                   }}
                 >
-                  @{a.name}
+                  {a.kind === "note" ? <StickyNote size={14} /> : a.kind === "portal" ? <Globe size={14} /> : a.kind === "file" ? <File size={14} /> : <TerminalSquare size={14} />}
+                  {a.name}
                 </button>
               </li>
             ))}
           </ul>
         )}
+        {menu?.trigger === "#" && indexError && <p role="status" className="composer-hint">{t("Não consegui buscar arquivos: {error}", { error: indexError })}</p>}
       </div>
 
+      {attachments.length > 0 && <div className="composer-attachments" aria-label={t("Anexos do prompt")}>
+        {attachments.map((attachment) => <div className="composer-attachment" key={attachment.start}>
+          {attachment.image ? <AttachmentImage root={attachment.root} name={attachment.name} /> : <File size={24} />}
+          <span title={attachment.path}>{attachment.name}</span>
+          <button className="icon-btn" aria-label={t("Remover anexo {name}", { name: attachment.name })}
+            onClick={() => setDraft(slot, draft.slice(0, attachment.start) + draft.slice(attachment.end))}><X size={12} /></button>
+        </div>)}
+      </div>}
+
       <div className="composer-foot">
+        <button className="icon-btn" aria-label={t("Anexar arquivos")} data-tip={t("Anexar arquivos")} onClick={() => void attachFiles()}><Paperclip size={15} /></button>
         <span className="composer-hint">
           <kbd>Ctrl</kbd>+<kbd>Enter</kbd> {t("envia")} · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+
           <kbd>Enter</kbd> {t("deixa na CLI")} · <kbd>Esc</kbd> {t("fecha")}

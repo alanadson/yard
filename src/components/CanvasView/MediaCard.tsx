@@ -22,6 +22,7 @@ import { FileQuestion, PenSquare } from "lucide-react";
 import { InlineRename } from "../ContextMenu/InlineRename";
 
 import { ResizeHandles } from "./ResizeHandles";
+import { ItemMaximizeButton } from "./ItemMaximizeButton";
 import { FileGlyph } from "../FileGlyph";
 import { ipc } from "../../lib/ipc";
 import { fileSize, mediaKind, mediaUrl, type MediaKind } from "../../lib/media";
@@ -47,6 +48,7 @@ interface Props {
   onResizeStart: (e: React.PointerEvent, it: MediaItem, dir: ResizeDir) => void;
   onResizeMove: (e: React.PointerEvent) => void;
   onResizeEnd: (e: React.PointerEvent) => void;
+  onMaximize: (id: string) => void;
   /** The in-place rename is open on this card (the board owns which one). */
   renaming: boolean;
   onRenameStart: (id: string) => void;
@@ -79,6 +81,7 @@ function MediaCardImpl({
   onResizeStart,
   onResizeMove,
   onResizeEnd,
+  onMaximize,
   renaming,
   onRenameStart,
   onRenameEnd,
@@ -141,6 +144,7 @@ function MediaCardImpl({
   return (
     <div
       className={`cv-media ${selected ? "is-selected" : ""} ${connectClass}`}
+      data-maximized={!!it.restore}
       style={{ left: it.x + dx, top: it.y + dy, width: w, height: h, opacity: faded ? 0.22 : 1 }}
     >
       <div
@@ -175,6 +179,7 @@ function MediaCardImpl({
         {facts && !facts.error && facts.size > 0 && (
           <span className="cv-media-size">{fileSize(facts.size)}</span>
         )}
+        <ItemMaximizeButton item={it} onMaximize={onMaximize} />
         {/* Only for a file inside the project: the editor addresses files
             relative to the project root, and a card pointing at `D:\fotos`
             has nothing it could hand over. */}

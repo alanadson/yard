@@ -124,7 +124,7 @@ pub struct SessionFeed {
 /// against real sessions on this machine.
 #[derive(Default)]
 pub(crate) struct Cursor {
-    last_usage_msg: String,
+    seen_usage: std::collections::HashSet<String>,
     totals: SessionUsage,
 }
 
@@ -350,14 +350,11 @@ fn assistant_line(
 
     // Usage arrives repeated on every content-block line of the same API
     // message; count each message once, then publish cumulative totals.
-    let msg_id = msg.get("id").and_then(|i| i.as_str()).unwrap_or("");
-    if !msg_id.is_empty() && msg_id != cur.last_usage_msg {
-        if let Some(u) = msg.get("usage") {
-            cur.last_usage_msg = msg_id.to_string();
-            cur.totals.input_tokens += num(u, "input_tokens");
-            cur.totals.output_tokens += num(u, "output_tokens");
-            cur.totals.cache_creation_tokens += num(u, "cache_creation_input_tokens");
-            cur.totals.cache_read_tokens += num(u, "cache_read_input_tokens");
+    if let Some(delta) = super::tokens::claude_delta(msg, &mut cur.seen_usage) {
+            cur.totals.input_tokens += delta.0;
+            cur.totals.output_tokens += delta.3;
+            cur.totals.cache_creation_tokens += delta.2;
+            cur.totals.cache_read_tokens += delta.1;
             cur.totals.messages += 1;
             let model = msg
                 .get("model")
@@ -379,7 +376,6 @@ fn assistant_line(
                 cost_usd: super::sessions::estimate_cost(&cur.totals),
                 ..Default::default()
             });
-        }
     }
 }
 
@@ -417,7 +413,7 @@ fn user_line(v: &serde_json::Value, at: i64, side: bool, out: &mut Vec<FeedEvent
                     ),
                     ..Default::default()
                 };
-                if let Some(t) = &text {
+                if let Some(t) = text {
                     // "Task #7 created" — lets the UI map plan cards to ids.
                     if let Some(id) = t
                         .strip_prefix("Task #")
@@ -470,9 +466,14 @@ fn push_prompt(raw: &str, at: i64, side: bool, out: &mut Vec<FeedEvent>) {
     });
 }
 
+/// What a `tool_use` without `input` reads as: every key missing.
+static NO_INPUT: serde_json::Value = serde_json::Value::Null;
+
 fn tool_event(block: &serde_json::Value, at: i64, side: bool, cwd: &str) -> Option<FeedEvent> {
     let name = block.get("name").and_then(|n| n.as_str())?;
-    let input = block.get("input").cloned().unwrap_or_default();
+    // Borrowed, not cloned: a `Write` carries the whole file it wrote, and
+    // the event reads a few keys of it.
+    let input = block.get("input").unwrap_or(&NO_INPUT);
     let mut ev = FeedEvent {
         kind: "tool".into(),
         at,
@@ -502,13 +503,13 @@ fn tool_event(block: &serde_json::Value, at: i64, side: bool, cwd: &str) -> Opti
         "Edit" | "NotebookEdit" => {
             ev.op = Some("edit".into());
             ev.path = path_of("file_path").or_else(|| path_of("notebook_path"));
-            ev.removed = Some(lines_of(&input, "old_string"));
-            ev.added = Some(lines_of(&input, "new_string"));
+            ev.removed = Some(lines_of(input, "old_string"));
+            ev.added = Some(lines_of(input, "new_string"));
         }
         "Write" => {
             ev.op = Some("write".into());
             ev.path = path_of("file_path");
-            ev.added = Some(lines_of(&input, "content"));
+            ev.added = Some(lines_of(input, "content"));
         }
         "Read" => {
             ev.op = Some("read".into());
@@ -589,10 +590,6 @@ fn tool_event(block: &serde_json::Value, at: i64, side: bool, cwd: &str) -> Opti
 // helpers
 // ---------------------------------------------------------------------------
 
-fn num(v: &serde_json::Value, key: &str) -> u64 {
-    v.get(key).and_then(|x| x.as_u64()).unwrap_or(0)
-}
-
 fn lines_of(input: &serde_json::Value, key: &str) -> u32 {
     input
         .get(key)
@@ -608,15 +605,17 @@ fn lines_of(input: &serde_json::Value, key: &str) -> u32 {
 }
 
 /// `tool_result.content` is sometimes a string, sometimes text blocks.
-fn result_text(block: &serde_json::Value) -> Option<String> {
+/// Borrowed: it can be a command's whole output, and only a capped preview
+/// of it is kept.
+fn result_text(block: &serde_json::Value) -> Option<&str> {
     let content = block.get("content")?;
     if let Some(s) = content.as_str() {
-        return Some(s.trim().to_string());
+        return Some(s.trim());
     }
     for b in content.as_array()? {
         if b.get("type").and_then(|t| t.as_str()) == Some("text") {
             if let Some(t) = b.get("text").and_then(|t| t.as_str()) {
-                return Some(t.trim().to_string());
+                return Some(t.trim());
             }
         }
     }
@@ -634,10 +633,14 @@ fn relative_path(cwd: &str, path: &str) -> String {
         let c = cwd.replace('\\', "/");
         c.trim_end_matches('/').to_string() + "/"
     };
-    if norm.len() > cwd_norm.len() && norm[..cwd_norm.len()].eq_ignore_ascii_case(&cwd_norm) {
-        norm[cwd_norm.len()..].to_string()
-    } else {
-        norm
+    // `get` refuses a cut inside a multi-byte character (a `None`, not a
+    // panic): the cwd's byte length says nothing about where the path's
+    // characters end.
+    match norm.get(..cwd_norm.len()) {
+        Some(head) if norm.len() > cwd_norm.len() && head.eq_ignore_ascii_case(&cwd_norm) => {
+            norm[cwd_norm.len()..].to_string()
+        }
+        _ => norm,
     }
 }
 
@@ -655,13 +658,16 @@ fn strip_tags(s: &str) -> String {
     out
 }
 
+/// The first `max` characters of `s` with every `\r` dropped, and `…`
+/// when anything was left out. Cut while walking the string: a preview of a
+/// whole file costs its first few hundred characters, not the file.
 fn cap(s: &str, max: usize) -> String {
-    let one_line = s.replace(['\r'], "");
-    if one_line.chars().count() <= max {
-        return one_line;
+    let mut chars = s.chars().filter(|&c| c != '\r');
+    let mut out: String = chars.by_ref().take(max).collect();
+    if chars.next().is_some() {
+        out.push('…');
     }
-    let cut: String = one_line.chars().take(max).collect();
-    format!("{cut}…")
+    out
 }
 
 #[cfg(test)]
@@ -728,6 +734,108 @@ mod tests {
         assert_eq!(evs.len(), 2);
         assert_eq!(evs[0].kind, "notify");
         assert_eq!(evs[1].kind, "prompt");
+    }
+
+    /// The regression that motivated the fix: a cwd whose byte length lands
+    /// inside a multi-byte character of the path (`C:\proj` against
+    /// `C:\projé\x.ts`) sliced the string by byte index and panicked. With
+    /// `panic = "abort"` in release, one such tool call took the app down.
+    #[test]
+    fn a_cwd_prefix_that_cuts_a_multibyte_char_leaves_the_path_whole() {
+        assert_eq!(relative_path(r"C:\proj", r"C:\projé\x.ts"), "C:/projé/x.ts");
+    }
+
+    /// `cap` as it was before it cut first: strip every `\r` of the whole
+    /// string, count all its characters, then take the first `max`. The
+    /// oracle for the cheaper version, which must give the same bytes.
+    fn old_cap(s: &str, max: usize) -> String {
+        let one_line = s.replace(['\r'], "");
+        if one_line.chars().count() <= max {
+            return one_line;
+        }
+        let cut: String = one_line.chars().take(max).collect();
+        format!("{cut}…")
+    }
+
+    /// A preview is cut to 120 or 400 characters, from strings that can be a
+    /// whole file. Carriage returns do not count toward the cap, multi-byte
+    /// characters are never split, and the ellipsis appears exactly when
+    /// something was left out.
+    #[test]
+    fn cap_gives_the_same_preview_as_stripping_and_counting_everything() {
+        let long = "linha com acentuação\r\n".repeat(500);
+        let inputs = [
+            "",
+            "abc",
+            "\r",
+            "\r\r\r",
+            "abcde",
+            "abcdef",
+            "a\rb\rc\rd\re",
+            "a\rb\rc\rd\re\rf",
+            "abcde\r",
+            "abcde\r\r\rf",
+            "\r\rabcde",
+            "é🙂ção\r\n",
+            "🙂🙂🙂🙂🙂🙂",
+            "one\r\ntwo\r\nthree",
+            long.as_str(),
+        ];
+        for s in inputs {
+            for max in [0, 1, 2, 5, 6, DETAIL_CAP, TEXT_CAP, 20_000] {
+                assert_eq!(cap(s, max), old_cap(s, max), "{s:?} at {max}");
+            }
+        }
+    }
+
+    /// The tool's input is read in place (a `Write` carries the whole file
+    /// it wrote): the event says what it always said.
+    #[test]
+    fn a_tool_event_reads_its_input_without_changing_what_it_says() {
+        let content = "fn main() {}\r\n".repeat(2_000);
+        let write = serde_json::json!({
+            "type": "assistant", "cwd": "C:\\proj",
+            "message": { "id": "w1", "content": [
+                { "type": "tool_use", "id": "t1", "name": "Write", "input": { "file_path": "C:\\proj\\src\\main.rs", "content": content } },
+                { "type": "tool_use", "id": "t2", "name": "Bash", "input": { "command": format!("echo {}\r\n", "x".repeat(300)) } },
+                { "type": "tool_use", "id": "t3", "name": "Read" },
+                { "type": "tool_use", "id": "t4", "name": "TodoWrite", "input": { "todos": [{ "content": "a\r\nb", "status": "done" }, { "content": 5 }] } },
+                { "type": "tool_use", "id": "t5", "name": "mcp__server__tool", "input": "not an object" }
+            ]}
+        })
+        .to_string();
+        let evs = parse_all(&[&write]);
+        let json: Vec<serde_json::Value> = evs.iter().map(|e| serde_json::to_value(e).unwrap()).collect();
+        assert_eq!(json, [
+            serde_json::json!({ "kind": "tool", "at": 0, "toolId": "t1", "tool": "Write", "op": "write", "path": "src/main.rs", "added": 2000 }),
+            serde_json::json!({ "kind": "tool", "at": 0, "toolId": "t2", "tool": "Bash", "op": "run", "detail": old_cap(&format!("echo {}", "x".repeat(300)), DETAIL_CAP) }),
+            serde_json::json!({ "kind": "tool", "at": 0, "toolId": "t3", "tool": "Read", "op": "read" }),
+            serde_json::json!({ "kind": "tool", "at": 0, "toolId": "t4", "tool": "TodoWrite", "op": "todo", "todos": [{ "content": "a\nb", "status": "done" }] }),
+            serde_json::json!({ "kind": "tool", "at": 0, "toolId": "t5", "tool": "mcp__server__tool", "op": "other", "detail": "server · tool" }),
+        ]);
+    }
+
+    /// A tool result can be the whole output of a command; the event keeps a
+    /// trimmed, capped preview and the task id, as before.
+    #[test]
+    fn a_tool_result_reads_its_text_without_changing_what_it_says() {
+        let output = format!("  \r\nTask #12: done\r\n{}  \n", "saída ".repeat(1_000));
+        let line = serde_json::json!({
+            "type": "user",
+            "message": { "content": [
+                { "type": "tool_result", "tool_use_id": "t1", "content": output },
+                { "type": "tool_result", "tool_use_id": "t2", "is_error": true, "content": [{ "type": "image" }, { "type": "text", "text": "  falhou  " }] },
+                { "type": "tool_result", "tool_use_id": "t3", "content": [{ "type": "image" }] }
+            ]}
+        })
+        .to_string();
+        let evs = parse_all(&[&line]);
+        let json: Vec<serde_json::Value> = evs.iter().map(|e| serde_json::to_value(e).unwrap()).collect();
+        assert_eq!(json, [
+            serde_json::json!({ "kind": "result", "at": 0, "toolId": "t1", "ok": true, "taskId": "12", "text": old_cap(output.trim(), DETAIL_CAP) }),
+            serde_json::json!({ "kind": "result", "at": 0, "toolId": "t2", "ok": false, "text": "falhou" }),
+            serde_json::json!({ "kind": "result", "at": 0, "toolId": "t3", "ok": true }),
+        ]);
     }
 
     #[test]

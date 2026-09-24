@@ -12,6 +12,7 @@ import { Check, ChevronDown, ChevronUp, Copy, Search, X } from "lucide-react";
 
 import { Modal } from "./Modal";
 import { useT } from "../../hooks/useT";
+import { reasonOf } from "../../lib/loading";
 import { copyText } from "../../lib/clipboard";
 import { locale } from "../../lib/i18n";
 import { ipc } from "../../lib/ipc";
@@ -54,7 +55,7 @@ export function TranscriptModal() {
         if (alive) setBlocks(transcriptBlocks(events));
       })
       .catch((e) => {
-        if (alive) setError(String(e));
+        if (alive) setError(reasonOf(e));
       });
     return () => {
       alive = false;

@@ -10,7 +10,7 @@
  * back there. The editor configures the stages; the terminal gives the order.
  */
 import { useMemo, useState } from "react";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../lib/confirmation";
 import { ArrowDown, ArrowUp, Cable, ChevronDown, Plus, Trash2 } from "lucide-react";
 
 import { Modal } from "./Modal";
@@ -18,7 +18,7 @@ import { TerminalMark } from "../BrandIcon";
 import { useT } from "../../hooks/useT";
 import { commitCanvasExternal } from "../../lib/canvasWrite";
 import { patchItemOfType, removeItemAndEdges } from "../../lib/canvasOps";
-import { flowAgents, FLOW_PRESETS, type FlowItem } from "../../lib/flow";
+import { flowAgents, FLOW_PRESETS, prepareFlowStages, type FlowItem } from "../../lib/flow";
 import { cancelRunsOf, liveRunsOf } from "../../lib/flowRun";
 import { baseName } from "../../lib/terminals";
 import {
@@ -61,6 +61,7 @@ export function FlowModal() {
   );
   const [trigger, setTrigger] = useState(item ? item.trigger !== false : true);
   const [touched, setTouched] = useState(false);
+  const [emptyStages, setEmptyStages] = useState<number[]>([]);
 
   /** The CLIs already hooked to this card — information, not configuration. */
   const wired = useMemo(() => {
@@ -72,6 +73,9 @@ export function FlowModal() {
 
   const patchStage = (i: number, patch: Partial<FlowStage>) => {
     setTouched(true);
+    if ("prompt" in patch && patch.prompt?.trim()) {
+      setEmptyStages((current) => current.filter((index) => index !== i));
+    }
     setStages((cur) => cur.map((s, j) => (j === i ? { ...s, ...patch } : s)));
   };
   const moveStage = (i: number, dir: -1 | 1) => {
@@ -96,18 +100,16 @@ export function FlowModal() {
   const save = () => {
     if (!item) return closeModal();
     const cleanName = name.trim().slice(0, FLOW_NAME_MAX) || DEFAULT_FLOW_NAME;
-    // An empty stage is not a stage: the briefing `yard flow stage` hands over
-    // would carry no instruction at all, and the CLI would burn a whole turn
-    // guessing. They are dropped here instead of being refused, so a row the
-    // user added and left blank simply does not become part of the esteira —
-    // and the count in the toast says what actually got saved.
-    const cleanStages = stages
-      .map((s) => ({
-        prompt: s.prompt.trim(),
-        ...(s.label?.trim() ? { label: s.label.trim() } : {}),
-      }))
-      .filter((s) => s.prompt.length > 0);
-    const emptyCount = stages.length - cleanStages.length;
+    const prepared = prepareFlowStages(stages);
+    if (!prepared.valid) {
+      setEmptyStages(prepared.emptyIndexes);
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLTextAreaElement>(".flow-step-prompt[aria-invalid='true']")?.focus();
+      });
+      return;
+    }
+    setEmptyStages([]);
+    const cleanStages = prepared.stages;
     commitCanvasExternal(groupId, (c) =>
       patchItemOfType(c, item.id, "flow", {
         name: cleanName,
@@ -118,10 +120,6 @@ export function FlowModal() {
         h: Math.max(item.h, flowCardHeight(cleanStages.length)),
       }),
     );
-    const discarded =
-      emptyCount > 0
-        ? " " + t("{n} etapa(s) sem prompt foram descartadas.", { n: emptyCount })
-        : "";
     useUI
       .getState()
       .showToast(
@@ -137,7 +135,7 @@ export function FlowModal() {
               })
             : t('Fluxo "{name}" salvo — conecte uma CLI ao cartão (tecla C) para armá-lo.', {
                 name: cleanName,
-              })) + discarded,
+              })),
         cleanStages.length === 0 ? "error" : "info",
       );
     closeModal();
@@ -284,8 +282,15 @@ export function FlowModal() {
                 value={s.prompt}
                 placeholder={t("O que esta etapa deve fazer com a tarefa que chegar…")}
                 aria-label={t("Instruções da etapa {n}", { n: i + 1 })}
+                aria-invalid={emptyStages.includes(i) || undefined}
+                aria-describedby={emptyStages.includes(i) ? `flow-stage-error-${i}` : undefined}
                 onChange={(e) => patchStage(i, { prompt: e.target.value })}
               />
+              {emptyStages.includes(i) && (
+                <p className="hint hint--error" id={`flow-stage-error-${i}`} role="alert">
+                  {t("Escreva o que esta etapa deve fazer antes de salvar o fluxo.")}
+                </p>
+              )}
             </div>
           </div>
         ))}

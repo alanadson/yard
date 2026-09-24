@@ -1,5 +1,29 @@
 /* --- prompt composer --- */
 
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+
+.composer-attachment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 260px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+  font-size: var(--fs-xs);
+}
+
+.composer-attachment img { width: 60px; height: 44px; object-fit: contain; border-radius: 4px; }
+.composer-attachment span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-attachment .icon-btn { flex-shrink: 0; }
+.composer-mentions [role="option"] { display: flex; align-items: center; gap: 8px; }
+
 /* Floats over the workspace, anchored bottom right: it covers neither the
    sidebar nor the focused card's header, which is where the eye is. */
 /* In the middle of the window, like every other dialog. It sat in the
@@ -22,6 +46,7 @@
 }
 
 .composer {
+  overflow-y: auto;
   width: min(720px, 94vw);
   max-height: 86vh;
   display: flex;
@@ -36,6 +61,7 @@
 
 .composer-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 9px 9px 9px 14px;
@@ -93,13 +119,15 @@
 
 .composer-area {
   position: relative;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 .composer-input {
   display: block;
   width: 100%;
   resize: vertical;
-  min-height: 200px;
+  min-height: min(200px, 30vh);
   max-height: 56vh;
   border: none;
   background: transparent;
@@ -161,6 +189,8 @@
 
 .composer-foot {
   display: flex;
+  flex-wrap: wrap;
+  flex-shrink: 0;
   align-items: center;
   gap: 10px;
   padding: 8px 10px 10px 14px;
@@ -171,7 +201,7 @@
    as one group — an `auto` margin per button would have spread them across the
    footer once there was more than one. */
 .composer-hint {
-  flex: 1;
+  flex: 1 1 220px;
   min-width: 0;
   font-size: var(--fs-xs);
   color: var(--text-dim);
@@ -181,4 +211,6 @@
 .composer-foot .btn,
 .composer-foot .composer-save {
   flex-shrink: 0;
+  max-width: 100%;
+  white-space: normal;
 }

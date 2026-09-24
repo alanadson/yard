@@ -1,14 +1,16 @@
 import { ipc, on, type BridgeResponse } from "./ipc";
+import { AsyncDisposer } from "./disposables";
+import { uiLog } from "./log";
 
 /**
  * Lightweight startup listener. The command engine is downloaded only when a
  * CLI actually calls the bridge (or when the lazy prompt composer needs it).
  */
-export function startBridge(): () => void {
-  let unlisten: (() => void) | null = null;
-  let stopped = false;
-  void on
-    .bridgeRequest(async ({ id, request }) => {
+export function startBridge(
+  onError: (error: unknown) => void = (error) => uiLog.warn(`Bridge registration failed: ${error}`),
+): () => void {
+  const owner = new AsyncDisposer(onError);
+  void owner.add(on.bridgeRequest(async ({ id, request }) => {
       let response: BridgeResponse;
       try {
         const { handleBridgeRequest } = await import("./bridge");
@@ -17,13 +19,6 @@ export function startBridge(): () => void {
         response = { code: 1, output: `yard: erro interno: ${error}\n` };
       }
       void ipc.bridgeRespond(id, response).catch(() => {});
-    })
-    .then((dispose) => {
-      if (stopped) dispose();
-      else unlisten = dispose;
-    });
-  return () => {
-    stopped = true;
-    unlisten?.();
-  };
+    }));
+  return () => owner.dispose();
 }

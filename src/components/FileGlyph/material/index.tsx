@@ -1,3 +1,4 @@
+import { folded, resolveFileIcon } from "../resolve";
 /**
  * The Material Icon Theme — the real one, by Philipp Kief.
  *
@@ -29,11 +30,7 @@ interface MaterialTheme {
 const t = theme as unknown as MaterialTheme;
 
 /** Case-folded copies of the maps — the JSON mixes cases, our lookup doesn't. */
-function folded(map: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(map)) out[k.toLowerCase()] = v;
-  return out;
-}
+
 
 const FILE_NAMES = folded(t.fileNames);
 const FILE_EXTS = folded(t.fileExtensions);
@@ -49,16 +46,7 @@ function urlOf(def: string | undefined): string | null {
 }
 
 export function fileIconUrl(name: string): string | null {
-  const lower = name.toLowerCase();
-  const exact = urlOf(FILE_NAMES[lower]);
-  if (exact) return exact;
-  let dot = lower.indexOf(".");
-  while (dot !== -1) {
-    const hit = urlOf(FILE_EXTS[lower.slice(dot + 1)]);
-    if (hit) return hit;
-    dot = lower.indexOf(".", dot + 1);
-  }
-  return urlOf(t.file);
+  return resolveFileIcon(name, FILE_NAMES, FILE_EXTS, t.file, urlOf);
 }
 
 export function folderIconUrl(name: string, expanded?: boolean): string | null {

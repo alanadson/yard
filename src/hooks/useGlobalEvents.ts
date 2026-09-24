@@ -6,11 +6,7 @@
  * On boot we ask the backend who is running instead of assuming.
  */
 import { useEffect } from "react";
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
+import { notify } from "../lib/notifications";
 
 import { classifyPrompt, TAIL_CAP } from "../lib/blocked";
 import { AsyncDisposer } from "../lib/disposables";
@@ -21,7 +17,6 @@ import { shouldNotify } from "../lib/notifyAgent";
 import { useChanges } from "../stores/changesStore";
 import { useEditor } from "../stores/editorStore";
 import { notesCenterVisible } from "../stores/notesStore";
-import { pushOut } from "../lib/notifyOut";
 import { useProjects } from "../stores/projectsStore";
 import { readTail, useTerminals } from "../stores/terminalsStore";
 import { useUI } from "../stores/uiStore";
@@ -148,16 +143,7 @@ export function useGlobalEvents() {
               ? t("{title} terminou em {project}.", vars)
               : t("{title} terminou.", vars);
           try {
-            let ok = await isPermissionGranted();
-            if (!ok) ok = (await requestPermission()) === "granted";
-            if (ok) {
-              sendNotification({ title: "Yard", body });
-            }
-            // And off the machine, when an address is configured: a balloon
-            // only works for someone who is in front of the screen, and an
-            // agent frozen on a question at 3am is exactly the case where
-            // nobody is (`lib/notifyOut.ts`).
-            pushOut("Yard", body, asking ? "blocked" : "finished");
+            await notify({ title: "Yard", body, event: asking ? "blocked" : "finished" });
           } catch (e) {
             console.warn("[yard] notificacao indisponivel", e);
           }

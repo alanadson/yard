@@ -9,6 +9,14 @@
  */
 import { NODE_MIN_H, NODE_MIN_W, type Box, type CanvasData, type CanvasNode } from "./canvas";
 
+/** Concealing content is presentation only; text, geometry and connections stay intact. */
+export function setContentHidden(c: CanvasData, id: string, hidden: boolean, initial?: Box): CanvasData {
+  const node = c.nodes[id] ?? initial;
+  if (node) return { ...c, nodes: { ...c.nodes, [id]: { ...node, contentHidden: hidden } } };
+  return { ...c, items: c.items.map((item) => item.id === id && item.type === "note"
+    ? { ...item, contentHidden: hidden } : item) };
+}
+
 // ---------------------------------------------------------------------------
 // paint order
 // ---------------------------------------------------------------------------
@@ -68,8 +76,8 @@ export function setPinned(c: CanvasData, id: string, pinned: boolean): CanvasDat
 /** Everything fixed in place, cards and items together. */
 export function pinnedIds(c: CanvasData): Set<string> {
   const out = new Set<string>();
-  for (const [id, n] of Object.entries(c.nodes)) if (n.pinned) out.add(id);
-  for (const it of c.items) if (it.pinned) out.add(it.id);
+  for (const [id, n] of Object.entries(c.nodes)) if (n.pinned || n.dock) out.add(id);
+  for (const it of c.items) if (it.pinned || it.dock) out.add(it.id);
   return out;
 }
 

@@ -1,3 +1,4 @@
+import { inlineCode } from "./markdownCode";
 /**
  * Review annotations: comments dropped on diff lines and shipped back to the
  * agent that wrote them.
@@ -47,21 +48,7 @@ export interface ReviewComment {
  * Diff lines are arbitrary source, and Markdown inside a prompt is still read
  * by the agent as Markdown.
  */
-export function inlineCode(content: string): string {
-  let longest = 0;
-  let run = 0;
-  for (const char of content) {
-    if (char !== "`") {
-      run = 0;
-      continue;
-    }
-    run += 1;
-    if (run > longest) longest = run;
-  }
-  const fence = "`".repeat(longest + 1);
-  const pad = content.startsWith("`") || content.endsWith("`") ? " " : "";
-  return `${fence}${pad}${content}${pad}${fence}`;
-}
+export { inlineCode } from "./markdownCode";
 
 /** One line, whitespace collapsed — a comment body is a note, not a document. */
 function oneLine(value: string, max = 600): string {

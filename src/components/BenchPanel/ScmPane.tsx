@@ -69,6 +69,7 @@ import {
 // same marks, and duplicating the rules here was how they started to diverge.
 import "../ChangesPanel/changes.css";
 import "./scm.css";
+import { submitQuestion } from "./askSubmission";
 
 import { ContextMenu, type MenuAnchor, type MenuEntry } from "../ContextMenu";
 import { GitStatusBadge, PathLabel } from "../FileMarks";
@@ -125,6 +126,10 @@ import { useEditor } from "../../stores/editorStore";
 import { useScm, type ScmSection } from "../../stores/scmStore";
 import { useUI } from "../../stores/uiStore";
 import { useT } from "../../hooks/useT";
+import { useProjects } from "../../stores/projectsStore";
+import { useCheckpoints } from "../../stores/checkpointsStore";
+import { checkpointScope } from "../../lib/checkpoints";
+import { failureMessage, reasonOf } from "../../lib/loading";
 import { tn } from "../../lib/i18n";
 
 /** Read context, built once and handed down to the sections. */
@@ -196,9 +201,10 @@ export function ScmPane({ focusTick }: { focusTick: number }) {
 
   const run = useCallback(
     async (label: string, fn: () => Promise<unknown>) => {
-      if (!root) return;
+      if (!root) return t("Nenhum projeto aberto");
       const err = await useScm.getState().run(root, label, fn);
       if (err) showToast(err, "error");
+      return err;
     },
     [root, showToast],
   );
@@ -271,6 +277,11 @@ export function ScmPane({ focusTick }: { focusTick: number }) {
         onMenu={openMenu}
         counts={counts}
       />
+      <button className="btn btn--sm" onClick={() => {
+        const workspace = useProjects.getState();
+        const group = workspace.groups.find((row) => row.id === workspace.activeGroupId);
+        void useCheckpoints.getState().open(checkpointScope({ id: group?.id ?? root, cwd: root, groupId: group?.id ?? "", title: group?.name ?? t("Trabalho manual") }, group));
+      }}><History size={13} />{t("Checkpoints de código")}</button>
 
       {banner && (
         <div className={`scm-banner scm-banner--${banner.tone}`} role="status">
@@ -304,7 +315,7 @@ export function ScmPane({ focusTick }: { focusTick: number }) {
             role="tab"
             aria-selected={section === s.id}
             className={section === s.id ? "is-active" : ""}
-            data-tip={t("{label} — {tip}", { label: t(s.label), tip: t(s.tip) })}
+            data-tip={t("{label}: {tip}", { label: t(s.label), tip: t(s.tip) })}
             aria-label={t(s.label)}
             onClick={() => setSection(s.id)}
           >
@@ -363,7 +374,7 @@ export function ScmPane({ focusTick }: { focusTick: number }) {
 // top bar: branch, remote, refresh, ⋯
 // ---------------------------------------------------------------------------
 
-type Run = (label: string, fn: () => Promise<unknown>) => Promise<void>;
+type Run = (label: string, fn: () => Promise<unknown>) => Promise<string | null>;
 type ConfirmAction = (spec: ScmConfirmSpec, onConfirm: () => void) => void;
 type OnMenu = (e: ReactMouseEvent, items: MenuEntry[]) => void;
 
@@ -415,7 +426,7 @@ function ScmToolbar({
       initial: title,
       onConfirm: (value) => {
         const chosen = value.trim() || title;
-        void run(t("abrindo o PR"), async () => {
+        return run(t("abrindo o PR"), async () => {
           const url = await ipc.forgePrCreate(ctx.root, branch, chosen, "", null, false);
           await useForge.getState().refresh(ctx.root, branch, true);
           if (url) openWebAddress(url);
@@ -524,8 +535,9 @@ function ScmToolbar({
             title: t("Guardar o quê?"),
             placeholder: t("Uma descrição (opcional)"),
             confirm: t("Guardar"),
+            allowEmpty: true,
             onConfirm: (theText) =>
-              void run(t("guardando"), () => ipc.scmStashPush(ctx.root, theText || null, true, false)),
+              run(t("guardando"), () => ipc.scmStashPush(ctx.root, theText || null, true, false)),
           }),
       },
       {
@@ -545,7 +557,7 @@ function ScmToolbar({
             placeholder: t("feature/algo"),
             confirm: t("Criar e trocar"),
             onConfirm: (itemName) =>
-              itemName && void run(t("criando"), () => ipc.scmBranchCreate(ctx.root, itemName, null, true)),
+              run(t("criando"), () => ipc.scmBranchCreate(ctx.root, itemName, null, true)),
           }),
       },
       {
@@ -558,7 +570,7 @@ function ScmToolbar({
             placeholder: t("v1.0.0"),
             confirm: t("Criar"),
             onConfirm: (name) =>
-              name && void run(t("etiquetando"), () => ipc.scmTagCreate(ctx.root, name, null, null)),
+              run(t("etiquetando"), () => ipc.scmTagCreate(ctx.root, name, null, null)),
           }),
       },
       { kind: "sep" },
@@ -701,7 +713,8 @@ interface AskSpec {
   placeholder: string;
   confirm: string;
   initial?: string;
-  onConfirm: (value: string) => void;
+  allowEmpty?: boolean;
+  onConfirm: (value: string) => Promise<string | null>;
 }
 
 /**
@@ -712,6 +725,8 @@ interface AskSpec {
  */
 function AskLine({ spec, onClose }: { spec: AskSpec; onClose: () => void }) {
   const [value, setValue] = useState(spec.initial ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const t = useT();
   const ref = useRef<HTMLInputElement>(null);
   // The top bar and the branches section can each have one open at the same
@@ -722,13 +737,18 @@ function AskLine({ spec, onClose }: { spec: AskSpec; onClose: () => void }) {
     ref.current?.select();
   }, []);
 
-  const confirmAction = () => {
-    spec.onConfirm(value.trim());
-    onClose();
+  const confirmAction = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    const result = await submitQuestion(value, !!spec.allowEmpty, spec.onConfirm, onClose);
+    setError(result === "required" ? t("Preencha este campo para continuar.") : result);
+    setBusy(false);
+    if (result) ref.current?.focus();
   };
 
   return (
-    <div className="scm-ask">
+    <div className="scm-ask" aria-busy={busy}>
       <label className="scm-ask-label" htmlFor={id}>
         {spec.title}
       </label>
@@ -737,20 +757,24 @@ function AskLine({ spec, onClose }: { spec: AskSpec; onClose: () => void }) {
           id={id}
           ref={ref}
           value={value}
+          disabled={busy}
+          aria-invalid={!!error}
+          aria-describedby={error ? `${id}-error` : undefined}
           placeholder={spec.placeholder}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") confirmAction();
-            if (e.key === "Escape") onClose();
+            if (e.key === "Enter") { e.preventDefault(); void confirmAction(); }
+            if (e.key === "Escape") { e.stopPropagation(); if (!busy) onClose(); }
           }}
         />
-        <button className="btn btn--sm btn--primary" onClick={confirmAction}>
-          {spec.confirm}
+        <button className="btn btn--sm btn--primary" disabled={busy} onClick={() => void confirmAction()}>
+          {busy ? t("Executando…") : spec.confirm}
         </button>
-        <button className="icon-btn" aria-label={t("Cancelar")} onClick={onClose}>
+        <button className="icon-btn" disabled={busy} aria-label={t("Cancelar")} onClick={onClose}>
           <X size={12} />
         </button>
       </div>
+      {error && <p className="hint hint--error" id={`${id}-error`} role="alert">{error}</p>}
     </div>
   );
 }
@@ -891,7 +915,7 @@ function CommitBox({
           onClick={() => void doCommit()}
         >
           <Check size={13} aria-hidden="true" />
-          {busy === "commitando" ? t("Gravando…") : action.label}
+          {busy === t("commitando") ? t("Gravando…") : action.label}
         </button>
         <button
           className={`btn btn--sm${amend ? " is-active" : ""}`}
@@ -1106,7 +1130,7 @@ const FileRow = memo(function FileRow({
       },
       copyText: (text: string) => void copyText(text),
       reveal: (osPath: string) => {
-        void ipc.revealPath(osPath).catch((e) => showToast(String(e), "error"));
+        void ipc.revealPath(osPath).catch((e) => showToast(failureMessage(e), "error"));
       },
     }),
     [ctx.root, ctx.projectId, row.path, row.untracked, run, confirmAction, showToast, t],
@@ -1137,8 +1161,8 @@ const FileRow = memo(function FileRow({
         <div className="scm-row-acts">
           <button
             className="icon-btn"
-            data-tip="Abrir o diff numa aba"
-            aria-label={`Abrir o diff de ${row.path} numa aba`}
+            data-tip={t("Abrir o diff numa aba")}
+            aria-label={t("Abrir o diff de {path} numa aba", { path: row.path })}
             onClick={() => actions.openDiffTab(row)}
           >
             <SquareArrowOutUpRight size={12} />
@@ -1226,7 +1250,7 @@ function RowDiff({
         setDiff(d);
         setSelection({});
       })
-      .catch((e) => alive && setError(String(e)));
+      .catch((e) => alive && setError(reasonOf(e)));
     return () => {
       alive = false;
     };
@@ -1282,13 +1306,13 @@ function RowDiff({
           onApplyHunk={() =>
             applyIt(
               patchForHunks(diff.text, [h.index]),
-              staged ? "despreparando" : "preparando",
+              staged ? t("despreparando") : t("preparando"),
             )
           }
           onApplyLines={() =>
             applyIt(
               patchForLines(diff.text, h.index, selection[h.index] ?? EMPTY_SET),
-              staged ? "despreparando" : "preparando",
+              staged ? t("despreparando") : t("preparando"),
             )
           }
           onDiscardHunk={() =>
@@ -1497,7 +1521,7 @@ function CommitRow({
     void ipc
       .scmCommitDetail(ctx.root, commit.hash)
       .then((d) => alive && setDetail(d))
-      .catch((e) => showToast(String(e), "error"));
+      .catch((e) => showToast(failureMessage(e), "error"));
     return () => {
       alive = false;
     };
@@ -1511,7 +1535,7 @@ function CommitRow({
         placeholder: t("feature/algo"),
         confirm: t("Criar e trocar"),
         onConfirm: (name) =>
-          name && void run(t("criando"), () => ipc.scmBranchCreate(ctx.root, name, start, true)),
+          run(t("criando"), () => ipc.scmBranchCreate(ctx.root, name, start, true)),
       }),
     revert: (hash: string) =>
       void run(t("revertendo"), async () => {
@@ -1528,7 +1552,7 @@ function CommitRow({
         placeholder: t("v1.0.0"),
         confirm: t("Criar"),
         onConfirm: (name) =>
-          name && void run(t("etiquetando"), () => ipc.scmTagCreate(ctx.root, name, null, hash)),
+          run(t("etiquetando"), () => ipc.scmTagCreate(ctx.root, name, null, hash)),
       }),
     copyText: (text: string) => void copyText(text),
   };
@@ -1597,6 +1621,7 @@ function CommitFile({
   hash: string;
   file: { path: string; status: string; additions: number | null; deletions: number | null };
 }) {
+  const t = useT();
   const [isOpen, setIsOpen] = useState(false);
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const showToast = useUI((s) => s.showToast);
@@ -1607,7 +1632,7 @@ function CommitFile({
     void ipc
       .scmCommitFileDiff(ctx.root, hash, file.path)
       .then((d) => alive && setDiff(d))
-      .catch((e) => showToast(String(e), "error"));
+      .catch((e) => showToast(failureMessage(e), "error"));
     return () => {
       alive = false;
     };
@@ -1624,8 +1649,8 @@ function CommitFile({
         <div className="scm-row-acts">
           <button
             className="icon-btn"
-            data-tip="Abrir o diff deste commit numa aba"
-            aria-label={`Abrir o diff de ${file.path} neste commit numa aba`}
+            data-tip={t("Abrir o diff deste commit numa aba")}
+            aria-label={t("Abrir o diff de {path} neste commit numa aba", { path: file.path })}
             onClick={() =>
               useEditor.getState().openDiff(file.path, { source: "commit", hash })
             }
@@ -1686,7 +1711,7 @@ function BranchesSection({
         confirm: tr("Criar e trocar"),
         initial: start.includes("/") ? start.split("/").slice(1).join("/") : "",
         onConfirm: (name) =>
-          name && void run(tr("criando"), () => ipc.scmBranchCreate(ctx.root, name, start, true)),
+          run(tr("criando"), () => ipc.scmBranchCreate(ctx.root, name, start, true)),
       }),
     merge: (name: string) =>
       void run(tr("mesclando"), async () => {
@@ -1711,7 +1736,7 @@ function BranchesSection({
         confirm: tr("Renomear"),
         initial: name,
         onConfirm: (next) =>
-          next && void run(tr("renomeando"), () => ipc.scmBranchRename(ctx.root, name, next)),
+          run(tr("renomeando"), () => ipc.scmBranchRename(ctx.root, name, next)),
       }),
     deleteBranch: (name: string, force: boolean) =>
       confirmAction(branchDeleteSpec(name, force), () =>
@@ -1748,7 +1773,7 @@ function BranchesSection({
               placeholder: tr("feature/algo"),
               confirm: tr("Criar e trocar"),
               onConfirm: (name) =>
-                name && void run(tr("criando"), () => ipc.scmBranchCreate(ctx.root, name, null, true)),
+                run(tr("criando"), () => ipc.scmBranchCreate(ctx.root, name, null, true)),
             })
           }
         >
@@ -1910,7 +1935,7 @@ function StashSection({
       void ipc
         .scmStashShow(ctx.root, index)
         .then((text) => setShowing({ index, text }))
-        .catch((e) => showToast(String(e), "error"));
+        .catch((e) => showToast(failureMessage(e), "error"));
     },
   };
 

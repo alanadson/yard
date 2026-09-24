@@ -31,6 +31,8 @@ import { useT } from "../../hooks/useT";
 
 interface Props {
   text: string;
+  /** Reuse the parsed revision shared with the outline and counters. */
+  blocks?: Block[];
   /** Project root of the document — images and relative links hang off it. */
   root: string;
   /** The document's own path, relative to the root. */
@@ -511,6 +513,7 @@ function Blocks({ blocks, onTask, onGoToLine, top, ...rest }: BlocksProps) {
 
 function MarkdownPreviewImpl({
   text,
+  blocks: parsed,
   root,
   path,
   onTask,
@@ -518,7 +521,7 @@ function MarkdownPreviewImpl({
   onOpenUrl,
   onGoToLine,
 }: Props) {
-  const blocks = parseDoc(text);
+  const blocks = parsed ?? parseDoc(text);
   const title = blocks.find((b) => b.t === "h");
 
   return (

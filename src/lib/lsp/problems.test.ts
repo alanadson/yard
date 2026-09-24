@@ -89,6 +89,32 @@ describe("receive", () => {
     expect(problemRows(state)).toHaveLength(1);
   });
 
+  /**
+   * Servers publish for every file they compile, clean ones included, and
+   * republish the same list after each edit. A fresh map every time made
+   * every subscriber of the store (the bench counts problems) render again
+   * for news that changed nothing.
+   */
+  it("leaves the state as it was when a file with nothing reports it is clean", () => {
+    const state = receive(NO_PROBLEMS, ROOT, A, [diag(3, 1, "boom")]);
+
+    expect(receive(state, ROOT, B, [])).toBe(state);
+  });
+
+  it("leaves the state as it was when a file republishes the same diagnostics", () => {
+    const state = receive(NO_PROBLEMS, ROOT, A, [diag(3, 1, "boom"), diag(9, 2, "meh")]);
+
+    expect(receive(state, ROOT, A, [diag(3, 1, "boom"), diag(9, 2, "meh")])).toBe(state);
+  });
+
+  it("still takes a republish whose only change is in the raw entry a quick fix reads", () => {
+    const state = receive(NO_PROBLEMS, ROOT, A, [{ ...diag(3, 1, "boom"), code: 1 }]);
+    const next = receive(state, ROOT, A, [{ ...diag(3, 1, "boom"), code: 2 }]);
+
+    expect(next).not.toBe(state);
+    expect(diagnosticsAt(next, A, 3)).toEqual([{ ...diag(3, 1, "boom"), code: 2 }]);
+  });
+
   it("treats a diagnostic with no severity as an error", () => {
     // The protocol allows it, and the safe reading of "something is wrong
     // and I did not say how badly" is not "hint".
