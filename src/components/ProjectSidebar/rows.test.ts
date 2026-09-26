@@ -91,12 +91,12 @@ describe("treeRows", () => {
 describe("cardOrigin", () => {
   const projects = [
     { id: "p1", name: "yard", path: "C:\\Workspace\\Code\\yard" },
-    { id: "p2", name: "Interagia", path: "C:/Workspace/Code/interagia" },
+    { id: "p2", name: "Acme", path: "C:/Workspace/Code/acme" },
   ];
 
   it("names the project the card is running in", () => {
     expect(cardOrigin(projects, "C:/Workspace/Code/yard")).toBe("yard");
-    expect(cardOrigin(projects, "C:\\Workspace\\Code\\interagia")).toBe("Interagia");
+    expect(cardOrigin(projects, "C:\\Workspace\\Code\\acme")).toBe("Acme");
   });
 
   it("a folder inside the project still belongs to it", () => {
@@ -113,7 +113,7 @@ describe("cardOrigin", () => {
   });
 
   it("a folder outside every project has no origin to show", () => {
-    expect(cardOrigin(projects, "C:/Users/alanr")).toBeNull();
+    expect(cardOrigin(projects, "C:/Users/alguem")).toBeNull();
     expect(cardOrigin(projects, "")).toBeNull();
   });
 

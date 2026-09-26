@@ -125,10 +125,11 @@ While the app is open, Windows keeps the `.exe` locked — in that case the
 launcher doesn't rebuild; it just brings the existing window to the front.
 
 If builds still feel slow, the usual culprit on Windows is Defender scanning
-every artifact cargo writes. From an **administrator** PowerShell:
+every artifact cargo writes. From an **administrator** PowerShell, with the
+path of your own clone:
 
 ```powershell
-Add-MpPreference -ExclusionPath "C:\Workspace\Code\yard\src-tauri\target"
+Add-MpPreference -ExclusionPath "C:\path\to\yard\src-tauri\target"
 ```
 
 | Variable        | What for |

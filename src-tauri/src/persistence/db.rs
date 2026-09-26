@@ -756,11 +756,11 @@ mod tests {
             CREATE TABLE projects_prototipo (id TEXT, name TEXT, path TEXT, color TEXT, sort INTEGER, created_at INTEGER);
             CREATE TABLE groups_prototipo (id TEXT, project_id TEXT, name TEXT, layout_json TEXT, suspended INTEGER, sort INTEGER);
             CREATE TABLE terminals_prototipo (id TEXT, group_id TEXT, title TEXT, kind TEXT, program TEXT, args_json TEXT, cwd TEXT, resume_json TEXT, sort INTEGER, alive INTEGER);
-            INSERT INTO projects_prototipo VALUES ('velho', 'crm-ia', 'C:\Workspace\Code\crm-ia', NULL, 0, 1);
+            INSERT INTO projects_prototipo VALUES ('velho', 'acme', 'C:\Workspace\Code\acme', NULL, 0, 1);
             INSERT INTO groups_prototipo VALUES ('gv', 'velho', 'Principal', '{}', 0, 0);
-            INSERT INTO terminals_prototipo VALUES ('tv', 'gv', 'Claude Code', 'agent', 'claude.exe', '[]', 'C:\Workspace\Code\crm-ia', NULL, 0, 1);
+            INSERT INTO terminals_prototipo VALUES ('tv', 'gv', 'Claude Code', 'agent', 'claude.exe', '[]', 'C:\Workspace\Code\acme', NULL, 0, 1);
             INSERT INTO projects(id, name, path, color, sort, created_at)
-              VALUES ('novo', 'crm-ia', 'C:\Workspace\Code\crm-ia', NULL, 0, 2);
+              VALUES ('novo', 'acme', 'C:\Workspace\Code\acme', NULL, 0, 2);
             "#,
         )
         .unwrap();
@@ -771,7 +771,7 @@ mod tests {
         // The old project does not come back as a duplicate…
         let n: i64 = c
             .query_row(
-                "SELECT COUNT(*) FROM projects WHERE path = 'C:\\Workspace\\Code\\crm-ia'",
+                "SELECT COUNT(*) FROM projects WHERE path = 'C:\\Workspace\\Code\\acme'",
                 [],
                 |r| r.get(0),
             )

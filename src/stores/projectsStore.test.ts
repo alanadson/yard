@@ -829,12 +829,12 @@ describe("boards", () => {
     const fromOther = useProjects.getState().addTerminal({
       groupId: b,
       program: "pwsh",
-      cwd: "C:/Workspace/Code/interagia",
+      cwd: "C:/Workspace/Code/acme",
     });
 
     expect(useProjects.getState().terminal(fromYard)?.cwd).toBe("C:/Workspace/Code/yard");
     expect(useProjects.getState().terminal(fromOther)?.cwd).toBe(
-      "C:/Workspace/Code/interagia",
+      "C:/Workspace/Code/acme",
     );
     expect(useProjects.getState().terminalsOn(b, "canvas")).toHaveLength(2);
   });

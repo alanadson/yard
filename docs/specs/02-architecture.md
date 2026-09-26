@@ -402,8 +402,7 @@ The project watcher uses bounded, nonblocking intake. A positive `dropped`
 count also means the consumer must resynchronize: invalidate root diffs,
 refresh loaded directories and clean open documents, mark dirty drafts stale,
 and age or repeat the file index. Shared directory exclusions retain explicit
-watcher/index differences. See the [implementation record](../refactoring-2026-09.md)
-for regression evidence and validation limits.
+watcher/index differences.
 
 ### Canvas item sizing
 

@@ -119,7 +119,7 @@ describe("extractBoards", () => {
 
   it("each canvas becomes its own board, in the order the groups come", () => {
     const out = extractBoards(
-      [project("p1", "yard"), project("p2", "Interagia")],
+      [project("p1", "yard"), project("p2", "Acme")],
       [
         group("g1", "p1", "Grupo 1", { canvas: drawnOn }),
         group("g2", "p2", "Principal", { canvas: drawnOn }),
@@ -128,7 +128,7 @@ describe("extractBoards", () => {
     );
 
     const boards = out.groups.filter((g) => g.projectId === null);
-    expect(boards.map((b) => b.name)).toEqual(["yard · Grupo 1", "Interagia · Principal"]);
+    expect(boards.map((b) => b.name)).toEqual(["yard · Grupo 1", "Acme · Principal"]);
     expect(boards.map((b) => b.sort)).toEqual([0, 1]);
   });
 
