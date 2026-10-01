@@ -56,7 +56,7 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "4", default-features = false, features = ["deflate"] }
 anyhow = "1"
 parking_lot = "0.12"
 # Agent<->app bridge: named-pipe server (bridge.rs). Tauri already brings
