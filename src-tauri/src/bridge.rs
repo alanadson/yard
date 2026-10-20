@@ -1698,8 +1698,17 @@ mod tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or_default();
-            let dir = std::env::temp_dir()
-                .join(format!("yard-cli-{tag}-{}-{nanos}", std::process::id()));
+            // The long form of the temp dir: on the windows-latest runner
+            // `TEMP` is `C:\Users\RUNNER~1\...`, and the client reports its
+            // folder with 8.3 names expanded, so a scratch path kept short
+            // never equals the `cwd` a request carries. The short form has a
+            // test of its own (`short_path_name`).
+            let temp = std::env::temp_dir();
+            let temp = std::fs::canonicalize(&temp)
+                .ok()
+                .and_then(|long| long.to_str().and_then(|s| s.strip_prefix(r"\\?\")).map(std::path::PathBuf::from))
+                .unwrap_or(temp);
+            let dir = temp.join(format!("yard-cli-{tag}-{}-{nanos}", std::process::id()));
             std::fs::create_dir_all(&dir).expect("scratch dir");
             Scratch(dir)
         }
