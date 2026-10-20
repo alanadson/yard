@@ -45,6 +45,12 @@ it("refuses malformed certificate identities before they reach the bundler confi
   }
 });
 
+// A cold Windows PowerShell plus a 2048-bit key outran vitest's default 5 s on
+// the windows-latest runner (release run 39363219714, full suite in parallel)
+// while taking under a second locally. The budget below is for that spawn;
+// the spawn's own deadline turns a hung PowerShell into a failure that says so.
+const POWERSHELL_DEADLINE_MS = 25_000;
+
 it("reads real Windows certificate metadata without importing a key into the user's certificate store", () => {
   const directory = mkdtempSync(join(tmpdir(), "yard-signing-check-"));
   try {
@@ -61,8 +67,9 @@ try { @(Get-ReleaseCertificateMetadata -Certificates @($certificate)) | ConvertT
 finally { $certificate.Dispose(); $rsa.Dispose() }
 `);
     const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", fixture,
-      join(dirname(fileURLToPath(import.meta.url)), "signing-certificate.ps1")], { encoding: "utf8", windowsHide: true });
-    expect(result.status, result.stderr).toBe(0);
+      join(dirname(fileURLToPath(import.meta.url)), "signing-certificate.ps1")],
+      { encoding: "utf8", windowsHide: true, timeout: POWERSHELL_DEADLINE_MS });
+    expect(result.status, result.error?.message ?? result.stderr).toBe(0);
     const record = JSON.parse(result.stdout.replace(/^\uFEFF/, ""));
     expect(record.hasPrivateKey).toBe(true);
     expect(record.usages).toEqual(["1.3.6.1.5.5.7.3.3"]);
@@ -71,4 +78,4 @@ finally { $certificate.Dispose(); $rsa.Dispose() }
     expect(dirname(resolve(directory))).toBe(resolve(tmpdir()));
     rmSync(directory, { recursive: true, force: true });
   }
-});
+}, POWERSHELL_DEADLINE_MS + 5_000);
