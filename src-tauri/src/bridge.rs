@@ -2052,6 +2052,56 @@ mod tests {
         }
     }
 
+    /// `dir` spelled through its 8.3 short names, as `GetShortPathNameW` does.
+    fn short_path_name(dir: &std::path::Path) -> std::path::PathBuf {
+        use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetShortPathNameW(long: *const u16, short: *mut u16, len: u32) -> u32;
+        }
+        let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut buf = vec![0u16; 1024];
+        // SAFETY: `wide` is NUL-terminated and the call writes at most
+        // `buf.len()` units into `buf`.
+        let len = unsafe { GetShortPathNameW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) } as usize;
+        assert!(len > 0 && len < buf.len(), "GetShortPathNameW failed for {}", dir.display());
+        buf.truncate(len);
+        std::path::PathBuf::from(std::ffi::OsString::from_wide(&buf))
+    }
+
+    /// The regression: on the windows-latest runner `TEMP` is
+    /// `C:\Users\RUNNER~1\...`, an 8.3 short name. `(Get-Location).Path` in
+    /// `yard.ps1` sent that folder in its long form (`runneradmin`) and the
+    /// native client sent the short form the process held, so one folder
+    /// reached the app as two strings and the v0.1.0 release validation failed
+    /// on the parity test above. On a volume with 8.3 names turned off the
+    /// short form is the long one and there is nothing to tell apart.
+    #[test]
+    fn a_working_directory_reached_through_its_8dot3_short_name_is_sent_as_powershell_sends_it() {
+        use std::os::windows::process::CommandExt;
+        let scratch = Scratch::new("short-cwd");
+        let exe = client_in(scratch.path());
+        let ps1 = scratch.path().join("yard.ps1");
+        std::fs::write(&ps1, YARD_PS1).unwrap();
+        let short = short_path_name(scratch.path());
+        let pipe = TestPipe::serve("short-cwd", vec![Some(r#"{"code":0}"#.to_string()); 2]);
+        let mut powershell = isolated("powershell.exe", &short);
+        powershell.raw_arg(format!(
+            "-NoProfile -ExecutionPolicy Bypass -File \"{}\" note write N --stdin",
+            ps1.display()
+        ));
+        let mut native = isolated(&exe, &short);
+        native.args(["note", "write", "N", "--stdin"]);
+        for cmd in [&mut powershell, &mut native] {
+            cmd.env("YARD_PIPE", &pipe.name);
+        }
+        let from_powershell = run(powershell, b"texto\r\n");
+        assert_eq!(from_powershell.code, 0, "{}", String::from_utf8_lossy(&from_powershell.stderr));
+        let from_native = run(native, b"texto\r\n");
+        assert_eq!(from_native.code, 0, "{}", String::from_utf8_lossy(&from_native.stderr));
+        assert_eq!(pipe.request(1)["cwd"], pipe.request(0)["cwd"], "run from {}", short.display());
+    }
+
     /// The regression: cmd.exe's `echo ação| yard note write N --stdin`
     /// writes the console's code page into the pipe (`61 87 C6 6F` under 850,
     /// a Brazilian Windows), which `[Console]::In` in `yard.ps1` read in that

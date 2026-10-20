@@ -826,6 +826,37 @@ fn command_line() -> String {
     }
 }
 
+/// The working directory as `(Get-Location).Path` gave it to `yard.ps1`: with
+/// every 8.3 short name expanded (`C:\Users\RUNNER~1` is
+/// `C:\Users\runneradmin`), so one folder reaches the app as one string
+/// whichever client sent it. Where Windows cannot expand it, it goes as the
+/// process holds it.
+fn working_directory() -> String {
+    use std::os::windows::ffi::OsStrExt as _;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetLongPathNameW(short: *const u16, long: *mut u16, len: u32) -> u32;
+    }
+    let Ok(dir) = std::env::current_dir() else {
+        return String::new();
+    };
+    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut long = vec![0u16; 260];
+    loop {
+        // SAFETY: `wide` is NUL-terminated; the call writes at most
+        // `long.len()` units into `long`, or answers the size it needs.
+        let len = unsafe { GetLongPathNameW(wide.as_ptr(), long.as_mut_ptr(), long.len() as u32) } as usize;
+        if len == 0 {
+            return dir.to_string_lossy().into_owned();
+        }
+        if len < long.len() {
+            long.truncate(len);
+            return String::from_utf16_lossy(&long);
+        }
+        long.resize(len, 0);
+    }
+}
+
 fn read_file(path: &str) -> FileText {
     match std::fs::read(path) {
         Ok(bytes) => FileText::Text(decode_text(&bytes)),
@@ -898,9 +929,7 @@ fn run() -> i32 {
         Err(exit) => return fail(&exit.message, exit.code),
     };
     let terminal = std::env::var_os("YARD_PTY_ID").map(|id| id.to_string_lossy().into_owned());
-    let cwd = std::env::current_dir()
-        .map(|dir| dir.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let cwd = working_directory();
     let token = std::env::var_os("YARD_TOKEN").map(|token| token.to_string_lossy().into_owned());
     let mut line = encode_authenticated_request(terminal.as_deref(), &cwd, &request, token.as_deref());
     // `StreamWriter.WriteLine`: the line ends in CRLF.
