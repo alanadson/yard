@@ -60,7 +60,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Set-Content -LiteralPath dist/index.html -Value '<!doctype html><title>Yard</title>' -Encoding utf8
-      - uses: dtolnay/rust-toolchain@1.98.0  # keep in step with rust-toolchain.toml
+      - uses: dtolnay/rust-toolchain@1.120.0  # keep in step with rust-toolchain.toml
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
