@@ -18,6 +18,8 @@ import { flowsOf } from "../../lib/flow";
 import { locale } from "../../lib/i18n";
 import { baseName } from "../../lib/terminals";
 import {
+  defaultCooldownSec,
+  toggledTrigger,
   TRIGGER_EVENT_OPTIONS,
   triggerSummary,
 } from "../../lib/triggers";
@@ -83,7 +85,13 @@ export function TriggersSection({
   const [flowId, setFlowId] = useState("");
   const [text, setText] = useState("");
   const [once, setOnce] = useState(false);
-  const [cooldownSec, setCooldownSec] = useState(0);
+  const [cooldownSec, setCooldownSec] = useState(() => defaultCooldownSec("ask"));
+  // The default follows the action until the user types a number of their own.
+  const [cooldownTouched, setCooldownTouched] = useState(false);
+  const pickKind = (next: Kind) => {
+    setKind(next);
+    if (!cooldownTouched) setCooldownSec(defaultCooldownSec(next));
+  };
   useEffect(() => { onDraftChange?.(!!text); }, [text, onDraftChange]);
 
   const content = text.trim();
@@ -117,7 +125,7 @@ export function TriggersSection({
     commitCanvasExternal(groupId, (c) => ({
       ...c,
       triggers: (c.triggers ?? []).map((def) =>
-        def.id === id ? { ...def, enabled: !def.enabled } : def,
+        def.id === id ? toggledTrigger(def) : def,
       ),
     }));
 
@@ -177,7 +185,7 @@ export function TriggersSection({
             label={t("Então")}
             value={kind}
             options={kindOptions}
-            onChange={(v) => setKind(v as Kind)}
+            onChange={(v) => pickKind(v as Kind)}
           />
           {kind === "ask" && (
             <Select
@@ -227,7 +235,10 @@ export function TriggersSection({
             min={0}
             max={86_400}
             clamp={(n) => (Number.isFinite(n) ? Math.min(86_400, Math.max(0, Math.round(n))) : 0)}
-            onChange={setCooldownSec}
+            onChange={(n) => {
+              setCooldownTouched(true);
+              setCooldownSec(n);
+            }}
           />
           <label className="routine-check">
             <input type="checkbox" checked={once} onChange={(e) => setOnce(e.target.checked)} />
@@ -285,7 +296,11 @@ function TriggerRow({
 }) {
   const t = useT();
   const extras = [
-    def.enabled ? "" : t("pausado — não dispara"),
+    def.awaitingApproval
+      ? t("criado por um agente: aguarda a sua aprovação (ligue para aprovar)")
+      : def.enabled
+        ? ""
+        : t("pausado — não dispara"),
     def.once ? (def.lastRunAt ? t("uma vez · já disparou") : t("uma vez")) : "",
     def.cooldownSec ? t("mín. {s} s entre disparos", { s: def.cooldownSec }) : "",
     def.lastRunAt

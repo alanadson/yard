@@ -14,6 +14,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setPrefsTransport } from "../lib/prefs";
 import { useFlows, type FlowRun } from "./flowStore";
 
+const native = vi.hoisted(() => ({ snapshot: vi.fn() }));
+vi.mock("../lib/ipc", () => ({ ipc: { flowSnapshot: native.snapshot } }));
+
 function run(patch: Partial<FlowRun> = {}): FlowRun {
   return {
     flowId: "f1",
@@ -41,6 +44,7 @@ function run(patch: Partial<FlowRun> = {}): FlowRun {
 let written: Record<string, string>;
 
 beforeEach(() => {
+  native.snapshot.mockReset();
   written = {};
   setPrefsTransport({
     readPrefs: async () => ({}),
@@ -49,6 +53,36 @@ beforeEach(() => {
     },
   });
   useFlows.setState({ runs: {}, marks: {} });
+});
+
+it("preserves flow subscriptions until native snapshot content changes", async () => {
+  setPrefsTransport({ nativeScheduler: true, readPrefs: async () => ({}), writePref: async () => {} });
+  const first = run({ owner: "native" });
+  const second = run({ owner: "native", flowId: "f2", terminalId: "t2" });
+  native.snapshot.mockResolvedValue([first, second]);
+  await useFlows.getState().refreshNative();
+  const before = useFlows.getState();
+
+  native.snapshot.mockResolvedValue(structuredClone([first, second]));
+  await useFlows.getState().refreshNative();
+  expect(useFlows.getState()).toBe(before);
+
+  native.snapshot.mockResolvedValue([structuredClone(first), { ...second, brief: "Updated instructions" }]);
+  await useFlows.getState().refreshNative();
+  expect(useFlows.getState().runs.f1).toBe(before.runs.f1);
+  expect(useFlows.getState().runs.f2.brief).toBe("Updated instructions");
+});
+
+it("publishes flow badge changes only for terminals whose visible progress changed", () => {
+  useFlows.getState().begin(run());
+  useFlows.getState().begin(run({ flowId: "f2", terminalId: "t2" }));
+  const marks = useFlows.getState().marks;
+  useFlows.getState().patchRun("f1", { brief: "Updated instructions" });
+  expect(useFlows.getState().marks).toBe(marks);
+
+  useFlows.getState().setStage("f1", 1, "blocked");
+  expect(useFlows.getState().marks.t1.status).toBe("blocked");
+  expect(useFlows.getState().marks.t2).toBe(marks.t2);
 });
 
 describe("the run survives a reload", () => {

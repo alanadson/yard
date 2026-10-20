@@ -1,0 +1,37 @@
+name: dependency audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+      - package-lock.json
+      - .github/workflows/dependency-audit.yml
+  schedule:
+    - cron: "0 12 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  npm-audit:
+    # The audit reads only the lockfile, so nothing here needs Windows.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # `--package-lock-only` audits the resolved tree straight from the
+      # lockfile: no install, no install scripts, no npm cache to restore.
+      - name: Check current dependency advisories
+        run: npm audit --package-lock-only --audit-level=moderate --json > dependency-audit.json
+      - name: Retain the complete advisory result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit
+          path: dependency-audit.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -60,7 +60,7 @@ export function sendability(terminalId: string, now = Date.now()): Sendability {
       message: t("{name} não está rodando — inicie antes de enviar.", { name }),
     };
   }
-  if (rt?.blocked) {
+  if (rt?.blocked || rt?.hookPhase === "permission") {
     return {
       ok: false,
       reason: "blocked",
@@ -77,7 +77,7 @@ export function sendability(terminalId: string, now = Date.now()): Sendability {
   }
   const { lastByteAt } = getActivity(terminalId);
   // No byte yet means the CLI is sitting at its prompt, not mid-work.
-  if (lastByteAt && now - lastByteAt < IDLE_MS) {
+  if (rt?.hookPhase === "working" || (lastByteAt && now - lastByteAt < IDLE_MS)) {
     return {
       ok: false,
       reason: "busy",

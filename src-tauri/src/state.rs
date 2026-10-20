@@ -25,6 +25,9 @@ pub struct AppState {
     pub ptys: Mutex<HashMap<String, Arc<Mutex<PtyHandle>>>>,
     /// IDs currently between `openpty` and registry insertion.
     pub spawning_ptys: Mutex<HashSet<String>>,
+    /// Queue operations still owned by the native process, independent of a page.
+    pub native_queue_dispatches: Mutex<HashSet<String>>,
+    pub scheduler: crate::scheduler::SchedulerState,
     /// Last known state of each id — including ones that already died,
     /// so the UI can explain the exit banner after a reload.
     pub statuses: Mutex<HashMap<String, PtyStatus>>,
@@ -55,6 +58,8 @@ impl AppState {
         Self {
             ptys: Mutex::new(HashMap::new()),
             spawning_ptys: Mutex::new(HashSet::new()),
+            native_queue_dispatches: Mutex::new(HashSet::new()),
+            scheduler: Default::default(),
             statuses: Mutex::new(HashMap::new()),
             procs: Mutex::new(ProcSnapshot::default()),
             db: Mutex::new(db),

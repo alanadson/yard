@@ -51,6 +51,7 @@ import { resolvedTheme, useResolvedTheme } from "../../stores/themeStore";
 import { t } from "../../lib/i18n";
 import { TERM_WELL_VAR, termPaletteFor } from "../../lib/termTheme";
 import { attachWants, replayPlan } from "./attachPlan";
+import { IMAGE_ADDON_OPTIONS } from "./imageAddon";
 import { attachRenderer } from "../../lib/termRenderer";
 
 export interface XTermHandle {
@@ -1043,7 +1044,7 @@ export const XTermView = memo(forwardRef<XTermHandle, Props>(function XTermView(
     void import("@xterm/addon-image")
       .then(({ ImageAddon }) => {
         if (!alive || !termRef.current) return;
-        const a = new ImageAddon();
+        const a = new ImageAddon({ ...IMAGE_ADDON_OPTIONS });
         term.loadAddon(a);
         addon = a;
       })

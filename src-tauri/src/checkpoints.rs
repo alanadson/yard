@@ -1,5 +1,10 @@
 //! Task-scoped snapshots of working files, stored outside the repository.
-use std::collections::BTreeMap;
+//!
+//! A capture is streamed file by file: once to compute its content digest and,
+//! only when that digest differs from the newest checkpoint of the same
+//! folder, once more into a new archive. An unchanged tree therefore costs a
+//! manifest that points at the archive it already has, not another zip.
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -7,6 +12,7 @@ use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
 
 type Files = BTreeMap<String, Vec<u8>>;
@@ -104,6 +110,93 @@ pub struct Checkpoint {
     pub file_count: usize,
     pub bytes: usize,
     pub git_state: String,
+    /// SHA-256 over the sorted paths and bytes of the captured files.
+    /// Absent on checkpoints written before deduplication existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+    /// The checkpoint whose archive holds these files, when it is not this
+    /// one: a capture identical to the newest one reuses its archive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive: Option<String>,
+}
+
+impl Checkpoint {
+    /// The id of the `.zip` that holds this checkpoint's files.
+    fn archive_id(&self) -> &str {
+        self.archive.as_deref().unwrap_or(&self.id)
+    }
+}
+
+/// The content digest of a capture: every path and its bytes, length-prefixed
+/// so no two different trees can feed the same stream, in path order.
+#[derive(Default)]
+struct ContentDigest(Sha256);
+
+impl ContentDigest {
+    fn add(&mut self, name: &str, bytes: &[u8]) {
+        self.0.update((name.len() as u64).to_le_bytes());
+        self.0.update(name.as_bytes());
+        self.0.update((bytes.len() as u64).to_le_bytes());
+        self.0.update(bytes);
+    }
+
+    fn finish(self) -> String {
+        format!("{:x}", self.0.finalize())
+    }
+}
+
+/// What a capture held: how many files, how many bytes, and their digest.
+struct Summary {
+    count: usize,
+    bytes: usize,
+    digest: String,
+}
+
+/// A new archive being written, entry by entry.
+struct Archive {
+    zip: zip::ZipWriter<File>,
+    digest: ContentDigest,
+    count: usize,
+    bytes: usize,
+}
+
+impl Archive {
+    fn create(path: &Path) -> Result<Self, String> {
+        let file = File::create_new(path).map_err(|e| e.to_string())?;
+        Ok(Self {
+            zip: zip::ZipWriter::new(file),
+            digest: ContentDigest::default(),
+            count: 0,
+            bytes: 0,
+        })
+    }
+
+    fn add(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        self.zip
+            .start_file(
+                name,
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated),
+            )
+            .map_err(|e| e.to_string())?;
+        self.zip.write_all(bytes).map_err(|e| e.to_string())?;
+        self.digest.add(name, bytes);
+        self.count += 1;
+        self.bytes += bytes.len();
+        Ok(())
+    }
+
+    fn finish(self) -> Result<Summary, String> {
+        self.zip
+            .finish()
+            .map_err(|e| e.to_string())?
+            .sync_all()
+            .map_err(|e| e.to_string())?;
+        Ok(Summary {
+            count: self.count,
+            bytes: self.bytes,
+            digest: self.digest.finish(),
+        })
+    }
 }
 
 fn repository_state(root: &Path) -> String {
@@ -140,14 +233,17 @@ fn root_name(root: &Path) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+#[cfg(test)]
 fn capture(root: &Path) -> Result<Files, String> {
     capture_with(root, std::iter::empty())
 }
 
-fn capture_with<'a>(
+/// The paths a capture covers: tracked and non-ignored files, plus `included`
+/// (the paths of the checkpoint being compared against).
+fn capture_names<'a>(
     root: &Path,
     included: impl Iterator<Item = &'a String>,
-) -> Result<Files, String> {
+) -> Result<BTreeSet<String>, String> {
     let names = git(
         root,
         &[
@@ -158,21 +254,44 @@ fn capture_with<'a>(
             "-z",
         ],
     )?;
-    let mut files = Files::new();
-    let mut total = 0;
-    let mut paths = std::collections::BTreeSet::new();
+    let mut paths = BTreeSet::new();
     for name in names.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
         paths.insert(String::from_utf8(name.to_vec()).map_err(|e| e.to_string())?);
     }
     paths.extend(included.cloned());
     check_budget(paths.len(), 0)?;
-    for name in paths {
-        if let Some(bytes) = read_bytes(&safe_file(root, &name)?)? {
+    Ok(paths)
+}
+
+/// Reads `names` one file at a time, in path order, and hands each to `each`:
+/// only one file is in memory at a time. The budget is enforced as it goes.
+fn visit_files(
+    root: &Path,
+    names: &BTreeSet<String>,
+    mut each: impl FnMut(&str, Vec<u8>) -> Result<(), String>,
+) -> Result<(), String> {
+    let (mut count, mut total) = (0, 0);
+    for name in names {
+        if let Some(bytes) = read_bytes(&safe_file(root, name)?)? {
+            count += 1;
             total += bytes.len();
-            check_budget(files.len() + 1, total)?;
-            files.insert(name, bytes);
+            check_budget(count, total)?;
+            each(name, bytes)?;
         }
     }
+    Ok(())
+}
+
+fn capture_with<'a>(
+    root: &Path,
+    included: impl Iterator<Item = &'a String>,
+) -> Result<Files, String> {
+    let names = capture_names(root, included)?;
+    let mut files = Files::new();
+    visit_files(root, &names, |name, bytes| {
+        files.insert(name.to_string(), bytes);
+        Ok(())
+    })?;
     Ok(files)
 }
 
@@ -185,8 +304,53 @@ pub fn create(
     now: i64,
 ) -> Result<Checkpoint, String> {
     external_store(store, root)?;
-    let files = capture(root)?;
-    save(store, root, task_id, task_label, label, now, &files)
+    let names = capture_names(root, std::iter::empty())?;
+    let mut digest = ContentDigest::default();
+    let (mut count, mut bytes) = (0, 0);
+    visit_files(root, &names, |name, data| {
+        digest.add(name, &data);
+        count += 1;
+        bytes += data.len();
+        Ok(())
+    })?;
+    let summary = Summary { count, bytes, digest: digest.finish() };
+    let who = Identity { task_id, task_label, label, now };
+    let saved = store_capture(store, root, who, summary, |archive| {
+        visit_files(root, &names, |name, data| archive.add(name, &data))
+    })?;
+    // Retention is housekeeping: the capture just written stands even when an
+    // old file refuses to go (the next capture tries again).
+    if let Err(error) = prune(store, root, now) {
+        tracing::warn!(%error, "checkpoint retention could not finish");
+    }
+    Ok(saved)
+}
+
+/// Applies `retention` to the checkpoints of `root`. Manifests go before
+/// archives, so an interruption never leaves a manifest without its archive.
+fn prune(store: &Path, root: &Path, now: i64) -> Result<(), String> {
+    let plan = retention(&all_rows(store)?, &root_name(root)?, now);
+    for id in &plan.manifests {
+        check_id(id)?;
+        fs::remove_file(store.join(format!("{id}.json"))).map_err(|e| format!("{id}: {e}"))?;
+    }
+    for id in &plan.archives {
+        check_id(id)?;
+        match fs::remove_file(store.join(format!("{id}.zip"))) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("{id}: {e}")),
+        }
+    }
+    Ok(())
+}
+
+/// Who a checkpoint belongs to and when it was taken.
+struct Identity<'a> {
+    task_id: &'a str,
+    task_label: &'a str,
+    label: &'a str,
+    now: i64,
 }
 
 fn external_store(store: &Path, root: &Path) -> Result<(), String> {
@@ -204,6 +368,8 @@ fn external_store(store: &Path, root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// A checkpoint of files already in memory (the recovery snapshot `restore`
+/// takes of what it is about to replace).
 fn save(
     store: &Path,
     root: &Path,
@@ -213,40 +379,73 @@ fn save(
     now: i64,
     files: &Files,
 ) -> Result<Checkpoint, String> {
+    let mut digest = ContentDigest::default();
+    for (name, bytes) in files {
+        digest.add(name, bytes);
+    }
+    let summary = Summary {
+        count: files.len(),
+        bytes: files.values().map(Vec::len).sum(),
+        digest: digest.finish(),
+    };
+    let who = Identity { task_id, task_label, label, now };
+    store_capture(store, root, who, summary, |archive| {
+        files.iter().try_for_each(|(name, bytes)| archive.add(name, bytes))
+    })
+}
+
+/// Records a capture whose content is `summary`. When the newest checkpoint of
+/// the same folder has the same digest (and its archive is still there), the
+/// new manifest points at that archive; otherwise `write` fills a new one. A
+/// write that fails leaves no partial archive behind.
+fn store_capture(
+    store: &Path,
+    root: &Path,
+    who: Identity,
+    summary: Summary,
+    write: impl FnOnce(&mut Archive) -> Result<(), String>,
+) -> Result<Checkpoint, String> {
     external_store(store, root)?;
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let id = format!(
         "{}-{}-{}",
-        now,
+        who.now,
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     );
+    let reused = list(store, root)?.into_iter().next().filter(|newest| {
+        newest.digest.as_deref() == Some(summary.digest.as_str())
+            && store.join(format!("{}.zip", newest.archive_id())).is_file()
+    });
+    let (summary, archive) = match reused {
+        Some(newest) => (summary, Some(newest.archive_id().to_string())),
+        None => {
+            fs::create_dir_all(store).map_err(|e| e.to_string())?;
+            let path = store.join(format!("{id}.zip"));
+            let mut archive = Archive::create(&path)?;
+            let written = write(&mut archive).and_then(|_| archive.finish());
+            match written {
+                Ok(written) => (written, None),
+                Err(error) => {
+                    let _ = fs::remove_file(&path);
+                    return Err(error);
+                }
+            }
+        }
+    };
     let row = Checkpoint {
         id: id.clone(),
         root: root_name(root)?,
-        task_id: task_id.into(),
-        task_label: task_label.into(),
-        label: label.into(),
-        created_at: now,
-        file_count: files.len(),
-        bytes: files.values().map(Vec::len).sum(),
+        task_id: who.task_id.into(),
+        task_label: who.task_label.into(),
+        label: who.label.into(),
+        created_at: who.now,
+        file_count: summary.count,
+        bytes: summary.bytes,
         git_state: repository_state(root),
+        digest: Some(summary.digest),
+        archive,
     };
-    fs::create_dir_all(store).map_err(|e| e.to_string())?;
-    let archive = File::create_new(store.join(format!("{id}.zip"))).map_err(|e| e.to_string())?;
-    let mut zip = zip::ZipWriter::new(archive);
-    for (name, bytes) in files {
-        zip.start_file(
-            name,
-            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated),
-        )
-        .map_err(|e| e.to_string())?;
-        zip.write_all(bytes).map_err(|e| e.to_string())?;
-    }
-    zip.finish()
-        .map_err(|e| e.to_string())?
-        .sync_all()
-        .map_err(|e| e.to_string())?;
     let metadata = serde_json::to_vec(&row).map_err(|e| e.to_string())?;
     let pending = store.join(format!("{id}.pending"));
     let mut manifest = File::create_new(&pending).map_err(|e| e.to_string())?;
@@ -259,6 +458,20 @@ fn save(
 
 pub fn list(store: &Path, root: &Path) -> Result<Vec<Checkpoint>, String> {
     let root = root_name(root)?;
+    let mut rows: Vec<Checkpoint> = all_rows(store)?
+        .into_iter()
+        .filter(|row| row.root == root)
+        .collect();
+    rows.sort_by(|a, b| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| b.id.cmp(&a.id))
+    });
+    Ok(rows)
+}
+
+/// Every readable manifest in the store, whatever folder it belongs to.
+fn all_rows(store: &Path) -> Result<Vec<Checkpoint>, String> {
     if !store.exists() {
         return Ok(Vec::new());
     }
@@ -284,19 +497,18 @@ pub fn list(store: &Path, root: &Path) -> Result<Vec<Checkpoint>, String> {
                 continue;
             }
         };
-        if row.root == root {
-            rows.push(row);
-        }
+        rows.push(row);
     }
-    rows.sort_by(|a, b| {
-        b.created_at
-            .cmp(&a.created_at)
-            .then_with(|| b.id.cmp(&a.id))
-    });
     Ok(rows)
 }
 
+/// The files of checkpoint `id`, read from whichever archive holds them.
+#[cfg(test)]
 fn load_files(store: &Path, id: &str) -> Result<Files, String> {
+    load_archive(store, metadata(store, id)?.archive_id())
+}
+
+fn load_archive(store: &Path, id: &str) -> Result<Files, String> {
     check_id(id)?;
     let file = File::open(store.join(format!("{id}.zip"))).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
@@ -414,7 +626,7 @@ fn changes(before: &Files, after: &Files) -> Vec<ChangedFile> {
 
 pub fn preview(store: &Path, root: &Path, id: &str) -> Result<Preview, String> {
     let row = scoped_metadata(store, root, id)?;
-    let before = load_files(store, id)?;
+    let before = load_archive(store, row.archive_id())?;
     let after = capture_with(root, before.keys())?;
     Ok(Preview {
         files: changes(&before, &after),
@@ -425,8 +637,8 @@ pub fn preview(store: &Path, root: &Path, id: &str) -> Result<Preview, String> {
 
 pub fn compare_file(store: &Path, root: &Path, id: &str, path: &str) -> Result<Comparison, String> {
     check_path(path)?;
-    scoped_metadata(store, root, id)?;
-    let files = load_files(store, id)?;
+    let row = scoped_metadata(store, root, id)?;
+    let files = load_archive(store, row.archive_id())?;
     let after = read_bytes(&safe_file(root, path)?)?.unwrap_or_default();
     let before = files.get(path).cloned().unwrap_or_default();
     let text = |bytes: Vec<u8>| {
@@ -471,7 +683,7 @@ pub fn restore(
     if let Some(reason) = repository_block(&row, root) {
         return Err(reason);
     }
-    let wanted = load_files(store, id)?;
+    let wanted = load_archive(store, row.archive_id())?;
     for name in wanted.keys() {
         safe_file(root, name)?;
     }
@@ -486,7 +698,7 @@ pub fn restore(
         root,
         &row.task_id,
         &row.task_label,
-        "Antes de restaurar",
+        RECOVERY_LABEL,
         now,
         &current,
     )?;
@@ -515,10 +727,61 @@ fn repository_block(row: &Checkpoint, root: &Path) -> Option<String> {
     })
 }
 
+/// How many checkpoints of one working folder the store keeps.
+const KEEP_PER_ROOT: usize = 50;
+/// The label `restore` gives the snapshot of what it replaces.
+const RECOVERY_LABEL: &str = "Antes de restaurar";
+/// A recovery snapshot younger than this survives retention: it is the undo
+/// of a restore the user may not have looked at yet.
+const RECOVERY_GRACE_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// What one retention pass removes, oldest first.
+#[derive(Debug, Default, PartialEq)]
+struct Retention {
+    manifests: Vec<String>,
+    archives: Vec<String>,
+}
+
+/// Retention for the checkpoints of `root`, given every manifest in the store:
+/// the newest `KEEP_PER_ROOT` stay, recovery snapshots younger than a day stay
+/// too, and an archive leaves only when no remaining manifest (of any folder)
+/// reads it.
+fn retention(rows: &[Checkpoint], root: &str, now: i64) -> Retention {
+    let mut own: Vec<&Checkpoint> = rows.iter().filter(|row| row.root == root).collect();
+    own.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| b.id.cmp(&a.id)));
+    let mut removed: Vec<&Checkpoint> = own
+        .into_iter()
+        .skip(KEEP_PER_ROOT)
+        .filter(|row| !(row.label == RECOVERY_LABEL && now - row.created_at < RECOVERY_GRACE_MS))
+        .collect();
+    removed.reverse();
+    let gone = |row: &Checkpoint| removed.iter().any(|old| old.id == row.id);
+    let read: BTreeSet<&str> = rows.iter().filter(|row| !gone(row)).map(Checkpoint::archive_id).collect();
+    let mut archives: Vec<String> = Vec::new();
+    for row in &removed {
+        let archive = row.archive_id();
+        if !read.contains(archive) && !archives.iter().any(|seen| seen == archive) {
+            archives.push(archive.to_string());
+        }
+    }
+    Retention {
+        manifests: removed.iter().map(|row| row.id.clone()).collect(),
+        archives,
+    }
+}
+
+/// Removes one checkpoint. Its archive goes too unless another checkpoint
+/// still reads it. The manifest goes first: an interruption can leave an
+/// archive nobody points at, never a manifest without its archive.
 pub fn delete(store: &Path, root: &Path, id: &str) -> Result<(), String> {
-    scoped_metadata(store, root, id)?;
-    fs::remove_file(store.join(format!("{id}.zip"))).map_err(|e| e.to_string())?;
-    fs::remove_file(store.join(format!("{id}.json"))).map_err(|e| e.to_string())
+    let row = scoped_metadata(store, root, id)?;
+    fs::remove_file(store.join(format!("{id}.json"))).map_err(|e| e.to_string())?;
+    let archive = row.archive_id();
+    if all_rows(store)?.iter().all(|other| other.archive_id() != archive) {
+        check_id(archive)?;
+        fs::remove_file(store.join(format!("{archive}.zip"))).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -584,6 +847,129 @@ mod tests {
         }
     }
 
+    fn archives_in(store: &Path) -> usize {
+        fs::read_dir(store)
+            .unwrap()
+            .filter(|entry| entry.as_ref().unwrap().path().extension().is_some_and(|e| e == "zip"))
+            .count()
+    }
+
+    /// The regression that motivated deduplication: every prompt sent to an
+    /// idle agent wrote another full archive of an unchanged tree.
+    #[test]
+    fn an_unchanged_tree_reuses_the_newest_archive_and_keeps_both_task_identities() {
+        let f = Fixture::new();
+        let first = create(&f.store, &f.root, "first", "First", "Before", 1000).unwrap();
+        let second = create(&f.store, &f.root, "second", "Second", "Before", 2000).unwrap();
+        assert_ne!(first.id, second.id);
+        assert_eq!(archives_in(&f.store), 1, "an identical capture must not write another archive");
+        let rows = list(&f.store, &f.root).unwrap();
+        assert_eq!(
+            rows.iter().map(|row| row.task_id.as_str()).collect::<Vec<_>>(),
+            ["second", "first"]
+        );
+        f.write("code.txt", b"changed after both");
+        let review = preview(&f.store, &f.root, &second.id).unwrap();
+        assert_eq!(review.files.len(), 1);
+        restore(&f.store, &f.root, &second.id, &review.token, 3000).unwrap();
+        assert_eq!(fs::read(f.root.join("code.txt")).unwrap(), b"original\r\n");
+    }
+
+    const HOUR: i64 = 60 * 60 * 1000;
+
+    fn row(created_at: i64, root: &str, label: &str, archive: Option<&str>) -> Checkpoint {
+        Checkpoint {
+            id: format!("{created_at}-1-0"),
+            root: root.into(),
+            task_id: "task".into(),
+            task_label: "Task".into(),
+            label: label.into(),
+            created_at,
+            file_count: 1,
+            bytes: 1,
+            git_state: String::new(),
+            digest: None,
+            archive: archive.map(str::to_string),
+        }
+    }
+
+    /// The regression that motivated retention: every send, queue delivery
+    /// and flow stage added an archive, and nothing ever removed one.
+    #[test]
+    fn retention_keeps_the_newest_fifty_of_a_folder_and_leaves_other_folders_alone() {
+        let mut rows: Vec<Checkpoint> = (1..=52).map(|at| row(at * HOUR, "C:\\repo", "Before", None)).collect();
+        rows.push(row(HOUR / 2, "C:\\other", "Before", None));
+        let plan = retention(&rows, "C:\\repo", 100 * HOUR);
+        let oldest = vec![format!("{}-1-0", HOUR), format!("{}-1-0", 2 * HOUR)];
+        assert_eq!(plan.manifests, oldest);
+        assert_eq!(plan.archives, oldest);
+    }
+
+    #[test]
+    fn retention_spares_recent_recovery_checkpoints_and_archives_a_kept_checkpoint_reads() {
+        let now = 1000 * HOUR;
+        let shared = format!("{}-1-0", 3 * HOUR);
+        let mut rows: Vec<Checkpoint> = (0..50)
+            .map(|n| row(now - n * 60_000, "C:\\repo", "Before", None))
+            .collect();
+        // The newest checkpoint reuses the archive of one past the limit.
+        rows[0].archive = Some(shared.clone());
+        rows.push(row(3 * HOUR, "C:\\repo", "Before", None));
+        rows.push(row(now - 23 * HOUR, "C:\\repo", RECOVERY_LABEL, None));
+        rows.push(row(now - 25 * HOUR, "C:\\repo", RECOVERY_LABEL, None));
+        let plan = retention(&rows, "C:\\repo", now);
+        let stale_recovery = format!("{}-1-0", now - 25 * HOUR);
+        assert_eq!(plan.manifests, vec![shared, stale_recovery.clone()]);
+        assert_eq!(plan.archives, vec![stale_recovery]);
+    }
+
+    #[test]
+    fn a_new_capture_retires_the_oldest_checkpoint_past_the_limit_with_its_archive() {
+        let f = Fixture::new();
+        fs::create_dir_all(&f.store).unwrap();
+        let root = root_name(&f.root).unwrap();
+        for at in 1..=50 {
+            let old = row(at, &root, "Before", None);
+            fs::write(f.store.join(format!("{}.json", old.id)), serde_json::to_vec(&old).unwrap()).unwrap();
+            fs::write(f.store.join(format!("{}.zip", old.id)), b"old archive").unwrap();
+        }
+        create(&f.store, &f.root, "task", "Task", "Before", 1000 * HOUR).unwrap();
+        let rows = list(&f.store, &f.root).unwrap();
+        assert_eq!(rows.len(), 50);
+        assert!(rows.iter().all(|row| row.id != "1-1-0"), "the oldest checkpoint must be retired");
+        assert!(!f.store.join("1-1-0.zip").exists());
+        assert!(f.store.join("2-1-0.zip").exists());
+    }
+
+    /// Streaming writes the archive while reading the tree, so a file that
+    /// grows past the budget between the digest pass and the archive pass
+    /// fails halfway through the zip; that half must not stay in the store.
+    #[test]
+    fn an_archive_that_fails_halfway_leaves_neither_a_manifest_nor_a_partial_zip() {
+        let f = Fixture::new();
+        let summary = Summary { count: 1, bytes: 1, digest: "new".into() };
+        let who = Identity { task_id: "task", task_label: "Task", label: "Before", now: 1000 };
+        let result = store_capture(&f.store, &f.root, who, summary, |archive| {
+            archive.add("code.txt", b"half")?;
+            Err("O checkpoint excede o limite de 20.000 arquivos ou 256 MiB.".into())
+        });
+        assert!(result.is_err());
+        assert_eq!(archives_in(&f.store), 0);
+        assert!(list(&f.store, &f.root).unwrap().is_empty());
+    }
+
+    #[test]
+    fn deleting_a_checkpoint_keeps_an_archive_another_checkpoint_still_reads() {
+        let f = Fixture::new();
+        let first = create(&f.store, &f.root, "first", "First", "Before", 1000).unwrap();
+        let second = create(&f.store, &f.root, "second", "Second", "Before", 2000).unwrap();
+        delete(&f.store, &f.root, &first.id).unwrap();
+        assert_eq!(archives_in(&f.store), 1, "the second checkpoint still needs the shared archive");
+        assert!(preview(&f.store, &f.root, &second.id).unwrap().files.is_empty());
+        delete(&f.store, &f.root, &second.id).unwrap();
+        assert_eq!(archives_in(&f.store), 0, "the last reader takes the archive with it");
+    }
+
     #[test]
     fn windows_path_aliases_cannot_address_parent_folders_or_devices() {
         for name in [
@@ -602,6 +988,9 @@ mod tests {
     fn deleting_one_checkpoint_leaves_other_tasks_and_working_files_untouched() {
         let f = Fixture::new();
         let first = create(&f.store, &f.root, "first", "First", "Before", 1000).unwrap();
+        // A different tree, so the second checkpoint has an archive of its
+        // own (identical captures share one, see the deduplication test).
+        f.write("code.txt", b"second task's work");
         let second = create(&f.store, &f.root, "second", "Second", "Before", 2000).unwrap();
         let before = capture(&f.root).unwrap();
         delete(&f.store, &f.root, &first.id).unwrap();

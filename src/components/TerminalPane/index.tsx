@@ -4,9 +4,9 @@
  * In normal use there is a single pane filling the screen and each CLI is a
  * tab on the top bar — creating a terminal never splits the screen (§F2).
  *
- * All terminals in the slot stay mounted; only the active one is visible.
- * That keeps `XTermView` (and therefore the attach) stable when switching
- * tabs, and the backend drops emission of the hidden ones to 450 ms.
+ * Live terminals stay mounted; only the active one is visible. Stopped
+ * histories load on selection, with the two most recent views kept warm.
+ * Eviction disposes the view only; history remains on disk for the next visit.
  *
  * The action bar shows only three fixed buttons (find, start/suspend and the
  * kebab): with 4 or 6 panes open, a row of six icons per pane becomes
@@ -65,8 +65,6 @@ import { useT } from "../../hooks/useT";
 import { captureTextTarget, textMenuEntries } from "../../lib/textMenu";
 import { terminalActionEntries } from "../../lib/terminalMenu";
 import { beginTabDrag, moveTabBy } from "../../lib/tabDrag";
-import { flowsOf } from "../../lib/flow";
-import { isConnected } from "../../lib/canvasOps";
 import { ipc, type TerminalRow } from "../../lib/ipc";
 import { confirmClearTerminal, confirmCloseTerminal } from "../../lib/lifecycle";
 import { fileName } from "../../lib/paths";
@@ -86,6 +84,8 @@ import { isLive, useTerminals } from "../../stores/terminalsStore";
 import { useUI } from "../../stores/uiStore";
 import { terminalPanelProps } from "./panelVisibility";
 import { paneViewCallbacks, type PaneNow } from "./viewCallbacks";
+import { retainedTerminalViews } from "./terminalViews";
+import { armedFlowsSelector } from "./armedFlows";
 
 // The same promise the boot starts (`XTermView/load.ts`), so the chunk is
 // usually here before the first pane asks for it.
@@ -165,33 +165,13 @@ export function TerminalPane({
    * in a wired CLI does not go to the agent, it goes to the pipeline, and the
    * only permanent sign of that lived on the board's card.
    *
-   * The signature is a string on purpose: the canvas is rewritten on every
-   * keystroke typed into a note, and a stable signature keeps that from
-   * repainting the tab bar.
+   * The projection stays stable while unrelated canvas content changes.
    */
-  const flowSig = useProjects((s) => {
-    const canvas = s.layoutOf(groupId).canvas;
-    if (!canvas) return "";
-    return flowsOf(canvas)
-      .filter((f) => f.trigger !== false && f.stages.length > 0)
-      .map((f) => `${f.id}:${f.name}:${f.stages.length}`)
-      .join("|");
-  });
-  const armed = useMemo(() => {
-    const out: Record<string, { name: string; etapas: number }> = {};
-    const canvas = useProjects.getState().layoutOf(groupId).canvas;
-    if (!canvas) return out;
-    for (const f of flowsOf(canvas)) {
-      if (f.trigger === false || f.stages.length === 0) continue;
-      for (const t of terminals) {
-        if (isConnected(canvas, f.id, t.id)) {
-          out[t.id] = { name: f.name, etapas: f.stages.length };
-        }
-      }
-    }
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flowSig, terminals, groupId]);
+  const selectArmed = useMemo(
+    () => armedFlowsSelector(terminals.map((terminal) => terminal.id)),
+    [terminals],
+  );
+  const armed = useProjects((state) => selectArmed(state.layoutOf(groupId).canvas));
   /** Current stage of whatever is running right now, per terminal. */
   const flowMarks = useFlows((s) => s.marks);
   // How many prompts are parked per terminal of this pane. Subscribed to the
@@ -295,6 +275,19 @@ export function TerminalPane({
     [terminals, activeId, activeDoc, activeBrowser, activeNotes],
   );
   const focused = !!active && active.id === focusedTerminalId;
+  const [recentViews, setRecentViews] = useState<readonly string[]>([]);
+  const retainedViews = retainedTerminalViews(
+    recentViews,
+    terminals.map((terminal) => ({
+      id: terminal.id,
+      alive: terminal.alive || isLive(runtimes[terminal.id]),
+    })),
+    active?.id ?? null,
+  );
+  useEffect(() => {
+    setRecentViews(retainedViews);
+  }, [retainedViews]);
+  const mountedViews = new Set(retainedViews);
   /**
    * Does this agent write its session to disk? That is what Live has to read.
    *
@@ -702,7 +695,7 @@ export function TerminalPane({
                         data-tip-wrap=""
                         data-tip={t(
                           "O Enter desta CLI entra no fluxo \"{name}\" ({n} etapas). Desarme no cartão do fluxo, no canvas.",
-                          { name: armed[term.id].name, n: armed[term.id].etapas },
+                          { name: armed[term.id].name, n: armed[term.id].stageCount },
                         )}
                       >
                         <Workflow size={10} aria-hidden="true" />
@@ -1162,13 +1155,13 @@ export function TerminalPane({
               <ExitBanner
                 rt={r}
                 term={t}
-                onStart={(extra) =>
+                onStart={(extra, keepScrollback = true) =>
                   void handles.current[t.id]?.start(
-                    extra ? { args: [...t.args, ...extra] } : undefined,
+                    { keepScrollback, ...(extra ? { args: [...t.args, ...extra] } : {}) },
                   )
                 }
               />
-              <Suspense fallback={<div className="xterm-host" aria-hidden />}>
+              {mountedViews.has(t.id) && <Suspense fallback={<div className="xterm-host" aria-hidden />}>
                 <XTermView
                   ref={view.ref}
                   id={t.id}
@@ -1189,7 +1182,7 @@ export function TerminalPane({
                   // the panel's own handler above only covers the frame.
                   onContextMenu={view.onContextMenu}
                 />
-              </Suspense>
+              </Suspense>}
             </div>
           );
         })}

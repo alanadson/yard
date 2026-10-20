@@ -40,22 +40,68 @@ reasons:
 1. **Rust goes where it matters.** In an app like this, the value is in the
    engine (processes, I/O, persistence, reliability), not in the CSS. Tauri
    puts Rust exactly there.
-2. **There is no mature terminal widget for native Rust GUIs.** egui/iced/Slint
-   would require implementing a VT emulator (ANSI escape parser, grid, reflow,
-   selection, IME, ligatures…) — months of work before the first feature.
-   xterm.js solves that today, at VS Code quality.
-3. **Weight and distribution on Windows.** WebView2 already ships with
-   Windows 10/11 → a ~10 MB installer and less baseline RAM than the ~150 MB
-   typical of an equivalent Electron app.
+2. **The existing terminal integration is substantial.** Native terminal
+   widgets do exist: [egui_term](https://github.com/kemokempo/egui_term) uses
+   `alacritty_terminal` and reports Windows support, while explicitly describing
+   incomplete terminal features. A native prototype can reuse a VT engine;
+   it still needs to validate input, selection, IME, reflow, accessibility,
+   image protocols and the agent CLIs against Yard's current xterm behavior.
+3. **Weight and distribution on Windows.** Tauri uses the installed WebView2
+   runtime instead of bundling Chromium. That reduces distribution duplication,
+   but does not remove browser, renderer and GPU processes at runtime. Installer
+   size is not a RAM benchmark. Measure the whole owned process tree and separate
+   UI, embedded browsers and agent processes.
 4. **Ready-made ecosystem:** `tauri-plugin-updater` (signed auto-update),
    `single-instance`, `notification`, `dialog` — all officially maintained.
+
+### Memory review (2026-10-16)
+
+An isolated production build was measured through the native WebView2 debugger,
+with no agent processes or browser portals. Each stopped terminal had 20,000
+lines of synthetic output. Figures below sum the working sets of the owned Yard
+and WebView2 processes, in MiB; shared pages can be counted more than once. These
+are individual local samples, not a cross-product benchmark or a RAM guarantee.
+
+| Scenario | Before stopped-view retention | After stopped-view retention |
+| --- | ---: | ---: |
+| Empty workspace | 418.5 | 405.0 |
+| Twelve stopped tabs, first history selected | 1013.1 | 489.0 |
+| Same tabs, selecting the last history | 1040.1 | 553.6 |
+
+The original empty sample had a 4.3 MiB JavaScript heap, 13.2 MiB of private
+native-process memory and 238.1 MiB of private memory across WebView2 processes.
+Heap, private committed memory and working set are different metrics and must
+not be added together. Terminal backing arrays and graphics allocations are
+not represented by the JavaScript object heap alone.
+
+The measured defect was eager restoration of all stopped terminal buffers.
+Tabbed panes now retain at most two stopped views and preserve live views;
+`npm run test:native-terminal-memory` guards history recovery and background
+process identity in the actual application. Visiting all twelve histories in
+the updated build left two views mounted and a 625.2 MiB summed working set;
+browser caches and allocator behavior still affect total memory. This change
+does not optimize live-agent memory or canvas-card retention.
+
+Recommendation: keep Rust, SQLite and the current UI while addressing measured
+retention and portal lifecycle costs. Swapping React alone preserves the WebView2
+process floor. For a substantially lower idle footprint, evaluate a small native
+UI/terminal prototype before committing to a full migration. A prototype must
+compare equivalent terminal workloads, clipboard, IME, accessibility, editor
+behavior and embedded-browser support. [PhotoCraft's architecture](https://github.com/storytold/photocraft#under-the-hood)
+shows an egui/wgpu approach, but its advertised native architecture is not proof
+of a memory advantage on Yard's workloads. Embedded browser content would still
+need a browser engine in a native Yard.
+
+Portal optimization should examine inactive-view suspension and environment
+sharing when the chosen storage mode permits shared cookies and logins. Keep
+instance isolation explicit. See Microsoft's [WebView2 performance guidance](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/performance).
 
 ### Alternatives considered and discarded
 
 | Alternative                             | Why not (for now)                                                                                                                                                          |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Electron + Node**                     | Core in Node, not Rust; binary and RAM ~10× larger; it would have to be rewritten later to meet the "in Rust" goal.                                                       |
-| **Native Rust GUI** (egui, iced, Slint) | No terminal widget; reimplementing VT100 + rendering is a project in itself.                                                                                               |
+| **Electron + Node**                     | Bundles Chromium and adds a Node host. It would not address the retained terminal buffers or remove browser and agent memory costs. |
+| **Native Rust GUI** (egui, iced, Slint) | Viable for a measured prototype using an existing VT engine. Adopting it requires replacing the UI and validating terminal/editor/browser feature parity; it is not a drop-in renderer change. |
 | **GPUI (Zed's framework)**              | Technically the most beautiful, but still unstable as a standalone framework and with Windows support still maturing. Reassess in a year.                                  |
 | **wezterm-term/termwiz as the emulator** | Not a GUI — it is WezTerm's VT emulation _library_ in Rust. Discarded for F1, but **noted as F7**: it is the path to a headless terminal in the backend, 100% Rust.        |
 
@@ -63,7 +109,7 @@ reasons:
 
 Rust stable ≥ 1.80 (**MSVC** toolchain), Tauri 2.x, Node 20 LTS, React 18
 (not 19 — it fits better with `react-resizable-panels` and the rest of the UI
-ecosystem), TypeScript 5.x, Vite 6, `@xterm/xterm` 5.5 stable with
+ecosystem), TypeScript 5.x, Vite 7, `@xterm/xterm` 5.5 stable with
 `@xterm/addon-canvas` (the WebGL addon works in WebView2, but canvas is the
 proven-stable path — WebGL sits behind a flag in "Configurações" (Settings) →
 Terminal).

@@ -54,6 +54,7 @@ export interface TerminalRuntime {
    * "travado", which is a different thing to walk over and answer.
    */
   permission: boolean;
+  hookPhase?: "working" | "permission" | "ready";
   rssMb: number;
   cpu: number;
 }
@@ -186,9 +187,9 @@ interface TerminalsState {
   markRunning: (id: string, pid: number | null) => void;
   markExited: (id: string, code: number | null, reason: ExitReason) => void;
   markError: (id: string, message: string) => void;
-  markFinished: (id: string) => void;
+  markFinished: (id: string, at?: number) => void;
   markBlocked: (id: string, ask: string) => void;
-  markPermission: (id: string, ask: string) => void;
+  markPermission: (id: string, ask: string, at?: number) => void;
   hookTurnStart: (id: string) => void;
   hookWorking: (id: string) => void;
   clearBlocked: (id: string) => void;
@@ -227,6 +228,7 @@ export const useTerminals = create<TerminalsState>((set, get) => ({
 
   markStarting: (id) =>
     get().patch(id, {
+      hookPhase: undefined,
       state: "starting",
       exit: null,
       error: null,
@@ -236,17 +238,18 @@ export const useTerminals = create<TerminalsState>((set, get) => ({
       permission: false,
     }),
 
-  markRunning: (id, pid) =>
+  markRunning: (id, pid) => {
+    const current = get().byId[id];
+    const sameProcess = (pid !== null && current?.state === "running" && current.pid === pid)
+      || (current?.state === "starting" && current.hookPhase !== undefined);
     get().patch(id, {
       state: "running",
       pid,
       exit: null,
       error: null,
-      finished: false,
-      blocked: false,
-      blockedAsk: null,
-      permission: false,
-    }),
+      ...(sameProcess ? {} : { finished: false, blocked: false, blockedAsk: null, permission: false, hookPhase: undefined }),
+    });
+  },
 
   markExited: (id, code, reason) => {
     get().patch(id, {
@@ -266,10 +269,10 @@ export const useTerminals = create<TerminalsState>((set, get) => ({
     clearPersistedAlive(id);
   },
 
-  markFinished: (id) =>
+  markFinished: (id, at = Date.now()) =>
     get().patch(id, {
       finished: true,
-      finishedAt: Date.now(),
+      finishedAt: at,
       unread: true,
       blocked: false,
       blockedAsk: null,
@@ -291,10 +294,10 @@ export const useTerminals = create<TerminalsState>((set, get) => ({
    * permission`): a block like the tail detector's, flagged so the card can
    * say which kind. It stays until the CLI reports work again or writes.
    */
-  markPermission: (id, ask) =>
+  markPermission: (id, ask, at = Date.now()) =>
     get().patch(id, {
       finished: true,
-      finishedAt: Date.now(),
+      finishedAt: at,
       unread: true,
       blocked: true,
       blockedAsk: ask,
@@ -307,8 +310,9 @@ export const useTerminals = create<TerminalsState>((set, get) => ({
 
   /** `yard hook tool`: a tool ran, so the permission it waited on was granted. */
   hookWorking: (id) => {
-    if (!get().byId[id]?.blocked) return;
-    get().patch(id, { blocked: false, blockedAsk: null, permission: false });
+    const current = get().byId[id];
+    if (!current?.blocked && !current?.finished) return;
+    get().patch(id, { finished: false, blocked: false, blockedAsk: null, permission: false });
   },
 
   /**

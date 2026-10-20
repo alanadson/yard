@@ -2,6 +2,7 @@
 import { nanoid } from "nanoid";
 
 import { bridgeCallerRect, commitBridgeCanvas } from "./bridgeCanvas";
+import { NEW_PORTAL_STORAGE } from "./portalDefaults";
 import {
   connectedPortals,
   findPortal,
@@ -147,6 +148,9 @@ export async function cmdPortal(
       url: href,
       color: "#f5f5f5",
       engine: "webview2",
+      // The project's shared browser, like the dialog: an isolated profile
+      // per agent-made portal was a process tree and a folder each.
+      storage: NEW_PORTAL_STORAGE,
       ...(uaFromEngine ? { ua: uaFromEngine } : {}),
       ...(name ? { name } : {}),
     };

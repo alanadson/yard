@@ -181,9 +181,10 @@ export type CanvasItem =
       /** The esteira: prompts executed in order by whichever CLI is wired in. */
       stages: FlowStage[];
       /**
-       * Wired CLIs are triggers: on connect/save they are handed a standing
-       * instruction to forward any user task to `yard flow run`. `false`
-       * keeps the flow manual (HUD or an agent calling it on its own).
+       * `true` turns the Enter of every wired CLI into a run of this flow
+       * (`lib/flowIntercept.ts`). Absent or `false` keeps the flow manual (HUD
+       * or an agent calling it on its own), which is the default: each
+       * intercepted Enter is a whole paid pipeline.
        */
       trigger?: boolean;
     })
@@ -297,9 +298,10 @@ export type CanvasItemType = CanvasItem["type"];
  * keeps it from becoming a lie. `everyMin` had no upper bound, so a typo
  * (`--every 999999`) produced a routine that reads as scheduled, is listed as
  * active and never fires — indistinguishable from a paused one except by
- * arithmetic.
+ * arithmetic. Five minutes is the floor because every fire is a paid turn,
+ * and the native scheduler clamps to the same number.
  */
-export const ROUTINE_MIN_MIN = 1;
+export const ROUTINE_MIN_MIN = 5;
 /** A week. Past that a "routine" is a reminder for another tool. */
 export const ROUTINE_MAX_MIN = 7 * 24 * 60;
 
@@ -307,6 +309,12 @@ export const ROUTINE_MAX_MIN = 7 * 24 * 60;
 export function clampRoutineInterval(minutes: number): number {
   if (!Number.isFinite(minutes)) return 30;
   return Math.min(ROUTINE_MAX_MIN, Math.max(ROUTINE_MIN_MIN, Math.round(minutes)));
+}
+
+/** The routine with its interval inside the bounds; the same object when it already was. */
+export function clampedRoutine<R extends RoutineDef>(routine: R): R {
+  const everyMin = clampRoutineInterval(routine.everyMin);
+  return everyMin === routine.everyMin ? routine : { ...routine, everyMin };
 }
 
 export interface RoutineDef {
@@ -320,6 +328,11 @@ export interface RoutineDef {
   once?: boolean;
   createdAt: number;
   lastRunAt?: number;
+  /**
+   * Created by an agent (`yard routine create`) and saved switched off until
+   * the user turns it on; the CLI cannot resume it while this is set.
+   */
+  awaitingApproval?: boolean;
 }
 
 /** What a trigger listens for — the three edges the runtime mirror draws. */
@@ -361,6 +374,17 @@ export interface TriggerDef {
   cooldownSec?: number;
   createdAt: number;
   lastRunAt?: number;
+  /**
+   * The daily cap of an `ask` trigger (`lib/triggers.ts`): the local day of
+   * the last fire (`YYYY-MM-DD`) and how many fires that day has had.
+   */
+  firedDay?: string;
+  firedToday?: number;
+  /**
+   * Created by an agent (`yard trigger create`) and saved switched off until
+   * the user turns it on; the CLI cannot resume it while this is set.
+   */
+  awaitingApproval?: boolean;
 }
 
 /**
@@ -812,7 +836,10 @@ function canvasAround(r: Partial<CanvasData>, cleaned: CanvasItem[]): CanvasData
   const roles = normalizeRoles(r.roles);
   if (roles) data.roles = roles;
   if (Array.isArray(r.routines)) {
-    const routines = (r.routines as RoutineDef[]).filter(isValidRoutine);
+    // Clamped, never dropped: a routine saved under the floor keeps firing, at the floor.
+    const routines = (r.routines as RoutineDef[])
+      .filter(isValidRoutine)
+      .map((routine) => clampedRoutine(routine));
     if (routines.length) data.routines = routines;
   }
   if (Array.isArray(r.triggers)) {
@@ -1088,7 +1115,9 @@ function sanitizeItem(it: CanvasItem): CanvasItem {
       h: Math.max(FLOW_MIN_H, it.h),
       name: (it.name || "Fluxo").trim().slice(0, FLOW_NAME_MAX) || "Fluxo",
       stages: normalizeFlowStages(it.stages),
-      ...(it.trigger === false ? { trigger: false } : { trigger: undefined }),
+      // Only an explicit `true` arms the Enter interception (`armsEnter`);
+      // absent and `false` both mean off, so only `true` is worth keeping.
+      ...(it.trigger === true ? { trigger: true } : { trigger: undefined }),
     };
   }
   if (it.type === "tree") {

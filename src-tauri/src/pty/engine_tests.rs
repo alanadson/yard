@@ -29,7 +29,7 @@ struct Fixture {
 fn isolate_test_data() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        let dir = std::env::temp_dir().join("yard-testes");
+        let dir = std::env::temp_dir().join(format!("yard-engine-tests-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         std::env::set_var("YARD_DATA_DIR", &dir);
     });
@@ -136,8 +136,84 @@ fn wait_until(timeout: Duration, label: &str, mut cond: impl FnMut() -> bool) {
     panic!("timed out waiting for: {label}");
 }
 
+/// Flow reservations must never deliver their input to a different process generation.
+#[test]
+fn a_flow_delivery_for_an_earlier_process_cannot_write_into_its_replacement() {
+    let fixture = Fixture::new();
+    fixture.spawn("flow-process-guard", ps("Write-Output 'GUARD_READY'; $line = [Console]::ReadLine(); Write-Output ('RECEIVED:' + $line)"));
+    wait_until(Duration::from_secs(30), "guard fixture ready", || pty::attach(&fixture.state, "flow-process-guard").data.contains("GUARD_READY"));
+    let identity = pty::process_identity(&fixture.state, "flow-process-guard").unwrap();
+    assert!(pty::inject_for_process(&fixture.state, "flow-process-guard", pty::ProcessIdentity { pid: identity.pid.wrapping_add(1), ..identity }, "Obsolete request", true).is_err());
+    pty::inject_for_process(&fixture.state, "flow-process-guard", identity, "Current request", true).unwrap();
+    wait_until(Duration::from_secs(30), "current request received", || pty::attach(&fixture.state, "flow-process-guard").data.contains("RECEIVED:Current request"));
+    assert!(!pty::attach(&fixture.state, "flow-process-guard").data.contains("Obsolete request"));
+}
+
+/// Prompt submission must complete inside the native process after the renderer call returns.
+#[test]
+fn a_native_prompt_operation_writes_the_request_and_submits_it_without_a_second_renderer_call() {
+    let fixture = Fixture::new();
+    fixture.spawn("native-prompt-submit", ps("Write-Output 'PROMPT_READY'; $line = [Console]::ReadLine(); Write-Output ('RECEIVED:' + $line)"));
+    wait_until(Duration::from_secs(30), "prompt fixture ready", || pty::attach(&fixture.state, "native-prompt-submit").data.contains("PROMPT_READY"));
+    pty::inject(&fixture.state, "native-prompt-submit", "Native prompt body", true).unwrap();
+    wait_until(Duration::from_secs(30), "complete submitted request", || pty::attach(&fixture.state, "native-prompt-submit").data.contains("RECEIVED:Native prompt body"));
+    wait_until(Duration::from_secs(30), "prompt fixture exits", || !pty::exists(&fixture.state, "native-prompt-submit"));
+}
+
+#[test]
+fn native_prompt_input_updates_readiness_before_the_next_cli_output() {
+    let fixture = Fixture::new();
+    fixture.spawn("native-input-clock", ps("Write-Output 'INPUT_CLOCK_READY'; $first = [Console]::ReadLine(); Write-Output ('INPUT_CLOCK_RECEIVED:' + $first); $null = [Console]::ReadLine()"));
+    wait_until(Duration::from_secs(30), "input clock fixture ready", || pty::attach(&fixture.state, "native-input-clock").data.contains("INPUT_CLOCK_READY"));
+    let event = crate::scheduler::parse_hook(&serde_json::json!({"terminal":"native-input-clock","argv":["hook","stop"]})).unwrap().1;
+    fixture.state.scheduler.record("native-input-clock", event, 1000);
+    pty::inject(&fixture.state, "native-input-clock", "Clocked prompt", true).unwrap();
+    assert!(fixture.state.scheduler.last_input_at("native-input-clock") > 1000);
+    assert_eq!(fixture.state.scheduler.phase("native-input-clock"), crate::scheduler::HookPhase::Working);
+    pty::kill(&fixture.state, "native-input-clock").unwrap();
+    wait_until(Duration::from_secs(30), "input clock fixture exits", || !pty::exists(&fixture.state, "native-input-clock"));
+}
+
+#[test]
+fn a_native_scheduler_tick_delivers_durable_work_without_a_renderer_timer() {
+    let fixture = Fixture::new();
+    fixture.state.db.lock().execute_batch("CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT NOT NULL)").unwrap();
+    fixture.spawn("native-scheduled-input", ps("Write-Output 'SCHEDULE_READY'; $line = [Console]::ReadLine(); Write-Output ('SCHEDULE_RECEIVED:' + $line); $null = [Console]::ReadLine()"));
+    wait_until(Duration::from_secs(30), "native scheduler fixture ready", || pty::attach(&fixture.state, "native-scheduled-input").data.contains("SCHEDULE_READY"));
+    crate::queue::apply(&mut fixture.state.db.lock(), &[], &[serde_json::json!({"id":"native-scheduled-request","terminalId":"native-scheduled-input","text":"Autonomous native request","at":1000,"source":"bridge"})]).unwrap();
+    let outcomes = crate::scheduler::run_once(&fixture.state, super::reader::now_ms() + 6000, 2).unwrap();
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].1.status, "delivered");
+    assert!(crate::queue::read(&fixture.state.db.lock()).unwrap().is_empty());
+    wait_until(Duration::from_secs(30), "scheduled request reaches the real process", || pty::attach(&fixture.state, "native-scheduled-input").data.contains("SCHEDULE_RECEIVED:Autonomous native request"));
+    pty::kill(&fixture.state, "native-scheduled-input").unwrap();
+    wait_until(Duration::from_secs(30), "native scheduler fixture exits", || !pty::exists(&fixture.state, "native-scheduled-input"));
+}
+
+/// A pause (budget, quota or the user) must stop deliveries without failing
+/// or dropping the queued work: it is delivered once automation resumes.
+#[test]
+fn a_paused_native_scheduler_tick_keeps_ready_work_queued_until_automation_resumes() {
+    let fixture = Fixture::new();
+    fixture.state.db.lock().execute_batch("CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT NOT NULL)").unwrap();
+    fixture.spawn("native-paused-input", ps("Write-Output 'PAUSED_READY'; $line = [Console]::ReadLine(); Write-Output ('PAUSED_RECEIVED:' + $line); $null = [Console]::ReadLine()"));
+    wait_until(Duration::from_secs(30), "paused scheduler fixture ready", || pty::attach(&fixture.state, "native-paused-input").data.contains("PAUSED_READY"));
+    let request = serde_json::json!({"id":"native-paused-request","terminalId":"native-paused-input","text":"Paused native request","at":1000,"source":"bridge"});
+    crate::queue::apply(&mut fixture.state.db.lock(), &[], std::slice::from_ref(&request)).unwrap();
+    crate::persistence::db::kv_set(&fixture.state.db.lock(), crate::scheduler::AUTOMATION_PAUSED, r#"{"reason":"budget","at":1000}"#).unwrap();
+    assert!(crate::scheduler::run_once(&fixture.state, super::reader::now_ms() + 6000, 2).unwrap().is_empty());
+    assert_eq!(crate::queue::read(&fixture.state.db.lock()).unwrap(), vec![request]);
+    crate::persistence::db::kv_delete(&fixture.state.db.lock(), crate::scheduler::AUTOMATION_PAUSED).unwrap();
+    let outcomes = crate::scheduler::run_once(&fixture.state, super::reader::now_ms() + 6000, 2).unwrap();
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].1.status, "delivered");
+    pty::kill(&fixture.state, "native-paused-input").unwrap();
+    wait_until(Duration::from_secs(30), "paused scheduler fixture exits", || !pty::exists(&fixture.state, "native-paused-input"));
+}
+
 #[test]
 fn spawn_reads_output_emits_event_and_exits_on_its_own() {
+    // Regression: publishing registry absence before the final flush and exit status exposed a dead attach with no exit reason.
     let f = Fixture::new();
     let marker = "yard-vivo-42";
     f.spawn("t-echo", ps(&format!("Write-Output '{marker}'")));
@@ -169,6 +245,125 @@ fn spawn_reads_output_emits_event_and_exits_on_its_own() {
     assert_eq!(f.exit_reason("t-echo").as_deref(), Some("normal"));
 
     pty::scrollback::Scrollback::delete_file("t-echo");
+}
+
+/// Revoked credentials must not retain access to a stopped card's connections.
+#[test]
+fn a_terminal_credential_authenticates_only_while_its_process_is_live() {
+    let fixture = Fixture::new();
+    let id = "t-credential-lifetime";
+    fixture.spawn(id, ps("Write-Output ('bridge-token:' + $env:YARD_TOKEN); [Console]::ReadLine() | Out-Null"));
+    wait_until(Duration::from_secs(30), "process credential output", || fixture.events.output.lock().contains("bridge-token:"));
+    let output = fixture.events.output.lock().clone();
+    let token: String = output.split("bridge-token:").last().unwrap().chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+    assert_eq!(token.len(), 64);
+    let request = serde_json::json!({ "terminal": id, "token": token });
+    assert!(crate::bridge::credentials().authenticate(&request));
+    pty::write(&fixture.state, id, "\r").unwrap();
+    wait_until(Duration::from_secs(30), "process exits and revokes its credential", || !pty::exists(&fixture.state, id));
+    assert!(!crate::bridge::credentials().authenticate(&request));
+    pty::scrollback::Scrollback::delete_file(id);
+}
+
+/// A process exit cannot silently leave its unfinished work marked as running.
+#[test]
+fn an_exited_executor_leaves_its_unsubmitted_task_waiting_for_attention() {
+    let fixture = Fixture::new();
+    let id = "t-task-interrupted";
+    {
+        let mut connection = fixture.state.db.lock();
+        crate::work::init(&connection).unwrap();
+        let task = crate::work::create(&mut connection, crate::work::NewTask {
+            id: "interrupted-work".into(), title: "Verify API".into(), request: "Keep this request after process exit".into(),
+            criteria: vec!["Keep all callers working".into()],
+            links: crate::work::TaskLinks { terminal_ids: vec![id.into()], ..Default::default() },
+        }, 1000).unwrap();
+        let queued = crate::work::transition(&mut connection, &task.id, task.revision, "queued", 2000).unwrap();
+        crate::work::transition(&mut connection, &task.id, queued.revision, "running", 3000).unwrap();
+    }
+    fixture.spawn(id, ps("Write-Output 'executor-ended'"));
+    wait_until(Duration::from_secs(30), "executor exit", || !pty::exists(&fixture.state, id));
+    let task = crate::work::get(&fixture.state.db.lock(), "interrupted-work").unwrap();
+    assert_eq!(task.status, "blocked");
+    assert_eq!(task.request, "Keep this request after process exit");
+    assert_eq!(task.criteria[0].text, "Keep all callers working");
+    assert_eq!(crate::work::events(&fixture.state.db.lock(), &task.id).unwrap().last().unwrap().kind, "interrupted");
+    pty::scrollback::Scrollback::delete_file(id);
+}
+
+fn credential_from_output(fixture: &Fixture, id: &str) -> String {
+    let marker = format!("{id}-token:");
+    let read = || fixture.events.output.lock().rsplit_once(&marker)
+        .map(|(_, tail)| tail.chars().take_while(|c| c.is_ascii_hexdigit()).collect::<String>()).unwrap_or_default();
+    wait_until(Duration::from_secs(30), "process credential output", || read().len() == 64);
+    read()
+}
+
+#[test]
+fn restarting_a_terminal_keeps_its_id_and_history_but_rejects_its_old_credential() {
+    let fixture = Fixture::new();
+    let id = "t-credential-restart";
+    fixture.spawn(id, ps(&format!("Write-Output ('{id}-token:' + $env:YARD_TOKEN); [Console]::ReadLine() | Out-Null")));
+    let old = credential_from_output(&fixture, id);
+    assert!(crate::bridge::credentials().authenticate(&serde_json::json!({ "terminal": id, "token": old })));
+    pty::restart(fixture.sink(), &fixture.state, id).unwrap();
+    fixture.auto_respond_dsr(id);
+    wait_until(Duration::from_secs(30), "replacement process credential", || credential_from_output(&fixture, id) != old);
+    let next = credential_from_output(&fixture, id);
+    assert!(crate::bridge::credentials().authenticate(&serde_json::json!({ "terminal": id, "token": next })));
+    assert!(!crate::bridge::credentials().authenticate(&serde_json::json!({ "terminal": id, "token": old })));
+    assert!(pty::attach(&fixture.state, id).data.contains(&old));
+    pty::kill(&fixture.state, id).unwrap();
+    wait_until(Duration::from_secs(30), "restarted terminal exits", || !pty::exists(&fixture.state, id));
+    pty::scrollback::Scrollback::delete_file(id);
+}
+
+#[test]
+fn kill_and_suspend_revoke_credentials_when_termination_is_requested() {
+    let fixture = Fixture::new();
+    for (id, suspend) in [("t-credential-kill", false), ("t-credential-suspend", true)] {
+        fixture.spawn(id, ps(&format!("Write-Output ('{id}-token:' + $env:YARD_TOKEN); [Console]::ReadLine() | Out-Null")));
+        let token = credential_from_output(&fixture, id);
+        let request = serde_json::json!({ "terminal": id, "token": token });
+        assert!(crate::bridge::credentials().authenticate(&request));
+        if suspend { pty::suspend(&fixture.state, id).unwrap(); } else { pty::kill(&fixture.state, id).unwrap(); }
+        assert!(!crate::bridge::credentials().authenticate(&request));
+        wait_until(Duration::from_secs(30), "terminated process exits", || !pty::exists(&fixture.state, id));
+        pty::scrollback::Scrollback::delete_file(id);
+    }
+}
+
+#[test]
+fn a_failed_spawn_releases_its_registered_identity_for_a_later_attempt() {
+    let fixture = Fixture::new();
+    let id = "t-credential-failed";
+    let result = pty::spawn(fixture.sink(), &fixture.state, SpawnOptions {
+        id: id.into(), program: "yard-nonexistent-program.exe".into(), args: vec![],
+        cwd: std::env::temp_dir().to_string_lossy().into_owned(), rows: 24, cols: 80,
+        kind: "shell".into(), title: id.into(), env: vec![], keep_scrollback: false,
+    });
+    assert!(result.is_err());
+    let retry = crate::bridge::credentials().issue(id).expect("failed startup revoked its credential");
+    assert!(crate::bridge::credentials().authenticate(&serde_json::json!({ "terminal": id, "token": retry.token() })));
+}
+
+/// A launch profile must not replace the identity pair assigned by the bridge.
+#[test]
+fn spawn_assigns_bridge_credentials_after_custom_environment_values() {
+    let fixture = Fixture::new();
+    let id = "t-bridge-credential";
+    pty::spawn(fixture.sink(), &fixture.state, SpawnOptions {
+        id: id.into(), program: pty::default_shell(),
+        args: ps("Write-Output ('credential-ok:' + (($env:YARD_TOKEN -match '^[a-f0-9]{64}$') -and ($env:YARD_PTY_ID -eq 't-bridge-credential')) )"),
+        cwd: std::env::temp_dir().to_string_lossy().into_owned(), rows: 24, cols: 80,
+        kind: "shell".into(), title: id.into(), keep_scrollback: false,
+        env: vec![("YARD_TOKEN".into(), "override".into()), ("YARD_PTY_ID".into(), "other-terminal".into())],
+    }).unwrap();
+    fixture.auto_respond_dsr(id);
+    wait_until(Duration::from_secs(30), "credential comparison", || pty::attach(&fixture.state, id).data.contains("credential-ok:"));
+    assert!(pty::attach(&fixture.state, id).data.contains("credential-ok:True"));
+    wait_until(Duration::from_secs(30), "credential process exit", || !pty::exists(&fixture.state, id));
+    pty::scrollback::Scrollback::delete_file(id);
 }
 
 /// The size the UI dedupes against.
@@ -417,7 +612,9 @@ fn bulky_output_does_not_blow_the_emit_buffer_memory() {
     // the scrollback ring (4 MB). Nothing may grow without a limit.
     f.spawn(
         "t-flood",
-        ps("1..60000 | ForEach-Object { 'linha-de-teste-com-uma-centena-de-bytes-para-encher-o-buffer-rapido-' + $_ }"),
+        // Emit the same lines as one burst so shell formatting speed cannot
+        // replace the buffer-volume contract this test exercises.
+        ps("$text = [Text.StringBuilder]::new(); for ($index = 1; $index -le 60000; $index++) { [void]$text.AppendLine('linha-de-teste-com-uma-centena-de-bytes-para-encher-o-buffer-rapido-' + $index) }; $bytes = [Text.Encoding]::UTF8.GetBytes($text.ToString()); $stdout = [Console]::OpenStandardOutput(); $stdout.Write($bytes, 0, $bytes.Length); $stdout.Flush()"),
     );
 
     wait_until(Duration::from_secs(90), "process to finish", || {
@@ -429,7 +626,7 @@ fn bulky_output_does_not_blow_the_emit_buffer_memory() {
         sb_len <= super::scrollback::RING_CAP,
         "scrollback blew past the 4 MB cap: {sb_len} bytes"
     );
-    assert!(sb_len > 0, "empty scrollback — nothing was captured");
+    assert_eq!(sb_len, super::scrollback::RING_CAP, "the full burst did not fill the retained history");
 
     pty::scrollback::Scrollback::delete_file("t-flood");
 }
@@ -444,7 +641,7 @@ fn a_flood_past_the_file_cap_leaves_the_end_of_the_history_on_disk() {
     let id = "t-flood-cap";
     f.spawn(
         id,
-        ps("$l = 'ç' * 100 + ('x' * 100); 1..60000 | ForEach-Object { $l + $_ }; 'FIM-DA-ENXURRADA'"),
+        ps("$line = 'ç' * 100 + ('x' * 100); $text = [Text.StringBuilder]::new(); for ($index = 1; $index -le 60000; $index++) { [void]$text.AppendLine($line + $index) }; [void]$text.AppendLine('FIM-DA-ENXURRADA'); $bytes = [Text.Encoding]::UTF8.GetBytes($text.ToString()); $stdout = [Console]::OpenStandardOutput(); $stdout.Write($bytes, 0, $bytes.Length); $stdout.Flush()"),
     );
     wait_until(Duration::from_secs(120), "process to finish", || {
         !pty::exists(&f.state, id)
@@ -550,7 +747,7 @@ fn ordinary_shell_is_not_mistaken_for_alternate_screen() {
 fn a_dead_terminal_about_to_start_again_is_attached_without_its_history() {
     let f = Fixture::new();
     let id = "t-dead-omit";
-    let mut sb = pty::scrollback::Scrollback::fresh(id);
+    let mut sb = pty::scrollback::Scrollback::fresh(id).expect("fresh scrollback");
     sb.push("historia-da-sessao-anterior\r\n".as_bytes());
     sb.flush().expect("flush");
 
@@ -914,6 +1111,27 @@ fn the_pty_id_placeholder_is_filled_in_at_spawn() {
 fn an_argument_without_the_placeholder_is_untouched() {
     let args = vec!["--resume".to_string(), "{{outra coisa}}".to_string()];
     assert_eq!(super::expand_pty_id(&args, "abc123"), args);
+}
+
+/// SSH commands must retain placeholders on disk while each process receives the current credential.
+#[test]
+fn session_credentials_are_resolved_without_mutating_the_saved_launch() {
+    let args = vec!["YARD_TOKEN='{{YARD_BRIDGE_TOKEN}}' exec claude".to_string()];
+    let expanded = super::expand_bridge_token(&args, "fixture-secret");
+    assert_eq!(expanded[0], "YARD_TOKEN='fixture-secret' exec claude");
+    assert_eq!(args[0], "YARD_TOKEN='{{YARD_BRIDGE_TOKEN}}' exec claude");
+}
+
+#[test]
+fn old_generated_ssh_launches_keep_no_credentials_and_reconnect_to_the_current_session() {
+    let args = vec!["-tt".into(), "-R".into(), "51515:127.0.0.1:51515".into(), "host".into(),
+        "cat <<'YARD_SHIM_EOF'\nshim\nYARD_SHIM_EOF\nYARD_PTY_ID='old' YARD_TOKEN='old-secret' YARD_PORT=51515 exec claude".into()];
+    let saved = super::normalize_remote_launch(&args);
+    assert!(!saved.join(" ").contains("old-secret"));
+    let launched = super::expand_remote_launch(&saved, "current", "new-secret", Some(51000));
+    assert_eq!(launched[2], "51000:127.0.0.1:51000");
+    assert!(launched[4].contains("YARD_PTY_ID='current' YARD_TOKEN='new-secret' YARD_PORT=51000"));
+    assert!(saved[4].contains("{{YARD_BRIDGE_TOKEN}}"));
 }
 
 /// A child that stops draining its stdin plus a large write used to block

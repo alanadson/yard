@@ -12,7 +12,10 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { MARKERS, bootVerdict } from "./smoke.mjs";
+import { MARKERS, bootVerdict, isolatedSmokeEnvironment, runSmoke, runSmokeIn } from "./smoke.mjs";
+import { dirname, join, resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 const healthy = [
   "2026-08-28T04:00:00Z INFO logging iniciado dir=C:\tmp\yard-smoke\logs",
@@ -21,6 +24,60 @@ const healthy = [
 ].join("\n");
 
 describe("bootVerdict", () => {
+  it("does not reuse the previous boot's healthy markers when the replacement never starts", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "yard-smoke-owned-"));
+    mkdirSync(join(directory, "logs"));
+    writeFileSync(join(directory, "logs", "fixture.log"), healthy);
+    writeFileSync(join(directory, "app.db"), "original database");
+    try {
+      expect((await runSmokeIn(process.execPath, directory, ["-e", "process.exit(0)"])).ok).toBe(false);
+    } finally {
+      expect(dirname(resolve(directory))).toBe(resolve(tmpdir()));
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  it("keeps caller-owned saved data after checking a real process boot", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "yard-smoke-owned-"));
+    writeFileSync(join(directory, "app.db"), "original database");
+    const script = `const fs = require('node:fs'); const path = require('node:path');
+      const root = process.env.YARD_DATA_DIR;
+      fs.mkdirSync(path.join(root, 'logs'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'logs', 'fixture.log'), ${JSON.stringify(healthy)});
+      setInterval(() => {}, 1000);`;
+    try {
+      expect((await runSmokeIn(process.execPath, directory, ["-e", script])).ok).toBe(true);
+      expect(readFileSync(join(directory, "app.db"), "utf8")).toBe("original database");
+    } finally {
+      expect(dirname(resolve(directory))).toBe(resolve(tmpdir()));
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  it("reports a real child failure even after all boot markers were written", async () => {
+    const script = `const fs = require('node:fs'); const path = require('node:path');
+      const root = process.env.YARD_DATA_DIR;
+      fs.mkdirSync(path.join(root, 'logs'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'app.db'), 'fixture');
+      fs.writeFileSync(path.join(root, 'logs', 'fixture.log'), ${JSON.stringify(healthy)});
+      process.exit(3);`;
+    const verdict = await runSmoke(process.execPath, ["-e", script]);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reasons.join(" ")).toContain("3");
+  });
+  it("isolates native browser and agent configuration without changing the parent process", () => {
+    const parent = { PATH: "tool-path", CODEX_HOME: "real-codex", CLAUDE_CONFIG_DIR: "real-claude" };
+    const child = isolatedSmokeEnvironment(parent, "test-data");
+    expect(child.YARD_DATA_DIR).toBe("test-data");
+    expect(child.YARD_HOME_DIR).toBe(join("test-data", "home"));
+    expect(child.CODEX_HOME).toBe(join("test-data", "home", ".codex"));
+    expect(child.CLAUDE_CONFIG_DIR).toBe(join("test-data", "home", ".claude"));
+    expect(child.WEBVIEW2_USER_DATA_FOLDER).toBe(join("test-data", "webview"));
+    expect(child.PATH).toBe("tool-path");
+    expect(parent.CODEX_HOME).toBe("real-codex");
+  });
+  it("fails when the native webview cannot be created even if services started", () => {
+    const log = `${healthy}\nERROR tauri_runtime_wry: failed to create webview: WebView2 error`;
+    expect(bootVerdict(log, { dbExists: true, exitCode: 0 }).ok).toBe(false);
+  });
   it("passes a boot that logged everything it has to log", () => {
     const v = bootVerdict(healthy, { dbExists: true, exitCode: 0 });
     expect(v.ok).toBe(true);

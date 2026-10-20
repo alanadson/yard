@@ -1767,6 +1767,16 @@ button.sb-chip:active {
   color: var(--red);
 }
 
+/* Under the line but not the whole story: part of the day has no price. */
+.sb-budget.is-partial {
+  color: var(--text-dim);
+}
+
+/* Automation stopped by the ceiling or the quota; a click resumes. */
+.sb-paused {
+  color: var(--red);
+}
+
 /* The pull request, when the Controle tab has read one. Chroma from the
    checks, on the same semantic scale as the diff numbers beside it: a build
    that is failing is the same kind of news as a line that was removed. */

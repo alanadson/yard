@@ -19,8 +19,11 @@
  */
 import { ipc } from "./ipc";
 import { uiLog } from "./log";
-import { webhookPayload, webhookTarget } from "./webhook";
+import { admitWebhook, webhookPayload, webhookTarget, type SentWebhook } from "./webhook";
 import { useUI } from "../stores/uiStore";
+
+/** What went out in the last minute (`admitWebhook` holds the rule). */
+let sent: SentWebhook[] = [];
 
 export function pushOut(title: string, body: string, event: string): void {
   const configured = useUI.getState().prefs.notifyWebhook;
@@ -31,6 +34,12 @@ export function pushOut(title: string, body: string, event: string): void {
     return;
   }
   const payload = webhookPayload(title, body, event);
+  const gate = admitWebhook(sent, JSON.stringify(payload), Date.now());
+  sent = gate.sent;
+  if (!gate.send) {
+    uiLog.info("webhook: repetido ou acima de 10 por minuto, não enviado");
+    return;
+  }
   void ipc
     .webhookPost(url, JSON.stringify(payload))
     .catch((e) => uiLog.warn(`webhook: ${e}`));

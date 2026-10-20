@@ -83,12 +83,36 @@ pub struct SessionUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_creation_tokens: u64,
+    pub cache_creation_one_hour_tokens: u64,
     pub cache_read_tokens: u64,
     pub messages: u64,
     pub models: Vec<String>,
     /// Estimate. Public list prices; good for order of magnitude,
     /// not for reconciling a bill.
     pub cost_usd: Option<f64>,
+    #[serde(skip)]
+    pub(crate) model_tokens: std::collections::BTreeMap<String, TokenCounts>,
+    #[serde(skip)]
+    pub(crate) model_one_hour_tokens: std::collections::BTreeMap<String, u64>,
+    #[serde(skip)]
+    pub(crate) invalid_pricing_metadata: bool,
+}
+
+impl SessionUsage {
+    pub(crate) fn record_cache_duration(&mut self, model: Option<&str>, usage: Option<&serde_json::Value>) {
+        self.invalid_pricing_metadata |= !super::tokens::cache_duration_valid(usage);
+        let one_hour = super::tokens::cache_one_hour_tokens(usage);
+        self.cache_creation_one_hour_tokens += one_hour;
+        *self.model_one_hour_tokens.entry(model.unwrap_or_default().to_string()).or_default() += one_hour;
+    }
+
+    pub(crate) fn record_model(&mut self, model: Option<&str>, delta: TokenCounts) {
+        let counts = self.model_tokens.entry(model.unwrap_or_default().to_string()).or_default();
+        counts.0 += delta.0;
+        counts.1 += delta.1;
+        counts.2 += delta.2;
+        counts.3 += delta.3;
+    }
 }
 
 /// Lists an agent's sessions for a project. Empty `project_path` =
@@ -457,6 +481,16 @@ fn usage_cache() -> &'static Mutex<BoundedCache<PathBuf, CachedUsage>> {
 /// it needs (`usage_line`). The tests hold it against the old full `Value`
 /// re-parse.
 pub fn usage(file: &str) -> SessionUsage {
+    usage_with_rates(file, &super::pricing::current().rates)
+}
+
+pub(crate) fn usage_with_rates(file: &str, rates: &[super::pricing::CustomRate]) -> SessionUsage {
+    let mut answer = cached_usage(file);
+    answer.cost_usd = estimate_cost_with_rates(&answer, rates);
+    answer
+}
+
+fn cached_usage(file: &str) -> SessionUsage {
     let path = Path::new(file);
     // No metadata, no key to keep it under: read it as it always was read.
     let Ok(meta) = std::fs::metadata(path) else {
@@ -527,6 +561,7 @@ fn scan_usage(path: &Path, len: u64, mtime: i64, previous: Option<CachedUsage>) 
 #[derive(Clone, Default)]
 struct UsageScan {
     totals: SessionUsage,
+    codex_model: String,
     previous_tokens: Option<TokenCounts>,
     seen_messages: HashSet<String>,
 }
@@ -539,8 +574,16 @@ impl UsageScan {
     }
 
     fn apply(&mut self, line: UsageLine) {
+        if line.kind.as_deref() == Some("turn_context") {
+            if let Some(model) = line.payload.as_ref().and_then(|payload| payload.model.as_ref()).filter(|model| !model.is_empty()) {
+                self.codex_model = model.clone();
+            }
+        }
         let u = &mut self.totals;
         u.messages += 1;
+        if let Some(info) = line.payload.as_ref().and_then(|payload| payload.info.as_ref()) {
+            u.invalid_pricing_metadata |= !super::tokens::codex_usage_valid(info, self.previous_tokens);
+        }
 
         if let Some(delta) = line
             .payload
@@ -552,6 +595,8 @@ impl UsageScan {
             u.cache_read_tokens += delta.1;
             u.cache_creation_tokens += delta.2;
             u.output_tokens += delta.3;
+            if !self.codex_model.is_empty() && !u.models.contains(&self.codex_model) { u.models.push(self.codex_model.clone()); }
+            u.record_model(Some(&self.codex_model), delta);
         }
 
         // Claude and compatible per-message usage objects are already deltas.
@@ -563,11 +608,19 @@ impl UsageScan {
             u.cache_read_tokens += delta.1;
             u.cache_creation_tokens += delta.2;
             u.output_tokens += delta.3;
+            u.record_model(message.and_then(|m| m.model.as_deref()), delta);
+            u.record_cache_duration(message.and_then(|m| m.model.as_deref()), message.and_then(|m| m.usage.as_ref()));
         } else if let Some(usage) = line.usage.as_ref() {
             u.input_tokens += num(usage, &["input_tokens"]);
             u.output_tokens += num(usage, &["output_tokens"]);
             u.cache_creation_tokens += num(usage, &["cache_creation_input_tokens"]);
             u.cache_read_tokens += num(usage, &["cache_read_input_tokens", "cached_input_tokens"]);
+            u.record_model(None, (
+                num(usage, &["input_tokens"]),
+                num(usage, &["cache_read_input_tokens", "cached_input_tokens"]),
+                num(usage, &["cache_creation_input_tokens"]),
+                num(usage, &["output_tokens"]),
+            ));
         }
 
         if let Some(model) = message.and_then(|m| m.model.as_deref()) {
@@ -595,48 +648,123 @@ fn num(v: &serde_json::Value, keys: &[&str]) -> u64 {
     0
 }
 
-/// Price table per million tokens (USD), checked on 2026-08-12.
+/// Reference prices per million tokens (USD), checked on 2026-10-06.
+/// The three legacy Claude 3 rows retain the inherited 2026-08-12 reference:
+/// https://platform.claude.com/docs/en/about-claude/pricing
 ///
-/// Order matters: the first matching pattern wins, so more specific ids
-/// come before the generic ones. "opus" alone is **not** a single price
-/// family — Opus 5/4.x costs US$ 5/25, while Opus 4.1 and Opus 3
-/// cost US$ 15/75. Treating both as the same thing inflates the estimate
-/// 3x, which is exactly the kind of wrong number that makes the user take
-/// a wrong decision.
-const PRICES: &[(&str, f64, f64)] = &[
-    ("fable", 10.0, 50.0),
-    ("mythos", 10.0, 50.0),
-    ("opus-5", 5.0, 25.0),
-    ("opus-4-8", 5.0, 25.0),
-    ("opus-4-7", 5.0, 25.0),
-    ("opus-4-6", 5.0, 25.0),
-    ("opus-4-5", 5.0, 25.0),
+/// Match explicit release IDs and optional dated snapshots. A family name
+/// cannot select another release's rates. Each row carries input, output
+/// and cache-read multiplier independently.
+const PRICES: &[(&str, f64, f64, f64)] = &[
+    ("fable-5-1", 10.0, 50.0, 0.025),
+    ("mythos-5-1", 10.0, 50.0, 0.025),
+    ("fable-5", 10.0, 50.0, 0.1),
+    ("mythos-5", 10.0, 50.0, 0.1),
+    ("opus-5-5", 4.0, 20.0, 0.05),
+    ("opus-5", 5.0, 25.0, 0.1),
+    ("opus-4-8", 5.0, 25.0, 0.1),
+    ("opus-4-7", 5.0, 25.0, 0.1),
+    ("opus-4-6", 5.0, 25.0, 0.1),
+    ("opus-4-5", 5.0, 25.0, 0.1),
     // Earlier Opus generations, in another band.
-    ("opus-4-1", 15.0, 75.0),
-    ("opus-4", 15.0, 75.0),
-    ("opus", 15.0, 75.0),
-    ("haiku", 1.0, 5.0),
-    ("sonnet", 3.0, 15.0),
+    ("opus-4-1", 15.0, 75.0, 0.1),
+    ("opus-4", 15.0, 75.0, 0.1),
+    ("3-opus", 15.0, 75.0, 0.1),
+    ("haiku-4-5", 1.0, 5.0, 0.1),
+    ("3-5-haiku", 0.8, 4.0, 0.1),
+    ("sonnet-5", 2.0, 10.0, 0.1),
+    ("sonnet-5-5", 2.0, 10.0, 0.1),
+    ("sonnet-4-6", 3.0, 15.0, 0.1),
+    ("sonnet-4-5", 3.0, 15.0, 0.1),
+    ("sonnet-4", 3.0, 15.0, 0.1),
+    ("3-5-sonnet", 3.0, 15.0, 0.1),
+    ("3-7-sonnet", 3.0, 15.0, 0.1),
 ];
 
-/// Cache multipliers over the input price: writing costs 1.25x
-/// (5 min TTL), reading costs 0.1x.
+/// Five-minute writes use 1.25x input; cache-read multipliers belong to each model.
 const CACHE_WRITE_MULT: f64 = 1.25;
-const CACHE_READ_MULT: f64 = 0.1;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPriceReference {
+    pub model: String,
+    pub input: f64,
+    pub output: f64,
+    pub cache_read: f64,
+    pub cache_write_five_minute: f64,
+    pub cache_write_one_hour: f64,
+    pub verified_on: Option<String>,
+    pub inherited_on: Option<String>,
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PricingReference {
+    pub version: String,
+    pub currency: String,
+    pub provider: String,
+    pub scope: String,
+    pub models: Vec<ModelPriceReference>,
+}
+
+pub fn pricing_reference() -> PricingReference {
+    let source = "https://platform.claude.com/docs/en/about-claude/pricing";
+    let models = PRICES.iter().map(|(model, input, output, read_mult)| {
+        let inherited = matches!(*model, "3-opus" | "3-5-sonnet" | "3-7-sonnet");
+        ModelPriceReference { model: format!("claude-{model}"), input: *input, output: *output,
+            cache_read: input * read_mult, cache_write_five_minute: input * CACHE_WRITE_MULT, cache_write_one_hour: input * 2.0,
+            verified_on: (!inherited).then(|| "2026-10-06".to_string()),
+            inherited_on: inherited.then(|| "2026-08-12".to_string()),
+            source: (!inherited).then(|| source.to_string()),
+        }
+    }).collect();
+    PricingReference { version: "anthropic-api-standard-global-2026-10-06-v1".into(), currency: "USD".into(),
+        provider: "anthropic".into(), scope: "api-standard-global".into(), models }
+}
 
 /// Cost estimate. `None` when the model is not in the table — better to
 /// show no number at all than to show a made-up number.
 /// `pub(crate)` because the live tail (`tail.rs`) adds up the same totals.
 pub(crate) fn estimate_cost(u: &SessionUsage) -> Option<f64> {
-    let models = u.models.join(" ").to_ascii_lowercase();
-    let (_, inp, out) = PRICES.iter().find(|(pat, _, _)| models.contains(pat))?;
+    estimate_cost_with_rates(u, &super::pricing::current().rates)
+}
 
+fn is_dated_snapshot_of(model: &str, release: &str) -> bool {
+    model.strip_prefix(release).and_then(|suffix| suffix.strip_prefix('-'))
+        .is_some_and(|suffix| suffix.len() == 8 && suffix.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+pub(crate) fn estimate_cost_with_rates(u: &SessionUsage, rates: &[super::pricing::CustomRate]) -> Option<f64> {
+    if u.invalid_pricing_metadata || u.cache_creation_one_hour_tokens > u.cache_creation_tokens { return None; }
+    if !u.model_tokens.is_empty() {
+        return u.model_tokens.iter().try_fold(0.0, |total, (model, counts)| {
+            let part = SessionUsage { input_tokens: counts.0, cache_read_tokens: counts.1, cache_creation_tokens: counts.2,
+                cache_creation_one_hour_tokens: u.model_one_hour_tokens.get(model).copied().unwrap_or(0),
+                output_tokens: counts.3, models: vec![model.clone()], ..Default::default() };
+            estimate_cost_with_rates(&part, rates).map(|cost| total + cost)
+        });
+    }
+    if u.models.len() != 1 { return None; }
+    let model = u.models[0].to_ascii_lowercase();
     let per_million = |n: u64, price: f64| (n as f64) * price / 1_000_000.0;
+    let custom = rates.iter().find(|rate| rate.model.eq_ignore_ascii_case(&model))
+        .or_else(|| rates.iter().find(|rate| is_dated_snapshot_of(&model, &rate.model.to_ascii_lowercase())));
+    if let Some(rate) = custom {
+        return Some(per_million(u.input_tokens, rate.input) + per_million(u.output_tokens, rate.output)
+            + per_million(u.cache_read_tokens, rate.cache_read)
+            + per_million(u.cache_creation_tokens - u.cache_creation_one_hour_tokens, rate.cache_write_five_minute)
+            + per_million(u.cache_creation_one_hour_tokens, rate.cache_write_one_hour));
+    }
+    let model = model.strip_prefix("claude-").unwrap_or(&model);
+    let (_, inp, out, read_mult) = PRICES.iter().find(|(id, _, _, _)| model == *id || is_dated_snapshot_of(model, id))?;
+
     Some(
         per_million(u.input_tokens, *inp)
             + per_million(u.output_tokens, *out)
             + per_million(u.cache_creation_tokens, inp * CACHE_WRITE_MULT)
-            + per_million(u.cache_read_tokens, inp * CACHE_READ_MULT),
+            + per_million(u.cache_read_tokens, inp * read_mult)
+            + per_million(u.cache_creation_one_hour_tokens, inp * (2.0 - CACHE_WRITE_MULT)),
     )
 }
 
@@ -730,7 +858,274 @@ fn path_matches(a: &str, b: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// A negotiated rate must price each token category without changing the recorded usage.
+    #[test]
+    fn an_explicit_custom_rate_prices_all_categories_for_its_exact_model() {
+        let usage = SessionUsage { input_tokens: 1_000_000, output_tokens: 1_000_000, cache_read_tokens: 1_000_000,
+            cache_creation_tokens: 2_000_000, cache_creation_one_hour_tokens: 1_000_000,
+            models: vec!["claude-sonnet-5-5".into()], ..Default::default() };
+        let rate = super::super::pricing::CustomRate { model: "claude-sonnet-5-5".into(), input: 1.0,
+            output: 3.0, cache_read: 0.2, cache_write_five_minute: 1.5, cache_write_one_hour: 2.5 };
+        assert_eq!(estimate_cost_with_rates(&usage, &[rate]), Some(8.2));
+        assert_eq!(usage.cache_creation_tokens, 2_000_000);
+    }
+
+    #[test]
+    fn an_unchanged_cached_session_is_repriced_when_custom_rates_change_or_are_removed() {
+        let root = usage_dir("custom-rate-cache");
+        let path = root.join("session.jsonl");
+        let line = serde_json::json!({ "type": "assistant", "message": { "id": "priced-request",
+            "model": "claude-sonnet-4-5", "usage": { "input_tokens": 1_000_000 } } });
+        std::fs::write(&path, line.to_string()).unwrap();
+        let file = path.to_str().unwrap();
+        assert_eq!(usage(file).cost_usd, Some(3.0));
+        let rate = super::super::pricing::CustomRate { model: "claude-sonnet-4-5".into(), input: 1.0,
+            output: 3.0, cache_read: 0.2, cache_write_five_minute: 1.5, cache_write_one_hour: 2.5 };
+        let repriced = usage_with_rates(file, &[rate]);
+        assert_eq!(repriced.cost_usd, Some(1.0));
+        assert_eq!(repriced.input_tokens, 1_000_000);
+        assert_eq!(usage_with_rates(file, &[]).cost_usd, Some(3.0));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Custom Codex rates need the turn's model, not an unlabelled token bucket.
+    #[test]
+    fn a_codex_session_prices_ordinary_input_and_cache_with_the_latest_turn_model() {
+        let root = usage_dir("codex-custom-rate");
+        let path = root.join("rollout.jsonl");
+        let lines = [serde_json::json!({ "type": "turn_context", "payload": { "model": "custom-codex-model" } }),
+            serde_json::json!({ "type": "event_msg", "payload": { "type": "token_count", "info": {
+                "total_token_usage": { "input_tokens": 1_000_000, "cached_input_tokens": 500_000, "output_tokens": 100_000 } } } })];
+        std::fs::write(&path, lines.iter().map(|line| line.to_string()).collect::<Vec<_>>().join("\n")).unwrap();
+        let rate = super::super::pricing::CustomRate { model: "custom-codex-model".into(), input: 2.0,
+            output: 10.0, cache_read: 0.5, cache_write_five_minute: 2.5, cache_write_one_hour: 4.0 };
+        let result = usage_with_rates(path.to_str().unwrap(), &[rate]);
+        assert_eq!(result.input_tokens, 500_000);
+        assert_eq!(result.cache_read_tokens, 500_000);
+        assert_eq!(result.cost_usd, Some(2.25));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Invalid provider counters must retain observed tokens without inventing a dollar estimate.
+    #[test]
+    fn a_codex_session_with_cache_exceeding_its_raw_input_keeps_usage_unpriced() {
+        let root = usage_dir("invalid-codex-cache");
+        let path = root.join("rollout.jsonl");
+        let lines = [serde_json::json!({ "type": "turn_context", "payload": { "model": "custom-codex-model" } }),
+            serde_json::json!({ "type": "event_msg", "payload": { "type": "token_count", "info": {
+                "total_token_usage": { "input_tokens": 100, "cached_input_tokens": 120, "output_tokens": 10 } } } })];
+        std::fs::write(&path, lines.iter().map(|line| line.to_string()).collect::<Vec<_>>().join("\n")).unwrap();
+        let rate = super::super::pricing::CustomRate { model: "custom-codex-model".into(), input: 2.0,
+            output: 10.0, cache_read: 0.5, cache_write_five_minute: 2.5, cache_write_one_hour: 4.0 };
+        let result = usage_with_rates(path.to_str().unwrap(), &[rate]);
+        assert_eq!(result.cache_read_tokens, 120);
+        assert_eq!(result.output_tokens, 10);
+        assert_eq!(result.cost_usd, None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_custom_release_rate_applies_to_its_dated_snapshot_without_pricing_another_release() {
+        let rate = super::super::pricing::CustomRate { model: "claude-sonnet-4-5".into(), input: 1.0,
+            output: 3.0, cache_read: 0.2, cache_write_five_minute: 1.5, cache_write_one_hour: 2.5 };
+        let usage = SessionUsage { models: vec!["claude-sonnet-4-5-20250929".into()], input_tokens: 1_000_000, ..Default::default() };
+        assert_eq!(estimate_cost_with_rates(&usage, std::slice::from_ref(&rate)), Some(1.0));
+        let unknown = SessionUsage { models: vec!["claude-sonnet-4-9".into()], ..usage };
+        assert_eq!(estimate_cost_with_rates(&unknown, &[rate]), None);
+    }
+
+    #[test]
+    fn an_exact_dated_custom_rate_wins_over_a_broader_release_override() {
+        let base = super::super::pricing::CustomRate { model: "claude-sonnet-4-5".into(), input: 1.0,
+            output: 3.0, cache_read: 0.2, cache_write_five_minute: 1.5, cache_write_one_hour: 2.5 };
+        let dated = super::super::pricing::CustomRate { model: "claude-sonnet-4-5-20250929".into(), input: 2.0, ..base.clone() };
+        let usage = SessionUsage { models: vec![dated.model.clone()], input_tokens: 1_000_000, ..Default::default() };
+        assert_eq!(estimate_cost_with_rates(&usage, &[base, dated]), Some(2.0));
+    }
+
+    #[test]
+    fn a_growing_codex_session_retains_the_previous_turns_rate_when_the_model_changes() {
+        let root = usage_dir("codex-model-change");
+        let path = root.join("rollout.jsonl");
+        let line = |model: &str, input: u64| [
+            serde_json::json!({ "type": "turn_context", "payload": { "model": model } }),
+            serde_json::json!({ "type": "event_msg", "payload": { "type": "token_count", "info": {
+                "total_token_usage": { "input_tokens": input, "cached_input_tokens": input / 2, "output_tokens": input / 10 } } } }),
+        ].iter().map(|line| line.to_string()).collect::<Vec<_>>().join("\n") + "\n";
+        std::fs::write(&path, line("custom-codex-one", 1_000_000)).unwrap();
+        let first = super::super::pricing::CustomRate { model: "custom-codex-one".into(), input: 2.0,
+            output: 10.0, cache_read: 0.5, cache_write_five_minute: 2.5, cache_write_one_hour: 4.0 };
+        let second = super::super::pricing::CustomRate { model: "custom-codex-two".into(), input: 4.0,
+            output: 20.0, cache_read: 1.0, ..first.clone() };
+        let rates = [first, second];
+        assert_eq!(usage_with_rates(path.to_str().unwrap(), &rates).cost_usd, Some(2.25));
+        append_to(&path, &line("custom-codex-two", 2_000_000));
+        let result = usage_with_rates(path.to_str().unwrap(), &rates);
+        assert_eq!(result.input_tokens, 1_000_000);
+        assert_eq!(result.cache_read_tokens, 1_000_000);
+        assert_eq!(result.models, ["custom-codex-one", "custom-codex-two"]);
+        assert_eq!(result.cost_usd, Some(6.75));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Another valid message must not hide malformed duration metadata in aggregate totals.
+    #[test]
+    fn a_session_with_invalid_message_duration_keeps_tokens_without_guessing_its_cost() {
+        let root = usage_dir("invalid-duration-aggregate");
+        let path = root.join("session.jsonl");
+        let lines: Vec<String> = [("invalid", 100, 101), ("valid", 100, 0)].map(|(id, total, one_hour)| {
+            serde_json::json!({ "type": "assistant", "message": { "id": id, "model": "claude-sonnet-4-5",
+                "usage": { "cache_creation_input_tokens": total, "cache_creation": { "ephemeral_1h_input_tokens": one_hour } } } }).to_string()
+        }).to_vec();
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        let result = usage(path.to_str().unwrap());
+        assert_eq!(result.cache_creation_tokens, 200);
+        assert_eq!(result.messages, 2);
+        assert_eq!(result.cost_usd, None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Inconsistent duration totals must remain unpriced instead of overstating the estimate.
+    #[test]
+    fn cache_duration_counts_above_total_writes_do_not_produce_a_price() {
+        let invalid = SessionUsage { models: vec!["claude-sonnet-4-5".into()], cache_creation_tokens: 1_000_000,
+            cache_creation_one_hour_tokens: 2_000_000, ..Default::default() };
+        assert_eq!(estimate_cost(&invalid), None);
+    }
+
+    /// Reported one-hour writes previously inherited the five-minute rate and understated cost.
+    #[test]
+    fn one_hour_duration_survives_incremental_session_reads_and_matches_the_value_scan() {
+        let root = usage_dir("cache-duration-incremental");
+        let file = root.join("session.jsonl");
+        let line = |id: &str| serde_json::json!({ "type": "assistant", "message": {
+            "id": id, "model": "claude-sonnet-4-5", "usage": { "cache_creation_input_tokens": 2_000_000,
+                "cache_creation": { "ephemeral_5m_input_tokens": 1_000_000, "ephemeral_1h_input_tokens": 1_000_000 } }
+        } }).to_string();
+        let first = line("first");
+        let second = line("second");
+        let cut = second.len() / 2;
+        std::fs::write(&file, format!("{first}\n{}", &second[..cut])).unwrap();
+        let before = usage_matches_a_full_reparse(&file, 0);
+        assert_eq!(before.cache_creation_one_hour_tokens, 1_000_000);
+        append_to(&file, &format!("{}\n{first}\n", &second[cut..]));
+        let after = usage_matches_a_full_reparse(&file, 1);
+        assert_eq!(after.cache_creation_one_hour_tokens, 2_000_000);
+        assert_eq!(after.cost_usd, Some(19.5));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reported_one_hour_cache_writes_are_priced_separately_from_five_minute_writes() {
+        let root = usage_dir("cache-duration-price");
+        let file = root.join("session.jsonl");
+        std::fs::write(&file, r#"{"type":"assistant","message":{"id":"cache-request","model":"claude-sonnet-4-5","usage":{"cache_creation_input_tokens":2000000,"cache_creation":{"ephemeral_5m_input_tokens":1000000,"ephemeral_1h_input_tokens":1000000}}}}"#).unwrap();
+        let result = usage(file.to_str().unwrap());
+        assert_eq!(result.cache_creation_tokens, 2_000_000);
+        assert_eq!(result.cost_usd, Some(9.75));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     // Repeated content blocks can be interleaved with other API messages.
+    #[test]
+    fn a_mixed_model_session_prices_each_message_using_its_own_model() {
+        let root = usage_dir("mixed-model-price");
+        let path = root.join("session.jsonl");
+        let lines: Vec<String> = [("a", "claude-opus-4-1"), ("b", "claude-sonnet-4-6")].map(|(id, model)| {
+            serde_json::json!({ "type": "assistant", "message": { "id": id, "model": model, "usage": { "input_tokens": 1_000_000 } } }).to_string()
+        }).to_vec();
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        let result = usage(path.to_str().unwrap());
+        assert_eq!(result.input_tokens, 2_000_000);
+        assert_eq!(result.cost_usd, Some(18.0));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn sonnet_five_uses_the_checked_reference_price_instead_of_the_previous_release_rate() {
+        let usage = SessionUsage { input_tokens: 1_000_000, output_tokens: 1_000_000,
+            models: vec!["claude-sonnet-5".into()], ..Default::default() };
+        assert_eq!(estimate_cost(&usage), Some(12.0));
+    }
+
+    #[test]
+    fn opus_five_five_uses_its_own_checked_input_output_and_cache_read_rates() {
+        let usage = SessionUsage { input_tokens: 1_000_000, output_tokens: 1_000_000, cache_read_tokens: 1_000_000,
+            models: vec!["claude-opus-5-5".into()], ..Default::default() };
+        assert_eq!(estimate_cost(&usage), Some(24.2));
+    }
+
+    #[test]
+    fn an_unlisted_opus_minor_version_does_not_inherit_a_listed_versions_rate() {
+        let usage = SessionUsage { input_tokens: 1_000_000, output_tokens: 1_000_000, cache_read_tokens: 1_000_000,
+            models: vec!["claude-opus-5-5".into()], ..Default::default() };
+        let unknown = SessionUsage { models: vec!["claude-opus-5-6".into()], ..usage };
+        assert_eq!(estimate_cost(&unknown), None);
+    }
+
+    #[test]
+    fn fable_and_mythos_five_one_use_their_release_specific_cache_read_rates() {
+        for model in ["claude-fable-5-1", "claude-mythos-5-1"] {
+            let usage = SessionUsage { input_tokens: 1_000_000, output_tokens: 1_000_000, cache_read_tokens: 1_000_000,
+                models: vec![model.into()], ..Default::default() };
+            assert_eq!(estimate_cost(&usage), Some(60.25), "{model}");
+        }
+    }
+
+    #[test]
+    fn sonnet_five_five_uses_its_verified_release_price() {
+        let usage = SessionUsage { input_tokens: 1_000_000, output_tokens: 1_000_000, cache_read_tokens: 1_000_000,
+            models: vec!["claude-sonnet-5-5".into()], ..Default::default() };
+        assert_eq!(estimate_cost(&usage), Some(12.2));
+    }
+
+    #[test]
+    fn fable_and_mythos_five_keep_their_distinct_cache_read_rates() {
+        for model in ["claude-fable-5", "claude-mythos-5"] {
+            let usage = SessionUsage { cache_read_tokens: 1_000_000, models: vec![model.into()], ..Default::default() };
+            assert_eq!(estimate_cost(&usage), Some(1.0), "{model}");
+        }
+    }
+
+    #[test]
+    fn unversioned_fable_and_mythos_names_do_not_guess_a_release_specific_cache_price() {
+        for model in ["claude-fable", "claude-mythos"] {
+            let usage = SessionUsage { cache_read_tokens: 1_000_000, models: vec![model.into()], ..Default::default() };
+            assert_eq!(estimate_cost(&usage), None, "{model}");
+        }
+    }
+
+    #[test]
+    fn the_public_pricing_reference_exposes_the_rates_used_for_the_estimate() {
+        let reference = pricing_reference();
+        assert_eq!(reference.currency, "USD");
+        assert_eq!(reference.provider, "anthropic");
+        assert_eq!(reference.scope, "api-standard-global");
+        let rates = reference.models.iter().find(|rates| rates.model == "claude-opus-5-5").unwrap();
+        let usage = SessionUsage { input_tokens: 1_000_000, output_tokens: 1_000_000, cache_read_tokens: 1_000_000,
+            models: vec![rates.model.clone()], ..Default::default() };
+        assert_eq!(estimate_cost(&usage), Some(rates.input + rates.output + rates.cache_read));
+        assert_eq!(rates.verified_on.as_deref(), Some("2026-10-06"));
+        assert_eq!(rates.source.as_deref(), Some("https://platform.claude.com/docs/en/about-claude/pricing"));
+    }
+
+    #[test]
+    fn inherited_prices_do_not_claim_a_current_verification_or_an_official_source() {
+        let reference = pricing_reference();
+        for model in ["claude-3-opus", "claude-3-5-sonnet", "claude-3-7-sonnet"] {
+            let rates = reference.models.iter().find(|rates| rates.model == model).unwrap();
+            assert_eq!(rates.verified_on, None);
+            assert_eq!(rates.source, None);
+            assert_eq!(rates.inherited_on.as_deref(), Some("2026-08-12"));
+        }
+    }
+
+    #[test]
+    fn an_unrecognized_model_version_does_not_inherit_a_family_price() {
+        let usage = SessionUsage { output_tokens: 1_000_000, models: vec!["claude-sonnet-99".into()], ..Default::default() };
+        assert_eq!(estimate_cost(&usage), None);
+    }
+
     #[test]
     fn session_and_history_count_each_api_message_once() {
         let path = std::env::temp_dir().join(format!("yard-session-dedup-{}.jsonl", std::process::id()));
@@ -748,15 +1143,17 @@ mod tests {
         assert_eq!(history.len(), 2);
     }
 
-    /// `usage` as it was before it became typed and incremental, verbatim:
+    /// The independent full-file parser before typed and incremental scans:
     /// every line through `serde_json::Value`, every call from byte 0. The
-    /// oracle the cached, resumed `usage` is held against.
+    /// oracle the cached, resumed `usage` is held against. Cost attribution
+    /// follows the per-message contract; unlabelled tokens cannot inherit a price.
     fn value_oracle_usage(file: &str) -> SessionUsage {
         let mut u = SessionUsage::default();
         let Ok(f) = File::open(file) else { return u };
         let reader = BufReader::new(f);
         let mut previous_tokens = None;
         let mut seen_messages = std::collections::HashSet::new();
+        let mut codex_model = String::new();
 
         for line in reader.lines().map_while(Result::ok) {
             if line.len() > MAX_LINE || line.is_empty() {
@@ -766,6 +1163,11 @@ mod tests {
                 continue;
             };
             u.messages += 1;
+            if v.get("type").and_then(|kind| kind.as_str()) == Some("turn_context") {
+                if let Some(model) = v.get("payload").and_then(|payload| payload.get("model")).and_then(|model| model.as_str()).filter(|model| !model.is_empty()) {
+                    codex_model = model.to_string();
+                }
+            }
 
             if let Some(delta) = v.get("payload")
                 .and_then(|payload| payload.get("info"))
@@ -775,6 +1177,8 @@ mod tests {
                 u.cache_read_tokens += delta.1;
                 u.cache_creation_tokens += delta.2;
                 u.output_tokens += delta.3;
+                if !codex_model.is_empty() && !u.models.contains(&codex_model) { u.models.push(codex_model.clone()); }
+                u.record_model(Some(&codex_model), delta);
             }
 
             if let Some(delta) = v.get("message")
@@ -784,11 +1188,15 @@ mod tests {
                 u.cache_read_tokens += delta.1;
                 u.cache_creation_tokens += delta.2;
                 u.output_tokens += delta.3;
+                u.record_model(v.get("message").and_then(|message| message.get("model")).and_then(|model| model.as_str()), delta);
+                u.record_cache_duration(v.get("message").and_then(|message| message.get("model")).and_then(|model| model.as_str()),
+                    v.get("message").and_then(|message| message.get("usage")));
             } else if let Some(usage) = v.get("usage") {
                 u.input_tokens += num(usage, &["input_tokens"]);
                 u.output_tokens += num(usage, &["output_tokens"]);
                 u.cache_creation_tokens += num(usage, &["cache_creation_input_tokens"]);
                 u.cache_read_tokens += num(usage, &["cache_read_input_tokens", "cached_input_tokens"]);
+                u.record_model(None, (num(usage, &["input_tokens"]), num(usage, &["cache_read_input_tokens", "cached_input_tokens"]), num(usage, &["cache_creation_input_tokens"]), num(usage, &["output_tokens"])));
             }
 
             if let Some(model) = v
@@ -1163,7 +1571,8 @@ mod tests {
         // Opus 5: US$ 25/M of output. Opus 4.1 stays in the old band, 75.
         assert_eq!(estimate_cost(&base("claude-opus-5")), Some(25.0));
         assert_eq!(estimate_cost(&base("claude-opus-4-1")), Some(75.0));
-        assert_eq!(estimate_cost(&base("claude-sonnet-5")), Some(15.0));
+        // The checked Sonnet 5 reference is US$ 10/M of output as of 2026-10-06.
+        assert_eq!(estimate_cost(&base("claude-sonnet-5")), Some(10.0));
         assert_eq!(estimate_cost(&base("claude-haiku-4-5")), Some(5.0));
     }
 

@@ -21,7 +21,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, isAbsolute } from "node:path";
 
 /**
  * What a healthy boot writes, in `%YARD_DATA_DIR%\logs`. Substrings, not
@@ -30,6 +30,14 @@ import { join } from "node:path";
  * this from breaking every time a field is added to a log line.
  */
 export const MARKERS = ["logging iniciado", "sqlite pronto", "bridge: escutando"];
+
+/** Keep real agent configuration and active WebView profiles out of an isolated check. */
+export function isolatedSmokeEnvironment(parent, dir) {
+  const home = join(dir, "home");
+  return { ...parent, YARD_DATA_DIR: dir, YARD_HOME_DIR: home,
+    CLAUDE_CONFIG_DIR: join(home, ".claude"), CODEX_HOME: join(home, ".codex"),
+    WEBVIEW2_USER_DATA_FOLDER: join(dir, "webview") };
+}
 
 /**
  * Pass or fail, and why.
@@ -46,6 +54,7 @@ export function bootVerdict(log, { dbExists, exitCode }) {
   if (!dbExists) reasons.push("o app.db não foi criado");
   if (exitCode !== 0) reasons.push(`o processo saiu com código ${exitCode}`);
   if (/panicked at/i.test(log)) reasons.push("houve um panic no log");
+  if (/failed to create webview/i.test(log)) reasons.push("native WebView creation failed");
   return { ok: reasons.length === 0, missing, reasons };
 }
 
@@ -53,6 +62,7 @@ export function bootVerdict(log, { dbExists, exitCode }) {
 function readLogs(dir) {
   if (!existsSync(dir)) return "";
   return readdirSync(dir)
+    .sort()
     .map((name) => {
       try {
         return readFileSync(join(dir, name), "utf8");
@@ -65,31 +75,38 @@ function readLogs(dir) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function main() {
-  const exe =
-    process.argv[2] ?? join("src-tauri", "target", "debug", "yard.exe");
-  if (!existsSync(exe)) {
-    console.error(
-      `smoke: não achei o binário em ${exe}.\n` +
-        "Compile antes (`cargo build --manifest-path src-tauri/Cargo.toml`) " +
-        "ou passe o caminho como argumento.",
-    );
-    process.exit(2);
-  }
-
-  // A test must never write to %APPDATA%\Yard — that is where the user's real
-  // work lives. Same rule the Rust tests follow.
+export async function runSmoke(exe, args = []) {
+  // Process fixtures and real boot checks share the same isolated data boundary.
   const dir = mkdtempSync(join(tmpdir(), "yard-smoke-"));
-  console.log(`smoke: ${exe}\nsmoke: dados em ${dir}`);
+  try { return await runSmokeIn(exe, dir, args); }
+  finally {
+    try { rmSync(dir, { recursive: true, force: true }); }
+    catch { /* The native profile may still be releasing its files. */ }
+  }
+}
 
-  const child = spawn(exe, [], {
-    env: { ...process.env, YARD_DATA_DIR: dir },
+export async function runSmokeIn(exe, dir, args = []) {
+  const scope = relative(tmpdir(), dir);
+  if (!scope || scope.startsWith("..") || isAbsolute(scope)) throw new Error("Native smoke data must stay inside an owned temporary directory");
+  console.log(`smoke: ${exe}\nsmoke: dados em ${dir}`);
+  const previousLog = readLogs(join(dir, "logs"));
+  const currentLog = () => {
+    const log = readLogs(join(dir, "logs"));
+    return previousLog && log.startsWith(previousLog) ? log.slice(previousLog.length) : log;
+  };
+
+  const child = spawn(exe, args, {
+    env: isolatedSmokeEnvironment(process.env, dir),
     stdio: "ignore",
     windowsHide: true,
   });
   let exitCode = null;
-  child.on("exit", (code) => {
-    exitCode = code ?? 0;
+  let signal = null;
+  let terminatedByHarness = false;
+  child.on("error", () => { exitCode = -1; });
+  child.on("exit", (code, exitSignal) => {
+    exitCode = code ?? -1;
+    signal = exitSignal;
   });
 
   // Wait for the markers rather than for a fixed time: a debug build on a
@@ -98,7 +115,7 @@ async function main() {
   let log = "";
   while (Date.now() < deadline) {
     await sleep(500);
-    log = readLogs(join(dir, "logs"));
+    log = currentLog();
     if (MARKERS.every((m) => log.includes(m))) break;
     if (exitCode !== null) break;
   }
@@ -108,6 +125,7 @@ async function main() {
   // Ask it to go, then insist. The exit path is part of what is being tested:
   // an app that has to be killed is an app that leaks child processes.
   if (exitCode === null) {
+    terminatedByHarness = true;
     child.kill();
     for (let i = 0; i < 20 && exitCode === null; i++) await sleep(250);
     if (exitCode === null) {
@@ -115,22 +133,27 @@ async function main() {
       await sleep(500);
     }
   }
-  log = readLogs(join(dir, "logs"));
+  log = currentLog();
 
-  // A kill is how this harness ends a healthy run, so the exit code of a
-  // process we terminated ourselves is not evidence of anything.
-  const verdict = bootVerdict(log, { dbExists, exitCode: 0 });
+  // Only a signal sent by this harness is an expected end to a healthy run.
+  const expectedSignal = terminatedByHarness && ["SIGTERM", "SIGKILL"].includes(signal);
+  const verdict = bootVerdict(log, { dbExists, exitCode: expectedSignal ? 0 : exitCode });
   if (verdict.ok) {
     console.log("smoke: boot saudável (log, sqlite, ponte, sem panic).");
   } else {
     console.error("smoke: FALHOU");
     for (const reason of verdict.reasons) console.error(`  - ${reason}`);
   }
-  try {
-    rmSync(dir, { recursive: true, force: true });
-  } catch {
-    // A file still held by the process that just died is not a test failure.
+  return verdict;
+}
+
+async function main() {
+  const exe = process.argv[2] ?? join("src-tauri", "target", "debug", "yard.exe");
+  if (!existsSync(exe)) {
+    console.error(`smoke: executable not found: ${exe}. Build first or pass its path.`);
+    process.exit(2);
   }
+  const verdict = await runSmoke(exe);
   process.exit(verdict.ok ? 0 : 1);
 }
 

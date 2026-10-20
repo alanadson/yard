@@ -6,6 +6,15 @@
  * read by agents, not by the user. Key = the PT-BR sentence as written.
  */
 export default {
+  "O pedido da tarefa mudou. Atualize o painel antes de iniciar o fluxo.": "The task request changed. Refresh the panel before starting the pipeline.",
+  "A captura em {root} falhou. O trabalho pode continuar sem checkpoint: {reason}.": "The snapshot in {root} failed. Work may continue without a checkpoint: {reason}.",
+  "Não consegui salvar o pedido na fila. Seu texto foi preservado.": "Could not save the queued request. Your text has been preserved.",
+  "Não consegui salvar o pedido na fila. O prompt não foi aceito.": "Could not save the queued request. The prompt was not accepted.",
+  "Exportar tópico": "Export topic",
+  "falha ao limpar a fila": "could not clear the queue",
+  "Conferir fila ({n})": "Review queue ({n})",
+  "A entrega foi interrompida antes da confirmação. Confira o terminal antes de reenviar.": "Delivery was interrupted before confirmation. Check the terminal before resending.",
+  "Não foi possível confirmar o registro da entrega. Confira o terminal antes de reenviar.": "Could not confirm the delivery record. Check the terminal before resending.",
   "Dê um nome ao papel para identificá-lo no cartão.": "Name the role so it can be identified on the card.",
   "Use no máximo {max} caracteres no nome.": "Use at most {max} characters in the name.",
   "Escreva as instruções que este agente deve seguir.": "Write the instructions this agent should follow.",
@@ -428,4 +437,31 @@ export default {
   "Pedindo permissão": "Asking for permission",
   "Uma partitura só se aplica num quadro: ela é um arranjo do canvas, e o canvas são os quadros.":
     "A score only applies on a board: it is an arrangement of the canvas, and the canvas is the boards.",
+  "Não foi possível iniciar o fluxo: {reason}.": "Could not start the flow: {reason}.",
+  'Fluxo "{name}" iniciado em "{term}", {n} etapa(s).': 'Flow "{name}" started in "{term}", {n} stage(s).',
+  "Retomar este fluxo reenviará a etapa atual e pode repetir trabalho. Confira o terminal antes de continuar.": "Resuming this flow resends the current stage and may repeat work. Check the terminal before continuing.",
+  "Revisar e retomar fluxo": "Review and resume flow",
+  "Retomar etapa": "Resume stage",
+  "A entrega da etapa ficou incerta. Confira o terminal antes de retomar.": "The stage delivery is unconfirmed. Check the terminal before resuming.",
+  "O processo executor foi interrompido. Confira o terminal antes de retomar.": "The executor process was interrupted. Check the terminal before resuming.",
+  "A etapa ficou sem produzir saída por muito tempo. Confira o terminal antes de retomar.": "The stage produced no output for too long. Check the terminal before resuming.",
+  "O agente ou o fluxo já pertence a uma execução. Aguarde, revise ou cancele esse fluxo antes de iniciar outro pedido.": "The agent or flow already belongs to an execution. Wait, review or cancel that flow before starting another request.",
+  "Inicie o agente executor antes de rodar o fluxo.": "Start the executor agent before running the flow.",
+  "Conecte o agente ao cartão do fluxo antes de executá-lo.": "Connect the agent to the flow card before running it.",
+  "O fluxo mudou. Atualize seu estado e confira a etapa antes de continuar.": "The flow changed. Refresh its state and check the stage before continuing.",
+  "Preencha um pedido válido e pelo menos uma etapa com instruções.": "Enter a valid request and at least one stage with instructions.",
+  'Fluxo "{name}" assumiu o pedido: {n} etapa(s) nesta CLI.': 'Flow "{name}" took over the request: {n} stage(s) in this CLI.',
+  // lib/automationPause: why automation stopped
+  "orçamento do dia estourado": "the day's budget is blown",
+  "janela de 5 h do plano quase no fim": "the plan's 5-hour window is nearly used up",
+  "pausada por você": "paused by you",
+  "Automação pausada: {reason}. Retome pelo rodapé quando quiser.": "Automation paused: {reason}. Resume from the footer whenever you want.",
+  // lib/budget: a day with unpriced usage
+  "Orçamento do dia sem medida: o uso de hoje é de modelos sem preço conhecido (teto de US$ {limit}).": "The day's budget cannot be measured: today's usage is from models with no known price (ceiling US$ {limit}).",
+  "Parte do uso de hoje está sem preço conhecido: o gasto real é maior.": "Part of today's usage has no known price: the real spend is higher.",
+  "orçamento sem preço": "budget without prices",
+  "≥ {pct}% do orçamento": "≥ {pct}% of the budget",
+  // lib/bridge: automation an agent created waits for the user
+  "{who} criou um gatilho que aguarda a sua aprovação: {summary}. Ligue em Rotinas e gatilhos para valer.": "{who} created a trigger that awaits your approval: {summary}. Switch it on in Routines and triggers to make it count.",
+  '{who} criou uma rotina para "{target}" que aguarda a sua aprovação. Ligue em Rotinas e gatilhos para valer.': '{who} created a routine for "{target}" that awaits your approval. Switch it on in Routines and triggers to make it count.',
 } satisfies Record<string, string>;

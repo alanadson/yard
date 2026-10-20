@@ -360,22 +360,26 @@ through `yard.ps1` on their own.
   costs no tokens at all.
 - `note create|read|write|edit|delete` — canvas notes as shared memory; note
   chains work. A note **locked** by the user refuses writes from the CLI.
-- `connect` / `recruit` / `dismiss` — assemble the team on your own canvas.
+- `connect` / `recruit` / `dismiss` — assemble the team on your own canvas
+  (`connect` refuses a flow card: wiring a CLI to a pipeline is the user's
+  call, since every stage is a paid turn).
   `recruit --replace "Old"` swaps a card's process while preserving position,
   connections and role. `recruit --floor "Frente"` makes the recruit spawn on the
   front's canvas, with its worktree as cwd.
 - `floor list` / `floor create` / `floor land` / `floor compare` / `floor fanout`
   — fronts from the CLI. Creation is silent: the user's screen doesn't switch
-  groups.
+  groups. `floor fanout` requires `--agents`.
 - `role` — a role per card and a library of reusable roles
   (`--scope global|current`). Setting a live agent's role hands it the
   instructions on the spot.
 - `routine` — scheduled prompts, delivered only while the target is running and
-  idle.
+  idle, at least five minutes apart. A routine an agent creates is saved
+  switched off and waits for the user to switch it on.
 - `trigger` — "when X happens to a CLI, do Y": `--when finished|blocked|exited
   --on "Agent"|any`, then `--ask "Target" "prompt"`, `--notify "text"` or
   `--flow "Flow" "task"`; `{name}` and `{ask}` in the text become who fired and
-  the question it stopped at. Same gate as `ask`.
+  the question it stopped at. Same gate as `ask`. A trigger an agent creates is
+  saved switched off and waits for the user's approval.
 - `score` — save and reapply a group's entire arrangement (scores).
 - `notify` / `debug` / `help`.
 
@@ -930,8 +934,9 @@ failure as a toast instead of typing into a busy agent. The stamp
 (`lastRunAt`, off after a one-shot) is written *before* the delivery, so a
 second edge meanwhile finds the trigger spent; `--cooldown` is the floor
 between two fires, and a trigger whose `ask` lands on its own source waits at
-least a minute (`SELF_ASK_MIN_COOLDOWN_SEC`) — the loop guard for "when I
-finish, tell me to go on".
+least ten minutes (`SELF_ASK_MIN_COOLDOWN_SEC`), the loop guard for "when I
+finish, tell me to go on". Loops between CLIs, the daily cap and the pause are
+in [Cost guards](#cost-guards).
 
 On screen they share the routines' sheet — "Rotinas e gatilhos…" in the card
 menu (with the armed count) and in Search for the CLI in focus: a second
@@ -961,6 +966,12 @@ the document, and, for TOML, the comments and layout (`toml_edit`). The
 listing never carries env or header values, only their names; the form asks
 for them one server at a time. The neutral model, the validation and the
 screen's order live in `src/lib/mcp.ts`.
+An explicit **Testar conexão** action now checks a configured local stdio server
+or Streamable HTTP endpoint, negotiates MCP and lists tools without executing
+them. It supports JSON and streamed SSE responses, bounded pagination, a ten-second
+deadline, Windows process-tree cleanup and HTTP session termination. Configuration
+refreshes invalidate results. Legacy separate-endpoint SSE and WebSocket checks
+are still unsupported.
 **Agents over SSH — what does not travel.** A CLI told to run on another
 machine is a real card like any other: scrollback on disk, the exit banner,
 suspend and restart, the role typed in as the first message, the cache flags
@@ -1034,19 +1045,26 @@ vai passar por IPC. Tetos por terminal e no total, ordem de prioridade
 tecla digitada é uma varredura de disco. Os agentes têm a mesma coisa em
 `yard search "texto" [--all] [--limit 4]`.
 
-**Fila de trabalho por agente.** Tudo o que uma fila precisa já existia sem
-estar ligado: o portão de envio (`lib/sendable.ts`), a detecção de ocupado e
-travado, e a entrega que espera o silêncio. Faltava o elo, porque mandar algo
-para um agente ocupado era esperar ou desistir. Agora o compositor troca
-**Enviar** por **Enfileirar** quando a CLI está trabalhando (ou travada numa
-pergunta: as duas passam), o texto fica guardado e entra sozinho na primeira
-janela de silêncio. Uma por vez, na ordem em que foram pedidas: dois prompts
-colados de uma vez são um prompt partido. O motor é puro (`lib/queue.ts`), o
-estado sobrevive ao reload no `kv` (`queue.items`), e o entregador é um tique de
-2 s (`hooks/useQueueRunner.ts`), porque "pronto" é em parte uma condição de
-*tempo* e o último byte de uma resposta não emite evento nenhum. A contagem
-aparece na aba e no cartão, o menu da CLI limpa, e os agentes usam
-`yard ask "Alvo" --queue "prompt"` e `yard queue [list] | clear`.
+**Work queues per terminal.** The composer changes **Enviar** to **Enfileirar**
+while the destination is working or waiting on a question. Requests persist in
+`queue.items` and retain terminal FIFO. A native scheduler (every two seconds
+while work is pending, otherwise woken by events) checks
+process liveness, recent input and output, hook state and permission prompts,
+then submits one eligible head through that terminal's ordered input lane.
+Reservations precede input; acknowledgment removes and retires an identity only
+after the native write completes. Unconfirmed attempts require explicit review.
+Scheduling continues while the page is unloaded. Counts remain visible on tabs
+and cards, and the CLI supports `yard ask "Target" --queue "prompt"` and
+`yard queue [list] | clear`.
+
+**Native scheduled routines.** Routine occurrences continue while the application
+page is unloaded. Each occurrence enters the durable queue once. Delivery
+confirmation records the last execution time; a failure with an unknown write
+outcome requires queue review. Pausing or removing a routine stops its pending
+occurrence before input. Completed one-time reminders can be rearmed with a
+fresh delay, and cancelling a repeating occurrence waits for the next interval.
+The routine manager retains the last known execution result when its next
+status read fails and shows the synchronization error.
 
 **Pull requests, sem sair do Yard** (`src-tauri/src/forge.rs`). Uma frente já
 nascia, rodava e **aterrissava**; o que não existia era a metade de fora, a
@@ -1345,14 +1363,70 @@ automatically, only the logic behind it, plus `npm run smoke`, which starts
 the real binary against a temporary data directory and checks the boot
 contract: log, SQLite, bridge up, no panic, clean exit.
 
+## Cost guards
+
+Every prompt Yard sends on its own spends the user's paid tokens or plan
+quota, so the automatic senders have limits that do not depend on the user
+remembering to set them.
+
+- **Automation pause.** When the daily budget is exceeded
+  (`budgetPauseAutomation`, on by default when a budget is set) or a
+  provider's five-hour window reaches `quotaPausePct` (default 90), the page
+  writes `automation.paused`. While it is set the native queue, routines and
+  flows start nothing new, trigger asks wait, and the agent-to-agent commands
+  of the CLI (`ask`, `handoff`, `worker send|create`, `recruit`,
+  `floor fanout`) refuse. Only the user resumes, from the status bar chip
+  ("Automação pausada"). A day whose usage has no price (Codex today) is
+  shown as such instead of reading as 0%.
+- **One admission point.** `automationMaxAgents` (default 2) limits queue
+  items, routine occurrences, flow stages and trigger asks together; trigger
+  asks travel through the target's queue. `yard ask --batch` runs at most that
+  many asks at a time.
+- **Triggers.** Triggers in a loop of asks (A asks B, B asks A, `*` included)
+  wait at least 5 minutes between fires; a trigger that asks its own source
+  waits 10 minutes; a wildcard ask ignores the edges of its own target; an ask
+  trigger fires at most 50 times per local day; the form starts an ask at a
+  300 s cooldown.
+- **Routines** run at least 5 minutes apart and are not caught up after the
+  app was closed.
+- **Agents creating agents.** `recruit`, `worker create` and `floor fanout`
+  refuse past 8 live agents per project, and a worker cannot create agents.
+- **Agent to agent.** `yard ask` stamps the prompt with
+  `[Yard · de "<caller>" · salto <n>]`, refuses a fourth hop and more than 6
+  asks between the same pair in 10 minutes, hands back the last 8000
+  characters of the answer by default (`--max-chars`, up to 30000), and sends a
+  prompt over 32 KB as a file the agent is told to read (pruned after 7 days).
+  `yard chat history` returns the newest 50 messages (`--last N`) and says
+  how many were omitted.
+- **Flows.** A flow card intercepts Enter only when its trigger was switched
+  on, and the carry between stages keeps its last 8000 characters.
+- **Webhooks** drop an identical notification within a minute and send at most
+  ten a minute.
+
 ## Cost estimates
 
-The prices per million tokens are in `agents/sessions.rs` and were checked on
-2026-08-12 (Opus 5: US$ 5/25; Sonnet 5: 3/15; Haiku 4.5: 1/5; cache write 1.25×
-input, read 0.1×). A model outside the table gets no estimate at all — better no
-number than a made-up one. **Check the table when prices change.** The
-"Custos e uso" panel (`Ctrl+Alt+U`) applies the same table per day, project,
-agent and model, and marks a sum with an unpriced part as a floor.
+The versioned reference in `agents/sessions.rs` is available through
+`pricing_reference` and the "Referência de preços" button in "Custos e uso"
+(`Ctrl+Alt+U`). Each model exposes input, output, cache-read, five-minute cache-write
+and one-hour cache-write prices per million tokens in USD, with its provenance.
+Current rows were checked on 2026-10-06 against the
+[Claude API price reference](https://platform.claude.com/docs/en/about-claude/pricing).
+The three Claude 3 legacy rows retain their 2026-08-12 reference and are explicitly
+marked as not rechecked. Standard global API rates can differ from subscriptions,
+partner providers, batch, priority or geography rates.
+
+Session summaries, live usage and daily history use the same exact model rates.
+Unknown release IDs remain unpriced, and aggregate sums with an unpriced part are
+shown as a floor. Reported one-hour cache writes use their own rate; older records
+without duration metadata retain the five-minute reference. The reference panel
+supports model search and closing it returns to the costs panel.
+
+The reference panel also allows explicit custom prices for an exact model ID,
+with separate input, output, cache-read and both cache-write rates. Decimal commas
+are accepted, every field is required and zero must be explicit. Custom prices are
+saved with revision protection, labelled separately from checked prices and applied
+to usage estimates. Removing a custom rate restores the default for that model.
+The default table remains unchanged and the settings are included in database backups.
 
 ## Usage-limit meter
 

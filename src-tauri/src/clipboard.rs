@@ -7,7 +7,7 @@
 //!
 //! This module is the bottom half of that path: it takes the bytes WebView2
 //! handed over in the `paste` event, checks they really are an image and writes
-//! them to `%TEMP%\yard-clipboard\`. Pasting the path into the terminal is the
+//! them to the workspace's `attachments` directory. Pasting the path into the terminal is the
 //! front end's job.
 //!
 //! Two decisions worth the comment:
@@ -15,35 +15,29 @@
 //! * **The extension comes from the file's signature**, not from the `type` the
 //!   front end reported. The MIME comes from the source page and is a guess; the
 //!   first bytes are the file itself. With no known signature nothing is written
-//!   — the directory is public and nobody needs a `.png` that is something else.
-//! * **`%TEMP%` and not `%APPDATA%\Yard`**: it is where a screenshot already
-//!   lives, it is disposable by definition and it does not bloat the directory
-//!   the user backs up. The 24 h cleanup lives right here, on the write path,
-//!   because the folder is small and nobody wants one more background timer.
+//!   and nobody needs a `.png` that is something else.
+//! * Attachments are workspace data. They remain available until removed,
+//!   rather than disappearing while a saved prompt still refers to them.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime};
 
 /// Cap on what we accept writing. A 4K screenshot in PNG is ~10 MB; twice that
 /// is headroom enough and still keeps the IPC trip short.
 pub const MAX_BYTES: usize = 24 * 1024 * 1024;
 
-/// Age past which an old paste is deleted on the next write.
-const MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
-
-/// Prefix of the files this module creates — the cleanup only deletes its own.
+/// Prefix of the files this module creates.
 const PREFIX: &str = "yard-";
 
 /// Breaks the tie between two `paste`s in the same second (repeated Ctrl+V is common).
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
-fn dir() -> PathBuf {
-    std::env::temp_dir().join("yard-clipboard")
-}
-
 /// Writes the bytes (as base64) and returns the file's absolute path.
 pub fn save_image(data: &str) -> Result<String, String> {
+    save_image_in(&crate::paths::app_dir(), data)
+}
+
+fn save_image_in(app_dir: &Path, data: &str) -> Result<String, String> {
     // Reject the giant before decoding: 4 base64 characters become 3 bytes, so
     // the final size is already known from the length of the text.
     if data.len() / 4 * 3 > MAX_BYTES {
@@ -58,15 +52,31 @@ pub fn save_image(data: &str) -> Result<String, String> {
     }
     let ext = sniff_ext(&bytes).ok_or("formato de imagem não reconhecido")?;
 
-    let dir = dir();
+    let dir = app_dir.join("attachments");
     std::fs::create_dir_all(&dir).map_err(|e| format!("não consegui criar {dir:?}: {e}"))?;
-    prune(&dir);
 
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let file = dir.join(format!("{PREFIX}{stamp}-{seq}.{ext}"));
     std::fs::write(&file, &bytes).map_err(|e| format!("não consegui gravar {file:?}: {e}"))?;
     Ok(file.to_string_lossy().into_owned())
+}
+
+/// The front end writes `yard ask` prompts too large to paste to
+/// `attachments/yard-ask-<ms>-<id>.md`; the agent reads one right away.
+const ASK_PROMPT_PREFIX: &str = "yard-ask-";
+const ASK_PROMPT_MAX_AGE_MS: i64 = 7 * crate::retention::DAY_MS;
+
+/// Deletes week-old large `yard ask` prompts, and nothing else of the
+/// attachments folder: the images there are the user's. Run at startup.
+pub fn prune_ask_prompts_in(app_dir: &Path, now: i64) -> Vec<String> {
+    crate::retention::prune_dir(
+        &app_dir.join("attachments"),
+        |name| name.starts_with(ASK_PROMPT_PREFIX) && name.ends_with(".md"),
+        now,
+        ASK_PROMPT_MAX_AGE_MS,
+        None,
+    )
 }
 
 /// Extension deduced from the first bytes. `None` when it is not an image the
@@ -90,29 +100,6 @@ fn sniff_ext(bytes: &[u8]) -> Option<&'static str> {
         return Some("webp");
     }
     None
-}
-
-/// Deletes old pastes. An error here is irrelevant: the new write is what
-/// matters, and the next paste tries again.
-fn prune(dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let now = SystemTime::now();
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        if !name.to_string_lossy().starts_with(PREFIX) {
-            continue;
-        }
-        let old = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .map(|t| now.duration_since(t).unwrap_or_default() > MAX_AGE)
-            .unwrap_or(false);
-        if old {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
 }
 
 /// Minimal base64 decoder — avoids a new crate for a single call.
@@ -202,6 +189,46 @@ pub fn encode_base64(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
+    /// `yard ask` prompts over 32 KB go to `attachments/yard-ask-*.md` and
+    /// nothing ever deleted them; the images beside them are user content.
+    #[test]
+    fn week_old_ask_prompts_are_deleted_and_every_other_attachment_is_kept() {
+        use crate::retention::testing::{millis, write_aged};
+        let root = std::env::temp_dir().join(format!("yard-ask-prompts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("attachments");
+        std::fs::create_dir_all(&dir).unwrap();
+        let now = std::time::SystemTime::now();
+        for (name, age_days) in [
+            ("yard-ask-1000-abc123.md", 8),
+            ("yard-ask-2000-def456.md", 2),
+            ("yard-image-20260101-000000-0.png", 90),
+            ("notes.md", 90),
+        ] {
+            write_aged(&dir.join(name), now, age_days);
+        }
+        prune_ask_prompts_in(&root, millis(now));
+        let mut left = std::fs::read_dir(&dir).unwrap().map(|entry| entry.unwrap().file_name().into_string().unwrap()).collect::<Vec<_>>();
+        left.sort();
+        assert_eq!(left, ["notes.md", "yard-ask-2000-def456.md", "yard-image-20260101-000000-0.png"]);
+        assert!(root.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Prompt attachments must survive restarts and travel with the workspace backup.
+    #[test]
+    fn pasted_images_are_owned_workspace_attachments_and_keep_existing_files() {
+        let root = std::env::temp_dir().join(format!("yard-attachments-{}", std::process::id()));
+        let assets = root.join("attachments");
+        std::fs::create_dir_all(&assets).unwrap();
+        std::fs::write(assets.join("older.png"), b"previous attachment").unwrap();
+        let path = save_image_in(&root, "iVBORw0KGgo=").unwrap();
+        assert_eq!(Path::new(&path).parent(), Some(assets.as_path()));
+        assert_eq!(std::fs::read(path).unwrap(), [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+        assert!(assets.join("older.png").is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn base64_round_trips() {
         for original in [
@@ -270,7 +297,8 @@ mod tests {
         // Smallest valid PNG (1x1 transparent), just as the front end would send it.
         const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk\
                                YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
-        let path = save_image(PNG_1X1).expect("should have written the file");
+        let root = std::env::temp_dir().join(format!("yard-clipboard-roundtrip-{}", std::process::id()));
+        let path = save_image_in(&root, PNG_1X1).expect("should have written the file");
         let file = Path::new(&path);
         assert!(file.is_file(), "{path} does not exist");
         assert_eq!(file.extension().and_then(|e| e.to_str()), Some("png"));
@@ -280,5 +308,6 @@ mod tests {
             "the file has to be byte for byte what was pasted"
         );
         let _ = std::fs::remove_file(file);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

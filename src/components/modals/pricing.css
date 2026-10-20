@@ -1,0 +1,18 @@
+/* Keep each model's rates and provenance readable on narrow windows. */
+.pricing-toolbar { display: flex; align-items: center; gap: 8px; }
+.pricing-search { min-width: 0; flex: 1; color: var(--text); background: var(--bg-raised); }
+.pricing-models { display: grid; gap: 10px; }
+.pricing-model { padding: 12px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-raised); }
+.pricing-model h4 { margin: 0 0 10px; overflow-wrap: anywhere; color: var(--text-bright); }
+.pricing-model dl { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.pricing-model dt { font-size: var(--fs-xs); color: var(--text-dim); }
+.pricing-model dd { margin: 4px 0 0; font-variant-numeric: tabular-nums; color: var(--text-bright); }
+.pricing-model p { margin: 10px 0 0; }
+.pricing-source, .pricing-version { overflow-wrap: anywhere; }
+.pricing-note { margin: 0; }
+.pricing-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.pricing-editor h4 { margin: 0; }
+.pricing-editor label { display: flex; flex-direction: column; gap: 5px; font-size: var(--fs-sm); }
+.pricing-editor input { min-width: 0; width: 100%; color: var(--text); background: var(--bg-raised); }
+.pricing-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+@media (max-width: 650px) { .pricing-model dl { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

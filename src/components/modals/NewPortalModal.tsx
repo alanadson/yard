@@ -28,6 +28,7 @@ import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
 import { ipc } from "../../lib/ipc";
 import { devicePortalItem, type AndroidDevice } from "../../lib/devicePortal";
+import { NEW_PORTAL_STORAGE, PORTAL_STORAGE_OPTIONS } from "../../lib/portalDefaults";
 
 export interface NewPortalPayload {
   groupId?: string;
@@ -38,13 +39,6 @@ export interface NewPortalPayload {
   url?: string;
   name?: string;
 }
-
-// i18n-scan: tables — rendered through `t()` in the picker below.
-const STORAGE_OPTIONS = [
-  { value: "instance", label: "Isolado" },
-  { value: "workspace", label: "Deste projeto" },
-  { value: "global", label: "Global" },
-];
 
 export function NewPortalModal() {
   const t = useT();
@@ -58,7 +52,8 @@ export function NewPortalModal() {
   const [name, setName] = useState(payload?.name ?? "");
   const [choiceId, setChoiceId] = useState("default");
   const [customUa, setCustomUa] = useState("");
-  const [storage, setStorage] = useState<PortalStorage>("instance");
+  // The project's shared profile, not one per card (`lib/portalDefaults`).
+  const [storage, setStorage] = useState<PortalStorage>(NEW_PORTAL_STORAGE);
   const [kind, setKind] = useState("browser");
   const [devices, setDevices] = useState<AndroidDevice[]>([]);
   const [serial, setSerial] = useState("");
@@ -105,7 +100,7 @@ export function NewPortalModal() {
       group: uaTitle[g],
     })),
   );
-  const storageOptions = STORAGE_OPTIONS.map((o) => ({ ...o, label: t(o.label) }));
+  const storageOptions = PORTAL_STORAGE_OPTIONS.map((o) => ({ ...o, label: t(o.label) }));
 
   const create = () => {
     if (!groupId) {

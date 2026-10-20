@@ -1,9 +1,27 @@
 name: ci
 
+# Documentation and issue templates cannot break the build, so a change that
+# touches only them does not spend two Windows runners. One exception:
+# `src/styles.test.ts` reads `docs/DESIGN.md` and checks its token scales
+# against the CSS, so that file still runs CI. This is `paths` with negations
+# rather than `paths-ignore` because only `paths` can re-include a file; the
+# patterns apply in order and the last match wins.
 on:
   push:
     branches: [main]
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!**/*.md"
+      - "!.github/ISSUE_TEMPLATE/**"
+      - "docs/DESIGN.md"
   pull_request:
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!**/*.md"
+      - "!.github/ISSUE_TEMPLATE/**"
+      - "docs/DESIGN.md"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -13,6 +31,7 @@ jobs:
   front:
     name: typecheck + vitest + build
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -20,29 +39,39 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run typecheck
       - run: npm test
+      # `npm run build` is `tsc && vite build`, and tsconfig has `noEmit`: the
+      # typecheck runs inside the build, so a separate `npm run typecheck`
+      # step would only compile the whole project a second time.
       - run: npm run build
 
   rust:
     name: clippy + cargo test
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      # `tauri::generate_context!` embeds the front-end bundle at compile time,
-      # so the Rust crate needs `dist/` to exist before it can build.
-      - run: npm ci
-      - run: npm run build
-      - uses: dtolnay/rust-toolchain@stable
+      # `tauri::generate_context!` reads `frontendDist` (../dist) at compile
+      # time and fails when the folder is missing. Clippy and the unit tests
+      # never serve a page, so a placeholder is enough: no Node setup, no
+      # `npm ci` and no Vite build in this job.
+      - name: Placeholder front-end bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Set-Content -LiteralPath dist/index.html -Value '<!doctype html><title>Yard</title>' -Encoding utf8
+      - uses: dtolnay/rust-toolchain@1.98.0  # keep in step with rust-toolchain.toml
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # The same key as release.yml, which restores this cache too.
+          shared-key: yard-windows
+          cache-on-failure: true
+          # Pull requests restore main's cache but never save their own: a
+          # save per PR would evict main's entry from the repository quota.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: clippy
         run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
       - name: cargo test

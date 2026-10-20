@@ -32,6 +32,7 @@
 import { ipc, on, type ActivityPayload } from "./ipc";
 import { AsyncDisposer } from "./disposables";
 import { forgetTyped } from "./flowIntercept";
+import { markChatInterrupted } from "./chatRecovery";
 import { uiLog } from "./log";
 import { useAdvertised } from "../stores/advertisedStore";
 import { useProjects } from "../stores/projectsStore";
@@ -77,6 +78,7 @@ export function startPtyWatch(): () => void {
     void Promise.all([
       owner.add(on.exit(id, (p) => {
         useTerminals.getState().markExited(id, p.code, p.reason);
+        void markChatInterrupted(id).catch((error) => uiLog.warn(`Unable to save interrupted chat ${id}: ${error}`));
         // What it was serving died with it, except across a restart, where
         // the same server is about to print the same address again.
         if (p.reason !== "restarted") useAdvertised.getState().forget(id);

@@ -9,25 +9,32 @@
  */
 import { useEffect, useState, type ReactNode } from "react";
 
+import { renderedBlocks } from "../../lib/renderCache";
 import { useExtensions } from "../../stores/extensionsStore";
 
 export function KatexBlock({ text, fallback }: { text: string; fallback: ReactNode }) {
   const on = useExtensions((s) => s.enabled.katex === true);
-  const [html, setHtml] = useState<string | null>(null);
+  // A formula rendered before comes back from the cache on the first frame.
+  const [html, setHtml] = useState<string | null>(() => renderedBlocks.get("katex", "", text) ?? null);
 
   useEffect(() => {
     if (!on) return;
+    const cached = renderedBlocks.get("katex", "", text);
+    if (cached !== undefined) {
+      setHtml(cached);
+      return;
+    }
     let alive = true;
     setHtml(null);
     void Promise.all([import("katex"), import("katex/dist/katex.min.css")])
       .then(([katex]) => {
         if (!alive) return;
-        setHtml(
-          katex.default.renderToString(text, {
-            displayMode: true,
-            throwOnError: true,
-          }),
-        );
+        const markup = katex.default.renderToString(text, {
+          displayMode: true,
+          throwOnError: true,
+        });
+        renderedBlocks.set("katex", "", text, markup);
+        setHtml(markup);
       })
       .catch(() => {
         /* bad TeX: the fence stays a code block */

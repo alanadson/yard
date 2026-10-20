@@ -33,6 +33,16 @@ export function prepareFlowStages(stages: FlowStage[]): PreparedFlowStages {
     : { valid: true, stages: clean };
 }
 
+/**
+ * Does a wire to this card turn the CLI's Enter into a pipeline run? Only
+ * when the user switched it on in the card's editor: every intercepted Enter
+ * is a whole paid pipeline, and an agent-drawn or forgotten wire must not
+ * arm that on its own.
+ */
+export function armsEnter(flow: FlowItem): boolean {
+  return flow.trigger === true;
+}
+
 export function flowsOf(c: CanvasData | undefined): FlowItem[] {
   return (c?.items ?? []).filter((i): i is FlowItem => i.type === "flow");
 }

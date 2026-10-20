@@ -815,7 +815,24 @@ pub fn grab_shot(app: &AppHandle, id: &str, rect: PortalRect) -> Result<String, 
     shot_png(app, id, Some(rect))
 }
 
+/// Screenshots older than this, or past the newest `SHOTS_KEPT`, are deleted
+/// whenever a new one is saved.
+const SHOT_MAX_AGE_MS: i64 = 7 * crate::retention::DAY_MS;
+const SHOTS_KEPT: usize = 200;
+
+fn prune_shots(dir: &Path, now: i64) {
+    crate::retention::prune_dir(dir, |name| name.ends_with(".png"), now, SHOT_MAX_AGE_MS, Some(SHOTS_KEPT));
+}
+
 fn shot_png(app: &AppHandle, id: &str, focus: Option<PortalRect>) -> Result<String, String> {
+    let saved = shot_png_unpruned(app, id, focus)?;
+    if let Some(dir) = Path::new(&saved).parent() {
+        prune_shots(dir, chrono::Utc::now().timestamp_millis());
+    }
+    Ok(saved)
+}
+
+fn shot_png_unpruned(app: &AppHandle, id: &str, focus: Option<PortalRect>) -> Result<String, String> {
     let dest = paths::app_dir().join("portals").join("shots").join(format!(
         "{}_{}.png",
         paths::sanitize_id(id),
@@ -1743,21 +1760,19 @@ const PROBE_CAP: u64 = 512 * 1024;
 /// Nothing is remembered here: the caller compares two answers.
 pub fn probe(url: &str) -> Result<String, String> {
     let url = normalize_url(url)?;
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_millis(1500))
-        .timeout_read(Duration::from_millis(3000))
-        .build();
-    let resp = agent
+    let resp = probe_client()?
         .get(&url)
-        .set("Cache-Control", "no-cache")
-        .set("Pragma", "no-cache")
-        .call()
+        .header("Cache-Control", "no-cache")
+        .header("Pragma", "no-cache")
+        .send()
         .map_err(|e| format!("portal: sondagem falhou: {e}"))?;
-    let etag = resp.header("etag").unwrap_or_default().to_string();
-    let modified = resp.header("last-modified").unwrap_or_default().to_string();
+    if let Some(code) = crate::http::refused(&resp) {
+        return Err(format!("portal: sondagem falhou: HTTP {code}"));
+    }
+    let etag = crate::http::header(&resp, "etag").unwrap_or_default().to_string();
+    let modified = crate::http::header(&resp, "last-modified").unwrap_or_default().to_string();
     let mut body = Vec::new();
-    resp.into_reader()
-        .take(PROBE_CAP)
+    resp.take(PROBE_CAP)
         .read_to_end(&mut body)
         .map_err(|e| format!("portal: sondagem falhou: {e}"))?;
     Ok(format!(
@@ -1765,6 +1780,18 @@ pub fn probe(url: &str) -> Result<String, String> {
         body.len(),
         fnv1a(&body)
     ))
+}
+
+/// The probe's client, kept for the life of the app: live reload asks every
+/// few seconds per watched portal, and each client runs its own thread.
+fn probe_client() -> Result<&'static crate::http::Client, String> {
+    static CLIENT: std::sync::OnceLock<crate::http::Client> = std::sync::OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client);
+    }
+    let client = crate::http::client(Duration::from_millis(4500), Some(Duration::from_millis(1500)), true)
+        .map_err(|e| format!("portal: sondagem falhou: {e}"))?;
+    Ok(CLIENT.get_or_init(|| client))
 }
 
 /// FNV-1a. Not a hash for security — a hash for "these bytes changed".
@@ -1780,6 +1807,86 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 // ---------------------------------------------------------------------------
 // misc
 // ---------------------------------------------------------------------------
+
+/// An `instance` profile nobody names is deleted only after this long
+/// untouched: an undo, or a layout saved a moment late, gets its cookies back.
+const PROFILE_IDLE_MS: i64 = 30 * crate::retention::DAY_MS;
+
+/// Every portal id a saved layout still names (any `{"type":"portal","id"}`
+/// object, wherever it sits in the JSON) or a browser tab of the pane
+/// (`panes.browsers`), as the folder names `profile_dir` gives them. `None`
+/// when anything fails to parse: then no profile is known to be unused.
+pub(crate) fn referenced_portal_ids(layouts: &[String], pane_browsers: Option<&str>) -> Option<std::collections::HashSet<String>> {
+    fn walk(value: &serde_json::Value, ids: &mut std::collections::HashSet<String>) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                if let (Some("portal"), Some(id)) = (fields.get("type").and_then(|v| v.as_str()), fields.get("id").and_then(|v| v.as_str())) {
+                    ids.insert(paths::sanitize_id(id));
+                }
+                fields.values().for_each(|child| walk(child, ids));
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|child| walk(child, ids)),
+            _ => {}
+        }
+    }
+    let mut ids = std::collections::HashSet::new();
+    for layout in layouts {
+        let raw = if layout.trim().is_empty() { "{}" } else { layout.as_str() };
+        walk(&serde_json::from_str(raw).ok()?, &mut ids);
+    }
+    if let Some(raw) = pane_browsers {
+        let tabs: Vec<serde_json::Value> = serde_json::from_str(raw).ok()?;
+        ids.extend(tabs.iter().filter_map(|tab| tab["id"].as_str()).map(paths::sanitize_id));
+    }
+    Some(ids)
+}
+
+/// The `instance` profile folders to delete: named by nothing in `referenced`
+/// and not modified for `PROFILE_IDLE_MS`. Oldest first.
+pub(crate) fn stale_profiles(folders: &[crate::retention::Entry], referenced: &std::collections::HashSet<String>, now: i64) -> Vec<String> {
+    let unreferenced: Vec<crate::retention::Entry> = folders.iter().filter(|folder| !referenced.contains(&folder.name)).cloned().collect();
+    crate::retention::to_prune(&unreferenced, now, PROFILE_IDLE_MS, None)
+}
+
+/// The portal ids the saved workspace names: every group's layout and the
+/// pane's browser tabs. `None` when either cannot be read or parsed.
+pub fn saved_portal_ids(conn: &rusqlite::Connection) -> Option<std::collections::HashSet<String>> {
+    use rusqlite::OptionalExtension;
+    let layouts = conn.prepare("SELECT layout_json FROM groups").and_then(|mut statement| {
+        statement.query_map([], |row| row.get::<_, Option<String>>(0))?.map(|row| row.map(Option::unwrap_or_default)).collect::<Result<Vec<String>, _>>()
+    });
+    let panes = conn.query_row("SELECT value FROM kv WHERE key = 'panes.browsers'", [], |row| row.get::<_, String>(0)).optional();
+    referenced_portal_ids(&layouts.ok()?, panes.ok()?.as_deref())
+}
+
+/// Startup cleanup of `portals/instance/<id>`: the WebView2 profile of every
+/// portal card or tab ever opened stayed on disk after the card was deleted.
+/// Returns the folders removed. `referenced` comes from `saved_portal_ids`;
+/// without it (the workspace could not be read) nothing is deleted.
+pub fn prune_instance_profiles_in(app_dir: &Path, referenced: Option<&std::collections::HashSet<String>>, now: i64) -> Vec<String> {
+    let Some(referenced) = referenced else { return Vec::new() };
+    let root = app_dir.join("portals").join("instance");
+    let Ok(listing) = std::fs::read_dir(&root) else { return Vec::new() };
+    let folders: Vec<crate::retention::Entry> = listing
+        .flatten()
+        .filter_map(|item| {
+            // `file_type` does not follow links: a junction is never a profile.
+            if !item.file_type().ok()?.is_dir() {
+                return None;
+            }
+            let metadata = item.metadata().ok()?;
+            Some(crate::retention::Entry { name: item.file_name().into_string().ok()?, modified_ms: crate::retention::modified_ms(&metadata)? })
+        })
+        .collect();
+    let mut removed = Vec::new();
+    for name in stale_profiles(&folders, referenced, now) {
+        match std::fs::remove_dir_all(root.join(&name)) {
+            Ok(()) => removed.push(name),
+            Err(error) => tracing::warn!(%error, profile = %name, "unused portal profile could not be deleted"),
+        }
+    }
+    removed
+}
 
 fn profile_dir(id: &str, storage: &str, engine: &str, project_id: Option<&str>) -> PathBuf {
     let root = paths::app_dir().join("portals");
@@ -1907,6 +2014,106 @@ const MUTE_JS: &str = r#"
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Screenshots exist to be read by an agent right after they are taken;
+    /// the folder used to keep every one of them forever.
+    #[test]
+    fn portal_shots_older_than_a_week_or_past_the_newest_two_hundred_are_deleted() {
+        use crate::retention::testing::{millis, write_aged};
+        let dir = std::env::temp_dir().join(format!("yard-portal-shots-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let now = std::time::SystemTime::now();
+        write_aged(&dir.join("portal_old.png"), now, 8);
+        for n in 0..201 {
+            write_aged(&dir.join(format!("portal_{n:03}.png")), now - std::time::Duration::from_secs(n), 0);
+        }
+        write_aged(&dir.join("notes.txt"), now, 30);
+        prune_shots(&dir, millis(now));
+        assert!(!dir.join("portal_old.png").exists());
+        assert!(!dir.join("portal_200.png").exists(), "the 201st newest shot goes");
+        assert!(dir.join("portal_199.png").exists() && dir.join("portal_000.png").exists());
+        assert!(dir.join("notes.txt").exists(), "only screenshots are the folder's to prune");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Pinned when the client moved from ureq to reqwest: the live-reload
+    /// fingerprint is built from the validators and the body, uncached.
+    #[test]
+    fn the_live_reload_probe_fingerprints_the_validators_and_the_body() {
+        let (url, server) = crate::http::testing::serve_once("200 OK", &["ETag: \"v1\"", "Last-Modified: Wed, 21 Oct 2026 07:28:00 GMT"], "<html>");
+        let print = probe(&url).unwrap();
+        assert!(print.starts_with("\"v1\"|Wed, 21 Oct 2026 07:28:00 GMT|6|"), "{print}");
+        let request = server.join().unwrap().to_ascii_lowercase();
+        assert!(request.contains("cache-control: no-cache") && request.contains("pragma: no-cache"));
+    }
+
+    #[test]
+    fn a_live_reload_probe_answered_with_an_error_status_fails() {
+        let (url, server) = crate::http::testing::serve_once("404 Not Found", &[], "missing");
+        assert!(probe(&url).is_err());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn portal_ids_come_from_every_saved_layout_and_the_browser_pane_as_folder_names() {
+        let layouts = [
+            r#"{"surface":"canvas","canvas":{"items":[{"type":"portal","id":"card/1"},{"type":"note","id":"note-1"}]}}"#.to_string(),
+            r#"{"canvas":{"items":[{"type":"binder","children":[{"type":"portal","id":"nested"}]}]}}"#.to_string(),
+            String::new(),
+        ];
+        let ids = referenced_portal_ids(&layouts, Some(r#"[{"id":"tab-1","groupId":"g","url":"about:blank"}]"#)).unwrap();
+        let mut ids: Vec<_> = ids.into_iter().collect();
+        ids.sort();
+        assert_eq!(ids, ["card_1", "nested", "tab-1"]);
+    }
+
+    /// Conservative on purpose: a layout this code cannot read may name a
+    /// portal whose cookies the user still wants.
+    #[test]
+    fn an_unreadable_layout_or_pane_list_means_no_profile_is_known_to_be_unused() {
+        assert!(referenced_portal_ids(&["{not json".to_string()], None).is_none());
+        assert!(referenced_portal_ids(&["{}".to_string()], Some("[broken")).is_none());
+    }
+
+    #[test]
+    fn only_unreferenced_profiles_untouched_for_thirty_days_are_stale() {
+        let day = crate::retention::DAY_MS;
+        let now = 100 * day;
+        let folder = |name: &str, age: i64| crate::retention::Entry { name: name.into(), modified_ms: now - age * day };
+        let referenced: std::collections::HashSet<String> = ["kept-old".to_string()].into();
+        let folders = [folder("kept-old", 90), folder("orphan-old", 31), folder("orphan-recent", 29)];
+        assert_eq!(stale_profiles(&folders, &referenced, now), ["orphan-old"]);
+    }
+
+    #[test]
+    fn startup_cleanup_deletes_only_stale_profiles_that_no_layout_or_tab_names() {
+        let app = std::env::temp_dir().join(format!("yard-portal-profiles-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&app);
+        let instance = app.join("portals").join("instance");
+        for name in ["card", "tab", "orphan"] {
+            std::fs::create_dir_all(instance.join(name).join("EBWebView")).unwrap();
+        }
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"CREATE TABLE groups (id TEXT PRIMARY KEY, layout_json TEXT NOT NULL);
+               CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT);
+               INSERT INTO groups VALUES ('g', '{"canvas":{"items":[{"type":"portal","id":"card"}]}}');
+               INSERT INTO kv VALUES ('panes.browsers', '[{"id":"tab","groupId":"g","url":"about:blank"}]');"#,
+        )
+        .unwrap();
+        let later = chrono::Utc::now().timestamp_millis() + 31 * crate::retention::DAY_MS;
+        assert_eq!(prune_instance_profiles_in(&app, saved_portal_ids(&conn).as_ref(), later), ["orphan"]);
+        assert!(instance.join("card").is_dir() && instance.join("tab").is_dir());
+        assert!(!instance.join("orphan").exists());
+        conn.execute("UPDATE groups SET layout_json = '{broken'", []).unwrap();
+        std::fs::create_dir_all(instance.join("another-orphan")).unwrap();
+        assert!(saved_portal_ids(&conn).is_none(), "an unreadable layout names nothing for sure");
+        assert!(prune_instance_profiles_in(&app, None, later).is_empty());
+        assert!(instance.join("another-orphan").is_dir());
+        assert!(app.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(app).unwrap();
+    }
 
     fn b(x: f64, y: f64, w: f64, h: f64) -> Bounds {
         Bounds { x, y, w, h }

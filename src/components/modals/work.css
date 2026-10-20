@@ -1,0 +1,24 @@
+.work-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.work-toolbar-area { padding: 12px 18px; }
+.work-toolbar-area .work-toolbar { margin-bottom: 0; }
+.work-toolbar-area > p { margin-bottom: 0; }
+.work-toolbar > span { flex: 1; color: var(--muted); }
+.work-layout { display: grid; grid-template-columns: minmax(150px, 190px) minmax(0, 1fr); gap: 20px; }
+.work-list { display: flex; flex-direction: column; gap: 5px; align-self: start; }
+.work-task { text-align: left; display: flex; flex-direction: column; gap: 5px; padding: 10px; border: 1px solid var(--border); border-radius: var(--r-md); background: transparent; color: var(--text); overflow-wrap: anywhere; }
+.work-task.is-selected { background: rgb(var(--veil) / 8%); }
+.work-task > span { font-size: var(--fs-xs); color: var(--muted); }
+.work-detail { min-width: 0; }
+.work-detail h3 { margin: 0 0 8px; overflow-wrap: anywhere; }
+.work-detail h4 { margin: 18px 0 8px; }
+.work-pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.work-form { display: flex; flex-direction: column; gap: 14px; }
+.work-form label, .work-send label { display: flex; flex-direction: column; gap: 6px; }
+.work-form input, .work-form textarea, .work-form select, .work-send select { width: 100%; box-sizing: border-box; }
+.work-form textarea { resize: vertical; }
+.work-send { display: flex; flex-direction: column; gap: 10px; margin: 16px 0; }
+.work-history { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
+.work-history summary { cursor: pointer; }
+.work-history section + section { border-top: 1px solid var(--border); margin-top: 18px; }
+@media (max-width: 760px) { .work-layout { grid-template-columns: 1fr; } .work-list { max-height: 140px; overflow: auto; } }
+.work-chats .btn { display: block; margin-bottom: 6px; white-space: normal; text-align: left; }

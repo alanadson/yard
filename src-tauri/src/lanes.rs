@@ -165,10 +165,21 @@ pub fn before_teardown(lanes: &Lanes, teardown: impl FnOnce()) {
 /// The sync commands that lock `state.db`. Reads are here too, not only
 /// writes: a `read_prefs` issued after a `write_pref` has to see it, as it
 /// did when both ran on the UI thread.
-const DB_COMMANDS: [&str; 13] = [
+const DB_COMMANDS: &[&str] = &[
+    "flow_dismiss",
+    "flow_start", "flow_snapshot", "flow_cancel", "flow_resume",
+    "task_enqueue", "task_claim",
+    "queue_patch",
+    "queue_read",
+    "routine_snapshot",
+    "queue_retry",
+    "queue_remove",
+    "task_create", "task_list", "task_get", "task_link", "task_events", "task_deliveries", "task_retry_delivery", "task_transition", "task_submit", "task_approve",
+    "checkpoint_notices", "checkpoint_acknowledge_notices", "checkpoint_notice_history",
     "save_workspace",
     "load_workspace",
     "read_prefs",
+    "pricing_settings", "pricing_settings_save",
     "write_pref",
     "write_prefs",
     "delete_pref",
@@ -185,10 +196,20 @@ const DB_COMMANDS: [&str; 13] = [
 ///
 /// `payload` is the invoke's JSON arguments, when there are any.
 pub fn route(command: &str, payload: Option<&serde_json::Value>) -> Option<String> {
+    if command == "flow_start" {
+        if let Some(terminal) = payload.and_then(|value| value["input"]["terminalId"].as_str()) {
+            return Some(format!("pty:{terminal}"));
+        }
+    }
     if DB_COMMANDS.contains(&command) {
         return Some(DB.to_string());
     }
     match command {
+        "queue_dispatch" => {
+            let id = payload?.get("terminalId")?.as_str()?;
+            Some(format!("pty:{id}"))
+        }
+        "pty_archives" | "pty_archive_preview" | "pty_archive_export" | "pty_archive_delete" => Some("output-history".to_string()),
         // One lane per terminal: its keystrokes keep their order, and a child
         // that stopped reading its stdin blocks only its own writes. Clearing
         // its history (a scrollback lock, maybe behind a 4 MB rewrite) and
@@ -554,6 +575,21 @@ mod tests {
         assert_ne!(lane_a1.as_deref(), Some(DB));
     }
 
+    #[test]
+    fn starting_a_flow_shares_the_executors_input_lane_before_later_keystrokes() {
+        let start = serde_json::json!({"input":{"terminalId":"t-a","typed":true}});
+        let input = serde_json::json!({"id":"t-a","data":"next keystroke"});
+        assert_eq!(route("flow_start", Some(&start)), route("write_pty", Some(&input)));
+    }
+
+    #[test]
+    fn a_durable_queue_operation_shares_the_destination_terminals_input_lane() {
+        let queued = serde_json::json!({ "id": "request-id", "terminalId": "t-a", "attemptedAt": 2000 });
+        let input = serde_json::json!({ "id": "t-a", "data": "next keystroke" });
+        assert_eq!(route("queue_dispatch", Some(&queued)), route("write_pty", Some(&input)));
+        assert_eq!(route("queue_dispatch", None), None);
+    }
+
     /// A malformed write has no terminal to queue behind. It stays with the
     /// normal handler, whose argument error is the one the caller always got.
     #[test]
@@ -614,6 +650,18 @@ mod tests {
         assert_eq!(route("forget_pty", Some(&a)), lane);
         assert_ne!(route("clear_pty", Some(&b)), lane);
         assert_ne!(route("forget_pty", Some(&b)), lane);
+    }
+
+    /// History file operations stay ordered without blocking terminal input or the UI thread.
+    #[test]
+    fn archive_management_uses_one_ordered_lane_independent_of_live_terminal_input() {
+        let terminal = serde_json::json!({ "id": "terminal" });
+        let lane = Some("output-history".to_string());
+        assert_eq!(route("pty_archives", None), lane);
+        assert_eq!(route("pty_archive_preview", Some(&terminal)), lane);
+        assert_eq!(route("pty_archive_export", Some(&terminal)), lane);
+        assert_eq!(route("pty_archive_delete", Some(&terminal)), lane);
+        assert_ne!(route("write_pty", Some(&terminal)), lane);
     }
 
     /// Starting a watch on a project and dropping it (the store drops one

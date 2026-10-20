@@ -23,6 +23,7 @@ import { Overlay } from "./components/Overlay";
 import { WorkspaceGrid } from "./components/WorkspaceGrid";
 import { loadXTermView } from "./components/XTermView/load";
 import { useGlobalEvents } from "./hooks/useGlobalEvents";
+import { startWindowLiveRead } from "./hooks/useLiveRead";
 import { useOccluder } from "./hooks/useOccluder";
 import { useKeybindings } from "./hooks/useKeybindings";
 import { useLspLifecycle } from "./hooks/useLspLifecycle";
@@ -37,6 +38,8 @@ import { tn } from "./lib/i18n";
 import { useTriggers } from "./hooks/useTriggers";
 import { useQueueRunner } from "./hooks/useQueueRunner";
 import { useBudgetWatch } from "./hooks/useBudgetWatch";
+import { useQuotaPause } from "./hooks/useQuotaPause";
+import { useAutomation } from "./stores/automationStore";
 import { useQueue } from "./stores/queueStore";
 import { setLocalBridge } from "./lib/remoteBridge";
 import { useAutoBackupTimer } from "./hooks/useAutoBackupTimer";
@@ -47,7 +50,7 @@ import { bundledFamiliesFor, loadBundledFamilies } from "./lib/bundledFonts";
 import { AsyncDisposer } from "./lib/disposables";
 import { applyFontPrefs } from "./lib/fonts";
 import { applySyntaxVars } from "./lib/schemeChoice";
-import { ipc } from "./lib/ipc";
+import { ipc, on } from "./lib/ipc";
 import { reconcileAliveFlags } from "./lib/lifecycle";
 import { reconcileFronts } from "./lib/provision/reconcileRun";
 import { uiLog } from "./lib/log";
@@ -57,11 +60,14 @@ import { startPtyWatch } from "./lib/ptyWatch";
 import { startTipLayer } from "./lib/tipLayer";
 import { baseName } from "./lib/terminals";
 import { welcomeCall } from "./lib/welcome";
+import { viewports } from "./lib/canvasViewport";
+import { isWindowShown, subscribeWindowShown } from "./lib/windowShown";
 import { useAgentDefaults } from "./stores/agentDefaultsStore";
 import { useAgents } from "./stores/agentsStore";
 import { useBench } from "./stores/benchStore";
 import { useBrowsers, watchPaneBrowserEvents } from "./stores/browsersStore";
 import { useChanges } from "./stores/changesStore";
+import { useChats } from "./stores/chatsStore";
 import { isDirty, isReadOnly, useEditor } from "./stores/editorStore";
 import { useExtensions } from "./stores/extensionsStore";
 import { INTERRUPTED, useFlows } from "./stores/flowStore";
@@ -175,6 +181,9 @@ const ScoresModal = lazy(() =>
   import("./components/modals/ScoresModal").then((m) => ({ default: m.ScoresModal })),
 );
 const CheckpointsModal = lazy(() => import("./components/modals/CheckpointsModal").then((m) => ({ default: m.CheckpointsModal })));
+const QueueModal = lazy(() => import("./components/modals/QueueModal").then((m) => ({ default: m.QueueModal })));
+const WorkModal = lazy(() => import("./components/modals/WorkModal").then((m) => ({ default: m.WorkModal })));
+const OutputHistoryModal = lazy(() => import("./components/modals/OutputHistoryModal").then((m) => ({ default: m.OutputHistoryModal })));
 const SessionsModal = lazy(() =>
   import("./components/modals/SessionsModal").then((m) => ({ default: m.SessionsModal })),
 );
@@ -187,6 +196,9 @@ const OnboardingModal = lazy(() =>
 const CostsModal = lazy(() =>
   import("./components/modals/CostsModal").then((m) => ({ default: m.CostsModal })),
 );
+const PricingModal = lazy(() =>
+  import("./components/modals/PricingModal").then((m) => ({ default: m.PricingModal })),
+);
 const ShoulderModal = lazy(() =>
   import("./components/modals/ShoulderModal").then((m) => ({ default: m.ShoulderModal })),
 );
@@ -195,6 +207,25 @@ const TranscriptModal = lazy(() =>
 );
 
 export default function App() {
+  // The native flow runs and the checkpoint notices follow the backend's
+  // announcements (`lib/liveRead.ts`): no 2 s poll, and nothing at all while
+  // the window sits in the tray.
+  useEffect(() => {
+    const stopFlows = startWindowLiveRead({
+      read: () => useFlows.getState().refreshNative(),
+      events: [on.flowChanged],
+      onError: (error) => uiLog.warn(`Native flow refresh unavailable: ${error}`),
+    });
+    const stopNotices = startWindowLiveRead({
+      read: () => import("./lib/checkpointNotices").then((module) => module.refreshCheckpointNotices()),
+      events: [on.checkpointNotices],
+      onError: (error) => uiLog.warn(`Checkpoint notices unavailable: ${error}`),
+    });
+    return () => {
+      stopFlows();
+      stopNotices();
+    };
+  }, []);
   const [booting, setBooting] = useState(true);
   const [retrying, setRetrying] = useState(false);
   /** Panels the window itself closed — the ones it owes back when it widens. */
@@ -254,6 +285,7 @@ export default function App() {
   useTriggers();
   useQueueRunner();
   useBudgetWatch();
+  useQuotaPause();
   useLspLifecycle();
 
   // Chosen fonts → CSS variables on <html>. One scalar per subscription, like
@@ -350,6 +382,7 @@ export default function App() {
         // until now (`main.tsx`); from here the real one decides.
         bootPrefs.then((prefs) => loadPrefs(prefs)).finally(releaseRememberedLang),
         bootPrefs.then((prefs) => useBench.getState().load(prefs)),
+        bootPrefs.then((prefs) => useChats.getState().load(prefs)),
         // Before anything can be spawned: the fixed command line of each CLI
         // is read at spawn time, with no `await` to spare.
         bootPrefs.then((prefs) => useAgentDefaults.getState().load(prefs)),
@@ -358,6 +391,9 @@ export default function App() {
         bootPrefs.then((prefs) => useExtensions.getState().load(prefs)),
         bootPrefs.then((prefs) => useNotes.getState().load(prefs)),
         bootPrefs.then((prefs) => usePower.getState().load(prefs)),
+        // Each board's camera has its own kv row (`lib/canvasViewport.ts`);
+        // before the first board mounts, or it opens at the layout's copy.
+        bootPrefs.then((prefs) => viewports.seed(prefs)),
         bootPrefs.then((prefs) => useKeymap.getState().load(prefs)),
         bootPrefs.then((prefs) => usePortalWeb.getState().load(prefs)),
         // Pipelines that were running when the interface went away. They come
@@ -388,6 +424,9 @@ export default function App() {
         // The PTYs survived the reload in Rust; losing the queue would drop
         // work the user had already stopped holding in their head.
         bootPrefs.then((prefs) => useQueue.getState().hydrate(prefs)),
+        // A pause from the previous run is still in force: the native
+        // scheduler already honours it, and the bridge must refuse too.
+        bootPrefs.then((prefs) => useAutomation.getState().load(prefs)),
       ]);
       // Only now are there rows to check against the backend.
       await reconcileAliveFlags().catch((e) =>
@@ -486,6 +525,26 @@ export default function App() {
       .getState()
       .setRoot(active?.id ?? null, active ? (activeRoot ?? active.path) : null);
   }, [booting, projects, activeProjectId, activeRoot]);
+
+  // `git status` runs for the project on screen only (`changesStore`): tell
+  // the store which one that is and whether the window is shown. A
+  // subscription rather than state, so minimizing does not re-render the app.
+  useEffect(() => {
+    const push = () =>
+      useChanges.getState().setGitFocus({
+        projectId: useProjects.getState().activeProjectId,
+        shown: isWindowShown(),
+      });
+    push();
+    const offShown = subscribeWindowShown(push);
+    const offProjects = useProjects.subscribe((state, prev) => {
+      if (state.activeProjectId !== prev.activeProjectId) push();
+    });
+    return () => {
+      offShown();
+      offProjects();
+    };
+  }, []);
 
   // In a narrow window the three panels together (698 px minimum) plus the
   // canvas floor do not fit — the window can get down to 900 px. The CSS
@@ -1055,8 +1114,12 @@ function ModalHost() {
       {modal === "flow" && <FlowModal />}
       {modal === "scm-confirm" && <ScmConfirmModal />}
       {modal === "checkpoints" && <CheckpointsModal />}
+      {modal === "queue" && <QueueModal />}
+      {modal === "work" && <WorkModal />}
+      {modal === "output-history" && <OutputHistoryModal />}
       {modal === "onboarding" && <OnboardingModal />}
       {modal === "costs" && <CostsModal />}
+      {modal === "pricing" && <PricingModal />}
       {modal === "shoulder" && <ShoulderModal />}
       {modal === "transcript" && <TranscriptModal />}
       {modal === "sessions" && (

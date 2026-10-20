@@ -74,6 +74,12 @@ describe("bucketBy", () => {
 });
 
 describe("totals", () => {
+  it("retains reported one-hour writes as part of total cache writes while treating legacy rows as unspecified", () => {
+    const result = totals([row({ cacheWrite: 200, cacheWriteOneHour: 100 }), row({ cacheWrite: 50 })]);
+    expect(result.cacheWrite).toBe(250);
+    expect(result.cacheWriteOneHour).toBe(100);
+  });
+
   it("adds every column, and the cost is a floor when a row had no price", () => {
     const t = totals([
       row({ input: 1, output: 2, cacheRead: 3, cacheWrite: 4, costUsd: 0.5, sessions: 1 }),

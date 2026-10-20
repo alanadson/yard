@@ -10,7 +10,8 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { WARN_AT, budgetState, worsened } from "./budget";
+import { WARN_AT, budgetChip, budgetMessage, budgetOfDay, budgetState, worsened } from "./budget";
+import type { UsageRow } from "./ipc";
 
 describe("budgetState", () => {
   it("is off when no limit was set — most people never set one", () => {
@@ -83,5 +84,46 @@ describe("worsened", () => {
     expect(worsened("over", "off")).toBe(false);
     // Setting a limit that is already blown is worth hearing about once.
     expect(worsened("off", "over")).toBe(true);
+  });
+});
+
+/**
+ * The regression: the watch summed `costUsd ?? 0`, so a day spent only on a
+ * CLI with no price table (Codex) was always 0% and "ok", and the ceiling
+ * could never be reached. A day with unpriced usage is a floor, and a day
+ * with no priced usage at all is unknown; both have to say so.
+ */
+describe("the budget of a day with unpriced usage", () => {
+  const row = (costUsd: number | null, day = "2026-10-19"): UsageRow => ({
+    day,
+    agent: costUsd === null ? "codex" : "claude",
+    projectPath: "C:/p",
+    model: costUsd === null ? "gpt-x" : "sonnet",
+    input: 1_000,
+    output: 1_000,
+    cacheRead: 0,
+    cacheWrite: 0,
+    costUsd,
+    sessions: 1,
+  });
+
+  it("is unknown, not ok, when nothing used today had a price", () => {
+    const state = budgetOfDay([row(null), row(null)], 10, "2026-10-19");
+    expect(state.unknown).toBe(true);
+    expect(budgetMessage(state)).toContain("sem preço");
+    expect(budgetChip(state)?.label).toBe("orçamento sem preço");
+  });
+
+  it("is a floor when part of today had a price and part did not", () => {
+    const state = budgetOfDay([row(3), row(null), row(50, "2026-10-18")], 10, "2026-10-19");
+    expect(state).toMatchObject({ level: "ok", pct: 30, partial: true, unknown: false });
+    expect(budgetMessage(state)).toContain("sem preço");
+    expect(budgetChip(state)?.label).toBe("≥ 30% do orçamento");
+  });
+
+  it("keeps the chip quiet on a fully priced day under the warning line, and when off", () => {
+    expect(budgetChip(budgetOfDay([row(3)], 10, "2026-10-19"))).toBeNull();
+    expect(budgetChip(budgetOfDay([row(null)], 0, "2026-10-19"))).toBeNull();
+    expect(budgetChip(budgetOfDay([row(9)], 10, "2026-10-19"))?.label).toBe("90% do orçamento");
   });
 });

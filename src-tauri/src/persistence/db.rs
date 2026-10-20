@@ -8,29 +8,40 @@ use rusqlite::{Connection, OptionalExtension};
 
 /// Schema version. Every new migration increments this and gets a block in
 /// `migrate`. Never rewrite a migration that has already shipped.
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 pub fn open() -> anyhow::Result<Connection> {
     crate::paths::ensure_dirs()?;
+    open_in(&crate::paths::app_dir())
+}
+
+fn open_in(app_dir: &std::path::Path) -> anyhow::Result<Connection> {
 
     // A backup restored in the previous session is only swapped in here:
     // before any connection exists. Failing to adopt must not stop the app
     // from booting on the database it already has.
-    match super::backup::adopt_pending() {
+    match super::backup::adopt_pending_in(app_dir) {
         Ok(true) => tracing::info!("backup restaurado aplicado"),
         Ok(false) => {}
-        Err(e) => tracing::error!(error = %e, "nao consegui aplicar o backup restaurado"),
+        Err(e) => {
+            if app_dir.join("restore-journal.json").exists() { return Err(e); }
+            tracing::error!(error = %e, "nao consegui aplicar o backup restaurado");
+        }
     }
 
-    let path = crate::paths::db_path();
+    let path = app_dir.join("app.db");
     let conn = Connection::open(&path)?;
 
     conn.pragma_update(None, "journal_mode", "WAL")?;
+    // Without a limit the WAL keeps the size of the largest transaction it
+    // ever held; with it, each checkpoint truncates it back to 1 MiB.
+    conn.pragma_update(None, "journal_size_limit", 1_048_576)?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
 
     migrate(&conn)?;
+    crate::pty::scrub_saved_transports(&conn, app_dir)?;
     tracing::info!(path = %path.display(), "sqlite pronto");
     Ok(conn)
 }
@@ -40,8 +51,14 @@ fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
 }
 
 pub(super) fn migrate(conn: &Connection) -> anyhow::Result<()> {
+    let version = user_version(conn)?;
+    if version > SCHEMA_VERSION {
+        anyhow::bail!("workspace schema {version} requires a newer Yard version (supported: {SCHEMA_VERSION})");
+    }
     quarantine_prototype(conn)?;
     ensure_added_columns(conn)?;
+    crate::work::init(conn)?;
+    crate::queue::init(conn, chrono::Utc::now().timestamp_millis())?;
 
     let current = user_version(conn)?;
     if current >= SCHEMA_VERSION {
@@ -225,6 +242,11 @@ pub(super) fn migrate(conn: &Connection) -> anyhow::Result<()> {
         // whatever the stamp says; this step only moves the stamp.
         conn.pragma_update(None, "user_version", 8)?;
         tracing::info!("migracao aplicada: schema v8");
+    }
+
+    if current < 9 {
+        conn.pragma_update(None, "user_version", 9)?;
+        tracing::info!("migration applied: schema v9 work tasks");
     }
 
     Ok(())
@@ -501,6 +523,130 @@ fn has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_newer_schema_is_refused_without_changing_its_tables_or_version() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("CREATE TABLE future_data (payload TEXT)").unwrap();
+        connection.pragma_update(None, "user_version", SCHEMA_VERSION + 1).unwrap();
+        assert!(migrate(&connection).is_err());
+        assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION + 1);
+        let tables: Vec<String> = connection.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").unwrap()
+            .query_map([], |row| row.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+        assert_eq!(tables, ["future_data"]);
+    }
+
+    /// Opening a fresh database during an unfinished restore can hide recoverable user data.
+    #[test]
+    fn an_unrecoverable_restore_journal_prevents_creating_a_replacement_database() {
+        let root = std::env::temp_dir().join(format!("yard-db-restore-journal-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("restore-journal.json"), b"interrupted invalid journal").unwrap();
+        let result = open_in(&root);
+        assert!(result.is_err());
+        assert!(!root.join("app.db").exists());
+        assert!(root.join("restore-journal.json").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A WAL file grows to the largest transaction it ever held and, without
+    /// a limit, keeps that size on disk after every checkpoint.
+    #[test]
+    fn the_opened_database_truncates_its_wal_back_to_one_megabyte() {
+        let root = std::env::temp_dir().join(format!("yard-db-journal-limit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let conn = open_in(&root).unwrap();
+        let limit: i64 = conn.query_row("PRAGMA journal_size_limit", [], |row| row.get(0)).unwrap();
+        assert_eq!(limit, 1_048_576);
+        drop(conn);
+        assert!(root.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Work requests retain acceptance criteria and context independently of a terminal.
+    #[test]
+    fn a_created_task_restores_its_request_criteria_and_workspace_links() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        let input = crate::work::NewTask {
+            id: "task-1".into(), title: "Review API".into(), request: "Review the response contract".into(),
+            criteria: vec!["Existing callers keep working".into()],
+            links: crate::work::TaskLinks { project_id: Some("project-1".into()), terminal_ids: vec!["terminal-1".into()], ..Default::default() },
+        };
+        let created = crate::work::create(&mut conn, input, 1_000).unwrap();
+        let restored = crate::work::get(&conn, "task-1").unwrap();
+        assert_eq!(restored, created);
+        assert_eq!(restored.request, "Review the response contract");
+        assert_eq!(restored.criteria[0].text, "Existing callers keep working");
+        assert_eq!(restored.links.terminal_ids, ["terminal-1"]);
+        assert_eq!(crate::work::events(&conn, "task-1").unwrap()[0].kind, "created");
+    }
+
+    /// The regression: `read_prefs` sent the whole kv table to the page at
+    /// every boot, retired queue ids, flow and routine runs and the notice
+    /// history included. The page gets its preferences, the pause switch
+    /// among them, and none of those internal records.
+    #[test]
+    fn the_page_preferences_leave_out_internal_automation_records() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO kv VALUES ('theme', 'dark'), ('automation.paused', '{\"reason\":\"user\",\"at\":1}'),
+              ('queue.items', '[]'), ('checkpoint.notices', '[]'),
+              ('queue.retired.old', '1'), ('native.flow.run.ab', '{}'), ('routine.run.ab', '{}'),
+              ('checkpoint.notice.history', '[]');").unwrap();
+        let mut keys: Vec<String> = kv_page(&c).unwrap().into_iter().map(|(key, _)| key).collect();
+        keys.sort();
+        assert_eq!(keys, ["automation.paused", "checkpoint.notices", "queue.items", "theme"]);
+    }
+
+    /// Retired queue identities left the preferences table: the next boot
+    /// moves the markers an earlier version saved there.
+    #[test]
+    fn booting_moves_retired_queue_markers_out_of_the_preferences() {
+        let c = conn();
+        migrate(&c).unwrap();
+        kv_set(&c, "queue.retired.legacy", "1").unwrap();
+        migrate(&c).unwrap();
+        assert!(crate::queue::is_retired(&c, "legacy").unwrap());
+        assert_eq!(kv_get(&c, "queue.retired.legacy"), None);
+    }
+
+    /// The regression: flows and routines read their records with
+    /// `LIKE 'x.%'`, which SQLite cannot answer from the key index, so every
+    /// scheduler pass scanned the whole table. A key range is answered from
+    /// the index and returns the same records, in key order.
+    #[test]
+    fn a_prefix_read_returns_its_records_in_key_order_from_the_key_index() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO kv VALUES ('routine.run.b', 'second'), ('routine.run.a', 'first'), ('routine.runx', 'other'),
+              ('routine/', 'other'), ('theme', 'dark'), ('ROUTINE.RUN.c', 'other');").unwrap();
+        assert_eq!(super::kv_prefix_values(&c, "routine.run.").unwrap(), ["first", "second"]);
+        let (low, high) = super::prefix_range("routine.run.");
+        let plan: Vec<String> = c.prepare(&format!("EXPLAIN QUERY PLAN {}", super::KV_PREFIX_SQL)).unwrap()
+            .query_map([&low, &high], |row| row.get(3)).unwrap().collect::<Result<_, _>>().unwrap();
+        assert!(plan.iter().any(|step| step.contains("USING INDEX") || step.contains("USING PRIMARY KEY")), "{plan:?}");
+    }
+
+    /// Queue, flow, routine and notice writes reach the page as events. Storing
+    /// the value that is already there is no change: it must not announce one
+    /// (the scheduler rewrote an unchanged flow run every two seconds).
+    #[test]
+    fn a_kv_write_records_a_change_only_when_the_stored_value_differs() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT NOT NULL)").unwrap();
+        let _ = crate::events::take_kv_changes();
+        super::kv_set(&c, "queue.items", "[]").unwrap();
+        assert_eq!(crate::events::take_kv_changes().topics(), vec![crate::events::QUEUE_CHANGED]);
+        super::kv_set(&c, "queue.items", "[]").unwrap();
+        assert!(crate::events::take_kv_changes().is_empty());
+        assert_eq!(super::kv_get(&c, "queue.items").as_deref(), Some("[]"));
+        super::kv_delete(&c, "queue.items").unwrap();
+        assert_eq!(crate::events::take_kv_changes().topics(), vec![crate::events::QUEUE_CHANGED]);
+        super::kv_delete(&c, "queue.items").unwrap();
+        assert!(crate::events::take_kv_changes().is_empty());
+    }
+
     /// A failed preference batch must not leave a partially updated draft snapshot.
     #[test]
     fn preference_batch_rolls_back_when_one_value_is_rejected() {
@@ -840,12 +986,20 @@ pub fn kv_get(conn: &Connection, key: &str) -> Option<String> {
 /// Cached, not re-prepared: every preference toggle and every key of a
 /// `kv_set_many` batch lands here, and parsing the same upsert each time was
 /// the only real work the call did.
+///
+/// Storing the value already there writes nothing. A real change is noted
+/// for the event it announces (`events::note_kv_write`).
 pub fn kv_set(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
-    conn.prepare_cached(
-        "INSERT INTO kv(key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    )?
-    .execute([key, value])?;
+    let changed = conn
+        .prepare_cached(
+            "INSERT INTO kv(key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value
+             WHERE kv.value IS NOT excluded.value",
+        )?
+        .execute([key, value])?;
+    if changed > 0 {
+        crate::events::note_kv_write(key);
+    }
     Ok(())
 }
 
@@ -857,13 +1011,51 @@ pub fn kv_set_many(conn: &Connection, entries: &[(String, String)]) -> rusqlite:
     tx.commit()
 }
 
+/// Records the native side keeps in `kv` for itself, which the page never
+/// reads through `read_prefs`.
+const INTERNAL_PREFIXES: [&str; 4] = ["queue.retired.", "native.flow.run.", "routine.run.", "checkpoint.notice."];
+
+/// The preferences the page reads (`read_prefs`): the whole table minus the
+/// internal records under `INTERNAL_PREFIXES`.
+pub fn kv_page(conn: &Connection) -> rusqlite::Result<Vec<(String, String)>> {
+    let excluded = vec!["NOT (key >= ? AND key < ?)"; INTERNAL_PREFIXES.len()].join(" AND ");
+    let bounds: Vec<String> = INTERNAL_PREFIXES.iter().flat_map(|prefix| { let (low, high) = prefix_range(prefix); [low, high] }).collect();
+    let mut stmt = conn.prepare_cached(&format!("SELECT key, value FROM kv WHERE {excluded}"))?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(bounds), |r| Ok((r.get(0)?, r.get(1)?)))?;
+    rows.collect()
+}
+
 pub fn kv_all(conn: &Connection) -> rusqlite::Result<Vec<(String, String)>> {
     let mut stmt = conn.prepare("SELECT key, value FROM kv")?;
     let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
     rows.collect()
 }
 
+/// The values whose key starts with a prefix, in key order. A key range, not
+/// `LIKE 'x.%'`: SQLite answers the range from the key index, while `LIKE`
+/// (case-insensitive) scans the whole table.
+const KV_PREFIX_SQL: &str = "SELECT value FROM kv WHERE key >= ?1 AND key < ?2 ORDER BY key";
+
+/// The bounds of the keys that start with `prefix`: from `prefix` itself to
+/// `prefix` with its last character moved one up (`x.` .. `x/`).
+fn prefix_range(prefix: &str) -> (String, String) {
+    let mut high = prefix.to_string();
+    let last = high.pop().expect("a key prefix is never empty");
+    high.push(char::from_u32(last as u32 + 1).expect("a key prefix ends in an ASCII character"));
+    (prefix.to_string(), high)
+}
+
+/// The values of every key that starts with `prefix`, in key order.
+pub fn kv_prefix_values(conn: &Connection, prefix: &str) -> rusqlite::Result<Vec<String>> {
+    let (low, high) = prefix_range(prefix);
+    let mut query = conn.prepare_cached(KV_PREFIX_SQL)?;
+    let rows = query.query_map([&low, &high], |row| row.get(0))?;
+    rows.collect()
+}
+
 pub fn kv_delete(conn: &Connection, key: &str) -> rusqlite::Result<()> {
-    conn.execute("DELETE FROM kv WHERE key = ?1", [key])?;
+    if conn.execute("DELETE FROM kv WHERE key = ?1", [key])? > 0 {
+        crate::events::note_kv_write(key);
+    }
     Ok(())
 }

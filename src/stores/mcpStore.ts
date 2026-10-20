@@ -10,22 +10,27 @@
  */
 import { create } from "zustand";
 
-import { ipc, type McpRow, type McpSecrets, type McpServer } from "../lib/ipc";
+import { ipc, type McpHealth, type McpRow, type McpSecrets, type McpServer } from "../lib/ipc";
+import { t } from "../lib/i18n";
+
+export type McpProbeState = { state: "pending" } | { state: "healthy"; result: McpHealth } | { state: "failed"; error: string };
 
 interface McpState {
+  health: Record<string, McpProbeState>;
+  probe: (row: McpRow) => Promise<void>;
   rows: McpRow[];
   /** Files the backend could not read, each naming its path. */
   fileErrors: string[];
   loading: boolean;
-  /** The last failed operation, in words; cleared by the next success. */
+  /** The last failed operation for the current project; cleared by the next success. */
   error: string | null;
   /** The project root the listing was read for (`null` = no project). */
   root: string | null;
 
   load: (root: string | null) => Promise<void>;
-  save: (cli: string, scope: string, server: McpServer) => Promise<boolean>;
-  remove: (cli: string, scope: string, name: string) => Promise<boolean>;
-  secrets: (cli: string, scope: string, name: string) => Promise<McpSecrets>;
+  save: (cli: string, scope: string, server: McpServer, expectedRoot?: string | null) => Promise<boolean>;
+  remove: (cli: string, scope: string, name: string, expectedRoot?: string | null) => Promise<boolean>;
+  secrets: (cli: string, scope: string, name: string, sourceRoot?: string | null) => Promise<McpSecrets>;
 }
 
 let request = 0;
@@ -35,6 +40,22 @@ function reason(e: unknown): string {
 }
 
 export const useMcp = create<McpState>((set, get) => ({
+  health: {},
+  probe: async (row) => {
+    const version = request;
+    const root = get().root;
+    const key = `${row.cli}:${row.scope}:${row.name}`;
+    if (get().health[key]?.state === "pending") return;
+    set({ health: { ...get().health, [key]: { state: "pending" } } });
+    try {
+      const result = await ipc.mcpProbe(row.cli, row.scope, root, row.name);
+      if (version !== request || root !== get().root) return;
+      set({ health: { ...get().health, [key]: { state: "healthy", result } } });
+    } catch (error) {
+      if (version !== request || root !== get().root) return;
+      set({ health: { ...get().health, [key]: { state: "failed", error: reason(error) } } });
+    }
+  },
   rows: [],
   fileErrors: [],
   loading: false,
@@ -43,7 +64,8 @@ export const useMcp = create<McpState>((set, get) => ({
 
   load: async (root) => {
     const mine = ++request;
-    set({ loading: true, root });
+    const changed = get().root !== root;
+    set({ loading: true, root, health: {}, ...(changed ? { rows: [], fileErrors: [], error: null } : {}) });
     try {
       const listing = await ipc.mcpList(root);
       if (mine !== request) return;
@@ -54,29 +76,37 @@ export const useMcp = create<McpState>((set, get) => ({
     }
   },
 
-  save: async (cli, scope, server) => {
+  save: async (cli, scope, server, expectedRoot = get().root) => {
     const { root } = get();
+    if (scope !== "user" && root !== expectedRoot) {
+      set({ error: t("O projeto mudou. Confira os servidores MCP antes de continuar.") });
+      return false;
+    }
     try {
       await ipc.mcpSave(cli, scope, root, server);
     } catch (e) {
-      set({ error: reason(e) });
+      if (scope === "user" || get().root === root) set({ error: reason(e) });
       return false;
     }
-    await get().load(root);
+    if (scope === "user" || get().root === root) await get().load(get().root);
     return true;
   },
 
-  remove: async (cli, scope, name) => {
+  remove: async (cli, scope, name, expectedRoot = get().root) => {
     const { root } = get();
+    if (scope !== "user" && root !== expectedRoot) {
+      set({ error: t("O projeto mudou. Confira os servidores MCP antes de continuar.") });
+      return false;
+    }
     try {
       await ipc.mcpDelete(cli, scope, root, name);
     } catch (e) {
-      set({ error: reason(e) });
+      if (scope === "user" || get().root === root) set({ error: reason(e) });
       return false;
     }
-    await get().load(root);
+    if (scope === "user" || get().root === root) await get().load(get().root);
     return true;
   },
 
-  secrets: (cli, scope, name) => ipc.mcpEnvValues(cli, scope, get().root, name),
+  secrets: (cli, scope, name, sourceRoot = get().root) => ipc.mcpEnvValues(cli, scope, sourceRoot, name),
 }));

@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  armsEnter,
   buildStagePrompt,
   buildStageStamp,
   CARRY_MARK,
@@ -224,11 +225,31 @@ describe("flowsOf / findFlow / flowAgents", () => {
   });
 });
 
+/**
+ * The contract that changed: a wire to a flow card used to arm the Enter
+ * interception unless someone had switched it off, so every prompt typed into
+ * that CLI became a whole paid pipeline. Now it is armed only when the user
+ * switched it on in the card's editor.
+ */
+describe("armsEnter", () => {
+  it("arms the Enter interception only for a flow whose trigger was switched on", () => {
+    expect(armsEnter({ ...flowItem("f1", "Entrega", ["QA"]), trigger: true })).toBe(true);
+    expect(armsEnter(flowItem("f2", "Entrega", ["QA"]))).toBe(false);
+    expect(armsEnter({ ...flowItem("f3", "Entrega", ["QA"]), trigger: false })).toBe(false);
+  });
+});
+
 describe("flow item through the persisted JSON", () => {
   it("round-trips intact", () => {
     const data = canvas([flowItem("f1", "Entrega", ["QA"])]);
     const back = normalizeCanvas(JSON.parse(JSON.stringify(data)));
     expect(back?.items).toEqual(data.items);
+  });
+
+  it("keeps a trigger that was switched on through a save and a load", () => {
+    const data = canvas([{ ...flowItem("f1", "Entrega", ["QA"]), trigger: true }]);
+    const back = normalizeCanvas(JSON.parse(JSON.stringify(data)));
+    expect(flowsOf(back).map((f) => armsEnter(f))).toEqual([true]);
   });
 
   it("sanitizes junk without poisoning the canvas", () => {

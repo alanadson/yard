@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { BODY_CAP, webhookTarget, webhookPayload } from "./webhook";
+import { admitWebhook, BODY_CAP, webhookTarget, webhookPayload, type SentWebhook } from "./webhook";
 
 describe("webhookTarget", () => {
   it("takes an https address", () => {
@@ -58,5 +58,33 @@ describe("webhookPayload", () => {
 
   it("leaves a short body exactly as it was written", () => {
     expect(webhookPayload("Yard", "curto", "finished").message).toBe("curto");
+  });
+});
+
+/**
+ * A looping trigger or a CLI that keeps stopping at the same question would
+ * otherwise post the same sentence to the user's phone every few seconds.
+ * The same notification twice within a minute goes once, and nothing at all
+ * goes past ten a minute.
+ */
+describe("admitWebhook", () => {
+  const send = (sent: SentWebhook[], key: string, now: number) => admitWebhook(sent, key, now);
+
+  it("drops an identical notification sent within a minute, and lets it through after", () => {
+    const first = send([], "A", 1_000);
+    expect(first.send).toBe(true);
+    expect(send(first.sent, "A", 1_000 + 59_000).send).toBe(false);
+    expect(send(first.sent, "A", 1_000 + 60_000).send).toBe(true);
+  });
+
+  it("sends at most ten a minute, whatever they say", () => {
+    let sent: SentWebhook[] = [];
+    for (let i = 0; i < 10; i++) {
+      const r = send(sent, `n${i}`, 1_000 + i);
+      expect(r.send).toBe(true);
+      sent = r.sent;
+    }
+    expect(send(sent, "eleventh", 2_000).send).toBe(false);
+    expect(send(sent, "eleventh", 1_000 + 60_000).send).toBe(true);
   });
 });

@@ -16,10 +16,17 @@ import {
   dueItems,
   moved,
   pendingFor,
+  parseQueue,
   withoutId,
   withoutTerminal,
   type QueueItem,
 } from "./queue";
+
+it("retains the routine occurrence identity when restoring the durable queue", () => {
+  const occurrence = { id: "routine-occurrence", terminalId: "agent", text: "Review the work", at: 61000,
+    source: "routine", by: "reminder", routineKey: "routine.run.identity" };
+  expect(parseQueue(JSON.stringify([occurrence]))).toEqual([occurrence]);
+});
 
 const item = (id: string, terminalId: string, at = 0): QueueItem => ({
   id,
@@ -30,6 +37,10 @@ const item = (id: string, terminalId: string, at = 0): QueueItem => ({
 });
 
 describe("pendingFor", () => {
+  it("restoring queued work preserves the durable task association", () => {
+    const queued = { ...item("queue-1", "agent-1"), taskId: "task-1" };
+    expect(parseQueue(JSON.stringify([queued]))).toEqual([queued]);
+  });
   const items = [item("1", "a"), item("2", "b"), item("3", "a")];
 
   it("keeps a terminal's items in the order they were asked", () => {
@@ -123,4 +134,20 @@ describe("dueItems", () => {
   it("has nothing to release from an empty queue", () => {
     expect(dueItems([], () => true)).toEqual([]);
   });
+});
+it("keeps a native-owned sending reservation pending across a renderer reload", () => {
+  const original = { id: "request", terminalId: "agent", text: "Native request", source: "user", at: 1000,
+    delivery: { status: "sending", attemptedAt: 2000, owner: "native" } };
+  expect(parseQueue(JSON.stringify([original]))).toEqual([original]);
+});
+
+/**
+ * A trigger's prompt now waits in the queue like any other automatic send, so
+ * the native admission (`automationMaxAgents`) applies to it. The tag is what
+ * tells the card and the log where it came from, and a reload must not turn it
+ * into something the user typed.
+ */
+it("keeps the trigger tag of a queued prompt through a reload", () => {
+  const queued = { id: "q1", terminalId: "t1", text: "revise", at: 5, source: "trigger" as const, by: "gatilho abc" };
+  expect(parseQueue(JSON.stringify([queued]))).toEqual([queued]);
 });

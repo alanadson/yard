@@ -12,17 +12,26 @@
  */
 import { useEffect, useState, type ReactNode } from "react";
 
+import { renderedBlocks } from "../../lib/renderCache";
 import { useExtensions } from "../../stores/extensionsStore";
 
+/** The theme every diagram is drawn with (`initialize` below): part of the cache key. */
+const THEME = "dark";
 let inited = false;
 let seq = 0;
 
 export function MermaidBlock({ text, fallback }: { text: string; fallback: ReactNode }) {
   const on = useExtensions((s) => s.enabled.mermaid === true);
-  const [svg, setSvg] = useState<string | null>(null);
+  // A diagram drawn before comes back from the cache on the first frame.
+  const [svg, setSvg] = useState<string | null>(() => renderedBlocks.get("mermaid", THEME, text) ?? null);
 
   useEffect(() => {
     if (!on) return;
+    const cached = renderedBlocks.get("mermaid", THEME, text);
+    if (cached !== undefined) {
+      setSvg(cached);
+      return;
+    }
     let alive = true;
     setSvg(null);
     void import("mermaid")
@@ -32,12 +41,13 @@ export function MermaidBlock({ text, fallback }: { text: string; fallback: React
           mermaid.initialize({
             startOnLoad: false,
             securityLevel: "strict",
-            theme: "dark",
+            theme: THEME,
             darkMode: true,
             fontFamily: "var(--ui-font, sans-serif)",
           });
         }
         const out = await mermaid.render(`yard-mermaid-${++seq}`, text);
+        renderedBlocks.set("mermaid", THEME, text, out.svg);
         if (alive) setSvg(out.svg);
       })
       .catch(() => {

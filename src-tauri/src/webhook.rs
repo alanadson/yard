@@ -46,15 +46,16 @@ pub fn post(url: &str, body: &str) -> Result<(), String> {
     if !allowed(url) {
         return Err("endereço não permitido: use https (ou http em localhost)".into());
     }
-    let agent = ureq::AgentBuilder::new().timeout(TIMEOUT).build();
-    match agent
+    let agent = crate::http::client(TIMEOUT, None, true).map_err(|e| format!("não consegui enviar: {e}"))?;
+    let response = agent
         .post(url)
-        .set("Content-Type", "application/json")
-        .send_string(body)
-    {
-        Ok(_) => Ok(()),
-        Err(ureq::Error::Status(code, _)) => Err(format!("o servidor respondeu {code}")),
-        Err(e) => Err(format!("não consegui enviar: {e}")),
+        .header("Content-Type", "application/json")
+        .body(body.to_string())
+        .send()
+        .map_err(|e| format!("não consegui enviar: {e}"))?;
+    match crate::http::refused(&response) {
+        Some(code) => Err(format!("o servidor respondeu {code}")),
+        None => Ok(()),
     }
 }
 
@@ -65,6 +66,25 @@ pub fn post(url: &str, body: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pinned when the client moved from ureq to reqwest: what the user reads
+    /// when the server refuses, and what the server receives.
+    #[test]
+    fn a_refused_post_reports_the_status_the_server_answered() {
+        let (url, server) = crate::http::testing::serve_once("500 Internal Server Error", &[], "");
+        assert_eq!(post(&format!("{url}/hook"), r#"{"text":"done"}"#), Err("o servidor respondeu 500".to_string()));
+        let request = server.join().unwrap();
+        assert!(request.starts_with("POST /hook "), "{request}");
+        assert!(request.to_ascii_lowercase().contains("content-type: application/json"));
+        assert!(request.ends_with(r#"{"text":"done"}"#));
+    }
+
+    #[test]
+    fn an_accepted_post_succeeds() {
+        let (url, server) = crate::http::testing::serve_once("204 No Content", &[], "");
+        assert_eq!(post(&format!("{url}/hook"), "{}"), Ok(()));
+        server.join().unwrap();
+    }
 
     #[test]
     fn https_is_allowed_anywhere() {

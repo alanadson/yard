@@ -24,7 +24,9 @@ vi.mock("./log", () => ({
 }));
 
 import type { FlowItem } from "./flow";
+import { askStamp } from "./askHops";
 import { startFlow } from "./flowRun";
+import { setPrefsTransport } from "./prefs";
 import { useFlows } from "../stores/flowStore";
 import { useProjects } from "../stores/projectsStore";
 import { useTerminals, type TerminalRuntime } from "../stores/terminalsStore";
@@ -56,7 +58,9 @@ const flow: FlowItem = {
   stages: [{ prompt: "Revise como QA" }],
 };
 
+let restorePrefs = () => {};
 beforeEach(() => {
+  restorePrefs = setPrefsTransport({ readPrefs: async () => ({}), writePref: async () => undefined });
   vi.useFakeTimers();
   sendabilityMock.mockReset();
   useFlows.setState({ runs: {}, marks: {} });
@@ -72,6 +76,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  restorePrefs();
   vi.useRealTimers();
 });
 
@@ -88,7 +93,7 @@ it("keeps waiting on a CLI that stays busy past the ready timeout; only its deat
       : { ok: false, reason: "dead", message: "o terminal morreu" },
   );
 
-  const started = startFlow("g1", flow, "Tarefa", { terminalId: "t1" });
+  const started = await startFlow("g1", flow, "Tarefa", { terminalId: "t1" });
   expect(started.ok).toBe(true);
 
   await vi.advanceTimersByTimeAsync(12 * 60_000);
@@ -98,4 +103,18 @@ it("keeps waiting on a CLI that stays busy past the ready timeout; only its deat
   const run = useFlows.getState().runs.flow;
   expect(run.error).toBe("o terminal morreu");
   expect(run.error).not.toContain("ocupada por muito tempo");
+});
+
+/**
+ * The hop stamp of `yard ask` and the flow's anti-forward rule have to agree:
+ * a prompt another agent sent is not a task the user typed, and an agent that
+ * forwards it to a flow must not start a paid pipeline on someone else's
+ * behalf. The guard already refuses anything starting with "[Yard"; this
+ * locks the stamp's format to it.
+ */
+it("refuses as a task a prompt that arrived stamped by `yard ask`", async () => {
+  const forwarded = `${askStamp("Codex", 1)}\nrevise o login`;
+  const r = await startFlow("g1", flow, forwarded, { terminalId: "t1" });
+  expect(r.ok).toBe(false);
+  expect(useFlows.getState().runs.flow).toBeUndefined();
 });

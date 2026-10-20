@@ -108,7 +108,7 @@ describe("startKeepAwake", () => {
     expect(spy).not.toHaveBeenCalled();
 
     usePower.getState().setMode("always");
-    expect(spy).toHaveBeenLastCalledWith(true);
+    expect(spy).toHaveBeenLastCalledWith(true, true);
     expect(usePower.getState().engaged).toBe(true);
 
     // The clock re-evaluates, the answer is the same: no new call.
@@ -117,7 +117,7 @@ describe("startKeepAwake", () => {
     expect(spy.mock.calls.length).toBe(calls);
 
     stop();
-    expect(spy).toHaveBeenLastCalledWith(false);
+    expect(spy).toHaveBeenLastCalledWith(false, false);
     expect(usePower.getState().engaged).toBe(false);
   });
 
@@ -132,13 +132,51 @@ describe("startKeepAwake", () => {
     const stop = startKeepAwake();
     usePower.getState().setMode("agents");
     expect(usePower.getState().engaged).toBe(true);
-    expect(spy).toHaveBeenLastCalledWith(true);
+    // An agent at work needs the PC awake, not the screen lit.
+    expect(spy).toHaveBeenLastCalledWith(true, false);
 
     // The turn ends; the next tick of the clock notices and releases.
     useTerminals.getState().markFinished("ag");
     vi.advanceTimersByTime(5_000);
     expect(usePower.getState().engaged).toBe(false);
-    expect(spy).toHaveBeenLastCalledWith(false);
+    expect(spy).toHaveBeenLastCalledWith(false, false);
+
+    stop();
+  });
+
+  /**
+   * The "always" mode holds the display on as well; "agents" only keeps the
+   * PC from suspending, so the screen of a machine left working overnight
+   * still turns off. Moving between the two with an agent working is a
+   * transition the backend has to hear even though "awake" did not change.
+   */
+  it("keeps the display lit only in always mode, and says so when the mode moves", () => {
+    vi.useFakeTimers();
+    const spy = vi.spyOn(ipc, "setKeepAwake").mockResolvedValue();
+    useProjects.setState({ terminals: [term("ag", "agent")] });
+    useTerminals.getState().markRunning("ag", 1);
+    markActivity("ag", Date.now(), 0);
+
+    const stop = startKeepAwake();
+    usePower.getState().setMode("always");
+    expect(spy).toHaveBeenLastCalledWith(true, true);
+    usePower.getState().setMode("agents");
+    expect(spy).toHaveBeenLastCalledWith(true, false);
+
+    stop();
+  });
+
+  /** A clock re-reading every terminal every 5 s for a mode that never asks. */
+  it("runs its clock only in agents mode", () => {
+    vi.useFakeTimers();
+    vi.spyOn(ipc, "setKeepAwake").mockResolvedValue();
+
+    const stop = startKeepAwake();
+    expect(vi.getTimerCount()).toBe(0);
+    usePower.getState().setMode("agents");
+    expect(vi.getTimerCount()).toBe(1);
+    usePower.getState().setMode("always");
+    expect(vi.getTimerCount()).toBe(0);
 
     stop();
   });

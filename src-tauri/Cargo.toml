@@ -56,15 +56,23 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+# The same major the updater plugin already compiles (tauri-plugin-updater
+# pulls zip 4 on Windows), so the crate is built once. `deflate-flate2` uses
+# the flate2 backend already in the graph (miniz_oxide, via png): zip's own
+# `deflate` feature would add zopfli and zlib-rs for nothing this app writes.
+zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
 anyhow = "1"
 parking_lot = "0.12"
 # Agent<->app bridge: named-pipe server (bridge.rs). Tauri already brings
 # tokio; here we only enable the features the pipe needs.
 tokio = { version = "1", features = ["net", "io-util", "time", "sync", "rt"] }
-# Agent usage limits (usage.rs): three GETs a minute on a background thread —
-# a small blocking client does the job without dragging in reqwest.
-ureq = "2"
+# Blocking HTTP (http.rs): the usage meters, the MCP health probe, the
+# portal's live-reload probe and webhooks. The updater plugin already compiles
+# reqwest on rustls with the ring provider, so `blocking` reuses that stack;
+# the ureq client this replaced added ureq and its own webpki-roots bundle.
+# `rustls` is named only to install that same ring provider (http.rs).
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 # Installed-font scan (fonts.rs): family name, monospaced flag and whether the
 # GSUB table carries ligatures — the preferences panel offers real choices
 # instead of a free-text field.
@@ -73,8 +81,12 @@ ttf-parser = "0.25"
 # behind the literal mode too, one matcher means the search and the replace
 # cannot disagree about what matched.
 regex = "1"
+sha2 = "0.10"
 # Portal screenshots (portal.rs): the files exist to be opened by agents, and
 # PNG is what agent APIs accept — the old BMPs could not be attached at all.
+# 0.17 on purpose: it is the version tauri-codegen's `ico` already builds on
+# Windows. png 0.18 only enters the graph on Linux and macOS (muda,
+# tray-icon), so moving to it would compile png twice here.
 png = "0.17"
 # MCP manager (mcp.rs): Codex keeps its servers in `~/.codex/config.toml`, and
 # editing that file must keep the user's comments and layout — toml_edit works
@@ -89,6 +101,7 @@ windows-sys = { version = "0.59", features = [
   # CreateJobObjectW takes *const SECURITY_ATTRIBUTES: without this feature
   # the function does not even exist in the crate.
   "Win32_Security",
+  "Win32_Security_Cryptography",
   "Win32_UI_WindowsAndMessaging",
   "Win32_Graphics_Gdi",
   # Keep-awake (power.rs): SetThreadExecutionState lives here.

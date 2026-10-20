@@ -18,6 +18,7 @@ import { Lru } from "../../lib/lru";
 const gen = rough.generator();
 
 const cache = new Lru<string, string[]>(800);
+const strokeCache = new WeakMap<number[], Partial<Record<keyof typeof STROKE_PX, string>>>();
 
 function cached(key: string, make: () => string[]): string[] {
   const hit = cache.get(key);
@@ -132,10 +133,14 @@ export function freehandPath(points: number[], size: keyof typeof STROKE_PX): st
 export function freehandPathCached(
   it: Extract<CanvasItem, { type: "stroke" }>,
 ): string {
-  // The first point goes into the key: moving the stroke translates every
-  // point, and without this the cache would return the drawing stuck in the old place.
-  const key = `f:${it.id}:${it.points.length}:${it.size}:${it.points[0]},${it.points[1]}`;
-  return cached(key, () => [freehandPath(it.points, it.size)])[0];
+  // Committed points are immutable. Geometry edits replace the array, and
+  // weak keys release old outlines when undo history no longer retains it.
+  let sizes = strokeCache.get(it.points);
+  if (!sizes) {
+    sizes = {};
+    strokeCache.set(it.points, sizes);
+  }
+  return (sizes[it.size] ??= freehandPath(it.points, it.size));
 }
 
 /** perfect-freehand polygon -> path with quadratics (smooth curve). */

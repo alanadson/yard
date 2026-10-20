@@ -17,11 +17,15 @@ pub mod emit;
 pub mod job;
 pub mod pages;
 pub mod reader;
+mod remote;
+pub use remote::{expand_remote_launch, normalize_remote_launch, sanitize_transport_json, scrub_saved_transports};
 pub mod scrollback;
 pub mod teardown;
 
 #[cfg(test)]
 mod engine_tests;
+
+pub mod history;
 
 use std::io::Write;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -55,6 +59,9 @@ const INTENT_KILLED: u8 = 1;
 const INTENT_SUSPENDED: u8 = 2;
 const INTENT_RESTARTED: u8 = 3;
 
+/// Live terminals (and spawns in flight) the app allows at once.
+const MAX_LIVE_PTYS: usize = 48;
+
 struct SpawnReservation<'a> {
     state: &'a AppState,
     id: String,
@@ -63,9 +70,17 @@ struct SpawnReservation<'a> {
 impl<'a> SpawnReservation<'a> {
     fn claim(state: &'a AppState, id: &str) -> Result<Self, String> {
         let mut spawning = state.spawning_ptys.lock();
-        if state.ptys.lock().contains_key(id) || !spawning.insert(id.to_string()) {
+        let live = state.ptys.lock();
+        if live.contains_key(id) || spawning.contains(id) {
             return Err(format!("pty '{id}' ja esta rodando"));
         }
+        if live.len() + spawning.len() >= MAX_LIVE_PTYS {
+            return Err(format!(
+                "Limite de {MAX_LIVE_PTYS} terminais abertos atingido. Feche um terminal para abrir outro."
+            ));
+        }
+        drop(live);
+        spawning.insert(id.to_string());
         Ok(Self {
             state,
             id: id.to_string(),
@@ -122,6 +137,7 @@ pub(crate) type SharedWriter = Arc<Mutex<Box<dyn Write + Send>>>;
 
 pub struct PtyHandle {
     pub meta: PtyMeta,
+    credential: Arc<crate::bridge::Credential>,
     master: Box<dyn MasterPty + Send>,
     writer: SharedWriter,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
@@ -274,12 +290,24 @@ pub fn expand_pty_id(args: &[String], id: &str) -> Vec<String> {
 /// The placeholder, spelled the same here and in `src/lib/remoteBridge.ts`.
 pub const PTY_ID_MARK: &str = "{{YARD_PTY_ID}}";
 
+/// Resolves a persisted transport marker only for the process being launched.
+pub fn expand_bridge_token(args: &[String], token: &str) -> Vec<String> {
+    args.iter().map(|arg| arg.replace(remote::TOKEN_MARK, token)).collect()
+}
+
 pub fn spawn(
     sink: Arc<dyn PtyEvents>,
     state: &Arc<AppState>,
     opts: SpawnOptions,
 ) -> Result<PtySnapshot, String> {
     let _reservation = SpawnReservation::claim(state, &opts.id)?;
+
+    // Archive failures abort before launching a child or replacing its previous output.
+    let scrollback = Arc::new(Mutex::new(if opts.keep_scrollback {
+        Scrollback::open(&opts.id)
+    } else {
+        Scrollback::fresh(&opts.id).map_err(|error| format!("Could not preserve previous terminal output: {error}"))?
+    }));
 
     let is_agent = opts.kind == "agent";
     if is_agent {
@@ -291,6 +319,12 @@ pub fn spawn(
     // `bridge::LauncherGate`).
     crate::bridge::seal_launchers();
 
+    // The rollback owner exists before launch so immediate hooks authenticate.
+    let credential = Arc::new(crate::bridge::credentials().issue(&opts.id)
+        .map_err(|error| format!("bridge credential: {error}"))?);
+    state.scheduler.clear(&opts.id);
+    state.scheduler.expect_hooks(&opts.id, crate::scheduler::native_hooks_configured(&opts.program, &opts.args));
+
     // npm `.cmd`/`.ps1` shims are not executables for CreateProcess —
     // the resolver rewrites that as `cmd.exe /c ...` (§9.3).
     let (program, args) = crate::agents::resolver::resolve_launch(&opts.program, &opts.args);
@@ -299,7 +333,7 @@ pub fn spawn(
     // the other side knows who is calling. The frontend builds that string
     // *before* the row exists, so it writes a placeholder and this fills it in
     //, on every spawn, which is also what makes a restart keep working.
-    let args = expand_pty_id(&args, &opts.id);
+    let args = expand_remote_launch(&args, &opts.id, credential.token(), crate::bridge::tcp_port());
 
     let cwd = if std::path::Path::new(&opts.cwd).is_dir() {
         opts.cwd.clone()
@@ -333,7 +367,6 @@ pub fn spawn(
     cmd.env("TERM_PROGRAM", "Yard");
     cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
     cmd.env("YARD", "1");
-    cmd.env("YARD_PTY_ID", &opts.id);
     // Agent<->app bridge: the `yard` CLI is prepended to every terminal's PATH
     // and the pipe/id go into the environment. Preserves the original spelling
     // of the PATH key — on Windows a duplicated "PATH"/"Path" pair has undefined
@@ -380,6 +413,8 @@ pub fn spawn(
     for (k, v) in &opts.env {
         cmd.env(k, v);
     }
+    cmd.env("YARD_PTY_ID", &opts.id);
+    cmd.env("YARD_TOKEN", credential.token());
 
     let mut child = pair
         .slave
@@ -423,11 +458,6 @@ pub fn spawn(
         .take_writer()
         .map_err(|e| format!("take_writer: {e}"))?;
 
-    let scrollback = Arc::new(Mutex::new(if opts.keep_scrollback {
-        Scrollback::open(&opts.id)
-    } else {
-        Scrollback::fresh(&opts.id)
-    }));
     let shared = PtyShared::with_window(is_agent, state.window_shown.clone());
     let intent = Arc::new(AtomicU8::new(INTENT_NONE));
 
@@ -438,6 +468,7 @@ pub fn spawn(
     };
 
     let handle = PtyHandle {
+        credential: credential.clone(),
         meta: PtyMeta {
             program: opts.program.clone(),
             args: opts.args.clone(),
@@ -496,6 +527,7 @@ pub fn spawn(
                     None
                 }
             };
+            credential.revoke();
             finish(&sink, &state, &id, code, &shared, &intent);
         });
     }
@@ -531,6 +563,7 @@ fn finish(
         std::thread::sleep(Duration::from_millis(25));
     }
     shared.stopping.store(true, Ordering::Release);
+    state.scheduler.clear(id);
     shared.wake_pump();
 
     let reason = match intent.load(Ordering::Acquire) {
@@ -540,17 +573,17 @@ fn finish(
         _ => ExitReason::Normal,
     };
 
-    // Its own statement on purpose: inside an `if let` the registry guard
-    // would live for the whole block, and the flush plus the ConPTY/Job
-    // teardown (the `drop` of the last handle) would run with every other
-    // terminal locked out.
-    let handle = state.ptys.lock().remove(id);
-    if let Some(handle) = handle {
-        let scrollback = handle.lock().scrollback.clone();
-        // Closed as well: a dead terminal keeps no `.bin` open.
-        let _ = scrollback.lock().flush_and_close();
-        drop(handle);
+    if let Err(error) = crate::work::interrupt_for_terminal(&mut state.db.lock(), id, reason.as_str(), reader::now_ms()) {
+        tracing::warn!(terminal = %id, %error, "unfinished task interruption could not be recorded");
     }
+
+    // Flush before publishing absence so a dead attach reads the final history.
+    let handle = state.ptys.lock().get(id).cloned();
+    if let Some(handle) = &handle {
+        let scrollback = handle.lock().scrollback.clone();
+        let _ = scrollback.lock().flush_and_close();
+    }
+    let mut registry = state.ptys.lock();
     state.statuses.lock().insert(
         id.to_string(),
         PtyStatus::Exited {
@@ -559,8 +592,15 @@ fn finish(
             at: reader::now_ms(),
         },
     );
+    registry.remove(id);
+    drop(registry);
+    // Process teardown must happen outside the registry lock.
+    drop(handle);
 
     tracing::info!(id = %id, code = ?code, reason = reason.as_str(), "pty encerrado");
+    // Work waiting on this terminal (a flow stage, a routine) has to be
+    // looked at again: it will not get ready any more.
+    crate::scheduler::wake();
     sink.exit(events::ExitPayload {
         id: id.to_string(),
         code,
@@ -639,7 +679,55 @@ fn wait_for_memory(state: &AppState) {
 
 pub fn write(state: &AppState, id: &str, data: &str) -> Result<(), String> {
     let handle = live_handle(state, id)?;
+    let _ = state.scheduler.mark_input(id, reader::now_ms(), data.contains(['\r', '\n']));
     write_through(&handle, |h| h.writer.clone(), data.as_bytes())
+}
+
+/// Keeps the paste and submission under one writer lock, independent of WebView lifetime.
+pub fn inject(state: &AppState, id: &str, text: &str, submit: bool) -> Result<(), String> {
+    inject_owned(state, id, None, text, submit)
+}
+
+#[derive(Clone, Copy)]
+pub struct ProcessIdentity { pub pid: u32, pub started_at: i64 }
+
+pub fn process_identity(state: &AppState, id: &str) -> Result<ProcessIdentity, String> {
+    let handle = live_handle(state, id)?;
+    let handle = handle.lock();
+    Ok(ProcessIdentity { pid: handle.pid.ok_or("PTY_PROCESS_MISSING")?, started_at: handle.started_at })
+}
+
+pub fn inject_for_process(state: &AppState, id: &str, identity: ProcessIdentity, text: &str, submit: bool) -> Result<(), String> {
+    inject_owned(state, id, Some(identity), text, submit)
+}
+
+fn inject_owned(state: &AppState, id: &str, identity: Option<ProcessIdentity>, text: &str, submit: bool) -> Result<(), String> {
+    let handle = live_handle(state, id)?;
+    let writer = {
+        let handle = handle.lock();
+        if identity.is_some_and(|expected| handle.pid != Some(expected.pid) || handle.started_at != expected.started_at) { return Err("PTY_PROCESS_CHANGED".into()); }
+        handle.writer.clone()
+    };
+    let mut writer = writer.lock();
+    {
+        let registered = state.ptys.lock();
+        if !registered.get(id).is_some_and(|current| Arc::ptr_eq(current, &handle)) { return Err("PTY_PROCESS_CHANGED".into()); }
+        let _ = state.scheduler.mark_input(id, reader::now_ms(), submit);
+    }
+    inject_into(writer.as_mut(), text, submit)
+}
+
+fn inject_into(writer: &mut dyn Write, text: &str, submit: bool) -> Result<(), String> {
+    let body = if text.contains('\n') { format!("\u{1b}[200~{text}\u{1b}[201~") } else { text.to_string() };
+    writer.write_all(body.as_bytes()).map_err(|error| error.to_string())?;
+    writer.flush().map_err(|error| error.to_string())?;
+    if submit {
+        // CLI paste handlers need the same processing interval as the existing prompt protocol.
+        std::thread::sleep(Duration::from_millis(150));
+        writer.write_all(b"\r").map_err(|error| error.to_string())?;
+        writer.flush().map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 /// Takes the writer out from under the handle's lock, releases that lock,
@@ -904,6 +992,7 @@ fn terminate(state: &AppState, id: &str, intent_code: u8) -> Result<(), String> 
     let (pid, has_job) = {
         let handle = live_handle(state, id)?;
         let h = handle.lock();
+        h.credential.revoke();
         h.intent.store(intent_code, Ordering::Release);
         let ok = match &h.job {
             Some(j) => j.terminate(),
@@ -1151,6 +1240,28 @@ mod tests {
     //! it wrong in one direction and a restart pays for megabytes nobody paints;
     //! in the other, a pane opens without the history it would have shown.
     use super::*;
+
+    /// Nothing capped the number of terminals: a runaway script or a flow
+    /// fanning out could start ConPTYs until the machine gave out. Spawns in
+    /// flight count like live terminals, so a burst cannot slip past the cap.
+    #[test]
+    fn a_spawn_beyond_forty_eight_terminals_is_refused_with_a_message_for_the_user() {
+        let state = AppState::new(rusqlite::Connection::open_in_memory().unwrap());
+        let held: Vec<_> = (0..MAX_LIVE_PTYS).map(|n| SpawnReservation::claim(&state, &format!("t{n}")).unwrap()).collect();
+        let error = SpawnReservation::claim(&state, "one-too-many").err().unwrap();
+        assert!(error.contains("48 terminais"), "{error}");
+        drop(held);
+        assert!(SpawnReservation::claim(&state, "one-too-many").is_ok());
+    }
+
+    /// A multiline manual paste must remain one block and leave submission to the user.
+    #[test]
+    fn a_native_manual_multiline_paste_uses_bracketed_framing_without_submitting() {
+        let mut output = Vec::new();
+        super::inject_into(&mut output, "First line\nSecond line", false).unwrap();
+        assert_eq!(output, b"\x1b[200~First line\nSecond line\x1b[201~");
+        assert!(!output.contains(&b'\r'));
+    }
 
     /// What `XTermView` asks for when it will spawn on a dead terminal.
     fn view_that_auto_starts() -> AttachWants {

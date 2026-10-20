@@ -37,8 +37,10 @@ import type { MenuEntry } from "../components/ContextMenu";
 import { openTranscriptFor } from "./transcriptOpen";
 import { openHandoffFor } from "./handoffFlow";
 import { useQueue } from "../stores/queueStore";
+import { clearTaskPrompts } from "./taskQueue";
 import { hasSessions } from "../stores/agentsStore";
 import { useProjects } from "../stores/projectsStore";
+import { useUI } from "../stores/uiStore";
 
 function canReadSession(id: string): boolean {
   const term = useProjects.getState().terminal(id);
@@ -140,10 +142,16 @@ export function terminalActionEntries({
     ...(queued > 0
       ? ([
           {
+            id: "queue-review",
+            label: t("Conferir fila ({n})", { n: queued }),
+            icon: <FileText size={13} />,
+            onSelect: () => useUI.getState().openModal("queue", { terminalId: id }),
+          },
+          {
             id: "queue-clear",
             label: t("Limpar a fila ({n})", { n: queued }),
             icon: <ListX size={13} />,
-            onSelect: () => useQueue.getState().clear(id),
+            onSelect: () => void run(() => clearTaskPrompts(id), t("falha ao limpar a fila")),
           },
         ] as MenuEntry[])
       : []),
@@ -154,6 +162,10 @@ export function terminalActionEntries({
       label: t("Salvar saída…"),
       icon: <Download size={13} />,
       onSelect: () => void exportTerminalOutput(id),
+    },
+    {
+      id: "output-history", label: t("Histórico de saída"), icon: <FileText size={13} />,
+      onSelect: () => useUI.getState().openModal("output-history", { terminalId: id }),
     },
     // Only for agents: a shell has no role, no session and nothing to hand
     // over, the entry would open a composer with a paragraph about nothing.

@@ -71,7 +71,11 @@ UI or switching layouts never disturbs an agent in the middle of a task.
   a CLI finishes, stops at a question, exits, or the day's spend goes past the
   ceiling you set, send a prompt to another one, notify, or start a flow
   (`yard trigger` from the CLI too). A prompt for a CLI that is busy waits in
-  that CLI's queue and goes in the moment it is free.
+  that CLI's queue and goes in the moment it is free. Automation spends paid
+  tokens, so it has guards that need no setup: a budget or plan window past
+  its limit pauses every automatic sender until you resume it, loops between
+  triggers are slowed down and capped per day, and what an agent creates
+  (routines, triggers, other agents) waits for your approval or a ceiling.
 - **It can reach you when you are not there.** Every notification can also
   `POST` to an address you paste in (ntfy, Discord, Slack, your own), which is
   what makes an agent frozen on a question at 3am something you find out
@@ -97,7 +101,7 @@ The full tour, phase by phase, is in [`docs/features.md`](./docs/features.md).
 ## Install
 
 Download the NSIS installer from the
-[latest release](https://github.com/alanadson/yard/releases) and run it
+[latest release](https://github.com/alanadson/yard/releases/latest) and run it
 (Windows 10/11, x64; WebView2 is installed on demand). The installer is not yet
 code-signed, so SmartScreen will ask once. From then on the app checks GitHub
 Releases on its own and offers each signed update in **Configurações → Dados e

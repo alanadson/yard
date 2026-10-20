@@ -15,8 +15,9 @@
 import { useEffect } from "react";
 import { notify as deliverNotice } from "../lib/notifications";
 
-import { budgetMessage, budgetState, worsened, type BudgetLevel } from "../lib/budget";
-import { localDay, totals } from "../lib/costs";
+import { budgetMessage, budgetOfDay, worsened, type BudgetLevel } from "../lib/budget";
+import { localDay } from "../lib/costs";
+import { useAutomation } from "../stores/automationStore";
 import { fireBudgetEdge } from "./useTriggers";
 import { t } from "../lib/i18n";
 import { ipc } from "../lib/ipc";
@@ -49,9 +50,13 @@ export function useBudgetWatch() {
           day = today;
           level = "off";
         }
-        const mine = rows.filter((row) => row.day === today);
-        const sum = totals(mine);
-        const state = budgetState(sum.costUsd ?? 0, limit, sum.priced);
+        // Unpriced usage counts as what it is: a floor, or unknown when
+        // nothing had a price (`budgetOfDay`), never a quiet zero.
+        const state = budgetOfDay(rows, limit, today);
+        // Every tick, not only on the edge: a pause the user resumed from is
+        // remembered by the store, and one that never happened (the pref was
+        // off) can still start when the pref is switched on.
+        void useAutomation.getState().observe({ budgetLevel: state.level }, Date.now());
         if (worsened(level, state.level)) {
           const message = budgetMessage(state);
           useUI.getState().showToast(message, state.level === "over" ? "error" : undefined);

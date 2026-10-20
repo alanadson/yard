@@ -9,6 +9,8 @@
 import { decodeEscapes } from "./bridgeCore";
 import { ipc } from "./ipc";
 import { uiLog } from "./log";
+import { checkpointFailureText } from "./checkpointNotices";
+import { useUI } from "../stores/uiStore";
 import type { CheckpointScope } from "./checkpoints";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -35,20 +37,11 @@ export async function injectPrompt(
     try {
       await ipc.checkpointCreate(scope.root, scope.taskId, scope.taskLabel, text.split(/\r?\n/)[0].slice(0, 160));
     } catch (e) {
-      uiLog.warn(`não consegui salvar o checkpoint de ${scope.taskLabel} em ${scope.root}: ${e}`);
+      uiLog.warn(`Checkpoint unavailable for ${scope.taskLabel} in ${scope.root}: ${e}`);
+      useUI.getState().showToast(checkpointFailureText(scope.root, String(e)), "error");
     }
   }
-  if (text.includes("\n")) {
-    await ipc.writePty(terminalId, `\x1b[200~${text}\x1b[201~`);
-  } else {
-    await ipc.writePty(terminalId, text);
-  }
-  // `submit: false` stops exactly here: the text sits on the CLI's prompt line
-  // and the Enter is the user's to press. That is the whole difference between
-  // sending a prompt and handing one over (`PromptModal`).
-  if (opts?.submit === false) return;
-  await sleep(150);
-  await ipc.writePty(terminalId, "\r");
+  await ipc.writePty(terminalId, text, opts?.submit !== false);
 }
 
 /**

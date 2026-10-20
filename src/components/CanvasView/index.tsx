@@ -154,6 +154,8 @@ import { navigatePortal } from "./portalNav";
 import { usePortalsCovered } from "../../hooks/usePortalsCovered";
 import { copyText, readClipboardText } from "../../lib/clipboard";
 import { registerDropCamera } from "../../lib/dropPoint";
+import { viewports } from "../../lib/canvasViewport";
+import { roundStrokePoints } from "../../lib/strokePrecision";
 import {
   lowerNode,
   nodeOrder,
@@ -471,9 +473,9 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
   const [focusedFront, setFocusedFront] = useState<string | null>(null);
 
   // --- session state (none of this persists) ---
-  const [vp, setVp] = useState<CanvasViewport>(
-    () => canvas?.viewport ?? { ...EMPTY_CANVAS.viewport },
-  );
+  // The camera has a kv row of its own (`lib/canvasViewport.ts`); the
+  // layout's copy is the fallback for a board that has none.
+  const [vp, setVp] = useState<CanvasViewport>(() => viewports.viewportOf(groupId, canvas?.viewport));
   const [tool, setTool] = useState<Tool>("select");
   const [color, setColor] = useState<string>(CANVAS_COLORS[0]);
   const [size, setSize] = useState<StrokeSize>("m");
@@ -953,6 +955,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
     (fn: (c: CanvasData) => CanvasData, opts?: { undo?: boolean }) => {
       if (opts?.undo !== false) pushUndo();
       updateCanvas(groupId, (c) => ({ ...fn(c), viewport: { ...vpRef.current } }));
+      // The row must never be older than the layout's copy it overrides.
+      viewports.remember(groupId, vpRef.current);
     },
     [groupId, pushUndo, updateCanvas],
   );
@@ -1010,21 +1014,23 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
 
   const scheduleVpCommit = useCallback(() => {
     if (vpTimer.current) clearTimeout(vpTimer.current);
+    // A camera move is not content: one kv row, not a re-serialized layout
+    // and a whole-workspace save (`lib/canvasViewport.ts`).
     vpTimer.current = setTimeout(() => {
       vpTimer.current = null;
-      updateCanvas(groupId, (c) => ({ ...c, viewport: { ...vpRef.current } }));
+      viewports.remember(groupId, vpRef.current);
     }, 500);
-  }, [groupId, updateCanvas]);
+  }, [groupId]);
 
   // A pending viewport must not be lost when switching group/mode.
   useEffect(
     () => () => {
       if (vpTimer.current) {
         clearTimeout(vpTimer.current);
-        updateCanvas(groupId, (c) => ({ ...c, viewport: { ...vpRef.current } }));
+        viewports.remember(groupId, vpRef.current);
       }
     },
-    [groupId, updateCanvas],
+    [groupId],
   );
 
   // --- camera glide ---
@@ -3423,7 +3429,8 @@ export function CanvasView({ groupId, terminals, canvas }: Props) {
         const item: CanvasItem = {
           id: nanoid(8),
           type: "stroke",
-          points: d.points,
+          // A tenth of a pixel, once the stroke is done (`lib/strokePrecision`).
+          points: roundStrokePoints(d.points),
           size,
           color,
         };

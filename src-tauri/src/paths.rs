@@ -39,6 +39,10 @@ pub fn scrollback_dir() -> PathBuf {
     app_dir().join("scrollback")
 }
 
+pub fn scrollback_archives_dir() -> PathBuf {
+    app_dir().join("scrollback-archives")
+}
+
 /// Scrollback file of a PTY. The id comes from the frontend, so it is sanitized
 /// to never escape the directory (`..`, separators, drive-colon).
 pub fn scrollback_file(id: &str) -> PathBuf {
@@ -55,7 +59,11 @@ pub fn backups_dir() -> PathBuf {
 
 /// User home directory (`%USERPROFILE%`), base for agent data.
 pub fn home_dir() -> Option<PathBuf> {
-    dirs::home_dir()
+    resolve_home(std::env::var_os("YARD_HOME_DIR").map(PathBuf::from), dirs::home_dir())
+}
+
+fn resolve_home(custom: Option<PathBuf>, system: Option<PathBuf>) -> Option<PathBuf> {
+    custom.filter(|path| !path.as_os_str().is_empty()).or(system)
 }
 
 /// Creates the full app directory tree. Idempotent.
@@ -115,6 +123,15 @@ pub fn claude_project_slug(project_path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Isolated app runs must not install agent configuration or read credentials from the real home.
+    #[test]
+    fn an_isolated_agent_home_takes_precedence_over_the_system_profile() {
+        let isolated = std::env::temp_dir().join("yard-isolated-home");
+        let actual = PathBuf::from("C:/Users/real-user");
+        assert_eq!(resolve_home(Some(isolated.clone()), Some(actual.clone())), Some(isolated));
+        assert_eq!(resolve_home(Some(PathBuf::new()), Some(actual.clone())), Some(actual));
+    }
 
     #[test]
     fn sanitize_blocks_traversal() {

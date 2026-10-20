@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyMd, blockOf, enterKey, toggleTaskLine, type MdSel } from "./mdedit";
+import { applyMd, blockOf, blockOfLine, enterKey, toggleTaskLine, type MdSel } from "./mdedit";
 
 /**
  * `|` marks the caret, `«…»` a selection — reads like what the user sees.
@@ -53,6 +53,18 @@ describe("blocks", () => {
   it("a selection ending at the line break does not take the next line", () => {
     const s: MdSel = { value: "um\ndois", start: 0, end: 3 };
     expect(applyMd("bullet", s).value).toBe("- um\ndois");
+  });
+
+  // The editors asked `blockOf` with the whole document (`doc.toString()`)
+  // on every caret move; the answer only ever depended on the caret's line.
+  it("blockOfLine names the block from the caret's line alone, as blockOf does from the whole text", () => {
+    const text = "# t\n\n- [ ] a\n- b\n1. c\n> d\nplain";
+    let at = 0;
+    for (const line of text.split("\n")) {
+      expect(blockOfLine(line)).toBe(blockOf(text, at));
+      at += line.length + 1;
+    }
+    expect(blockOfLine("###### six")).toBe("h6");
   });
 
   it("blockOf sees the block under the cursor", () => {

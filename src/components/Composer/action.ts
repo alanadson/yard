@@ -21,6 +21,24 @@ import type { Sendability } from "../../lib/sendable";
 
 export type ComposerAction = "send" | "queue" | "refuse";
 
+/** React's pending render cannot serialize events delivered in the same frame. */
+export function createComposerSubmissionGate(): { claim(): boolean; release(): void } {
+  let pending = false;
+  return {
+    claim() {
+      if (pending) return false;
+      pending = true;
+      return true;
+    },
+    release() { pending = false; },
+  };
+}
+
+export function queuedDraftDisposition(submitted: string, current: string, activeSlot: string, submittedSlot: string): { clear: boolean; close: boolean } {
+  const clear = current === submitted;
+  return { clear, close: clear && activeSlot === submittedSlot };
+}
+
 export function composerAction(ready: Sendability): ComposerAction {
   if (ready.ok) return "send";
   return ready.reason === "busy" || ready.reason === "blocked"

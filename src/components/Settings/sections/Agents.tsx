@@ -44,6 +44,13 @@ import { launchHint } from "../../../lib/roles";
 import { hasFlag, withFlag } from "../../../lib/termArgs";
 import { useAgentDefaults } from "../../../stores/agentDefaultsStore";
 import { useAgents } from "../../../stores/agentsStore";
+import { agentCapabilities, type AgentCapabilities } from "../../../lib/agentCapabilities";
+
+// i18n-scan: tables, translated in the capability table.
+const CAPABILITY_LABELS: Record<keyof AgentCapabilities, string> = {
+  resume: "Retomar sessão por ID", continue: "Retomar última conversa", transcript: "Transcrição ao vivo",
+  mcp: "Configuração MCP", hooks: "Eventos de hooks", usageLimits: "Limites da conta",
+};
 
 /** Sentinel of the distro picker: the one WSL itself defaults to. */
 const DEFAULT_DISTRO = "__padrao__";
@@ -65,6 +72,8 @@ function AgentPanel({
 }) {
   const t = useT();
   const setConfig = useAgentDefaults((s) => s.setConfig);
+  const detected = useAgents((state) => state.byId[row.id]);
+  const capabilities = agentCapabilities(detected, row.config.where);
   const fieldId = useId();
   const nameId = useId();
   /**
@@ -97,6 +106,19 @@ function AgentPanel({
 
   return (
     <>
+      <GroupTitle>{t("Diagnóstico e integrações")}</GroupTitle>
+      <Card>
+        <Row label={t("Executável local")} desc={<code className="set-agent-path">{detected?.bin ?? t("Não encontrado")}</code>}>
+          <span className="set-chip">{detected?.installed ? t("Encontrado") : t("Não encontrado")}</span>
+        </Row>
+        <Row label={t("Versão detectada")}><span className="set-agent-path">{detected?.version ?? t("Não verificado")}</span></Row>
+        <table className="set-agent-capabilities" aria-label={t("Integrações deste agente")}><caption>{t("Ambiente selecionado: {environment}", { environment: row.config.where.toUpperCase() })}</caption><thead><tr><th>{t("Recurso")}</th><th>{t("Integração no Yard")}</th></tr></thead><tbody>
+          {(Object.entries(CAPABILITY_LABELS) as [keyof AgentCapabilities, string][]).map(([key, label]) => <tr key={key} data-capability={key}>
+            <th scope="row">{t(label)}</th><td>{capabilities[key] ? t("Integrado") : t("Sem integração neste ambiente")}</td>
+          </tr>)}
+        </tbody></table>
+      </Card>
+      <p className="hint">{t("Esta matriz descreve as integrações implementadas no Yard. A descoberta de executável e versão é local; WSL e SSH precisam de verificação no ambiente de destino.")}</p>
       <Card>
         {row.skip ? (
           <Row
@@ -374,6 +396,8 @@ function AgentPanel({
 export function SecAgents() {
   const t = useT();
   const byId = useAgents((s) => s.byId);
+  const detecting = useAgents((state) => state.loading);
+  const detectionError = useAgents((state) => state.error);
   const defaults = useAgentDefaults((s) => s.defaults);
   const rows = agentDefaultRows(Object.values(byId), defaults);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -442,6 +466,9 @@ export function SecAgents() {
 
   return (
     <>
+      <div className="set-agent-detection"><span className="hint">{t("Descoberta local dos agentes")}</span><button className="btn btn--sm" disabled={detecting}
+        onClick={() => void useAgents.getState().load(true)}>{detecting ? t("Verificando agentes…") : t("Atualizar descoberta")}</button></div>
+      {detectionError && <p className="hint hint--error" role="alert">{t("A descoberta falhou. Os últimos dados conhecidos foram mantidos: {reason}", { reason: detectionError })}</p>}
       <GroupTitle>{t("Como cada CLI abre")}</GroupTitle>
       {rows.length === 0 ? (
         <Card>
@@ -524,6 +551,20 @@ export function SecAgents() {
           label={t("Teto de gasto por dia (US$)")}
           min={0}
           max={10000}
+          step={1}
+        />
+        <SwitchRow
+          pref="budgetPauseAutomation"
+          label={t("Pausar a automação ao estourar o teto")}
+          desc={t(
+            "Fila, rotinas, fluxos e pedidos entre agentes param até você retomar pelo rodapé. O que você digita nunca é bloqueado",
+          )}
+        />
+        <NumberRow
+          pref="quotaPausePct"
+          label={t("Pausar a automação com a janela de 5 h do plano em (%)")}
+          min={0}
+          max={100}
           step={1}
         />
       </Card>

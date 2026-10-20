@@ -128,20 +128,26 @@ pub(crate) struct Cursor {
     totals: SessionUsage,
 }
 
-pub fn start<R: Runtime>(app: AppHandle<R>, tail_id: String, file: String) -> TailStop {
+/// `window_shown` is `AppState::window_shown`: while the main window is off
+/// screen the tail only sleeps (see `run_with`).
+pub fn start<R: Runtime>(app: AppHandle<R>, tail_id: String, file: String, window_shown: Arc<AtomicBool>) -> TailStop {
     let stop: TailStop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
 
     std::thread::spawn(move || {
         tracing::info!(tail = %tail_id, file = %file, "grampo de sessao ligado");
-        run(app, &tail_id, &file, &flag);
+        run_with(&file, &flag, &window_shown, |reset, live, events| emit(&app, &tail_id, reset, live, events));
         tracing::info!(tail = %tail_id, "grampo de sessao desligado");
     });
 
     stop
 }
 
-fn run<R: Runtime>(app: AppHandle<R>, tail_id: &str, file: &str, stop: &AtomicBool) {
+/// The tail loop, with what it emits as a parameter (`reset`, `live`, the
+/// batch). With the window hidden a tick reads nothing, not even the file's
+/// length: nobody sees the overlay. Reading goes by offset, so the first tick
+/// after the window comes back reads everything appended meanwhile.
+fn run_with(file: &str, stop: &AtomicBool, window_shown: &AtomicBool, mut emit: impl FnMut(bool, bool, Vec<FeedEvent>)) {
     let mut offset: u64 = 0;
     let mut rem: Vec<u8> = Vec::new();
     let mut cur = Cursor::default();
@@ -151,6 +157,10 @@ fn run<R: Runtime>(app: AppHandle<R>, tail_id: &str, file: &str, stop: &AtomicBo
     loop {
         if stop.load(Ordering::Relaxed) {
             return;
+        }
+        if !window_shown.load(Ordering::Acquire) {
+            std::thread::sleep(POLL);
+            continue;
         }
 
         let len = match std::fs::metadata(file) {
@@ -195,13 +205,7 @@ fn run<R: Runtime>(app: AppHandle<R>, tail_id: &str, file: &str, stop: &AtomicBo
                         }
                         parse_line(line, &mut cur, &mut batch);
                         if batch.len() >= BATCH {
-                            emit(
-                                &app,
-                                tail_id,
-                                reset,
-                                !backfilling,
-                                std::mem::take(&mut batch),
-                            );
+                            emit(reset, !backfilling, std::mem::take(&mut batch));
                             reset = false;
                         }
                     }
@@ -215,23 +219,23 @@ fn run<R: Runtime>(app: AppHandle<R>, tail_id: &str, file: &str, stop: &AtomicBo
                         rem.clear();
                     }
                     if !batch.is_empty() || reset {
-                        emit(&app, tail_id, reset, !backfilling, batch);
+                        emit(reset, !backfilling, batch);
                     }
                     reset_pending = false;
                     if backfilling && offset >= len {
                         // Backfill reached the end of the file: from here on
                         // it is live — even if the session is idle.
-                        emit(&app, tail_id, false, true, Vec::new());
+                        emit(false, true, Vec::new());
                         backfilling = false;
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(tail = %tail_id, error = %e, "falha lendo a sessao");
+                    tracing::warn!(file = %file, error = %e, "falha lendo a sessao");
                 }
             }
         } else if backfilling {
             // Empty file: still announce the reset so the UI leaves "loading".
-            emit(&app, tail_id, reset_pending, true, Vec::new());
+            emit(reset_pending, true, Vec::new());
             reset_pending = false;
             backfilling = false;
         }
@@ -364,6 +368,8 @@ fn assistant_line(
             if !model.is_empty() && !cur.totals.models.iter().any(|m| m == &model) {
                 cur.totals.models.push(model.clone());
             }
+            cur.totals.record_model(Some(&model), delta);
+            cur.totals.record_cache_duration(Some(&model), msg.get("usage"));
             out.push(FeedEvent {
                 kind: "usage".into(),
                 at,
@@ -674,6 +680,35 @@ fn cap(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
 
+    /// An open "Ao Vivo" overlay polled its file every 350 ms with the window
+    /// in the tray. Hidden, the tail now reads nothing; shown again, it reads
+    /// everything appended meanwhile, since it reads by offset.
+    #[test]
+    fn a_tail_reads_nothing_while_the_window_is_hidden_and_catches_up_once_shown() {
+        use std::sync::mpsc;
+        let file = std::env::temp_dir().join(format!("yard-tail-hidden-{}.jsonl", std::process::id()));
+        std::fs::write(&file, "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hello\"}}\n").unwrap();
+        let shown = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel();
+        let worker = {
+            let (file, shown, stop) = (file.to_string_lossy().into_owned(), shown.clone(), stop.clone());
+            std::thread::spawn(move || {
+                run_with(&file, &stop, &shown, |reset, _live, events| {
+                    let _ = tx.send((reset, events.len()));
+                })
+            })
+        };
+        // An absence check needs a bound; three polls of nothing is the claim.
+        assert!(rx.recv_timeout(POLL * 3).is_err(), "hidden: the file is not read");
+        shown.store(true, Ordering::Release);
+        let first = rx.recv_timeout(Duration::from_secs(10)).expect("shown: the backlog arrives");
+        assert_eq!(first, (true, 1));
+        stop.store(true, Ordering::Relaxed);
+        worker.join().unwrap();
+        std::fs::remove_file(file).unwrap();
+    }
+
     fn parse_all(lines: &[&str]) -> Vec<FeedEvent> {
         let mut cur = Cursor::default();
         let mut out = Vec::new();
@@ -696,6 +731,16 @@ mod tests {
         // cumulative usage comes along, once per API message
         let usage = evs.iter().find(|e| e.kind == "usage").unwrap();
         assert_eq!(usage.out_tokens, Some(10));
+    }
+
+    #[test]
+    fn live_usage_prices_one_hour_cache_writes_once_even_when_the_message_repeats() {
+        let line = r#"{"type":"assistant","message":{"id":"cache-request","model":"claude-sonnet-4-5","content":[],"usage":{"cache_creation_input_tokens":2000000,"cache_creation":{"ephemeral_5m_input_tokens":1000000,"ephemeral_1h_input_tokens":1000000}}}}"#;
+        let events = parse_all(&[line, line]);
+        let usage: Vec<_> = events.iter().filter(|event| event.kind == "usage").collect();
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].cache_write, Some(2_000_000));
+        assert_eq!(usage[0].cost_usd, Some(9.75));
     }
 
     #[test]

@@ -23,7 +23,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { ask } from "../../lib/confirmation";
 import { basicSetup } from "codemirror";
 import { indentWithTab } from "@codemirror/commands";
-import { Compartment, EditorSelection, EditorState, Prec } from "@codemirror/state";
+import { Compartment, EditorSelection, EditorState, Prec, type Text } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import {
   BookOpen,
@@ -57,7 +57,8 @@ import { ipc } from "../../lib/ipc";
 import { LruCache } from "../../lib/lru";
 import { openWebAddress } from "../../lib/openLink";
 import { stats } from "../../lib/mddoc";
-import { blockOf, type BlockKind } from "../../lib/mdedit";
+import { blockOfLine, type BlockKind } from "../../lib/mdedit";
+import { createCoalescer, textTimer, type Coalescer } from "../../lib/coalesce";
 import {
   childrenOf,
   fallbackTitle,
@@ -607,6 +608,19 @@ function NoteSurface({
   const viewRef = useRef<EditorView | null>(null);
   /** Last text this surface itself published — tells edits apart from echoes. */
   const published = useRef<string | null>(null);
+  /**
+   * The typed body reaches the store at most once per window
+   * (`lib/coalesce`), not as a whole-text copy per keystroke. Flushed on
+   * Ctrl+S, any shortcut, a blur and the unmount, before anything reads it.
+   */
+  const bodyOut = useRef<Coalescer<{ id: string; doc: Text }> | null>(null);
+  if (!bodyOut.current) {
+    bodyOut.current = createCoalescer(({ id, doc }) => {
+      const text = doc.toString();
+      published.current = text;
+      useNotes.getState().updateNote(id, { body: text });
+    }, textTimer);
+  }
   const caretRef = useRef(onCaret);
   caretRef.current = onCaret;
   const scrollRef = useRef(onScrollLine);
@@ -642,6 +656,7 @@ function NoteSurface({
                 // only brings the pending write forward, for the hand that
                 // insists on Ctrl+S.
                 run: () => {
+                  bodyOut.current?.flush();
                   useNotes.getState().flush();
                   return true;
                 },
@@ -649,6 +664,15 @@ function NoteSurface({
             ]),
           ),
           EditorView.domEventHandlers({
+            // A global shortcut or a click elsewhere may read the note next.
+            keydown: (event) => {
+              if (event.ctrlKey || event.metaKey || event.altKey) bodyOut.current?.flush();
+              return false;
+            },
+            blur: () => {
+              bodyOut.current?.flush();
+              return false;
+            },
             paste: (event, view) => {
               const items = event.clipboardData?.items;
               if (!items) return false;
@@ -679,17 +703,13 @@ function NoteSurface({
             },
           }),
           EditorView.updateListener.of((u) => {
-            if (u.docChanged) {
-              const texto2 = u.state.doc.toString();
-              published.current = texto2;
-              useNotes.getState().updateNote(id, { body: texto2 });
-            }
+            if (u.docChanged) bodyOut.current?.push({ id, doc: u.state.doc });
             if (u.docChanged || u.selectionSet) {
               const sel = u.state.selection.main;
               const row = u.state.doc.lineAt(sel.head);
               const at = {
                 line: row.number - 1,
-                block: blockOf(u.state.doc.toString(), sel.head),
+                block: blockOfLine(row.text),
               };
               const before = lastCaret.current;
               if (!before || before.line !== at.line || before.block !== at.block) {
@@ -721,6 +741,7 @@ function NoteSurface({
     const stopScroll = observeVisibleLine(view, () => scrollRef.current);
 
     return () => {
+      bodyOut.current?.flush();
       stopScroll();
       stored.set(noteId, view.state);
       releaseSurface();

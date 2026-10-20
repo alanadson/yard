@@ -486,3 +486,82 @@ describe("diffRevisionOf", () => {
     expect(revision("a.ts")).not.toBe(before);
   });
 });
+
+/**
+ * `git status` used to run 1.2 s after every activity batch of every project
+ * ever visited, minimized window included: an agent writing in a project
+ * nobody looks at spawned a git process per second for nothing. Now only the
+ * project on screen refreshes; the others are marked stale and caught up with
+ * one read when they come back into view.
+ */
+describe("git refresh follows what is on screen", () => {
+  const ROOT = "C:\\repo";
+  let reads: string[] = [];
+
+  beforeEach(() => {
+    reset();
+    reads = [];
+    vi.useFakeTimers();
+    vi.spyOn(ipc, "gitChanges").mockImplementation(async (root: string) => {
+      reads.push(root);
+      return { isRepo: true, branch: "main", files: [], additions: 0, deletions: 0, uncounted: 0 };
+    });
+  });
+
+  afterEach(() => {
+    useChanges.getState().setGitFocus(null);
+    vi.spyOn(ipc, "unwatchProject").mockResolvedValue(undefined);
+    useChanges.getState().dropProject(PROJ);
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("does not run git status for activity in a project that is not the active one", async () => {
+    useChanges.getState().setGitFocus({ projectId: "another", shown: true });
+    useChanges.getState().applyActivity(activity([ev("a.ts", "modified", 1)]));
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(reads).toEqual([]);
+  });
+
+  it("does not run git status while the window is hidden, even for the active project", async () => {
+    useChanges.getState().setGitFocus({ projectId: PROJ, shown: false });
+    useChanges.getState().applyActivity(activity([ev("a.ts", "modified", 1)]));
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(reads).toEqual([]);
+  });
+
+  it("refreshes a stale project once when it becomes the active one", async () => {
+    useChanges.getState().setGitFocus({ projectId: "another", shown: true });
+    useChanges.getState().applyActivity(activity([ev("a.ts", "modified", 1)]));
+    useChanges.getState().applyActivity(activity([ev("b.ts", "modified", 2)]));
+    useChanges.getState().setGitFocus({ projectId: PROJ, shown: true });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(reads).toEqual([ROOT]);
+  });
+
+  it("refreshes the active project once when the window comes back after it went stale", async () => {
+    useChanges.getState().setGitFocus({ projectId: PROJ, shown: false });
+    useChanges.getState().applyActivity(activity([ev("a.ts", "modified", 1)]));
+    useChanges.getState().setGitFocus({ projectId: PROJ, shown: true });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(reads).toEqual([ROOT]);
+  });
+
+  it("a refresh already scheduled waits as stale when the project leaves the screen before it fires", async () => {
+    useChanges.getState().setGitFocus({ projectId: PROJ, shown: true });
+    useChanges.getState().applyActivity(activity([ev("a.ts", "modified", 1)]));
+    useChanges.getState().setGitFocus({ projectId: "another", shown: true });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(reads).toEqual([]);
+    useChanges.getState().setGitFocus({ projectId: PROJ, shown: true });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(reads).toEqual([ROOT]);
+  });
+
+  it("a project that comes into view with nothing stale is not read again", async () => {
+    useChanges.getState().setGitFocus({ projectId: "another", shown: true });
+    useChanges.getState().setGitFocus({ projectId: PROJ, shown: true });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(reads).toEqual([]);
+  });
+});

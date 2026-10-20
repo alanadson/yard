@@ -30,18 +30,34 @@
 /** Items one terminal may have waiting. Past this the answer is "no". */
 export const QUEUE_CAP = 20;
 
+export const QUEUE_INTERRUPTED = "A entrega foi interrompida antes da confirmação. Confira o terminal antes de reenviar.";
+
 /** Where a queued prompt came from — the card shows it, the CLI reports it. */
-export type QueueSource = "user" | "bridge" | "bench" | "review";
+export type QueueSource = "user" | "bridge" | "bench" | "review" | "routine" | "trigger";
 
 export interface QueueItem {
   id: string;
   terminalId: string;
+  taskId?: string;
+  routineKey?: string;
   text: string;
   /** When it was queued (ms). Ordering is by position, not by this. */
   at: number;
   source: QueueSource;
   /** Who queued it, when that is another agent. Shown on the card. */
   by?: string;
+  delivery?: {
+    owner?: "native";
+    status: "sending" | "uncertain";
+    attemptedAt: number;
+    error?: string;
+  };
+}
+
+export interface NativeQueueResult {
+  status: "delivered" | "skipped" | "uncertain";
+  items: QueueItem[];
+  error: string | null;
 }
 
 export function pendingFor(
@@ -114,7 +130,7 @@ export function dueItems(
   for (const item of items) {
     if (seen.has(item.terminalId)) continue;
     seen.add(item.terminalId);
-    if (isReady(item.terminalId)) out.push(item);
+    if (!item.delivery && isReady(item.terminalId)) out.push(item);
   }
   return out;
 }
@@ -128,6 +144,20 @@ export function pruned(
 }
 
 /** kv gives back text, and the format on disk is never to be trusted. */
+function parsedDelivery(raw: Record<string, unknown>): NonNullable<QueueItem["delivery"]> {
+  const native = raw.owner === "native";
+  const sending = native && raw.status === "sending";
+  return {
+    status: sending ? "sending" : "uncertain",
+    ...(native ? { owner: "native" as const } : {}),
+    attemptedAt: typeof raw.attemptedAt === "number" ? raw.attemptedAt : 0,
+    ...(sending ? {} : {
+      error: raw.status === "sending" ? QUEUE_INTERRUPTED
+        : typeof raw.error === "string" ? raw.error : QUEUE_INTERRUPTED,
+    }),
+  };
+}
+
 export function parseQueue(raw: string | undefined): QueueItem[] {
   if (!raw) return [];
   try {
@@ -147,12 +177,17 @@ export function parseQueue(raw: string | undefined): QueueItem[] {
         terminalId: i.terminalId as string,
         text: i.text as string,
         at: typeof i.at === "number" ? i.at : 0,
-        source: (["user", "bridge", "bench", "review"] as const).includes(
+        source: (["user", "bridge", "bench", "review", "routine", "trigger"] as const).includes(
           i.source as QueueSource,
         )
           ? (i.source as QueueSource)
           : "user",
         ...(typeof i.by === "string" ? { by: i.by as string } : {}),
+        ...(typeof i.taskId === "string" ? { taskId: i.taskId as string } : {}),
+        ...(typeof i.routineKey === "string" ? { routineKey: i.routineKey } : {}),
+        ...(i.delivery && typeof i.delivery === "object" ? {
+          delivery: parsedDelivery(i.delivery as Record<string, unknown>),
+        } : {}),
       }));
   } catch {
     return [];

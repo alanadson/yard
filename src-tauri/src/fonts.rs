@@ -71,7 +71,7 @@ fn font_dirs() -> Vec<PathBuf> {
         ] {
             dirs_out.push(PathBuf::from(p));
         }
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = crate::paths::home_dir() {
             dirs_out.push(home.join(".local/share/fonts"));
             dirs_out.push(home.join("Library/Fonts"));
         }

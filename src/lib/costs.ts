@@ -35,6 +35,7 @@ export interface Bucket {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  cacheWriteOneHour: number;
   /** Sum of the rows that had a price; `null` when none had. */
   costUsd: number | null;
   /** `false` when at least one row of the bucket had no price — the sum is a floor. */
@@ -52,6 +53,7 @@ function emptyBucket(key: string, label: string): Bucket {
     output: 0,
     cacheRead: 0,
     cacheWrite: 0,
+    cacheWriteOneHour: 0,
     costUsd: null,
     priced: true,
     sessions: 0,
@@ -64,6 +66,7 @@ function fold(into: Bucket, r: UsageRow): void {
   into.output += r.output;
   into.cacheRead += r.cacheRead;
   into.cacheWrite += r.cacheWrite;
+  into.cacheWriteOneHour += r.cacheWriteOneHour ?? 0;
   into.sessions += r.sessions;
   into.rows += 1;
   if (r.costUsd === null) {

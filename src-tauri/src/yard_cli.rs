@@ -416,6 +416,18 @@ pub fn encode_request(terminal: Option<&str>, cwd: &str, request: &Request) -> S
     out
 }
 
+/// The transport credential is encoded as JSON data, never as command syntax.
+fn encode_authenticated_request(terminal: Option<&str>, cwd: &str, request: &Request, token: Option<&str>) -> String {
+    let mut out = encode_request(terminal, cwd, request);
+    if let Some(token) = token.filter(|token| !token.is_empty()) {
+        out.pop();
+        out.push_str(",\"token\":");
+        push_json_string(&mut out, token);
+        out.push('}');
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // the reply line: just enough JSON to read `output` and `code`
 // ---------------------------------------------------------------------------
@@ -889,7 +901,8 @@ fn run() -> i32 {
     let cwd = std::env::current_dir()
         .map(|dir| dir.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let mut line = encode_request(terminal.as_deref(), &cwd, &request);
+    let token = std::env::var_os("YARD_TOKEN").map(|token| token.to_string_lossy().into_owned());
+    let mut line = encode_authenticated_request(terminal.as_deref(), &cwd, &request, token.as_deref());
     // `StreamWriter.WriteLine`: the line ends in CRLF.
     line.push_str("\r\n");
 

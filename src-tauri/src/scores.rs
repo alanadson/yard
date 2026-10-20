@@ -103,7 +103,7 @@ pub const EXISTS_PREFIX: &str = "JA_EXISTE:";
 pub fn save(name: &str, json: &str, overwrite: bool) -> Result<String, String> {
     // Validate before writing: a crooked score on disk would break the whole
     // listing afterwards.
-    serde_json::from_str::<serde_json::Value>(json)
+    let json = crate::pty::sanitize_transport_json(json)
         .map_err(|e| format!("partitura invalida: {e}"))?;
     let dir = scores_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("nao consegui criar {dir:?}: {e}"))?;

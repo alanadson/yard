@@ -311,6 +311,16 @@ export function stripAnsi(s: string): string {
     .replace(/\n{3,}/g, "\n\n");
 }
 
+/**
+ * The log line of one `yard` call: who called and which verb, with the
+ * argument count. Never the arguments themselves, which are prompts typed
+ * from one agent into another and have no business in `yard.log`.
+ */
+export function bridgeLogLine(caller: string, argv: readonly string[]): string {
+  const verb = argv[0]?.toLowerCase() || "help";
+  return `bridge: ${caller} -> ${verb} (${Math.max(0, argv.length - 1)} args)`;
+}
+
 export function tail(s: string, max: number): string {
   return s.length <= max ? s : `…(cortado)…\n${s.slice(s.length - max)}`;
 }

@@ -15,17 +15,28 @@ permissions:
 jobs:
   installer:
     runs-on: windows-latest
+    # A thin-LTO, single-codegen-unit build plus the packaged-install check;
+    # a run past this is hung, not slow.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0  # keep in step with rust-toolchain.toml
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Restore the cache ci.yml saves on main (same key) and never save
+          # one from a tag: a release build would only evict main's entry.
+          shared-key: yard-windows
+          save-if: false
       - run: npm ci
+      # Typecheck, tests, audit, clippy and cargo test. The front-end build is
+      # not in it: tauri-action runs `beforeBuildCommand` (`npm run build`).
+      - name: Validate before building release artifacts
+        run: npm run validate:release
 
       # Windows code signing — only when the repository carries a certificate.
       # `secrets.*` cannot be tested in `if:` directly, so the presence check
@@ -45,20 +56,27 @@ jobs:
             "args=" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
             exit 0
           }
-          New-Item -ItemType Directory -Force certificate | Out-Null
-          [IO.File]::WriteAllBytes("certificate/certificate.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
-          $cert = Import-PfxCertificate -FilePath certificate/certificate.pfx -CertStoreLocation Cert:\CurrentUser\My `
-            -Password (ConvertTo-SecureString -String $env:WINDOWS_CERT_PASSWORD -Force -AsPlainText)
-          Remove-Item -Recurse -Force certificate
+          $certificateFile = Join-Path $env:RUNNER_TEMP "yard-signing-$([Guid]::NewGuid().ToString('N')).pfx"
+          [IO.File]::WriteAllBytes($certificateFile, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
+          try {
+            $cert = @(Import-PfxCertificate -FilePath $certificateFile -CertStoreLocation Cert:\CurrentUser\My `
+              -Password (ConvertTo-SecureString -String $env:WINDOWS_CERT_PASSWORD -Force -AsPlainText))
+          } finally { Remove-Item -LiteralPath $certificateFile -Force }
+          . ./scripts/signing-certificate.ps1
+          $records = @(Get-ReleaseCertificateMetadata -Certificates $cert)
+          $metadataPath = Join-Path $env:RUNNER_TEMP "signing-metadata.json"
+          ConvertTo-Json -InputObject $records -Depth 5 -Compress | Set-Content -LiteralPath $metadataPath -Encoding utf8
+          $thumbprint = node scripts/signing-certificate.mjs $metadataPath
+          if ($LASTEXITCODE -ne 0) { throw "The imported signing certificate failed release validation." }
           $override = @{ bundle = @{ windows = @{
-            certificateThumbprint = $cert.Thumbprint
+            certificateThumbprint = $thumbprint.Trim()
             digestAlgorithm = "sha256"
             timestampUrl = "http://timestamp.digicert.com"
           } } } | ConvertTo-Json -Depth 5 -Compress
           $path = Join-Path $env:RUNNER_TEMP "signing.json"
           Set-Content -Path $path -Value $override -Encoding utf8
           "args=--config `"$path`"" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          Write-Output "certificate imported: $($cert.Thumbprint)"
+          Write-Output "certificate validated: $($thumbprint.Trim())"
 
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -93,3 +111,26 @@ jobs:
           uploadUpdaterJson: true
           updaterJsonPreferNsis: true
           args: ${{ steps.cert.outputs.args }}
+      - name: Verify packaged installation and replacement with preserved legacy data
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $current = @(Get-ChildItem -LiteralPath src-tauri/target/release/bundle/nsis -Filter '*-setup.exe')
+          if ($current.Count -ne 1) { throw 'Expected exactly one current installer artifact.' }
+          $baselineTag = & gh api "repos/$env:GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            $baselineDirectory = Join-Path $env:RUNNER_TEMP 'yard-previous-release'
+            & gh release download $baselineTag --repo $env:GITHUB_REPOSITORY --pattern '*-setup.exe' --dir $baselineDirectory
+            if ($LASTEXITCODE -ne 0) { throw 'Could not download the previous installer baseline.' }
+            $previous = @(Get-ChildItem -LiteralPath $baselineDirectory -Filter '*-setup.exe')
+            if ($previous.Count -ne 1) { throw 'Expected exactly one published installer baseline.' }
+            node scripts/packaged-install.mjs ($current[0].FullName) ($previous[0].FullName)
+          } elseif (($baselineTag | Out-String) -match 'HTTP 404') {
+            Write-Output 'No published baseline exists: verifying installation and same-package replacement.'
+            node scripts/packaged-install.mjs ($current[0].FullName)
+          } else {
+            throw 'Could not inspect the published installer baseline.'
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged installer verification failed.' }

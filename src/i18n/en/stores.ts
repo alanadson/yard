@@ -108,4 +108,8 @@ export default {
   // stores/scmStore
   "Escreva a mensagem do commit": "Write the commit message",
   commitando: "committing",
+  // hooks/useTriggers: a trigger's prompt goes through the queue
+  "gatilho {id}": "trigger {id}",
+  "a fila de {name} está cheia": "{name}'s queue is full",
+  "não consegui pôr o prompt na fila de {name}": "could not put the prompt in {name}'s queue",
 } satisfies Record<string, string>;

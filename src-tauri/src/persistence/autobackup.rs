@@ -5,7 +5,9 @@
 //! the backups folder and then prunes the oldest automatic copies beyond the
 //! number the user chose. Manual exports (`yard-backup-*.zip`, or anything
 //! else living in that folder) are never touched: the retention rule only
-//! ever deletes what this module itself wrote.
+//! ever deletes what this module itself wrote. The automatic copy is light
+//! (`backup::Scope::Light`): the database, scores and attachments, without
+//! terminal output, archived sessions or code checkpoints.
 //!
 //! Same `_in(app_dir)` twin as `backup.rs`, for the same reason: cargo runs
 //! tests in parallel and `YARD_DATA_DIR` is process-global.
@@ -84,7 +86,9 @@ fn run_in(
     std::fs::create_dir_all(&dir)
         .map_err(|e| anyhow::anyhow!("nao consegui criar a pasta de backups {}: {e}", dir.display()))?;
     let dest = dir.join(file_name(now));
-    super::backup::export_in(app_dir, db, &dest)?;
+    // Light: the database, scores and attachments. A manual export still
+    // carries everything (`backup::Scope`).
+    super::backup::export_scoped_in(app_dir, db, &dest, super::backup::Scope::Light)?;
     let bytes = std::fs::metadata(&dest)?.len();
 
     // Retention: only names this module wrote, sorted by their own stamp.
@@ -323,6 +327,24 @@ mod tests {
         });
         drop(db);
         let _ = std::fs::remove_dir_all(&app);
+    }
+
+    /// Each automatic copy used to carry every scrollback, archived session
+    /// and checkpoint, times the number of copies kept.
+    #[test]
+    fn the_automatic_copy_leaves_out_terminal_output_and_checkpoints() {
+        let app = temp_dir("light");
+        let conn = live_db(&app);
+        for name in ["scrollback/t1.bin", "scrollback-archives/t1--1000--0.bin", "checkpoints/1-1-0.zip", "attachments/capture.png"] {
+            let path = app.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, name).unwrap();
+        }
+        let report = run_in(&app, &conn, None, 3, at(2026, 8, 26, 4, 17)).unwrap();
+        let mut archive = ZipArchive::new(File::open(&report.path).unwrap()).unwrap();
+        let mut names: Vec<String> = (0..archive.len()).map(|i| archive.by_index(i).unwrap().name().to_string()).collect();
+        names.sort();
+        assert_eq!(names, ["app.db", "attachments/capture.png", "manifest.json"]);
     }
 
     #[test]

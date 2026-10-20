@@ -196,7 +196,16 @@ function setBlock(s: MdSel, kind: BlockKind): MdSel {
 
 /** Which block marker a line is already wearing — what the bar shows pressed. */
 export function blockOf(value: string, pos: number): BlockKind {
-  const { marker } = splitLine(value.slice(lineStart(value, pos), lineEnd(value, pos)));
+  return blockOfLine(value.slice(lineStart(value, pos), lineEnd(value, pos)));
+}
+
+/**
+ * The same answer from the caret's line alone: an editor hands it
+ * `doc.lineAt(head).text` instead of materializing the whole document on
+ * every caret move.
+ */
+export function blockOfLine(line: string): BlockKind {
+  const { marker } = splitLine(line);
   const order: BlockKind[] = [
     "h6",
     "h5",

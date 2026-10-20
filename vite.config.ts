@@ -1,12 +1,16 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+import { legacyFontsPlugin } from "./scripts/stripLegacyFonts.mjs";
+
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react()],
+  // WebView2 always loads the woff2 entry of a font face; the .woff and .ttf
+  // that Fontsource and KaTeX list after it were a third of the installer.
+  plugins: [react(), legacyFontsPlugin()],
 
   build: {
     // The only browser this bundle ever runs in is WebView2, which is evergreen

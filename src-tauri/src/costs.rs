@@ -35,7 +35,7 @@ use chrono::{DateTime, Local, TimeZone};
 use parking_lot::Mutex;
 use serde::Serialize;
 
-use crate::agents::sessions::{estimate_cost, SessionUsage};
+use crate::agents::sessions::{estimate_cost_with_rates, SessionUsage};
 use crate::agents::bookmark::{read_lines, Bookmark};
 use crate::agents::tokens::{claude_usage_delta, codex_delta, TokenCounts};
 use crate::agents::usage_line::{self, UsageLine};
@@ -62,6 +62,9 @@ pub struct UsageRow {
     pub output: u64,
     pub cache_read: u64,
     pub cache_write: u64,
+    pub cache_write_one_hour: u64,
+    #[serde(skip)]
+    invalid_pricing_metadata: bool,
     /// Estimate from the table in `sessions.rs`; `None` for a model outside
     /// it — no number beats a made-up number.
     pub cost_usd: Option<f64>,
@@ -70,16 +73,26 @@ pub struct UsageRow {
 }
 
 /// One API message's worth of usage, with where and when it happened.
+///
+/// The folder and the model are shared (`Arc<str>`): a session repeats the
+/// same two on every one of its samples, and the cache holds them all.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Sample {
     at: i64,
-    project: String,
-    model: String,
+    project: Arc<str>,
+    model: Arc<str>,
     input: u64,
     output: u64,
     cache_read: u64,
     cache_write: u64,
+    cache_write_one_hour: u64,
+    invalid_pricing_metadata: bool,
 }
+
+/// A file untouched for this long is taken as a finished session: its cache
+/// entry keeps the samples and drops what only a resumed read needs (every
+/// Claude message id it has seen). If it grows again it is read from byte 0.
+const IDLE_FORGET_MS: i64 = 6 * 60 * 60 * 1000;
 
 struct CachedFile {
     len: u64,
@@ -94,6 +107,16 @@ struct CachedFile {
     scan: Scan,
 }
 
+impl CachedFile {
+    /// Keeps the answer and forgets how to resume: the next change of the
+    /// file is parsed from the start, with a fresh scan.
+    fn forget_resume_state(&mut self) {
+        self.scan = self.scan.fresh();
+        self.bookmark = Bookmark::default();
+        self.committed = 0;
+    }
+}
+
 #[cfg(test)]
 mod cache_regressions {
     /// Warm reads must share immutable samples instead of cloning a full history.
@@ -101,8 +124,8 @@ mod cache_regressions {
     fn warm_history_reads_share_their_sample_storage() {
         let file = std::env::temp_dir().join(format!("yard-cache-shared-{}.jsonl", std::process::id()));
         std::fs::write(&file, "").unwrap();
-        let first = super::samples_for("codex", &file, 0, 0);
-        let second = super::samples_for("codex", &file, 0, 0);
+        let first = super::samples_for("codex", &file, 0, 0, 0);
+        let second = super::samples_for("codex", &file, 0, 0, 0);
         std::fs::remove_file(&file).unwrap();
         assert!(std::sync::Arc::ptr_eq(&first, &second));
     }
@@ -169,7 +192,8 @@ pub(crate) fn window_start(now: DateTime<Local>, days: u32) -> i64 {
 /// instead of the user's `~/.claude` and `~/.codex`.
 pub(crate) fn history_in(roots: &[(&str, &Path)], days: u32, now: DateTime<Local>) -> Vec<UsageRow> {
     let start = window_start(now, days);
-    type Key = (String, String, String, String);
+    let clock = now.timestamp_millis();
+    type Key = (String, String, Arc<str>, Arc<str>);
     let mut acc: HashMap<Key, (UsageRow, HashSet<PathBuf>)> = HashMap::new();
 
     for (agent, root) in roots {
@@ -181,7 +205,7 @@ pub(crate) fn history_in(roots: &[(&str, &Path)], days: u32, now: DateTime<Local
             if mtime < start {
                 continue;
             }
-            let samples = samples_for(agent, &file, meta.len(), mtime);
+            let samples = samples_for(agent, &file, meta.len(), mtime, clock);
             for s in samples.iter().filter(|s| s.at >= start) {
                 let day = local_day(s.at);
                 let key = (day.clone(), agent.to_string(), s.project.clone(), s.model.clone());
@@ -190,8 +214,8 @@ pub(crate) fn history_in(roots: &[(&str, &Path)], days: u32, now: DateTime<Local
                         UsageRow {
                             day,
                             agent: agent.to_string(),
-                            project_path: s.project.clone(),
-                            model: s.model.clone(),
+                            project_path: s.project.to_string(),
+                            model: s.model.to_string(),
                             ..Default::default()
                         },
                         HashSet::new(),
@@ -201,16 +225,19 @@ pub(crate) fn history_in(roots: &[(&str, &Path)], days: u32, now: DateTime<Local
                 row.output += s.output;
                 row.cache_read += s.cache_read;
                 row.cache_write += s.cache_write;
+                row.cache_write_one_hour += s.cache_write_one_hour;
+                row.invalid_pricing_metadata |= s.invalid_pricing_metadata;
                 files.insert(file.clone());
             }
         }
     }
 
+    let rates = crate::agents::pricing::current().rates;
     let mut rows: Vec<UsageRow> = acc
         .into_values()
         .map(|(mut row, files)| {
             row.sessions = files.len() as u32;
-            row.cost_usd = cost_of(&row);
+            row.cost_usd = cost_of(&row, &rates);
             row
         })
         .collect();
@@ -225,15 +252,17 @@ pub(crate) fn history_in(roots: &[(&str, &Path)], days: u32, now: DateTime<Local
 }
 
 /// Priced with the same table as a single session, one model per row.
-fn cost_of(row: &UsageRow) -> Option<f64> {
-    estimate_cost(&SessionUsage {
+fn cost_of(row: &UsageRow, rates: &[crate::agents::pricing::CustomRate]) -> Option<f64> {
+    estimate_cost_with_rates(&SessionUsage {
         input_tokens: row.input,
         output_tokens: row.output,
         cache_creation_tokens: row.cache_write,
+        cache_creation_one_hour_tokens: row.cache_write_one_hour,
+        invalid_pricing_metadata: row.invalid_pricing_metadata,
         cache_read_tokens: row.cache_read,
         models: vec![row.model.clone()],
         ..Default::default()
-    })
+    }, rates)
 }
 
 /// Sort key: a priced row goes before an unpriced one of the same day.
@@ -286,12 +315,17 @@ fn jsonl_under(root: &Path) -> Vec<PathBuf> {
 }
 
 /// The samples of one file, from the cache when its `(len, mtime)` still
-/// match, parsed otherwise.
-fn samples_for(agent: &str, file: &Path, len: u64, mtime: i64) -> Arc<[Sample]> {
+/// match, parsed otherwise. `now` decides whether the file is idle
+/// (`IDLE_FORGET_MS`).
+fn samples_for(agent: &str, file: &Path, len: u64, mtime: i64, now: i64) -> Arc<[Sample]> {
+    let idle = now - mtime > IDLE_FORGET_MS;
     let previous = {
         let mut cache = cache().lock();
-        if let Some(hit) = cache.get(file) {
+        if let Some(hit) = cache.get_mut(file) {
             if hit.len == len && hit.mtime == mtime {
+                if idle {
+                    hit.forget_resume_state();
+                }
                 return hit.samples.clone();
             }
         }
@@ -299,7 +333,10 @@ fn samples_for(agent: &str, file: &Path, len: u64, mtime: i64) -> Arc<[Sample]> 
         // has seen, and the new entry is built from it.
         cache.remove(file)
     };
-    let entry = scan_file(agent, file, len, mtime, previous);
+    let mut entry = scan_file(agent, file, len, mtime, previous);
+    if idle {
+        entry.forget_resume_state();
+    }
     let samples = entry.samples.clone();
     cache().lock().insert(file.to_path_buf(), entry);
     samples
@@ -345,11 +382,12 @@ enum Scan {
 #[derive(Clone, Default)]
 struct CodexState {
     /// From `session_meta` (or the first `turn_context` that has one).
-    project: String,
+    project: Arc<str>,
     /// From the latest `turn_context`.
-    model: String,
+    model: Arc<str>,
     /// The previous cumulative total, for turns that bring only that.
     prev_total: Option<TokenCounts>,
+    invalid_previous: bool,
 }
 
 impl Scan {
@@ -362,6 +400,14 @@ impl Scan {
 
     fn is_for(&self, agent: &str) -> bool {
         matches!(self, Scan::Codex(_)) == (agent == "codex")
+    }
+
+    /// A scan of the same agent with nothing remembered.
+    fn fresh(&self) -> Self {
+        match self {
+            Scan::Claude(_) => Scan::Claude(HashSet::new()),
+            Scan::Codex(_) => Scan::Codex(CodexState::default()),
+        }
     }
 
     fn line(&mut self, line: &str, out: &mut Vec<Sample>) {
@@ -419,15 +465,28 @@ fn add_claude_line(seen: &mut HashSet<String>, line: UsageLine, out: &mut Vec<Sa
     let Some(delta) = claude_usage_delta(msg.id.as_deref(), msg.usage.as_ref(), seen) else {
         return;
     };
-    out.push(Sample {
+    let previous = out.last();
+    let sample = Sample {
         at: parse_ts(line.timestamp.as_deref()),
-        project: line.cwd.unwrap_or_default(),
-        model: msg.model.unwrap_or_default(),
+        project: shared(previous.map(|s| &s.project), line.cwd.unwrap_or_default()),
+        model: shared(previous.map(|s| &s.model), msg.model.unwrap_or_default()),
         input: delta.0,
         output: delta.3,
         cache_read: delta.1,
         cache_write: delta.2,
-    });
+        cache_write_one_hour: crate::agents::tokens::cache_one_hour_tokens(msg.usage.as_ref()),
+        invalid_pricing_metadata: !crate::agents::tokens::cache_duration_valid(msg.usage.as_ref()),
+    };
+    out.push(sample);
+}
+
+/// `text` as an `Arc<str>`, the previous sample's own when it says the same:
+/// one copy per run of identical folders or models instead of one per sample.
+fn shared(previous: Option<&Arc<str>>, text: String) -> Arc<str> {
+    match previous {
+        Some(previous) if **previous == *text => previous.clone(),
+        _ => text.into(),
+    }
 }
 
 /// Parses one Codex rollout `.jsonl` into per-turn samples. The folder comes
@@ -446,17 +505,17 @@ fn add_codex_line(state: &mut CodexState, line: UsageLine, out: &mut Vec<Sample>
         Some("session_meta") => {
             let cwd = payload.and_then(|p| p.cwd).unwrap_or_default();
             if !cwd.is_empty() {
-                state.project = cwd;
+                state.project = cwd.into();
             }
         }
         Some("turn_context") => {
             let (model, cwd) = payload.map(|p| (p.model, p.cwd)).unwrap_or_default();
             let model = model.unwrap_or_default();
-            if !model.is_empty() {
-                state.model = model;
+            if !model.is_empty() && *state.model != *model {
+                state.model = model.into();
             }
             if state.project.is_empty() {
-                state.project = cwd.unwrap_or_default();
+                state.project = cwd.unwrap_or_default().into();
             }
         }
         Some("event_msg") => {
@@ -467,6 +526,11 @@ fn add_codex_line(state: &mut CodexState, line: UsageLine, out: &mut Vec<Sample>
             let Some(info) = payload.info.filter(|i| !i.is_null()) else {
                 return;
             };
+            let independent = info.get("last_token_usage").is_some_and(|usage| !usage.is_null());
+            let valid = crate::agents::tokens::codex_usage_valid(&info, state.prev_total) && (independent || !state.invalid_previous);
+            if let Some(total) = info.get("total_token_usage").filter(|total| !total.is_null()) {
+                state.invalid_previous = !crate::agents::tokens::codex_counters_valid(total);
+            }
             let Some(delta) = codex_delta(&info, &mut state.prev_total) else {
                 return;
             };
@@ -478,6 +542,8 @@ fn add_codex_line(state: &mut CodexState, line: UsageLine, out: &mut Vec<Sample>
                 output: delta.3,
                 cache_read: delta.1,
                 cache_write: delta.2,
+                cache_write_one_hour: 0,
+                invalid_pricing_metadata: !valid,
             });
         }
         _ => {}
@@ -563,6 +629,78 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&elsewhere);
+    }
+
+    #[test]
+    fn daily_history_prices_reported_one_hour_cache_writes_like_the_session_summary() {
+        let now = local(2026, 8, 26, 15);
+        let root = temp_root("cache-duration");
+        let line = serde_json::json!({ "type": "assistant", "timestamp": stamp(now), "cwd": "C:/project", "message": {
+            "id": "cache-request", "model": "claude-sonnet-4-5", "usage": { "cache_creation_input_tokens": 2_000_000,
+                "cache_creation": { "ephemeral_5m_input_tokens": 1_000_000, "ephemeral_1h_input_tokens": 1_000_000 } }
+        } });
+        std::fs::write(root.join("session.jsonl"), line.to_string()).unwrap();
+        let rows = history_in(&[("claude", root.as_path())], 1, now);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].cache_write, 2_000_000);
+        assert_eq!(rows[0].cost_usd, Some(9.75));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Daily aggregation must not let another request hide invalid per-message duration.
+    #[test]
+    fn daily_history_keeps_an_invalid_cache_message_unpriced_after_aggregation() {
+        let now = local(2026, 8, 26, 15);
+        let root = temp_root("invalid-cache-duration");
+        let lines: Vec<String> = [("invalid", 101), ("valid", 0)].map(|(id, one_hour)| {
+            serde_json::json!({ "type": "assistant", "timestamp": stamp(now), "cwd": "C:/project",
+                "message": { "id": id, "model": "claude-sonnet-4-5", "usage": { "cache_creation_input_tokens": 100,
+                    "cache_creation": { "ephemeral_1h_input_tokens": one_hour } } } }).to_string()
+        }).to_vec();
+        std::fs::write(root.join("session.jsonl"), lines.join("\n")).unwrap();
+        let rows = history_in(&[("claude", root.as_path())], 1, now);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].cache_write, 200);
+        assert_eq!(rows[0].cost_usd, None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn daily_codex_history_preserves_inconsistent_cache_usage_without_a_custom_cost_estimate() {
+        let now = local(2026, 10, 7, 0);
+        let root = temp_root("invalid-codex-cache");
+        let lines = [serde_json::json!({ "timestamp": stamp(now), "type": "turn_context", "payload": { "model": "custom-codex-model" } }),
+            serde_json::json!({ "timestamp": stamp(now), "type": "event_msg", "payload": { "type": "token_count", "info": {
+                "total_token_usage": { "input_tokens": 100, "cached_input_tokens": 120, "output_tokens": 10 } } } }),
+            serde_json::json!({ "timestamp": stamp(now), "type": "event_msg", "payload": { "type": "token_count", "info": {
+                "last_token_usage": { "input_tokens": 20, "output_tokens": 5 } } } })];
+        std::fs::write(root.join("rollout.jsonl"), lines.iter().map(|line| line.to_string()).collect::<Vec<_>>().join("\n")).unwrap();
+        let rows = history_in(&[("codex", root.as_path())], 1, now);
+        let rate = crate::agents::pricing::CustomRate { model: "custom-codex-model".into(), input: 2.0,
+            output: 10.0, cache_read: 0.5, cache_write_five_minute: 2.5, cache_write_one_hour: 4.0 };
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].input, rows[0].cache_read, rows[0].output), (20, 120, 15));
+        assert_eq!(cost_of(&rows[0], &[rate]), None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_codex_delta_with_an_invalid_previous_counter_stays_unpriced_when_that_event_is_outside_the_day() {
+        let now = local(2026, 10, 7, 0);
+        let root = temp_root("invalid-codex-previous");
+        let lines = [serde_json::json!({ "timestamp": stamp(now), "type": "turn_context", "payload": { "model": "custom-codex-model" } }),
+            serde_json::json!({ "timestamp": stamp(now - Duration::days(1)), "type": "event_msg", "payload": { "type": "token_count", "info": {
+                "total_token_usage": { "input_tokens": 50, "cached_input_tokens": "broken", "output_tokens": 5 } } } }),
+            serde_json::json!({ "timestamp": stamp(now), "type": "event_msg", "payload": { "type": "token_count", "info": {
+                "total_token_usage": { "input_tokens": 100, "cached_input_tokens": 0, "output_tokens": 10 } } } })];
+        std::fs::write(root.join("rollout.jsonl"), lines.iter().map(|line| line.to_string()).collect::<Vec<_>>().join("\n")).unwrap();
+        let rows = history_in(&[("codex", root.as_path())], 1, now);
+        let rate = crate::agents::pricing::CustomRate { model: "custom-codex-model".into(), input: 2.0,
+            output: 10.0, cache_read: 0.5, cache_write_five_minute: 2.5, cache_write_one_hour: 4.0 };
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].input, rows[0].output), (50, 5));
+        assert_eq!(cost_of(&rows[0], &[rate]), None);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -654,10 +792,11 @@ mod tests {
         ];
         let samples = codex_samples(lines.into_iter());
         assert_eq!(samples.len(), 2, "{samples:?}");
-        assert_eq!(samples[0].project, r"C:\repo");
-        assert_eq!(samples[0].model, "gpt-5.3-codex");
-        assert_eq!((samples[0].input, samples[0].cache_read, samples[0].output), (1000, 600, 100));
-        assert_eq!((samples[1].input, samples[1].cache_read, samples[1].output), (500, 300, 60));
+        assert_eq!(&*samples[0].project, r"C:\repo");
+        assert_eq!(&*samples[0].model, "gpt-5.3-codex");
+        // Input now reports the uncached portion, matching Claude's disjoint counters.
+        assert_eq!((samples[0].input, samples[0].cache_read, samples[0].output), (400, 600, 100));
+        assert_eq!((samples[1].input, samples[1].cache_read, samples[1].output), (200, 300, 60));
 
         // Through the whole scan: an OpenAI model is outside the price table,
         // so the tokens are there and the cost is honestly absent.
@@ -691,8 +830,9 @@ mod tests {
         ];
         let samples = codex_samples(lines.into_iter());
         assert_eq!(samples.len(), 2);
-        assert_eq!((samples[0].input, samples[0].output), (100, 20));
-        assert_eq!((samples[1].input, samples[1].cache_read, samples[1].cache_write, samples[1].output), (30, 5, 2, 5));
+        assert_eq!((samples[0].input, samples[0].output), (90, 20));
+        // Raw input includes reads and writes; the remaining ordinary input is 23.
+        assert_eq!((samples[1].input, samples[1].cache_read, samples[1].cache_write, samples[1].output), (23, 5, 2, 5));
     }
 
     /// The scan as it was before it became typed and incremental, verbatim:
@@ -738,12 +878,16 @@ mod tests {
                 let Some(delta) = claude_delta(msg, &mut seen_messages) else { continue };
                 out.push(Sample {
                     at: parse_ts(&v),
-                    project: text(Some(&v), "cwd"),
-                    model: text(Some(msg), "model"),
+                    project: text(Some(&v), "cwd").into(),
+                    model: text(Some(msg), "model").into(),
                     input: delta.0,
                     output: delta.3,
                     cache_read: delta.1,
                     cache_write: delta.2,
+                    cache_write_one_hour: msg.get("usage").and_then(|usage| usage.get("cache_creation"))
+                        .and_then(|cache| cache.get("ephemeral_1h_input_tokens"))
+                        .and_then(serde_json::Value::as_u64).unwrap_or(0),
+                    invalid_pricing_metadata: !crate::agents::tokens::cache_duration_valid(msg.get("usage")),
                 });
             }
             out
@@ -788,12 +932,14 @@ mod tests {
                         let Some(delta) = codex_delta(info, &mut prev_total) else { continue };
                         out.push(Sample {
                             at: parse_ts(&v),
-                            project: project.clone(),
-                            model: model.clone(),
+                            project: project.as_str().into(),
+                            model: model.as_str().into(),
                             input: delta.0,
                             output: delta.3,
                             cache_read: delta.1,
                             cache_write: delta.2,
+                            cache_write_one_hour: 0,
+                            invalid_pricing_metadata: false,
                         });
                     }
                     _ => {}
@@ -818,7 +964,7 @@ mod tests {
     /// same size inside one millisecond still reads as a change.
     fn refresh_matches_a_full_reparse(agent: &str, file: &Path, mtime: i64) -> Arc<[Sample]> {
         let len = std::fs::metadata(file).unwrap().len();
-        let got = samples_for(agent, file, len, mtime);
+        let got = samples_for(agent, file, len, mtime, mtime);
         let expected = value_oracle::samples_of(agent, file);
         assert_eq!(&*got, &expected[..], "{agent} {} at mtime {mtime}", file.display());
         got
@@ -901,13 +1047,13 @@ mod tests {
             codex_total(&at, 260, 31),
         ].join("\n") + "\n"));
         let grown = refresh_matches_a_full_reparse("codex", &file, 2);
-        assert_eq!(grown.iter().map(|s| (s.input, s.model.as_str())).collect::<Vec<_>>(), [
-            (100, "gpt-5.3-codex"),
+        assert_eq!(grown.iter().map(|s| (s.input, &*s.model)).collect::<Vec<_>>(), [
             (50, "gpt-5.3-codex"),
-            (40, "gpt-5.3-codex"),
-            (70, "gpt-5.4"),
+            (25, "gpt-5.3-codex"),
+            (20, "gpt-5.3-codex"),
+            (35, "gpt-5.4"),
         ]);
-        assert!(grown.iter().all(|s| s.project == r"C:\repo"));
+        assert!(grown.iter().all(|s| &*s.project == r"C:\repo"));
     }
 
     #[test]
@@ -919,7 +1065,7 @@ mod tests {
         refresh_matches_a_full_reparse("claude", &file, 1);
         std::fs::write(&file, claude_line("m9", at, "claude-opus-5", r"C:\q", 22, 2) + "\n").unwrap();
         let rewritten = refresh_matches_a_full_reparse("claude", &file, 2);
-        assert_eq!((rewritten[0].input, rewritten[0].project.as_str()), (22, r"C:\q"));
+        assert_eq!((rewritten[0].input, &*rewritten[0].project), (22, r"C:\q"));
     }
 
     #[test]
@@ -1071,6 +1217,50 @@ mod tests {
         assert!(!claude_samples(lines(&claude)).is_empty() && !codex_samples(lines(&codex)).is_empty());
     }
 
+    /// Every sample used to carry its own copy of the folder and the model,
+    /// thousands of identical strings per session in the cache.
+    #[test]
+    fn the_samples_of_one_session_share_one_copy_of_its_folder_and_model() {
+        let at = local(2026, 8, 26, 10);
+        let claude = claude_samples((1..=3).map(|i| claude_line(&format!("m{i}"), at, "claude-opus-5", r"C:\p", i, i)));
+        assert!(Arc::ptr_eq(&claude[0].project, &claude[2].project));
+        assert!(Arc::ptr_eq(&claude[0].model, &claude[2].model));
+        let stamp = stamp(at);
+        let codex = codex_samples(
+            [
+                format!(r#"{{"timestamp":"{stamp}","type":"turn_context","payload":{{"model":"gpt-5","cwd":"C:\\repo"}}}}"#),
+                codex_total(&stamp, 100, 10),
+                codex_total(&stamp, 150, 16),
+            ]
+            .into_iter(),
+        );
+        assert!(Arc::ptr_eq(&codex[0].project, &codex[1].project));
+        assert!(Arc::ptr_eq(&codex[0].model, &codex[1].model));
+    }
+
+    /// The regression: every Claude message id ever read stayed in memory for
+    /// the life of the process. A file idle for six hours keeps its samples
+    /// and drops the ids; if it grows again, it is simply read from the start.
+    #[test]
+    fn a_file_idle_for_six_hours_forgets_its_message_ids_and_still_counts_like_a_full_reparse() {
+        let at = local(2026, 8, 26, 10);
+        let root = temp_root("idle-ids");
+        let file = root.join("s.jsonl");
+        std::fs::write(&file, claude_line("m1", at, "claude-opus-5", r"C:\p", 10, 1) + "\n").unwrap();
+        let len = std::fs::metadata(&file).unwrap().len();
+        let hour = 60 * 60 * 1000;
+        samples_for("claude", &file, len, 1, 1 + 7 * hour);
+        let remembered = |file: &Path| match &cache().lock().get(file).unwrap().scan {
+            Scan::Claude(seen) => seen.len(),
+            Scan::Codex(_) => unreachable!(),
+        };
+        assert_eq!(remembered(&file), 0);
+        append(&file, &([claude_line("m1", at, "claude-opus-5", r"C:\p", 10, 1), claude_line("m2", at, "claude-opus-5", r"C:\p", 5, 5)].join("\n") + "\n"));
+        let grown = refresh_matches_a_full_reparse("claude", &file, 2);
+        assert_eq!(grown.iter().map(|s| s.input).collect::<Vec<_>>(), [10, 5]);
+        assert_eq!(remembered(&file), 2, "an active file keeps its ids for the next resume");
+    }
+
     #[test]
     fn a_line_that_does_not_parse_or_carries_no_usage_is_simply_skipped() {
         let at = local(2026, 8, 26, 10);
@@ -1083,7 +1273,7 @@ mod tests {
         ];
         let samples = claude_samples(lines.into_iter());
         assert_eq!(samples.len(), 1);
-        assert_eq!(samples[0].model, "claude-sonnet-5");
-        assert_eq!(samples[0].project, r"C:\p");
+        assert_eq!(&*samples[0].model, "claude-sonnet-5");
+        assert_eq!(&*samples[0].project, r"C:\p");
     }
 }

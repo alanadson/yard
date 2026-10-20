@@ -1,12 +1,9 @@
 //! Agent<->app bridge: the "`yard` CLI".
 //!
-//! Architecture: Rust is a dumb pipe. The `yard` CLI (shims in
-//! `<data_dir>\bin`) writes ONE JSON line on a named pipe and waits for ONE
-//! reply line. The server here only forwards the request to the
-//! frontend (`bridge://request` event) and returns whatever the frontend
-//! replies via the `bridge_respond` command. All intelligence — resolving
-//! names, validating canvas connections, injecting prompts, waiting for the
-//! agent to finish — lives in `src/lib/bridge.ts`, which holds workspace state.
+//! The `yard` CLI writes one authenticated JSON request and receives one reply.
+//! Documented hooks and assigned-task commands are served natively. Workspace
+//! and canvas commands forward to the frontend, which resolves their names,
+//! connections and operations through `src/lib/bridge.ts`.
 //!
 //! Also installs the bridge manual where agents find it on their own: the
 //! `yard` skill in `~/.claude/skills/` (Claude Code) and
@@ -14,12 +11,14 @@
 //! environment (codex, opencode, gemini…).
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::Arc;
 
 use parking_lot::Mutex;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 
@@ -46,6 +45,17 @@ const MAX_REQUEST_BYTES: u64 = 8 * 1024 * 1024;
 /// Pause after a failed `connect`, so a pipe that keeps refusing does not
 /// become a hot loop for the rest of the session.
 const CONNECT_BACKOFF_MS: u64 = 200;
+const TRANSPORT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+const MAX_CONNECTIONS: usize = 64;
+
+fn connection_slots() -> &'static Arc<tokio::sync::Semaphore> {
+    static SLOTS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+    SLOTS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS)))
+}
+
+fn admit_connection(slots: &Arc<tokio::sync::Semaphore>) -> Option<tokio::sync::OwnedSemaphorePermit> {
+    slots.clone().try_acquire_owned().ok()
+}
 
 static PENDING: OnceLock<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<serde_json::Value>>>> =
     OnceLock::new();
@@ -128,12 +138,15 @@ pub fn start(app: AppHandle) {
             // dropped unanswered because the listener could not be recreated.
             let conn = server;
             {
-                let app = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = handle_conn(conn, app).await {
-                        tracing::debug!(error = %e, "bridge: conexao encerrada com erro");
-                    }
-                });
+                if let Some(permit) = admit_connection(connection_slots()) {
+                    let app = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _permit = permit;
+                        if let Err(e) = handle_conn(conn, app).await {
+                            tracing::debug!(error = %e, "bridge: connection failed");
+                        }
+                    });
+                }
             }
             server = match ServerOptions::new().create(&full) {
                 Ok(s) => s,
@@ -146,40 +159,80 @@ pub fn start(app: AppHandle) {
     });
 }
 
-/// Secret every TCP request must carry, generated once per run.
-///
-/// The named pipe needs none: Windows already scopes it to this user's
-/// session. The TCP listener exists precisely to be reached from *another*
-/// machine (an agent running over SSH, through a reverse tunnel), and on that
-/// machine the loopback is shared with every other process and user. So the
-/// port alone proves nothing, and the token is the fence.
-///
-/// Random and per-run rather than derived from anything: it travels in a
-/// remote process's environment, where it is readable by that user and by
-/// root, and a token that outlived the session would keep working after the
-/// tunnel is gone.
-pub fn tcp_token() -> &'static str {
-    static TOKEN: OnceLock<String> = OnceLock::new();
-    TOKEN.get_or_init(|| {
-        // 32 characters out of the nanoid alphabet the rest of the app uses.
-        const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        let mut out = String::with_capacity(32);
-        let mut seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0x9E37_79B9_7F4A_7C15)
-            ^ (std::process::id() as u64) << 32
-            ^ (&out as *const String as u64);
-        for _ in 0..32 {
-            // xorshift64*: no dependency, and this is a session secret behind
-            // a loopback tunnel, not a key.
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            out.push(ALPHABET[(seed % ALPHABET.len() as u64) as usize] as char);
+pub(crate) fn credentials() -> &'static CredentialRegistry {
+    static REGISTRY: OnceLock<CredentialRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(CredentialRegistry::default)
+}
+
+/// Credentials belong to a terminal process incarnation, never to the whole app.
+#[derive(Clone, Default)]
+pub(crate) struct CredentialRegistry(Arc<Mutex<HashMap<String, String>>>);
+
+impl CredentialRegistry {
+    pub(crate) fn issue(&self, terminal: &str) -> std::io::Result<Credential> {
+        if terminal.is_empty() {
+            return Err(std::io::Error::other("empty terminal identity"));
         }
-        out
-    })
+        let token = token_from_entropy(system_entropy)?;
+        let mut active = self.0.lock();
+        if active.contains_key(terminal) {
+            return Err(std::io::Error::other("terminal credential is already active"));
+        }
+        active.insert(terminal.into(), token.clone());
+        Ok(Credential { terminal: terminal.into(), token, registry: self.clone() })
+    }
+
+    pub(crate) fn authenticate(&self, request: &serde_json::Value) -> bool {
+        let Some(terminal) = request.get("terminal").and_then(serde_json::Value::as_str) else { return false };
+        self.0.lock().get(terminal).is_some_and(|expected| token_ok(request, expected))
+    }
+}
+
+pub(crate) struct Credential {
+    terminal: String,
+    token: String,
+    registry: CredentialRegistry,
+}
+
+impl Credential {
+    pub(crate) fn token(&self) -> &str { &self.token }
+
+    pub(crate) fn revoke(&self) {
+        let mut active = self.registry.0.lock();
+        if active.get(&self.terminal) == Some(&self.token) {
+            active.remove(&self.terminal);
+        }
+    }
+}
+
+impl Drop for Credential {
+    fn drop(&mut self) { self.revoke(); }
+}
+
+fn token_from_entropy(fill: impl FnOnce(&mut [u8]) -> std::io::Result<()>) -> std::io::Result<String> {
+    let mut bytes = [0u8; 32];
+    fill(&mut bytes)?;
+    const HEX: &[u8] = b"0123456789abcdef";
+    let mut token = String::with_capacity(64);
+    for byte in bytes {
+        token.push(HEX[(byte >> 4) as usize] as char);
+        token.push(HEX[(byte & 15) as usize] as char);
+    }
+    Ok(token)
+}
+
+#[cfg(windows)]
+fn system_entropy(bytes: &mut [u8]) -> std::io::Result<()> {
+    use windows_sys::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
+    // The preferred provider fills the valid writable slice; no algorithm handle is required.
+    let status = unsafe { BCryptGenRandom(std::ptr::null_mut(), bytes.as_mut_ptr(), bytes.len() as u32, BCRYPT_USE_SYSTEM_PREFERRED_RNG) };
+    if status == 0 { Ok(()) } else { Err(std::io::Error::other(format!("BCryptGenRandom failed with status {status:#x}"))) }
+}
+
+#[cfg(not(windows))]
+fn system_entropy(bytes: &mut [u8]) -> std::io::Result<()> {
+    use std::io::Read;
+    std::fs::File::open("/dev/urandom")?.read_exact(bytes)
 }
 
 /// The loopback port the TCP twin is listening on, once it is up.
@@ -246,9 +299,11 @@ fn start_tcp(app: AppHandle) {
                 tokio::time::sleep(std::time::Duration::from_millis(CONNECT_BACKOFF_MS)).await;
                 continue;
             };
+            let Some(permit) = admit_connection(connection_slots()) else { continue; };
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = serve(stream, app, true).await {
+                let _permit = permit;
+                if let Err(e) = serve_authenticated(stream, |request| credentials().authenticate(request), move |request, wait_ms| dispatch_request(app, request, wait_ms)).await {
                     tracing::debug!(error = %e, "bridge: conexao TCP encerrada com erro");
                 }
             });
@@ -257,24 +312,35 @@ fn start_tcp(app: AppHandle) {
 }
 
 async fn handle_conn(conn: NamedPipeServer, app: AppHandle) -> std::io::Result<()> {
-    serve(conn, app, false).await
+    serve_authenticated(conn, |request| credentials().authenticate(request), move |request, wait_ms| dispatch_request(app, request, wait_ms)).await
 }
 
 /// One JSON line in, one JSON line out, the same conversation over the pipe
-/// and over the loopback socket. `guarded` is what tells them apart: a TCP
-/// request has to prove it is ours.
-async fn serve<S>(conn: S, app: AppHandle, guarded: bool) -> std::io::Result<()>
+/// and over the loopback socket. Both transports authenticate before dispatch.
+async fn serve_authenticated<S, A, D, R>(conn: S, authenticate: A, dispatch: D) -> std::io::Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    A: FnOnce(&serde_json::Value) -> bool,
+    D: FnOnce(serde_json::Value, u64) -> R,
+    R: Future<Output = serde_json::Value>,
+{
+    serve_with_deadlines(conn, authenticate, dispatch, TRANSPORT_DEADLINE).await
+}
+
+async fn serve_with_deadlines<S, A, D, R>(conn: S, authenticate: A, dispatch: D, deadline: std::time::Duration) -> std::io::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    A: FnOnce(&serde_json::Value) -> bool,
+    D: FnOnce(serde_json::Value, u64) -> R,
+    R: Future<Output = serde_json::Value>,
 {
     let mut reader = BufReader::new(conn);
     let mut line = String::new();
     // Bounded read: `read_line` on its own would take whatever the client
     // sends, and the CLI happily reads a whole file into the request.
-    let read_bytes = (&mut reader)
-        .take(MAX_REQUEST_BYTES + 1)
-        .read_line(&mut line)
-        .await?;
+    let mut bounded = (&mut reader).take(MAX_REQUEST_BYTES + 1);
+    let read_bytes = tokio::time::timeout(deadline, bounded.read_line(&mut line)).await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "Bridge request deadline exceeded"))??;
     let mut conn = reader.into_inner();
 
     if read_bytes as u64 > MAX_REQUEST_BYTES {
@@ -285,31 +351,33 @@ where
                 MAX_REQUEST_BYTES / (1024 * 1024)
             ),
         });
-        conn.write_all(format!("{out}\n").as_bytes()).await?;
+        write_reply(&mut conn, &out, deadline).await?;
         return Ok(());
     }
 
-    let req: serde_json::Value = match serde_json::from_str(line.trim()) {
+    let mut req: serde_json::Value = match serde_json::from_str(line.trim()) {
         Ok(v) => v,
         Err(e) => {
             let out = serde_json::json!({
                 "code": 2,
                 "output": format!("yard: requisicao invalida: {e}\n"),
             });
-            conn.write_all(format!("{out}\n").as_bytes()).await?;
+            write_reply(&mut conn, &out, deadline).await?;
             return Ok(());
         }
     };
 
-    if guarded && !token_ok(&req, tcp_token()) {
+    if !authenticate(&req) {
         let out = serde_json::json!({
             "code": 2,
             "output": "yard: token invalido (YARD_TOKEN nao confere)
 ",
         });
-        conn.write_all(format!("{out}
-").as_bytes()).await?;
+        write_reply(&mut conn, &out, deadline).await?;
         return Ok(());
+    }
+    if let Some(fields) = req.as_object_mut() {
+        fields.remove("token");
     }
 
     let wait_ms = req
@@ -318,6 +386,45 @@ where
         .unwrap_or(DEFAULT_WAIT_MS)
         .clamp(1_000, MAX_WAIT_MS);
 
+    let body = dispatch(req, wait_ms).await;
+    write_reply(&mut conn, &body, deadline).await
+}
+
+async fn write_reply<S: tokio::io::AsyncWrite + Unpin>(conn: &mut S, body: &serde_json::Value, deadline: std::time::Duration) -> std::io::Result<()> {
+    tokio::time::timeout(deadline, async {
+        conn.write_all(format!("{body}\n").as_bytes()).await?;
+        conn.flush().await
+    }).await.map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "Bridge reply deadline exceeded"))?
+}
+
+async fn dispatch_request(app: AppHandle, req: serde_json::Value, wait_ms: u64) -> serde_json::Value {
+    if req["argv"][0] == "flow" {
+        let state = app.state::<Arc<crate::state::AppState>>().inner().clone();
+        let flow_request = req.clone();
+        let outcome = tauri::async_runtime::spawn_blocking(move || {
+            let response = crate::flows::handle_cli(&mut state.db.lock(), &flow_request, crate::pty::reader::now_ms());
+            (response, crate::events::take_kv_changes())
+        }).await.ok();
+        if let Some((response, changes)) = outcome {
+            crate::events::emit_kv_changes(&app, changes);
+            if changes.wakes_scheduler() { crate::scheduler::wake(); }
+            if let Some(response) = response { return response; }
+        }
+    }
+    if let Some((terminal, event)) = crate::scheduler::parse_hook(&req) {
+        let state = app.state::<Arc<crate::state::AppState>>();
+        let _ = state.scheduler.record(&terminal, event, crate::pty::reader::now_ms());
+        return serde_json::json!({"code":0,"output":""});
+    }
+    if req["argv"][0] == "task" {
+        let state = app.state::<Arc<crate::state::AppState>>().inner().clone();
+        return match tauri::async_runtime::spawn_blocking(move || {
+            crate::bridge_task::handle(&mut state.db.lock(), &req, crate::pty::reader::now_ms())
+        }).await {
+            Ok(Some(response)) => response,
+            _ => serde_json::json!({"code":1,"output":"yard task: native task command interrupted\n"}),
+        };
+    }
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let (tx, rx) = tokio::sync::oneshot::channel();
     pending().lock().insert(id, tx);
@@ -327,15 +434,13 @@ where
         serde_json::json!({ "id": id, "request": req }),
     ) {
         pending().lock().remove(&id);
-        let out = serde_json::json!({
+        return serde_json::json!({
             "code": 1,
             "output": format!("yard: a interface nao esta escutando ({e})\n"),
         });
-        conn.write_all(format!("{out}\n").as_bytes()).await?;
-        return Ok(());
     }
 
-    let body = match tokio::time::timeout(std::time::Duration::from_millis(wait_ms), rx).await {
+    match tokio::time::timeout(std::time::Duration::from_millis(wait_ms), rx).await {
         Ok(Ok(v)) => v,
         Ok(Err(_)) => serde_json::json!({
             "code": 1,
@@ -351,11 +456,7 @@ where
                 ),
             })
         }
-    };
-
-    conn.write_all(format!("{body}\n").as_bytes()).await?;
-    conn.flush().await?;
-    Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -735,9 +836,9 @@ fn install_agent_docs_logged() {
 
 /// The first half of the shims, on the setup thread before any terminal can
 /// exist: the PowerShell client, the manual, the Claude hooks file, and
-/// shims that work. Shims left by an earlier session are kept while what
-/// they name is there (the background choice then only rewrites them if it
-/// has to); missing, damaged or orphaned ones become the PowerShell pair, so
+/// shims that work. Only this build's native client may survive an earlier
+/// session; an obsolete client may not understand transport authentication.
+/// Missing, damaged, orphaned or incompatible shims become the PowerShell pair, so
 /// even a terminal born before the choice settles has a working `yard`.
 ///
 /// Each file is written only when its text differs from what is on disk
@@ -751,7 +852,12 @@ fn write_support_files(dir: &std::path::Path) -> std::io::Result<()> {
         format!("# Yard — agent bridge\n\n{BRIDGE_DOC}"),
     )?;
     write_if_changed(&dir.join(CLAUDE_HOOKS_FILE), CLAUDE_HOOKS_JSON)?;
-    if launcher_on_disk(dir).is_none() {
+    let compatible = match launcher_on_disk(dir) {
+        Some(Launcher::PowerShell) => true,
+        Some(Launcher::Native(name)) => current_cli_name(CLI_EXE).as_deref() == Some(name.as_str()),
+        None => false,
+    };
+    if !compatible {
         write_if_changed(&dir.join("yard.cmd"), CMD_POWERSHELL)?;
         write_if_changed(&dir.join("yard"), SH_POWERSHELL)?;
     }
@@ -825,14 +931,16 @@ for ($i = 0; $i -lt $args.Count; $i++) {
   }
 }
 
-$req = @{
+$reqFields = @{
   v = 1
   terminal = $env:YARD_PTY_ID
   cwd = (Get-Location).Path
   argv = @($argv | ForEach-Object { [string]$_ })
   stdin = $stdinText
   timeoutMs = $timeoutMs
-} | ConvertTo-Json -Compress -Depth 5
+}
+if ($env:YARD_TOKEN) { $reqFields["token"] = $env:YARD_TOKEN }
+$req = $reqFields | ConvertTo-Json -Compress -Depth 5
 
 try {
   $pipe = New-Object System.IO.Pipes.NamedPipeClientStream(".", $pipeName, [System.IO.Pipes.PipeDirection]::InOut)
@@ -932,6 +1040,10 @@ be read and written.
 
 ## Commands
 
+- `yard task show ID`: read the original request, criteria and latest report of assigned work.
+- `yard task history ID`: read previous delivery snapshots and their evidence for assigned work.
+- `yard task submit ID --attempt ATTEMPT_ID --file delivery.json` / `--stdin`: report summary, artifacts, validation checks and criterion evidence for the attempt in the received prompt (`links.executionId` for pipelines, `links.queueItemId` for queued work). Submission waits for human review and cannot approve itself.
+- `yard task link ID --file reference.json` / `--stdin`: the current executor can attach a review reference with `kind` (`front`, `flow`, `checkpoint`, `diff`, `pull_request`), `id`, `root` and `label`. Checkpoint and diff references require a working-directory root; pull requests require an HTTPS review URL.
 - `yard list` — list yourself, connected agents, notes and portals (exact names)
 - `yard ask "Agent Name" "prompt"` — send a prompt to a connected agent and wait for its response
 - `yard ask "Agent Name" --file plan.md` — send a long/multi-line prompt from a file
@@ -939,6 +1051,8 @@ be read and written.
 - `yard ask "Agent Name" --raw "2\n"` — send raw keystrokes (escapes: \n Enter, \t Tab, \e ESC, \xNN byte)
 - `yard ask "Agent Name" --no-wait "prompt"` — fire and forget
 - `yard ask ... --timeout 600` — seconds to wait (default 600 for ask)
+- `yard ask ... --max-chars N`: how much of the answer comes back (default the last 8000 characters, at most 30000)
+- `yard ask --batch` runs at most the user's automation limit (default 2) at a time. Every non-raw ask arrives stamped `[Yard · de "<you>" · salto <n>]`; a chain deeper than 3 hops, or more than 6 asks between the same two agents in 10 minutes, is refused. A prompt over 32 KB is delivered as a file path the other agent is told to read
 - `yard check "Agent Name"` — read the agent's current terminal output without sending anything
 - `yard wait "Agent Name"` — block until it stops, instead of polling `check` in a loop
 - `yard wait --any` / `yard wait --all` — same, over every connected agent
@@ -952,7 +1066,8 @@ be read and written.
 - `yard note delete "Note Name"` — remove the note. Destructive: only when the user explicitly asks.
 - `yard connect "A" "B"` — wire two things together (agent, note or portal). One
   end must be you or something already connected to you; you cannot wire two
-  strangers together to reach them.
+  strangers together to reach them. A flow card is refused: wiring a CLI to a
+  pipeline is the user's decision, since every stage is a paid turn.
 - `yard portal create URL ["Name"] [--engine webview2|chrome|firefox|…] [--size WxH]` — new browser card, auto-connected
 - `yard portal snapshot "Name"` — accessibility tree with `@eN` refs (run this before click/fill)
 - `yard portal click|fill|type|key|hover|scroll|resize|ua|screenshot|evaluate|html|text|info "Name" …`
@@ -964,7 +1079,8 @@ be read and written.
 - `yard floor create "Name" [--branch x] [--existing-branch] [--adopt PATH] [--no-git] [--copy-ground] [--base REF] [--worktree-name FOLDER] [--dry-run] [--json]`: provision a new floor silently (the user's screen does not switch); `--copy-ground` clones the ground layout with stopped terminals. `--adopt PATH` opens the floor on a worktree git already knows about instead of creating one: nothing is written to the disk, and closing that floor never deletes it. `--base REF` picks the commit the branch grows from (frozen as an OID before anything is written) and `--worktree-name FOLDER` picks the folder under `.yard/floors/`. `--dry-run` prints the plan and writes nothing; `--json` prints that same plan (or result) with stable error codes. Exit codes: 0 all done, 2 the plan was refused, 3 partial, 4 something this run made is still on disk, 5 cancelled
 - `yard floor land "Name" [--close] [--keep-losers]` — merge the floor's branch onto the ground (refuses dirty trees and predicted conflicts). `--close` removes the floor afterwards; without `--keep-losers` the other floors of the same task go too
 - `yard floor compare` — diffstat of every isolated floor against the ground
-- `yard floor fanout "Name" --prompt "…" [--agents claude,codex] [--copy-ground]` — same prompt, one isolated floor per agent
+- `yard floor fanout "Name" --prompt "…" --agents claude,codex [--copy-ground]` — same prompt, one isolated floor per agent; `--agents` is required
+- Agents you raise (`recruit`, `worker create`, `floor fanout`) are capped at 8 live agents per project, and a worker cannot raise agents of its own
 - `yard worker create "Name" --task "…" [--agent claude|codex|…] [--copy-ground]`: one isolated front, one agent card inside it, the task typed in as its first prompt; the front keeps the name you gave. Without `--agent`, the worker is the same CLI as you. `--stdin` takes the task from stdin
 - `yard worker list [--json]`: every worker of this project with its state: `starting`, `working`, `done`, `blocked` (asking something), `permission` (the CLI's own hook said it waits on a permission), `stopped`, `exited`
 - `yard worker inspect "Name"`: agent, branch, worktree path, card id, the task. A name, a unique prefix of it, or the group id all address a worker
@@ -980,15 +1096,15 @@ be read and written.
 - `yard role show ["Agent Name"]` — the role of an agent, or the text of a saved role
 - `yard role create "Role" "text" [--scope global|current]` / `role list` / `role edit` / `role write` / `role delete`
 - `yard routine list` — scheduled prompts of this group
-- `yard routine create "Agent Name" "prompt" --every 30 [--once]` — run a prompt every N minutes (only when the target is idle)
+- `yard routine create "Agent Name" "prompt" --every 30 [--once]` — run a prompt every N minutes (at least 5; only when the target is idle). It is saved switched off and waits for the user to approve it; `routine resume` cannot approve it for them
 - `yard routine pause|resume|delete <id>` — manage them
 - `yard trigger list` — the group's triggers: "when X happens to a CLI, do Y"
-- `yard trigger create --when finished|blocked|exited --on "Agent Name"|any --ask "Target" "prompt" | --notify "text" | --flow "Flow Name" "task" [--once] [--cooldown 60]` — arm an automation on an edge (a CLI finished a turn, stopped at a question, or exited); `{name}` and `{ask}` in the text become who fired and the question it stopped at. Same gate as `ask`: source and target must be you or someone wired to you
+- `yard trigger create --when finished|blocked|exited --on "Agent Name"|any --ask "Target" "prompt" | --notify "text" | --flow "Flow Name" "task" [--once] [--cooldown 60]` — arm an automation on an edge (a CLI finished a turn, stopped at a question, or exited); `{name}` and `{ask}` in the text become who fired and the question it stopped at. Same gate as `ask`: source and target must be you or someone wired to you. It is saved switched off and waits for the user to approve it. Ask triggers wait in the target's queue, fire at most 50 times a day, and wait at least 5 minutes inside a loop of asks and 10 minutes when they ask their own source
 - `yard trigger pause|resume|delete <id>` — manage them
 - `yard flow list` — the group's flows: cards on the canvas holding an ordered pipeline of prompts (e.g. QA -> TDD). A flow has no agents of its own; the CLI wired to its card is who runs it
 - `yard flow run "Flow Name" --stdin` (or `"task"`) — run the pipeline IN YOUR OWN CLI: each stage arrives here as a one-line `[Yard · Fluxo ...]` stamp. On each stamp, run `yard flow stage` to receive the briefing (the stage's instructions, the task and the previous stage's summary), follow it, and end the turn with the `### RESUMO DA ETAPA` block it asks for. Gate: your terminal must be wired to the flow's card (`yard connect "You" "Flow Name"` works)
 - `yard flow stage` — the current stage's briefing for the run executing in your CLI; rerun it anytime you need the briefing again mid-stage
-- When the USER types a prompt in a wired CLI, Yard intercepts the Enter and runs the pipeline there by itself — you never forward anything, and connecting sends nothing. Just honor each `[Yard · Fluxo ...]` stamp (`yard flow stage`, follow, summarize); never pass a `[Yard ...]` message to `yard flow run`
+- When the USER types a prompt in a CLI wired to a flow whose trigger they switched on, Yard intercepts the Enter and runs the pipeline there by itself: you never forward anything, and connecting sends nothing. Just honor each `[Yard · Fluxo ...]` stamp (`yard flow stage`, follow, summarize); never pass a `[Yard ...]` message to `yard flow run`
 - `yard flow status ["Flow Name"]` / `yard flow cancel "Flow Name"` — follow or stop a run; never poll a running flow in a loop
 - `yard score save "Name"` / `score list` / `score apply "Name"` — save and reapply the whole group arrangement. Saving refuses a name already taken; add `--force` only when the user asked to replace that arrangement
 - `yard canvas list [--json]`: everything on the canvas with its position and size; `[conectado]` marks what you reach
@@ -1027,6 +1143,9 @@ be read and written.
   instead of embedding `\n` in a quoted argument.
 - Routines fire only while the target is running and idle, so they never
   interrupt work in progress.
+- Every automatic prompt spends the user's paid tokens. When `yard` answers
+  that automation is paused (daily budget or plan window), stop sending and
+  tell the user: only they can resume it, from Yard's status bar.
 - Never interrupt an agent that is still working; don't edit files another
   agent is actively modifying.
 - Portals: only drive portals listed under `Portais conectados`. Always
@@ -1197,6 +1316,124 @@ the same message — the briefing applies to that request.
 mod tests {
     use super::*;
 
+    /// A client that never finishes its request must release its transport slot.
+    #[test]
+    fn an_incomplete_request_expires_without_reaching_the_dispatcher() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        runtime.block_on(async {
+            let (server, mut client) = tokio::io::duplex(4096);
+            client.write_all(b"{\"terminal\":").await.unwrap();
+            let result = tokio::time::timeout(std::time::Duration::from_secs(1),
+                serve_with_deadlines(server, |_| true, |_, _| async { panic!("Incomplete request was dispatched") },
+                    std::time::Duration::from_millis(5))).await.unwrap();
+            assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        });
+    }
+
+    #[test]
+    fn a_client_that_never_reads_its_reply_cannot_hold_a_transport_slot_forever() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        runtime.block_on(async {
+            let (server, mut client) = tokio::io::duplex(128);
+            client.write_all(b"{}\n").await.unwrap();
+            let result = tokio::time::timeout(std::time::Duration::from_secs(1),
+                serve_with_deadlines(server, |_| true, |_, _| async { serde_json::json!({"code":0,"output":"x".repeat(4096)}) },
+                    std::time::Duration::from_millis(5))).await.unwrap();
+            assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        });
+    }
+
+    /// Both listeners share admission so idle clients cannot accumulate forever.
+    #[test]
+    fn transport_capacity_returns_after_a_connection_is_released() {
+        let slots = Arc::new(tokio::sync::Semaphore::new(2));
+        let first = admit_connection(&slots).unwrap();
+        let second = admit_connection(&slots).unwrap();
+        assert!(admit_connection(&slots).is_none());
+        drop(first);
+        assert!(admit_connection(&slots).is_some());
+        drop(second);
+    }
+
+    /// A valid caller must not borrow another terminal's workspace identity.
+    #[test]
+    fn a_terminals_valid_credential_cannot_dispatch_as_another_terminal() {
+        let registry = CredentialRegistry::default();
+        let credential = registry.issue("terminal-a").unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        runtime.block_on(async {
+            let (server, mut client) = tokio::io::duplex(4096);
+            let request = serde_json::json!({ "terminal": "terminal-b", "token": credential.token(), "argv": ["list"] });
+            client.write_all(format!("{request}\n").as_bytes()).await.unwrap();
+            client.shutdown().await.unwrap();
+            let delivered = std::sync::Arc::new(Mutex::new(Vec::new()));
+            let observed = delivered.clone();
+            serve_authenticated(server, |request| registry.authenticate(request), move |request, _| async move {
+                observed.lock().push(request);
+                serde_json::json!({ "code": 0 })
+            }).await.unwrap();
+            let mut reply = Vec::new();
+            client.read_to_end(&mut reply).await.unwrap();
+            assert_eq!(serde_json::from_slice::<serde_json::Value>(&reply).unwrap()["code"], 2);
+            assert!(delivered.lock().is_empty());
+        });
+    }
+
+    /// Authentication secrets must use all provider bytes and must never fall back to predictable seeds.
+    #[test]
+    fn session_credentials_preserve_os_entropy_and_refuse_provider_failure() {
+        let token = token_from_entropy(|bytes| {
+            for (index, byte) in bytes.iter_mut().enumerate() { *byte = index as u8; }
+            Ok(())
+        }).unwrap();
+        assert_eq!(token, "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+        let failed = token_from_entropy(|_| Err(std::io::Error::other("entropy unavailable")));
+        assert_eq!(failed.unwrap_err().to_string(), "entropy unavailable");
+    }
+
+    /// Local and remote transports must authenticate before any request reaches the app.
+    #[test]
+    fn an_unauthenticated_transport_request_never_reaches_the_dispatcher() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        runtime.block_on(async {
+            let (server, mut client) = tokio::io::duplex(4096);
+            client.write_all(b"{\"v\":1,\"terminal\":\"agent\",\"argv\":[\"list\"]}\n").await.unwrap();
+            client.shutdown().await.unwrap();
+            let delivered = std::sync::Arc::new(Mutex::new(Vec::new()));
+            let observed = delivered.clone();
+            serve_authenticated(server, |request| token_ok(request, "fixture-secret"), move |request, _wait_ms| async move {
+                observed.lock().push(request);
+                serde_json::json!({ "code": 0, "output": "accepted" })
+            }).await.unwrap();
+            let mut reply = Vec::new();
+            client.read_to_end(&mut reply).await.unwrap();
+            let reply: serde_json::Value = serde_json::from_slice(&reply).unwrap();
+            assert_eq!(reply["code"], 2);
+            assert!(delivered.lock().is_empty());
+        });
+    }
+
+    #[test]
+    fn authenticated_transport_delivers_the_request_without_exposing_its_credential() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        runtime.block_on(async {
+            let (server, mut client) = tokio::io::duplex(4096);
+            client.write_all(b"{\"v\":1,\"terminal\":\"agent\",\"argv\":[\"list\"],\"token\":\"fixture-secret\"}\n").await.unwrap();
+            client.shutdown().await.unwrap();
+            let delivered = std::sync::Arc::new(Mutex::new(Vec::new()));
+            let observed = delivered.clone();
+            serve_authenticated(server, |request| token_ok(request, "fixture-secret"), move |request, _wait_ms| async move {
+                observed.lock().push(request);
+                serde_json::json!({ "code": 0, "output": "accepted" })
+            }).await.unwrap();
+            let mut reply = Vec::new();
+            client.read_to_end(&mut reply).await.unwrap();
+            let reply: serde_json::Value = serde_json::from_slice(&reply).unwrap();
+            assert_eq!(reply["code"], 0);
+            assert_eq!(&*delivered.lock(), &[serde_json::json!({ "v": 1, "terminal": "agent", "argv": ["list"] })]);
+        });
+    }
+
     /// Why the token matters: the pipe is reachable only by this Windows user,
     /// but the TCP twin exists to be reached **from another machine** through
     /// an SSH reverse tunnel, which means anything running on that remote
@@ -1230,11 +1467,49 @@ mod tests {
     /// The session token goes into a remote process's environment, so it is
     /// worth being long and random rather than derived from anything.
     #[test]
-    fn the_session_token_is_long_and_stable_within_the_session() {
-        let a = tcp_token();
-        assert_eq!(a, tcp_token());
-        assert!(a.len() >= 32, "token curto demais: {}", a.len());
-        assert!(a.chars().all(|c| c.is_ascii_alphanumeric()));
+    fn the_process_token_is_long_and_stable_within_the_process() {
+        let registry = CredentialRegistry::default();
+        let credential = registry.issue("agent").unwrap();
+        assert_eq!(credential.token().len(), 64);
+        assert!(credential.token().chars().all(|c| c.is_ascii_hexdigit()));
+        let request = serde_json::json!({ "terminal": "agent", "token": credential.token() });
+        assert!(registry.authenticate(&request));
+        assert!(registry.authenticate(&request));
+        let other = registry.issue("another-agent").unwrap();
+        assert_ne!(credential.token(), other.token());
+    }
+
+    #[test]
+    fn malformed_or_unregistered_identities_cannot_use_an_active_credential() {
+        let registry = CredentialRegistry::default();
+        let credential = registry.issue("agent").unwrap();
+        for identity in [serde_json::Value::Null, serde_json::json!(42), serde_json::json!(""), serde_json::json!(" agent"), serde_json::json!("Agent"), serde_json::json!("stopped-agent")] {
+            assert!(!registry.authenticate(&serde_json::json!({ "terminal": identity, "token": credential.token() })));
+        }
+        for token in [serde_json::Value::Null, serde_json::json!(42), serde_json::json!(""), serde_json::json!("wrong")] {
+            assert!(!registry.authenticate(&serde_json::json!({ "terminal": "agent", "token": token })));
+        }
+        assert!(!registry.authenticate(&serde_json::json!({ "token": credential.token() })));
+    }
+
+    #[test]
+    fn late_cleanup_of_an_old_process_cannot_revoke_its_replacement() {
+        let registry = CredentialRegistry::default();
+        let old = registry.issue("agent").unwrap();
+        let old_request = serde_json::json!({ "terminal": "agent", "token": old.token() });
+        old.revoke();
+        let next = registry.issue("agent").unwrap();
+        drop(old);
+        assert!(!registry.authenticate(&old_request));
+        assert!(registry.authenticate(&serde_json::json!({ "terminal": "agent", "token": next.token() })));
+    }
+
+    #[test]
+    fn a_duplicate_credential_issue_preserves_the_live_process_identity() {
+        let registry = CredentialRegistry::default();
+        let active = registry.issue("agent").unwrap();
+        assert!(registry.issue("agent").is_err());
+        assert!(registry.authenticate(&serde_json::json!({ "terminal": "agent", "token": active.token() })));
     }
 
     /// The pipe name goes in every PTY's environment. If it changes between
@@ -1468,7 +1743,7 @@ mod tests {
     /// would otherwise talk to the real app.
     fn isolated(program: impl AsRef<std::ffi::OsStr>, dir: &std::path::Path) -> std::process::Command {
         let mut cmd = std::process::Command::new(program);
-        cmd.current_dir(dir).env_remove("YARD_PIPE").env_remove("YARD_PTY_ID");
+        cmd.current_dir(dir).env_remove("YARD_PIPE").env_remove("YARD_PTY_ID").env_remove("YARD_TOKEN");
         cmd
     }
 
@@ -1639,6 +1914,7 @@ mod tests {
         let mut cmd = isolated(&exe, scratch.path());
         cmd.env("YARD_PIPE", &pipe.name)
             .env("YARD_PTY_ID", "t-42")
+            .env("YARD_TOKEN", "fixture \"secret\"")
             .args(["hook", "prompt", "--stdin"]);
         let payload = r#"{"prompt":"ação €"}"#;
         let ran = run(cmd, payload.as_bytes());
@@ -1649,6 +1925,7 @@ mod tests {
             serde_json::json!({
                 "v": 1,
                 "terminal": "t-42",
+                "token": "fixture \"secret\"",
                 "cwd": scratch.path().to_string_lossy(),
                 "argv": ["hook", "prompt", "--stdin"],
                 "stdin": payload,
@@ -1760,6 +2037,7 @@ mod tests {
             native.raw_arg(tail);
             for cmd in [&mut powershell, &mut native] {
                 cmd.env("YARD_PIPE", &pipe.name).env("YARD_PTY_ID", "t-parity");
+                cmd.env("YARD_TOKEN", "fixture-secret");
             }
             let from_powershell = run(powershell, stdin.as_bytes());
             let from_native = run(native, stdin.as_bytes());
@@ -2067,13 +2345,22 @@ mod tests {
     }
 
     #[test]
-    fn native_shims_from_an_earlier_session_are_kept_while_their_client_is_there() {
+    fn compatible_native_shims_from_an_earlier_session_are_kept_while_their_client_is_there() {
         let scratch = Scratch::new("kept");
-        write_shims_with(scratch.path(), b"older client", |_| true).expect("shims");
+        write_shims_with(scratch.path(), CLI_EXE, |_| true).expect("shims");
         let before = shims_in(scratch.path());
         write_support_files(scratch.path()).expect("support files");
         assert_eq!(shims_in(scratch.path()), before);
-        assert_eq!(before, native_shims(&cli_exe_name(b"older client")));
+        assert_eq!(before, native_shims(&cli_exe_name(CLI_EXE)));
+    }
+
+    /// A client from before authentication would fail every hook if a PTY sealed it during boot.
+    #[test]
+    fn an_obsolete_native_client_falls_back_to_the_updated_powershell_before_any_terminal_starts() {
+        let scratch = Scratch::new("obsolete-auth");
+        write_shims_with(scratch.path(), b"older unauthenticated client", |_| true).unwrap();
+        write_support_files(scratch.path()).unwrap();
+        assert_eq!(shims_in(scratch.path()), (LEGACY_CMD.to_string(), LEGACY_SH.to_string()));
     }
 
     #[test]

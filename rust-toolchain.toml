@@ -1,4 +1,8 @@
 [toolchain]
-channel = "stable"
+# Pinned on purpose: a floating "stable" with `clippy -D warnings` broke CI
+# with no code change when a new release deprecated an API, and every Rust
+# release also invalidated the CI build cache. Bump it deliberately, in a
+# change of its own, together with the version in the workflows.
+channel = "1.98.0"
 components = ["rustfmt", "clippy"]
 targets = ["x86_64-pc-windows-msvc"]

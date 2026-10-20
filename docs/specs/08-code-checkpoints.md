@@ -52,15 +52,41 @@ omitting files. Restoring never recursively deletes a directory.
 
 Limits are 32 MiB per file, 256 MiB of uncompressed content and 20,000 paths per
 checkpoint. Text comparisons are limited to 512 KiB per side. File/directory
-type replacements and Git submodules are refused. Archives are retained until
-manually deleted; there is no automatic pruning or deduplication.
+type replacements and Git submodules are refused.
+
+A capture reads the tree one file at a time: a first pass computes a SHA-256
+digest over the sorted paths and bytes, and only when it differs from the newest
+checkpoint of the same working directory does a second pass stream the files into
+a new archive. An identical capture records its own manifest (task identity,
+label, timestamp, repository state) that points at the existing archive, so each
+task keeps its checkpoint and review link without another copy on disk. Deleting
+a checkpoint removes its archive only when no other manifest still reads it.
+
+After each automatic or manual capture, retention keeps the newest 50 checkpoints
+per working directory. Recovery snapshots (**Before restoring**) younger than 24
+hours are never pruned, and an archive is deleted only when no remaining manifest
+references it. A checkpoint linked from a task's review panel can therefore
+disappear once 50 newer captures exist in that directory.
 
 The composer (including paste without Enter), bench sends and non-bridge queue
 items save a checkpoint before delivery to a local agent in a Git directory.
+Queued delivery performs this capture in the native scheduler, even while the
+application page is unloaded. The queue request ID and the agent's actual working
+directory remain the checkpoint scope. Managed work uses its task ID as the
+checkpoint identity; standalone prompts retain their queue request ID. Capture and restore share
+one native serialization lock. The scheduler checks readiness again after the
+capture before attempting delivery.
 A new front with an initial task also saves a checkpoint before starting its
 local agent, after setup hooks have completed.
-A capture failure prevents that delivery; drafts and queued items remain
-available. Direct terminal input, agent-to-agent messages, routines and remote
+A capture failure is recorded and delivery continues. The native scheduler
+persists a warning until the interface displays it. Acknowledged warnings remain
+in the recovery history across reloads, and managed tasks retain the failure in
+their event timeline. Successful snapshots are linked from the task's review
+panel. Native pipeline stages use this same capture and outcome contract.
+Checkpoints are best effort;
+the user request is preserved even when a repository exceeds snapshot limits.
+Native routine occurrences also use the queued capture path for local agents.
+Direct terminal input, agent-to-agent messages and remote
 SSH/WSL sessions do not automatically capture local code.
 
 Checkpoints cover local Git working directories. SSH files, ignored build output,
@@ -71,5 +97,9 @@ Typing directly into a terminal does not create an automatic checkpoint.
 
 Rust tests use independent temporary Git repositories and snapshot stores. They
 cover byte preservation, ignored files, index preservation, previews, recovery,
-stale previews and scope/path boundaries. Frontend tests cover task identity,
+stale previews, scope/path boundaries, archive deduplication, shared-archive
+deletion and retention. Frontend tests cover task identity,
 draft/activity guards, prompt delivery ordering and stale asynchronous responses.
+The isolated native scheduler check unloads the page, delivers a user queue item,
+lets its agent change a file, and verifies the checkpoint still contains the
+original bytes under that request ID.

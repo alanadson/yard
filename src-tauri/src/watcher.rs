@@ -7,16 +7,44 @@
 //! 800 ms debounce because one agent turn writes dozens of times per
 //! second — without it, the event becomes a DDoS on the UI itself.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use notify::RecursiveMode;
 use notify_debouncer_mini::new_debouncer;
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 const DEBOUNCE: Duration = Duration::from_millis(800);
+/// How soon a change held while the window was hidden is announced after it
+/// comes back.
+const CATCH_UP: Duration = Duration::from_secs(1);
+
+/// Session changes seen while the main window was off screen: held, and
+/// announced once when it is back (`tick`).
+#[derive(Default)]
+pub(crate) struct HeldChanges(AtomicBool);
+
+impl HeldChanges {
+    /// A batch of changes. Whether to announce it now: with the window shown,
+    /// yes; hidden, it is held for the first tick after the window is back.
+    pub(crate) fn changed(&self, shown: bool) -> bool {
+        if !shown {
+            self.0.store(true, Ordering::Release);
+        }
+        shown
+    }
+
+    /// A periodic check: whether a held change is due now.
+    pub(crate) fn tick(&self, shown: bool) -> bool {
+        shown && self.0.swap(false, Ordering::AcqRel)
+    }
+}
 
 pub fn start<R: Runtime>(app: AppHandle<R>) {
     std::thread::spawn(move || {
+        let shown = app.state::<Arc<crate::state::AppState>>().window_shown.clone();
+        let held = Arc::new(HeldChanges::default());
         let roots: Vec<_> = ["claude", "codex", "opencode"]
             .iter()
             .filter_map(|kind| crate::agents::resolver::sessions_root(kind))
@@ -29,10 +57,11 @@ pub fn start<R: Runtime>(app: AppHandle<R>) {
         }
 
         let app_for_events = app.clone();
+        let (held_for_events, shown_for_events) = (held.clone(), shown.clone());
         let debouncer = new_debouncer(DEBOUNCE, move |res| {
             if let Ok(events) = res {
                 let events: Vec<notify_debouncer_mini::DebouncedEvent> = events;
-                if !events.is_empty() {
+                if !events.is_empty() && held_for_events.changed(shown_for_events.load(Ordering::Acquire)) {
                     let _ = app_for_events.emit(crate::events::AGENTS_CHANGED, ());
                 }
             }
@@ -54,9 +83,33 @@ pub fn start<R: Runtime>(app: AppHandle<R>) {
             }
         }
 
-        // The debouncer needs to stay alive; this thread is its owner.
+        // The debouncer needs to stay alive; this thread is its owner. It
+        // also announces, once, what changed while the window was hidden.
         loop {
-            std::thread::sleep(Duration::from_secs(3600));
+            std::thread::sleep(CATCH_UP);
+            if held.tick(shown.load(Ordering::Acquire)) {
+                let _ = app.emit(crate::events::AGENTS_CHANGED, ());
+            }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    // With the window in the tray nobody reads the session list, yet every
+    // turn of every agent announced a change each 800 ms. One held change is
+    // enough to refresh the page when the window comes back.
+    use super::*;
+
+    #[test]
+    fn changes_while_hidden_are_announced_once_when_the_window_comes_back() {
+        let held = HeldChanges::default();
+        assert!(held.changed(true), "on screen: announced right away");
+        assert!(!held.tick(true), "nothing was held");
+        assert!(!held.changed(false));
+        assert!(!held.changed(false));
+        assert!(!held.tick(false), "still hidden");
+        assert!(held.tick(true), "back on screen: announced");
+        assert!(!held.tick(true), "announced once");
+    }
 }

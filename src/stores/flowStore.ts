@@ -20,8 +20,11 @@
  */
 import { create } from "zustand";
 
-import { persistJsonPref, readPrefs, type PrefsSnapshot } from "../lib/prefs";
+import { nativeQueueScheduling, persistJsonPref, readPrefs, type PrefsSnapshot } from "../lib/prefs";
 import { uiLog } from "../lib/log";
+import { ipc } from "../lib/ipc";
+import type { FlowStage } from "../lib/canvas";
+import { reconcileSnapshot } from "../lib/reconcileSnapshot";
 
 export type FlowStageStatus =
   | "pending"
@@ -38,6 +41,12 @@ export interface FlowRunStage {
 }
 
 export interface FlowRun {
+  owner?: "native";
+  phase?: string;
+  attempt?: number;
+  taskId?: string | null;
+  taskExecution?: string;
+  definition?: FlowStage[];
   /** Canvas item id of the flow card. */
   flowId: string;
   groupId: string;
@@ -89,12 +98,13 @@ interface FlowsState {
   setStage: (flowId: string, index: number, status: FlowStageStatus) => void;
   requestCancel: (flowId: string) => void;
   /** Dismisses a finished run (the HUD's ×). Live runs stay. */
-  clear: (flowId: string) => void;
+  clear: (flowId: string) => Promise<void>;
   /**
    * Brings back what was walking when the webview went away, as an
    * **interrupted** run — see the note at the top of the file.
    */
   restore: (prefs?: PrefsSnapshot) => Promise<void>;
+  refreshNative: () => Promise<void>;
 }
 
 const KV_RUNS = "flow.runs";
@@ -182,22 +192,30 @@ function markOf(run: FlowRun): FlowMark {
   };
 }
 
-function deriveMarks(runs: Record<string, FlowRun>): Record<string, FlowMark> {
+function deriveMarks(runs: Record<string, FlowRun>, previous: Record<string, FlowMark>): Record<string, FlowMark> {
   const marks: Record<string, FlowMark> = {};
   for (const run of Object.values(runs)) {
-    if (run.stages.length) marks[run.terminalId] = markOf(run);
+    if (!run.stages.length) continue;
+    const next = markOf(run);
+    const kept = previous[run.terminalId];
+    marks[run.terminalId] = kept && kept.name === next.name && kept.step === next.step
+      && kept.total === next.total && kept.status === next.status ? kept : next;
   }
-  return marks;
+  const ids = Object.keys(marks);
+  return ids.length === Object.keys(previous).length
+    && ids.every((id) => marks[id] === previous[id]) ? previous : marks;
 }
 
 export const useFlows = create<FlowsState>((set, get) => {
+  let nativeReadVersion = 0;
   const write = (runs: Record<string, FlowRun>) => {
-    set({ runs, marks: deriveMarks(runs) });
+    nativeReadVersion++;
+    set({ runs, marks: deriveMarks(runs, get().marks) });
     // Only what is still walking: a finished run has nothing to rescue, and
     // the record is read exactly once, at boot.
     persistJsonPref(
       KV_RUNS,
-      Object.values(runs).filter((r) => !r.finishedAt),
+      Object.values(runs).filter((r) => !r.finishedAt && r.owner !== "native"),
       (error) => uiLog.warn(`não consegui guardar o estado do fluxo: ${error}`),
     );
   };
@@ -205,6 +223,20 @@ export const useFlows = create<FlowsState>((set, get) => {
   return {
     runs: {},
     marks: {},
+
+    refreshNative: async () => {
+      if (!nativeQueueScheduling()) return;
+      const version = ++nativeReadVersion;
+      const snapshot = await ipc.flowSnapshot();
+      if (version !== nativeReadVersion) return;
+      const previous = Object.values(get().runs);
+      const incoming = Object.fromEntries(previous.filter((run) => run.owner !== "native").map((run) => [run.flowId, run]));
+      for (const run of snapshot) incoming[run.flowId] = run;
+      const next = reconcileSnapshot(previous, Object.values(incoming), (run) => run.flowId);
+      if (next === previous) return;
+      const runs = Object.fromEntries(next.map((run) => [run.flowId, run]));
+      set({ runs, marks: deriveMarks(runs, get().marks) });
+    },
 
     begin: (run) => write({ ...get().runs, [run.flowId]: run }),
 
@@ -227,15 +259,20 @@ export const useFlows = create<FlowsState>((set, get) => {
       write({ ...get().runs, [flowId]: { ...cur, cancelRequested: true } });
     },
 
-    clear: (flowId) => {
+    clear: async (flowId) => {
       const cur = get().runs[flowId];
       if (!cur || !cur.finishedAt) return;
+      if (cur.owner === "native") {
+        await ipc.flowDismiss(cur.groupId, flowId, cur.attempt ?? 0);
+        if (get().runs[flowId]?.attempt !== cur.attempt) return;
+      }
       const runs = { ...get().runs };
       delete runs[flowId];
       write(runs);
     },
 
     restore: async (prefs) => {
+      if (nativeQueueScheduling()) await get().refreshNative();
       let raw: PrefsSnapshot;
       try {
         raw = prefs ?? (await readPrefs());

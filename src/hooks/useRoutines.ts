@@ -14,6 +14,7 @@
 import { useEffect } from "react";
 
 import { injectPrompt } from "../lib/inject";
+import { nativeQueueScheduling } from "../lib/prefs";
 import { canSend } from "../lib/sendable";
 import { commitCanvasExternal } from "../lib/canvasWrite";
 import { routineDue, type RoutineDef } from "../lib/canvas";
@@ -28,6 +29,9 @@ const TICK_MS = 30_000;
 
 export function useRoutines() {
   useEffect(() => {
+    // The backend fires the routines; their run state is only shown by the
+    // routines modal, which reads it while it is open (`RoutinesModal`).
+    if (nativeQueueScheduling()) return;
     let running = false;
 
     const tick = async () => {

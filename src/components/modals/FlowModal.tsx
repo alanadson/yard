@@ -18,7 +18,7 @@ import { TerminalMark } from "../BrandIcon";
 import { useT } from "../../hooks/useT";
 import { commitCanvasExternal } from "../../lib/canvasWrite";
 import { patchItemOfType, removeItemAndEdges } from "../../lib/canvasOps";
-import { flowAgents, FLOW_PRESETS, prepareFlowStages, type FlowItem } from "../../lib/flow";
+import { armsEnter, flowAgents, FLOW_PRESETS, prepareFlowStages, type FlowItem } from "../../lib/flow";
 import { cancelRunsOf, liveRunsOf } from "../../lib/flowRun";
 import { baseName } from "../../lib/terminals";
 import {
@@ -59,7 +59,8 @@ export function FlowModal() {
   const [stages, setStages] = useState<FlowStage[]>(
     () => item?.stages.map((s) => ({ ...s })) ?? [],
   );
-  const [trigger, setTrigger] = useState(item ? item.trigger !== false : true);
+  // Off unless the user switched it on: every intercepted Enter is a paid pipeline.
+  const [trigger, setTrigger] = useState(item ? armsEnter(item) : false);
   const [touched, setTouched] = useState(false);
   const [emptyStages, setEmptyStages] = useState<number[]>([]);
 
@@ -114,7 +115,7 @@ export function FlowModal() {
       patchItemOfType(c, item.id, "flow", {
         name: cleanName,
         stages: cleanStages,
-        trigger: trigger ? undefined : false,
+        trigger: trigger ? true : undefined,
         // The card grows to fit the pipeline, but never undoes a larger manual
         // resize — the card's size belongs to the user.
         h: Math.max(item.h, flowCardHeight(cleanStages.length)),

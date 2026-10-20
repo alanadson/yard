@@ -8,9 +8,11 @@
  * a different dialect.
  */
 import { describe, expect, it } from "vitest";
+import * as healthRules from "./mcp";
 
 import type { AgentInfo } from "./ipc";
 import {
+  canApplyMcpEdit,
   copyTo,
   draftOf,
   fromEnvLines,
@@ -234,4 +236,20 @@ describe("draftOf", () => {
       enabled: false,
     });
   });
+});
+
+it("does not apply a server editor response after leaving its project or selecting another server", () => {
+  expect(canApplyMcpEdit({ root: "A", version: 1 }, { root: "A", version: 1 })).toBe(true);
+  expect(canApplyMcpEdit({ root: "A", version: 1 }, { root: "B", version: 1 })).toBe(false);
+  expect(canApplyMcpEdit({ root: "A", version: 1 }, { root: "A", version: 2 })).toBe(false);
+});
+
+it("explains a completed MCP handshake and its tool count without exposing secret values", () => {
+  expect(healthRules.mcpHealthLabel({ state: "healthy", result: { serverName: "native-owned-mcp", serverVersion: "1.2.3", protocolVersion: "2025-06-18", tools: 1 } }))
+    .toBe("Conectado: native-owned-mcp 1.2.3, 1 ferramenta.");
+});
+
+it("explains an MCP timeout without rendering arbitrary server error text", () => {
+  expect(healthRules.mcpHealthLabel({ state: "failed", error: "MCP_TIMEOUT" })).toBe("O servidor MCP não respondeu dentro de 10 segundos.");
+  expect(healthRules.mcpHealthLabel({ state: "failed", error: "secret-from-server" })).toBe("Não consegui confirmar a conexão MCP.");
 });

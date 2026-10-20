@@ -21,12 +21,34 @@ import {
   COMPOSER_SCRATCH,
   DEFAULT_PREFS,
   SIDEBAR_MAX,
+  SCROLLBACK_MAX,
   SIDEBAR_MIN,
   clampPref,
   useUI,
 } from "./uiStore";
 
 describe("clampPref", () => {
+  it("bounds automatic execution to one through sixteen agents and starts with directory protection", () => {
+    expect(clampPref("automationMaxAgents", 0)).toBe(1);
+    expect(clampPref("automationMaxAgents", 99)).toBe(16);
+    expect(clampPref("automationMaxAgents", 1.6)).toBe(2);
+    expect(DEFAULT_PREFS.automationMaxAgents).toBe(2);
+    expect(DEFAULT_PREFS.automationLockDirectories).toBe(true);
+  });
+
+  /**
+   * A budget that only warns does not stop anything, so pausing automation
+   * at the ceiling is on by default, and so is the quota guard at 90% of the
+   * five-hour window. A percentage outside 0..100 from a hand-edited kv means
+   * nothing, and 0 is the "off" a person can type.
+   */
+  it("pauses automation at the ceiling and at 90% of the quota by default, with the percentage in 0..100", () => {
+    expect(DEFAULT_PREFS.budgetPauseAutomation).toBe(true);
+    expect(DEFAULT_PREFS.quotaPausePct).toBe(90);
+    expect(clampPref("quotaPausePct", 150)).toBe(100);
+    expect(clampPref("quotaPausePct", -5)).toBe(0);
+    expect(clampPref("quotaPausePct", 85.4)).toBe(85);
+  });
   it("clamps panel widths to the range of their splitter", () => {
     expect(clampPref("sidebarWidth", -900)).toBe(SIDEBAR_MIN);
     expect(clampPref("sidebarWidth", 99_999)).toBe(SIDEBAR_MAX);
@@ -40,7 +62,19 @@ describe("clampPref", () => {
     expect(clampPref("fontSize", 0)).toBe(8);
     expect(clampPref("fontSize", 400)).toBe(28);
     expect(clampPref("scrollback", -1)).toBe(1000);
-    expect(clampPref("scrollback", 10_000_000)).toBe(200_000);
+    expect(clampPref("scrollback", 10_000_000)).toBe(SCROLLBACK_MAX);
+  });
+
+  /**
+   * xterm keeps every scrollback line of every mounted terminal in memory: at
+   * 20 000 lines a board of ten agents held hundreds of megabytes of history
+   * nobody scrolls back through, and a 200 000 ceiling let one field multiply
+   * that by ten. 5 000 by default, 50 000 at most.
+   */
+  it("keeps terminal history modest by default and caps what a field can ask for", () => {
+    expect(DEFAULT_PREFS.scrollback).toBe(5_000);
+    expect(SCROLLBACK_MAX).toBe(50_000);
+    expect(clampPref("scrollback", 200_000)).toBe(50_000);
   });
 
   /**

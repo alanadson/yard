@@ -87,6 +87,18 @@ describe("useUpdater.check", () => {
     expect(useUpdater.getState().error).toContain("offline");
   });
 
+  /**
+   * Only a successful check used to be stamped, so with the network down (or
+   * GitHub refusing) the hourly tick found the check always due and fetched
+   * the manifest every hour for as long as the failure lasted.
+   */
+  it("stamps a failed check too, so the next automatic one waits the full interval", async () => {
+    plugin.check.mockRejectedValue(new Error("offline"));
+    await useUpdater.getState().check({ manual: false, now: 7_000 });
+    expect(useUpdater.getState().lastCheckAt).toBe(7_000);
+    expect(written[KV_LAST_CHECK]).toBe("7000");
+  });
+
   it("a second check while one is running is ignored", async () => {
     let release: (v: unknown) => void = () => {};
     plugin.check.mockReturnValue(new Promise((r) => (release = r)));

@@ -35,6 +35,7 @@ import { useAgents } from "../../stores/agentsStore";
 import { useBroadcast } from "../../stores/broadcastStore";
 import { useChanges } from "../../stores/changesStore";
 import { useProjects } from "../../stores/projectsStore";
+import { useUI } from "../../stores/uiStore";
 import { locale, setActiveLang } from "../../lib/i18n";
 
 // ---------------------------------------------------------------------------
@@ -310,6 +311,28 @@ beforeEach(() => {
 });
 
 describe("buildEntries", () => {
+  it("opens durable tasks and deliveries without requiring an active project", () => {
+    const entry = buildEntries({ ...fixture(), activeGroupId: null }).find((row) => row.id === "action:work");
+    expect(entry?.title).toBe("Tarefas e entregas");
+    entry?.run();
+    expect(useUI.getState().modal).toBe("work");
+    useUI.getState().closeModal();
+  });
+  it("opens the complete work queue from search without an active project", () => {
+    const world = { ...fixture(), activeGroupId: null };
+    const entry = buildEntries(world).find((row) => row.id === "action:queue");
+    expect(entry?.title).toBe("Fila de trabalho");
+    entry?.run();
+    expect(useUI.getState().modal).toBe("queue");
+    useUI.getState().closeModal();
+  });
+  it("opens archived terminal output without needing an active project or terminal card", () => {
+    const entry = buildEntries({ ...fixture(), activeGroupId: null, activeProjectId: null }).find((row) => row.id === "action:output-history");
+    expect(entry).toBeDefined();
+    entry!.run();
+    expect(useUI.getState().modal).toBe("output-history");
+    useUI.getState().closeModal();
+  });
   it("lists every domain in the order, text, weight and icon the Busca has always shown", () => {
     expect(buildEntries(fixture()).map(line).join("\n")).toMatchInlineSnapshot(`
       "terminal:t-claude | terminal | Claude | api · main <mdash> revisora | ["claude","claude","C:/w/api","revisora","--continue"] | - | 780 | CircleDot{"size":14,"className":"busca-dot busca-dot--waiting"} | icon,id,keywords,kind,run,subtitle,title,weight
@@ -375,6 +398,9 @@ describe("buildEntries", () => {
       action:agentes | action | Agentes <mdash> como cada CLI abre | a linha de comando fixa de cada agente, e o “sem pedir permissão” | ["permissao","dangerously","skip","yolo","flags","argumentos","claude","codex"] | - | - | - | id,keywords,kind,run,subtitle,title
       action:shortcuts | action | Atalhos de teclado | - | ["teclas","ajuda","keybindings","shortcuts","keys","help"] | Ctrl+Shift+H | - | - | hint,id,keywords,kind,run,title
       action:notifications | action | Histórico de notificações | - | ["avisos","erros","notifications","history","errors"] | - | - | - | id,keywords,kind,run,title
+      action:queue | action | Fila de trabalho | - | ["fila","prompts","reenviar","queue","retry"] | - | - | - | id,keywords,kind,run,title
+      action:output-history | action | Histórico de saída | - | ["histórico","sessões","saída","arquivos","output","history","archives"] | - | - | - | id,keywords,kind,run,title
+      action:work | action | Tarefas e entregas | - | ["tarefas","entregas","aceite","revisão","tasks","deliveries","acceptance"] | - | - | - | id,keywords,kind,run,title
       action:broadcast | action | Parar de transmitir o teclado | o que você digita numa CLI vai para todas as CLIs vivas do grupo | ["broadcast","uníssono","todos","transmitir","teclado","keyboard","all"] | Ctrl+Shift+U | - | - | hint,id,keywords,kind,run,subtitle,title
       action:export-output | action | Salvar saída do terminal em foco… | Um .txt legível, ou .ansi com as cores <mdash> vale para uma CLI que já morreu | ["exportar","salvar","saída","scrollback","log","histórico","export","save output","history"] | - | - | - | id,keywords,kind,run,subtitle,title
       action:theme-toggle | action | Alternar tema claro/escuro | Aparência do Yard <mdash> Escuro, Claro ou Sistema em Configurações | ["tema","aparência","claro","escuro","light","dark","theme","appearance"] | - | - | - | id,keywords,kind,run,subtitle,title

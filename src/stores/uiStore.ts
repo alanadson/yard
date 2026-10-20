@@ -23,6 +23,9 @@ import {
 export const COMPOSER_SCRATCH = "__sem-destino__";
 
 export type ModalKind =
+  | "output-history"
+  | "work"
+  | "queue"
   | "checkpoints"
   | null
   | "new-terminal"
@@ -45,6 +48,7 @@ export type ModalKind =
   | "scm-confirm"
   | "onboarding"
   | "costs"
+  | "pricing"
   | "shoulder"
   | "transcript"
   | "flow";
@@ -115,6 +119,8 @@ export interface Prefs {
    */
   statusBar: boolean;
   confirmOnExit: boolean;
+  automationMaxAgents: number;
+  automationLockDirectories: boolean;
   cursorBlink: boolean;
   /** Appearance: dark is the shipped look; light and system live in `lib/theme.ts`. */
   theme: ThemePref;
@@ -142,6 +148,16 @@ export interface Prefs {
    * Zero is off, which is what most people will leave it at.
    */
   budgetDaily: number;
+  /**
+   * Reaching the ceiling pauses automation (`lib/automationPause.ts`): queue,
+   * routines, flows and agent-to-agent sends stop until the user resumes.
+   */
+  budgetPauseAutomation: boolean;
+  /**
+   * Pause automation when a provider's five-hour window reaches this
+   * percentage of its limit. Zero is off.
+   */
+  quotaPausePct: number;
   /** Language servers in the file editor (completion, diagnostics, definitions). */
   lspEnabled: boolean;
   /**
@@ -167,6 +183,8 @@ export interface Prefs {
 }
 
 export const DEFAULT_PREFS: Prefs = {
+  automationMaxAgents: 2,
+  automationLockDirectories: true,
   fontSize: 13,
   fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace',
   termLigatures: false,
@@ -189,7 +207,10 @@ export const DEFAULT_PREFS: Prefs = {
   // Canvas is the path proven stable on WebView2; WebGL sits behind
   // this preference (§3, target versions).
   renderer: "canvas",
-  scrollback: 20000,
+  // Every mounted terminal holds its whole history in memory: 5 000 lines is
+  // a long session's worth without making a board of agents cost hundreds of
+  // megabytes.
+  scrollback: 5000,
   notifyOnFinish: true,
   notifyBlocked: true,
   usageWidget: true,
@@ -211,6 +232,11 @@ export const DEFAULT_PREFS: Prefs = {
   notifyWebhook: "",
   // Off: a ceiling nobody asked for is a warning nobody wants.
   budgetDaily: 0,
+  // On: a ceiling that only warns while agents keep spending is not a ceiling.
+  // Inert while `budgetDaily` is 0.
+  budgetPauseAutomation: true,
+  // Stop automation before the plan's window runs dry, not after.
+  quotaPausePct: 90,
   // On by default: inert until a server of the catalog is installed.
   lspEnabled: true,
   placementHints: true,
@@ -238,6 +264,8 @@ export const CHANGES_MAX = 620;
  */
 export const BENCH_MIN = 248;
 export const BENCH_MAX = 560;
+/** The history ceiling a field can ask for: 50 000 lines per terminal. */
+export const SCROLLBACK_MAX = 50_000;
 
 /**
  * Valid range for each numeric preference.
@@ -252,7 +280,7 @@ const RANGES: Partial<
   Record<keyof Prefs, { min: number; max: number; step?: number }>
 > = {
   fontSize: { min: 8, max: 28 },
-  scrollback: { min: 1000, max: 200000 },
+  scrollback: { min: 1000, max: SCROLLBACK_MAX },
   sidebarWidth: { min: SIDEBAR_MIN, max: SIDEBAR_MAX },
   changesWidth: { min: CHANGES_MIN, max: CHANGES_MAX },
   benchWidth: { min: BENCH_MIN, max: BENCH_MAX },
@@ -266,6 +294,8 @@ const RANGES: Partial<
   autoBackupKeep: { min: 1, max: 60, step: 1 },
   // No cents: a budget is a round number, and the day's spend is an estimate.
   budgetDaily: { min: 0, max: 10000, step: 1 },
+  automationMaxAgents: { min: 1, max: 16, step: 1 },
+  quotaPausePct: { min: 0, max: 100, step: 1 },
 };
 
 /** Clamps a numeric value to its key's range (no range, it passes through). */

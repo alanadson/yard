@@ -120,7 +120,7 @@ pub fn strip_ansi(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// LF → CRLF: the file opens in Notepad as lines, not as one paragraph.
-fn to_crlf(text: &[u8]) -> Vec<u8> {
+pub(crate) fn to_crlf(text: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len() + text.len() / 32);
     for &b in text {
         if b == b'\n' {

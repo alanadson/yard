@@ -55,6 +55,23 @@ const gitTimers = new Map<
   { timer: ReturnType<typeof setTimeout>; root: string }
 >();
 
+/**
+ * What is on screen, for `git status`: the active project and whether the
+ * window is shown at all. `null` until somebody says (a test, the first
+ * render): every project refreshes then, as it always did.
+ */
+export interface GitFocus {
+  projectId: string | null;
+  shown: boolean;
+}
+let gitFocus: GitFocus | null = null;
+/** Projects whose activity arrived off screen: projectId -> root to read. */
+const staleGit = new Map<string, string>();
+
+function onScreen(projectId: string): boolean {
+  return gitFocus === null || (gitFocus.shown && gitFocus.projectId === projectId);
+}
+
 // File events and changed status entries invalidate affected paths. Explicit
 // repository refreshes, branch switches and overflowed batches invalidate the
 // whole project: they cover HEAD/index changes no single entry shows.
@@ -197,6 +214,11 @@ interface ChangesState {
   applyActivity: (p: FilesActivity) => void;
   refreshGit: (projectId: string, root: string, invalidate?: boolean) => Promise<void>;
   scheduleGitRefresh: (projectId: string, root: string) => void;
+  /**
+   * The active project and the window state changed: a project that went
+   * stale off screen and is now in view is read once.
+   */
+  setGitFocus: (focus: GitFocus | null) => void;
   clearLive: (projectId: string) => void;
   /** Everything this store holds about a project that left the workspace. */
   dropProject: (projectId: string) => void;
@@ -289,6 +311,7 @@ export const useChanges = create<ChangesState>((set, get) => ({
       const scheduled = gitTimers.get(id);
       if (scheduled) clearTimeout(scheduled.timer);
       gitTimers.delete(id);
+      staleGit.delete(id);
       void ipc.unwatchProject(id).catch(() => {});
       delete watchedNext[id];
       changed = true;
@@ -344,6 +367,12 @@ export const useChanges = create<ChangesState>((set, get) => ({
   },
 
   scheduleGitRefresh: (projectId, root) => {
+    // Off screen (another project, or the window hidden): no git process for
+    // a summary nobody sees. The project is read once when it comes back.
+    if (!onScreen(projectId)) {
+      staleGit.set(projectId, root);
+      return;
+    }
     // Simple throttle: one refresh per window, fired at the end of it. Under
     // continuous activity that becomes "every 1.2 s", never a burst.
     const existing = gitTimers.get(projectId);
@@ -356,10 +385,21 @@ export const useChanges = create<ChangesState>((set, get) => ({
       timer: setTimeout(() => {
         const latest = gitTimers.get(projectId);
         gitTimers.delete(projectId);
-        if (latest) void get().refreshGit(projectId, latest.root, false);
+        if (!latest) return;
+        if (!onScreen(projectId)) staleGit.set(projectId, latest.root);
+        else void get().refreshGit(projectId, latest.root, false);
       }, GIT_REFRESH_MS),
     };
     gitTimers.set(projectId, entry);
+  },
+
+  setGitFocus: (focus) => {
+    gitFocus = focus;
+    if (!focus?.shown || !focus.projectId) return;
+    const root = staleGit.get(focus.projectId);
+    if (root === undefined) return;
+    staleGit.delete(focus.projectId);
+    void get().refreshGit(focus.projectId, root, false);
   },
 
   refreshGit: async (projectId, root, invalidate = true) => {
@@ -435,6 +475,7 @@ export const useChanges = create<ChangesState>((set, get) => ({
     const scheduled = gitTimers.get(projectId);
     if (scheduled) clearTimeout(scheduled.timer);
     gitTimers.delete(projectId);
+    staleGit.delete(projectId);
     watchDesired.delete(projectId);
     void ipc
       .unwatchProject(projectId)

@@ -4,6 +4,7 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 3
     groups:
       npm-minor-and-patch:
         update-types: [minor, patch]
@@ -11,6 +12,7 @@ updates:
     directory: /src-tauri
     schedule:
       interval: monthly
+    open-pull-requests-limit: 3
     groups:
       cargo-minor-and-patch:
         update-types: [minor, patch]
@@ -18,3 +20,4 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 3

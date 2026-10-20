@@ -11,7 +11,7 @@ import {
   setSurface,
 } from "../../../lib/schemeChoice";
 import { useExtensions } from "../../../stores/extensionsStore";
-import { useUI } from "../../../stores/uiStore";
+import { SCROLLBACK_MAX, useUI } from "../../../stores/uiStore";
 import { Card, FeatureRow, GroupTitle, NumberRow, PickerRow, SwitchRow } from "../rows";
 import { type Fonts } from "../useFonts";
 
@@ -50,7 +50,7 @@ export function SecTerminal({ fontes: fontList }: { fontes: Fonts }) {
           pref="scrollback"
           label={t("Linhas de histórico")}
           min={1000}
-          max={200000}
+          max={SCROLLBACK_MAX}
           step={1000}
           wide
         />

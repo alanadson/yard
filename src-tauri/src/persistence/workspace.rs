@@ -442,11 +442,11 @@ fn write_groups(tx: &Connection, sql: &str, rows: &[Group]) -> rusqlite::Result<
 fn write_terminals(tx: &Connection, sql: &str, rows: &[Terminal]) -> rusqlite::Result<()> {
     let mut stmt = tx.prepare_cached(sql)?;
     for t in rows {
-        let args = serde_json::to_string(&t.args).unwrap_or_else(|_| "[]".into());
+        let args = serde_json::to_string(&crate::pty::normalize_remote_launch(&t.args)).unwrap_or_else(|_| "[]".into());
         let resume = t
             .resume
             .as_ref()
-            .map(|r| serde_json::to_string(r).unwrap_or_else(|_| "[]".into()));
+            .map(|r| serde_json::to_string(&crate::pty::normalize_remote_launch(r)).unwrap_or_else(|_| "[]".into()));
         stmt.execute(rusqlite::params![
             t.id,
             t.group_id,
@@ -604,6 +604,22 @@ mod tests {
     /// The pin is the one thing about a CLI tab that only matters *between*
     /// sessions: a tab you kept at the front of the bar and out of "fechar as
     /// outras" is worth nothing if the next boot forgets it.
+    #[test]
+    fn saving_an_old_ssh_launch_removes_session_secrets_from_the_database() {
+        let mut conn = mem_db();
+        let mut snapshot = snap(0, "p");
+        snapshot.groups = vec![Group { id: "g1".into(), project_id: Some("p1".into()), name: "g".into(), layout_json: "{}".into(), suspended: false, sort: 0 }];
+        let mut terminal = a_terminal("ssh", "grid");
+        terminal.program = "ssh.exe".into();
+        terminal.args = vec!["cat <<'YARD_SHIM_EOF'\nshim\nYARD_SHIM_EOF\nYARD_PTY_ID='ssh' YARD_TOKEN='old-secret' YARD_PORT=51515 exec claude".into()];
+        snapshot.terminals.push(terminal);
+        save(&mut conn, &snapshot).unwrap();
+        let saved: String = conn.query_row("SELECT args_json FROM terminals WHERE id = 'ssh'", [], |row| row.get(0)).unwrap();
+        assert!(!saved.contains("old-secret"));
+        assert!(saved.contains("{{YARD_BRIDGE_TOKEN}}"));
+        assert_eq!(load(&conn).unwrap().terminals[0].program, "ssh.exe");
+    }
+
     #[test]
     fn a_pinned_terminal_comes_back_pinned() {
         let mut conn = mem_db();

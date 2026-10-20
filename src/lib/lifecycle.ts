@@ -6,6 +6,7 @@
  * orphan. That is why deleting a group, project, or tab goes through here.
  */
 import { ask } from "./confirmation";
+import { reconcileChatProcesses } from "./chatRecovery";
 
 import { removeNodeAndEdges } from "./canvasOps";
 import { commitCanvasExternal } from "./canvasWrite";
@@ -18,6 +19,7 @@ import { baseName } from "./terminals";
 import { useBench } from "../stores/benchStore";
 import { useBrowsers } from "../stores/browsersStore";
 import { useChanges } from "../stores/changesStore";
+import { useChats } from "../stores/chatsStore";
 import { useEditor } from "../stores/editorStore";
 import { useNotes } from "../stores/notesStore";
 import { useProjects } from "../stores/projectsStore";
@@ -41,6 +43,7 @@ export async function reconcileAliveFlags(): Promise<void> {
       store.updateTerminal(row.id, { alive: false });
     }
   }
+  await reconcileChatProcesses(alive);
 }
 
 /**
@@ -108,6 +111,7 @@ export async function disposePty(id: string): Promise<void> {
  */
 export async function closeTerminal(id: string): Promise<void> {
   await disposePty(id);
+  await useChats.getState().drop([id]);
   const row = useProjects.getState().terminal(id);
   if (row) commitCanvasExternal(row.groupId, (c) => removeNodeAndEdges(c, id));
   useProjects.getState().removeTerminal(id);
@@ -234,6 +238,7 @@ export async function closeGroup(groupId: string): Promise<void> {
     .terminals.filter((t) => t.groupId === groupId)
     .map((t) => t.id);
   await Promise.all(ids.map(disposePty));
+  await useChats.getState().drop(ids);
   useProjects.getState().removeGroup(groupId);
   // The files open in this group's panes go too. Left behind they point at a
   // `groupId` nothing resolves: no pane ever draws them again, but they keep
@@ -255,6 +260,7 @@ export async function closeProject(projectId: string): Promise<void> {
   );
   const ids = terminals.filter((t) => gids.has(t.groupId)).map((t) => t.id);
   await Promise.all(ids.map(disposePty));
+  await useChats.getState().drop(ids);
   removeProject(projectId);
   // The tabs open on this project's files — same reason as `closeGroup`, and
   // the editor was the last store still keeping its rows after the id that

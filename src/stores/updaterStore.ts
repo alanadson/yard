@@ -67,6 +67,14 @@ async function dropPending() {
   if (u) await u.close().catch(() => {});
 }
 
+/** When the last check happened, in the store and in kv (so a reload waits too). */
+function stamp(now: number) {
+  useUpdater.setState({ lastCheckAt: now });
+  persistPref(KV_LAST_CHECK, String(now), (e) =>
+    uiLog.warn(`não consegui gravar a hora da verificação de atualização: ${e}`),
+  );
+}
+
 export const useUpdater = create<UpdaterState>((set, get) => ({
   phase: "idle",
   version: null,
@@ -92,10 +100,7 @@ export const useUpdater = create<UpdaterState>((set, get) => ({
       try {
         await dropPending();
         const update = await pluginCheck();
-        set({ lastCheckAt: now });
-        persistPref(KV_LAST_CHECK, String(now), (e) =>
-          uiLog.warn(`não consegui gravar a hora da verificação de atualização: ${e}`),
-        );
+        stamp(now);
         if (!update || !update.available) {
           set({ phase: "none", version: null, notes: [] });
           return;
@@ -121,6 +126,9 @@ export const useUpdater = create<UpdaterState>((set, get) => ({
         uiLog.info(`atualização disponível: ${update.version}`);
       } catch (e) {
         uiLog.warn(`verificação de atualização falhou: ${e}`);
+        // A failure counts as a check: unstamped, the hourly tick found it
+        // due again every hour for as long as the network stayed down.
+        stamp(now);
         set({ phase: "error", error: String(e) });
       } finally {
         checking = null;

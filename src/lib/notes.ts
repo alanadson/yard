@@ -323,14 +323,27 @@ function tagsMatching(ctx: QueryContext, term: string): Set<string> {
   return out;
 }
 
+/**
+ * A note's title and text, folded once per note object: notes are immutable
+ * (an edit makes a new object), and the search used to refold every body on
+ * every keystroke of the query.
+ */
+const foldedNotes = new WeakMap<Note, { title: string; text: string }>();
+
+export function foldedNote(note: Note): { title: string; text: string } {
+  let folded = foldedNotes.get(note);
+  if (!folded) {
+    const title = fold(note.title);
+    folded = { title, text: `${title}\n${fold(note.body)}` };
+    foldedNotes.set(note, folded);
+  }
+  return folded;
+}
+
 export function matchNote(note: Note, q: NotesQuery, ctx: QueryContext): boolean {
   if (q.empty) return true;
-  const theTitle = fold(note.title);
-  let body: string | null = null;
-  const theText = () => {
-    if (body === null) body = `${theTitle}\n${fold(note.body)}`;
-    return body;
-  };
+  const theTitle = foldedNote(note).title;
+  const theText = () => foldedNote(note).text;
 
   for (const t of q.terms) {
     if (theText().includes(t.text) === t.not) return false;

@@ -3,6 +3,7 @@
 pub(crate) mod bookmark;
 pub mod resolver;
 pub mod sessions;
+pub mod pricing;
 pub mod read;
 pub mod tail;
 pub(crate) mod tokens;

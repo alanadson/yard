@@ -5,7 +5,7 @@
  * both write to `layoutJson.canvas.routines`, so a routine the agent created
  * shows up here and vice versa.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./routines.css";
 import { nanoid } from "nanoid";
 import { ask } from "../../lib/confirmation";
@@ -29,6 +29,11 @@ import { locale } from "../../lib/i18n";
 import { baseName } from "../../lib/terminals";
 import { useProjects } from "../../stores/projectsStore";
 import { useUI } from "../../stores/uiStore";
+import { useRoutineExecutions } from "../../stores/routinesStore";
+import { startWindowLiveRead } from "../../hooks/useLiveRead";
+import { on } from "../../lib/ipc";
+import { nativeQueueScheduling } from "../../lib/prefs";
+import { effectiveRoutine, routineExecutionView, setRoutineEnabled, type EffectiveRoutine } from "../../lib/routineExecution";
 
 interface Payload {
   groupId: string;
@@ -40,6 +45,17 @@ export function RoutinesModal() {
   const closeModal = useUI((s) => s.closeModal);
   const payload = useUI((s) => s.modalPayload) as Payload | null;
   const groups = useProjects((s) => s.groups);
+  const executions = useRoutineExecutions((state) => state.items);
+  const executionError = useRoutineExecutions((state) => state.error);
+  // The run state is read while somebody looks at it: on open, on each
+  // `routine://changed`, and on the slow safety tick (`lib/liveRead.ts`).
+  useEffect(() => {
+    if (!nativeQueueScheduling()) return;
+    return startWindowLiveRead({
+      read: () => useRoutineExecutions.getState().load(),
+      events: [on.routineChanged],
+    });
+  }, []);
   const terminal = useProjects((s) => s.terminal);
 
   const groupId = payload?.groupId ?? "";
@@ -50,9 +66,9 @@ export function RoutinesModal() {
   // `groups` in the deps: it is layoutJson that changes when someone writes.
   const all = useMemo(() => {
     const g = groups.find((x) => x.id === groupId);
-    if (!g) return [] as RoutineDef[];
-    return useProjects.getState().layoutOf(groupId).canvas?.routines ?? [];
-  }, [groups, groupId]);
+    if (!g) return [] as EffectiveRoutine[];
+    return (useProjects.getState().layoutOf(groupId).canvas?.routines ?? []).map((routine) => effectiveRoutine(groupId, routine, executions));
+  }, [groups, groupId, executions]);
   const routines = useMemo(
     () => all.filter((r) => r.terminalId === terminalId),
     [all, terminalId],
@@ -99,7 +115,7 @@ export function RoutinesModal() {
     commitCanvasExternal(groupId, (c) => ({
       ...c,
       routines: (c.routines ?? []).map((r) =>
-        r.id === id ? { ...r, enabled: !r.enabled } : r,
+        r.id === id ? setRoutineEnabled(r, !all.find((row) => row.id === id)?.enabled, Date.now()) : r,
       ),
     }));
 
@@ -123,6 +139,7 @@ export function RoutinesModal() {
 
   return (
     <Modal title={t("Rotinas e gatilhos — {name}", { name: label })} onClose={requestClose} wide>
+      {executionError ? <p className="hint hint--error" role="alert">{t("Não foi possível atualizar o estado das rotinas. A última informação conhecida foi mantida.")}</p> : null}
       <p className="hint">
         {t("Um prompt agendado só é entregue com o terminal ")}
         <strong>{t("rodando e ocioso")}</strong>
@@ -214,7 +231,7 @@ function RoutineRow({
   onToggle,
   onRemove,
 }: {
-  r: RoutineDef;
+  r: EffectiveRoutine;
   /** Name of the CLI, when the row is not the focused terminal's. */
   owner?: string;
   onToggle: () => void;
@@ -222,6 +239,7 @@ function RoutineRow({
 }) {
   const t = useT();
   const following = routineNextAt(r);
+  const view = routineExecutionView(r);
   const overdue = following <= Date.now();
   return (
     <div className={`routine ${r.enabled ? "" : "is-paused"}`}>
@@ -232,11 +250,13 @@ function RoutineRow({
           {r.once
             ? t("uma vez em {min} min", { min: r.everyMin })
             : t("a cada {min} min", { min: r.everyMin })}
-          {r.enabled ? "" : t(" · pausada")}
+          {view.label ? t(view.label) : ""}
         </strong>
         <small>{r.text}</small>
         <small className="routine-when">
-          {!r.enabled
+          {view.message ? t(view.message) : r.awaitingApproval
+            ? t("criada por um agente: aguarda a sua aprovação (ligue para aprovar)")
+            : !r.enabled
             ? t("pausada — não dispara")
             : overdue
               ? // The scheduler's rule: never interrupts work in progress.

@@ -20,7 +20,22 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "validate:release": "node scripts/release-validation.mjs",
     "smoke": "node scripts/smoke.mjs",
+    "test:native-work": "node scripts/native-work.mjs",
+    "test:native-chat": "node scripts/native-chat.mjs",
+    "test:native-diagnostics": "node scripts/native-diagnostics.mjs",
+    "test:native-costs": "node scripts/native-costs.mjs",
+    "test:native-rendering": "node scripts/native-rendering.mjs",
+    "test:native-terminal-memory": "node scripts/native-terminal-memory.mjs",
+    "test:native-mcp": "node scripts/native-mcp.mjs",
+    "test:native-scheduler": "node scripts/native-scheduler.mjs",
+    "test:native-policy": "node scripts/native-policy.mjs",
+    "test:native-legacy-flow": "node scripts/native-legacy-flow.mjs",
+    "test:native-flows": "node scripts/native-flows.mjs",
+    "test:native-flow-recovery": "node scripts/native-flow-recovery.mjs",
+    "test:native-task-evidence": "node scripts/native-task-evidence.mjs",
+    "test:packaged-install": "node scripts/packaged-install.mjs",
     "tauri": "tauri",
     "app": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/yard.ps1",
     "app:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/yard.ps1 -Installer",
@@ -102,9 +117,14 @@
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "allowScripts": {
     "esbuild@0.28.2": true
+  },
+  "overrides": {
+    "mermaid": {
+      "katex": "$katex"
+    }
   }
 }

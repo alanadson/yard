@@ -9,6 +9,7 @@ import { GROUP_DEFAULT_NAME, GROUP_HEAD } from "./canvasGroups";
 import { setActiveLang } from "./i18n";
 import {
   canonicalCanvas,
+  clampRoutineInterval,
   connectionGeometry,
   normalizeParsedCanvas,
   hitItem,
@@ -139,6 +140,25 @@ describe("normalizeCanvas", () => {
       routines: [routine(), { id: "x", terminalId: "t1", text: "a", everyMin: 0, enabled: true, createdAt: 0 }],
     })!;
     expect(out.routines).toHaveLength(1);
+  });
+
+  /**
+   * Five minutes is the floor of a routine (the native scheduler clamps the
+   * same way): a board saved with a one-minute routine keeps its routine, at
+   * the floor, instead of losing it or firing a paid turn every minute.
+   */
+  it("clamps a routine below the five-minute floor up to it, never dropping it", () => {
+    const out = normalizeCanvas({
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: {},
+      items: [],
+      routines: [routine({ id: "fast", everyMin: 1 }), routine({ id: "slow", everyMin: 45 })],
+    })!;
+    expect(out.routines?.map((r) => [r.id, r.everyMin])).toEqual([
+      ["fast", 5],
+      ["slow", 45],
+    ]);
+    expect(clampRoutineInterval(2)).toBe(5);
   });
 
   it("does not create the new fields when there is nothing in them", () => {

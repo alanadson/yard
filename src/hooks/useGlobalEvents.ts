@@ -8,12 +8,15 @@
 import { useEffect } from "react";
 import { notify } from "../lib/notifications";
 
-import { classifyPrompt, TAIL_CAP } from "../lib/blocked";
+import { TAIL_CAP } from "../lib/blocked";
 import { AsyncDisposer } from "../lib/disposables";
 import { isFrontOnScreen } from "../lib/frontTab";
 import { t } from "../lib/i18n";
 import { ipc, on } from "../lib/ipc";
+import { createNativeHookReceiver, applyInferredIdle } from "../lib/nativeHooks";
+import { refreshNativeQueue } from "../lib/queueDelivery";
 import { shouldNotify } from "../lib/notifyAgent";
+import { usageProviderOf } from "../lib/usageNudge";
 import { useChanges } from "../stores/changesStore";
 import { useEditor } from "../stores/editorStore";
 import { notesCenterVisible } from "../stores/notesStore";
@@ -71,6 +74,17 @@ export function useGlobalEvents() {
       }
       if (subscriptions.disposed) return;
 
+      const nativeHooks = createNativeHookReceiver();
+      await subscriptions.add(on.queueChanged(() => { void refreshNativeQueue(); }));
+      if (subscriptions.disposed) return;
+      const nativeHookLink = on.nativeHook((report) => { nativeHooks.accept(report); });
+      subscriptions.add(nativeHookLink);
+      try {
+        await nativeHookLink;
+        for (const report of await ipc.nativeHookSnapshot()) nativeHooks.accept(report);
+      } catch (error) { console.warn("[yard] native hook reconciliation failed", error); }
+      if (subscriptions.disposed) return;
+
       // 2. Resource HUD.
       await subscriptions.add(
         on.resources((tick) => {
@@ -112,14 +126,15 @@ export function useGlobalEvents() {
               console.warn("[yard] falha ao ler a cauda do PTY", e);
             }
           }
-          const asking = classifyPrompt(tail);
+          const inferred = applyInferredIdle(p.id, tail);
+          if (inferred.kind === "working") return;
+          const asking = inferred.kind === "permission" || inferred.kind === "blocked" ? inferred : null;
 
-          if (asking) useTerminals.getState().markBlocked(p.id, asking.ask);
-          else useTerminals.getState().markFinished(p.id);
-
-          // Usage changes exactly when an agent finishes a turn — recheck
-          // right away instead of waiting for the 60 s cycle.
-          useUsage.getState().nudge();
+          // Usage changes exactly when an agent finishes a turn: recheck the
+          // provider it spends right away instead of waiting for the cycle
+          // (once a minute per provider, never for a hidden window).
+          const provider = usageProviderOf(useProjects.getState().terminal(p.id));
+          if (provider) useUsage.getState().nudge(provider);
           const { prefs } = useUI.getState();
           // Two reasons, two switches (`lib/notifyAgent.ts`): whoever turns
           // off the "finished" balloon is still told about the agent stopped

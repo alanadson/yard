@@ -9,6 +9,21 @@
 import { describe, expect, it } from "vitest";
 
 import { composerAction } from "./action";
+import * as action from "./action";
+
+it("admits only one composer submission until its native acknowledgment completes", () => {
+  const gate = action.createComposerSubmissionGate();
+  expect(gate.claim()).toBe(true);
+  expect(gate.claim()).toBe(false);
+  gate.release();
+  expect(gate.claim()).toBe(true);
+});
+
+it("keeps newer text and a newly selected destination open when an earlier queue save is acknowledged", () => {
+  expect(action.queuedDraftDisposition("Original request", "Newer request", "old", "old")).toEqual({ clear: false, close: false });
+  expect(action.queuedDraftDisposition("Original request", "Original request", "new", "old")).toEqual({ clear: true, close: false });
+  expect(action.queuedDraftDisposition("Original request", "Original request", "old", "old")).toEqual({ clear: true, close: true });
+});
 
 describe("composerAction", () => {
   it("sends when the CLI is ready", () => {

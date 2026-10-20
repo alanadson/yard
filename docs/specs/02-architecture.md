@@ -213,12 +213,34 @@ page's; an HMR copy of `ipc.ts` keeps the token and gets a link of its own.
 | `resources://tick`    | `{ totalRssMb, perPty }`      | Every ~2 s while the main window is on screen, for the HUD and the supervisor |
 | `window://shown`      | `{ shown: boolean }`          | Every change of whether the main window is on screen (hidden to the tray or minimized is not) |
 | `bridge://request`    | JSON line from the `yard` CLI | Request from an agent over the bridge (answered via `bridge_respond`) |
+| `queue://changed`     | `()`                           | Any queue write that changed `queue.items` (enqueue, patch, retry, remove, reconciliation, delivery state) |
+| `flow://changed`      | `()`                           | A native flow run record changed                                      |
+| `routine://changed`   | `()`                           | A routine run record (`routine.run.*`) changed                        |
+| `checkpoint://notices` | `()`                          | The pending checkpoint notices changed (a failure recorded or acknowledged) |
+
+The four automation topics come from one place: `kv_set`/`kv_delete` skip
+writes that would not change the stored value and note the ones that did, and
+whoever ran the work (the IPC command wrapper, the scheduler tick or lane job,
+the bridge flow CLI) emits the matching topics. The page reads the snapshot
+once at boot, again on each topic and when the window comes back on screen,
+and keeps a 30 s safety read only while the window is shown
+(`src/lib/liveRead.ts`).
 
 **Golden rule:** the UI **never** assumes that creating/destroying a component
 creates/destroys a process. Mounted an `XTermView` → call `attach_pty`; if
 scrollback came back, just repaint; if `None` came back, then and only then
 `spawn_pty`. Closing a pane ≠ killing the process (that is an explicit action).
 This is what makes HMR, reload and UI restarts painless.
+
+Tabbed panes keep all live or auto-starting `XTermView` instances attached.
+Stopped tabs load their terminal history only when selected, and each pane
+retains at most its two most recently selected stopped views. Selecting a third
+stopped tab disposes the oldest stopped view without deleting its history or
+touching a process. Selecting an evicted tab reconstructs it from the backend's
+saved scrollback; its old selection and scroll position are not retained.
+This bounds the cost of browsing stopped sessions rather than allocating a
+20,000-line xterm buffer for every saved tab at boot. Canvas cards currently
+keep their existing view lifecycle.
 
 ### 4.1 The agent↔app bridge
 
@@ -228,6 +250,17 @@ back) → `bridge://request` event → `src/lib/bridge.ts` answers via
 workspace state lives in the frontend, and duplicating it in the backend would
 create two truths. The connections drawn on the canvas are the access control:
 an agent only reaches what is wired to it.
+
+Both the named pipe and the optional loopback TCP transport authenticate the
+exact terminal ID and its process credential before creating a pending request
+or emitting an event. A new `YARD_TOKEN` is generated with the operating
+system's cryptographic random provider for each process spawn. It is registered
+before launch, removed before dispatch and revoked on failed startup, requested
+termination or natural exit. Restart keeps the terminal ID and issues a new
+credential. Custom environment values cannot override this identity pair.
+SSH launch arguments store markers; expansion receives the same credential
+as the local process environment. `bridge_remote` returns the listener port
+and a compatibility marker, never an app-wide accepted credential.
 
 **The client.** `yard.cmd` (cmd and PowerShell callers) and `yard` (Git Bash)
 in `<data>\bin` only forward, as `%*` and `"$@"`, to a small native console
@@ -280,21 +313,194 @@ alone. The choice is normally made long before the window asks for a
 terminal. When a terminal wins the race (the first run of a freshly written
 exe, while the antivirus looks at it), the choice still in flight is dropped
 and that session keeps the shims the setup thread checked (the earlier
-session's client or PowerShell); the next start finds the exe in place and
+session's compatible client or PowerShell); the next start finds the exe in place and
 already scanned, so its probe is fast and it adopts the client.
 
-**The limit of that gate.** The requester identifies itself by the
-`YARD_PTY_ID` the app exported into that terminal's environment — and the
-environment is something the child process controls. An agent that rewrites
-the variable before calling the CLI takes on another card's address and, with
-it, that card's connections. Closing that hole would require matching the PID
-at the pipe's end against the PTY's process tree; until that exists, it is
-worth stating what the bridge promises: it protects against **mistakes** — an
-agent that gets lost and tries to talk to someone it shouldn't gets a
-`"<name>" não está conectado a você` ("<name>" is not connected to you) —, not
-against an adversarial agent. What sits on the other side of the gate is other
-terminals of the same user, on the same machine, all already running with that
-user's privileges.
+A native client from another build is replaced by the updated PowerShell fallback
+before any terminal may seal the launchers. This prevents pre-authentication
+clients from breaking hooks during the first startup after an update.
+
+**The limit of that gate.** Changing `YARD_PTY_ID` without the matching
+credential cannot borrow another card's connections. Stopped terminal rows
+have no active credential. The bridge authenticates possession of a process
+credential, not the operating-system identity of the pipe peer. Processes
+with the same user's privileges or remote root access may be able to read
+another process's environment. Obtaining that other process's credential
+remains outside this boundary; the bridge is not a sandbox for same-user
+processes or a remote machine administrator.
+
+### 4.2 Durable work requests
+
+`work.rs` stores task requests independently of a terminal's lifetime. Schema v9
+adds `work_tasks`, `work_task_events` and `work_task_deliveries`. Each task retains the original request,
+acceptance criteria, project and terminal references, queue identity, latest
+delivery, revision and timestamps. Mutations and timeline entries commit in one
+SQLite transaction. An outdated revision returns a structured `conflict` error.
+
+The work panel is available through Search as **Tarefas e entregas**. Creating a
+task requires a title and request. Sending it to a registered agent atomically
+records the queued task and its prompt. Repeating the same enqueue identity
+returns the existing operation. Before input reaches ConPTY, `task_claim`
+checks the task, assigned terminal and persisted sending queue head.
+
+The native commands are `task_create`, `task_list`, `task_get`, `task_events`, `task_deliveries`,
+`task_transition`, `task_enqueue`, `task_retry_delivery`, `task_claim`, `task_submit`, `task_link` and `task_approve`.
+They run on the database lane. Lists use a bounded page and an `(updatedAt, id)`
+cursor, with stable ordering when timestamps match.
+`task_list` also accepts `attention: true`, selecting `blocked`, `failed` and
+`in_review` directly in SQLite. `attentionTotal` counts these states across the
+complete ledger, independently of the selected page. The work panel preserves
+loaded attention pages while refreshing their current status, discards completed
+work and ignores responses from superseded filters.
+
+An assigned agent can inspect and report its work:
+
+```text
+yard task show TASK_ID
+yard task history TASK_ID
+yard task link TASK_ID --file reference.json
+yard task submit TASK_ID --attempt ATTEMPT_ID --file delivery.json
+yard task submit TASK_ID --attempt ATTEMPT_ID --stdin
+```
+
+The delivery document is:
+
+```json
+{
+  "delivery": {
+    "summary": "Compatibility verified",
+    "artifacts": ["src/api.ts"],
+    "checks": [
+      { "name": "Regression suite", "passed": true, "evidence": "test-result.txt" }
+    ]
+  },
+  "evidence": { "criterion-1": ["test-result.txt"] }
+}
+```
+
+Use the criterion identities returned by `show`. CLI reads and submissions
+require an explicit terminal assignment. Submission moves work to `in_review`.
+Reports for queued agent work must identify the attempt received in the prompt
+(`links.queueItemId` in `show`), through `--attempt` or `attemptId` in the JSON.
+An earlier attempt cannot submit a report for a later execution. The CLI never
+fills this value from the latest task automatically. Manual work without a
+queue identity keeps the existing submission contract.
+The reported checks and references are evidence for the reviewer to inspect.
+Explicit approval in the work panel requires evidence for every criterion and
+passing validation with references. Reopening a review retains its previous
+report and evidence. Submission alone does not complete work.
+
+Each accepted submission records a separate delivery snapshot and the acceptance
+evidence from that revision. A corrected report cannot overwrite an earlier
+report. The work panel exposes previous snapshots under **Histórico de entregas**.
+When upgrading a database without history, the most recent saved report is
+recovered once; reports overwritten before this feature cannot be reconstructed.
+
+The active `executorTerminalId` is separate from the list of participants who
+can read the request and history. Only that executor can submit a CLI report.
+Closing its process marks unsubmitted running work as `blocked` and records an
+`interrupted` event. Closing a former participant does not interrupt current work.
+Startup recovery runs in the application setup callback, after single-instance
+ownership, and marks unfinished agent work for attention without replaying input.
+Manual work with no agent assignment and reports awaiting review are preserved.
+Queued work whose persisted prompt is missing becomes blocked with `queue_missing`
+and requires review. Recovery never reconstructs or automatically resends it.
+Running-work recovery commits before inspecting the queued prompt mirror, so an
+unreadable queue cannot leave interrupted execution marked as running. An invalid
+queue snapshot remains untouched and its recovery error is logged.
+An explicit resend from the work panel requires confirmation, keeps the original
+request and evidence, replaces its previous queue prompt and records `resumed`.
+Explicit retry of an uncertain delivery reserves a fresh queue identity, rejects
+the previous claim and retains the original request. Removing a pending linked
+prompt cancels its queued or blocked task before updating the frontend mirror;
+removing a stale prompt does not cancel work already running or awaiting review.
+
+`queue_patch` executes on the ordered database lane and applies the caller's
+observed before/after lists inside an immediate SQLite transaction. Items the
+caller never observed remain in the queue. Changed records and FIFO order require
+the observed version, with idempotent repeated edits accepted only when their
+content matches. Duplicate identities, malformed records and per-terminal
+capacity overflow are rejected before commit. Store mutations, delivery
+reservations, acknowledgements and linked-task synchronization use this contract.
+The frontend merges acknowledged records while preserving later local edits.
+`enqueue` resolves only after native persistence acknowledges the prompt. The
+composer and agent CLI callers await that result before claiming acceptance or
+clearing a draft. Failed persistence retains the request. While a queue save is
+pending, repeated composer submission is suppressed; an acknowledgement clears
+only the unchanged submitted draft and does not close a newly selected destination.
+Direct submission and manual handoff apply the same draft comparison after native
+acknowledgement. A newer draft stays open, and focus changes only when the original
+destination still owns the unchanged request. Focus resolves the current terminal
+position instead of using the group and slot captured before delivery.
+
+Reviewed plain retries use `queue_retry` with the observed attempt timestamp and
+a fresh identity. Native persistence retains the authoritative request body and
+FIFO position, and rejects a changed attempt, a pending item or linked task.
+`queue_remove` also checks the reviewed timestamp for an interrupted delivery;
+an active reservation cannot be removed without that observation. These commands
+accept a persisted `sending` item after the renderer restores it as `uncertain`,
+so reloading does not strand the recovery controls. Linked prompts use the task
+transition first, and repeated removal of an already absent item is idempotent.
+Queue removals and replaced attempts record `queue.retired.<id>` in the same
+transaction. Later queue patches or task enqueues refuse an ended identity,
+including across reloads and backups, instead of reconstructing consumed work.
+
+Prompt injection sends `write_pty` with an explicit `submitPrompt` boolean. Rust
+frames multiline pastes, flushes the text and completes Enter under one writer
+lock. The operation continues after a WebView reload and cannot interleave a
+second writer between paste and submission. `false` retains manual submission;
+omitting the field preserves the raw keystroke protocol.
+
+Codex token records retain the reported counters when pricing validation fails.
+Known counters must be unsigned integers, cache categories must fit within raw
+input, and each cumulative increment must satisfy the same budget. A malformed
+previous total invalidates the next dependent increment even outside the displayed
+day. Such usage remains visible but has no dollar estimate; known custom rates
+cannot turn an inconsistent provider record into a valid cost.
+
+Queue and routine delivery runs in the native scheduler. Pipeline stages also
+belong to the backend and retain their own durable execution record. Renderer
+reloads reconcile these records without replaying input. Legacy preference
+adapters retain the prior frontend executors and conservative recovery.
+
+### Previous terminal output
+
+Starting from scratch preserves the previous active `.bin` before preparing the
+new session. `Scrollback::fresh` is fallible: it claims a unique archive name
+with an exclusive create, then moves the previous output there with a rename on
+the same volume, so no bytes are copied. Only when the rename is refused (for
+example, another program holds the file without delete sharing) is the output
+copied to a temporary file, synced and renamed into place before the active file
+is removed. Failure aborts before a child process is launched. Each terminal
+keeps its 5 newest archives; older ones are deleted when a new one is written.
+Resuming with `keepScrollback` retains the existing active output. Clearing the
+active output leaves earlier session archives available.
+
+**Histórico de saída** is available in Search and the terminal menu. The global
+view also discovers archives belonging to removed terminal cards. Preview reads
+at most 64 KiB from the end, starts at a UTF-8 boundary and removes terminal
+escapes for display. Export preserves the complete raw ANSI record or produces
+plain text; plain conversion is limited to 16 MiB. Larger records support raw
+export. Export writes and syncs a separate temporary file before replacing the
+destination, preserving an archived source referenced by an external hard link.
+
+`pty_archives`, `pty_archive_preview`, `pty_archive_export` and
+`pty_archive_delete` use the ordered `output-history` lane, independently of live
+terminal input. Archive names identify their terminal and creation time; reads,
+exports and removals validate that identity and accept regular files only.
+Incomplete temporary archives are excluded from discovery and backup.
+
+Removing a terminal for good (`forget_pty`) deletes its active `.bin` only; its
+archives stay discoverable in the global view. They are not kept forever: at
+startup, a background pass deletes archives older than 30 days (by the creation
+time in their name) whose terminal no longer exists in the workspace database.
+Archives of existing terminals follow only the 5-per-terminal rule. If the
+terminal list cannot be read, that pass deletes nothing. Users can also remove
+one selected record or preview records older than 30, 90 or 365 days and confirm
+their removal. The default selects no period. Current output and other terminals'
+archives are preserved when deleting a selected record. Manual backups include
+complete archive `.bin` files with the same inventory integrity and restore
+guarantees as the other managed files; automatic backups leave them out.
 
 ## 5. Persistence
 
@@ -302,11 +508,53 @@ user's privileges.
 %APPDATA%\Yard\
 ├── app.db                  # SQLite — structural state
 ├── scrollback\{ptyId}.bin  # append-only, compacted at 8 MB
+├── scrollback-archives\    # completed output of previous sessions (5 per terminal)
 ├── partituras\{name}.json  # scores: saved group arrangements that can be reapplied
 ├── bin\                    # yard CLI (shims, yard-cli-<hash>.exe, yard.ps1) + bridge manual (YARD-BRIDGE.md)
 ├── logs\yard.log           # tracing + daily rotation
-└── backups\                # .zip export (db + scrollbacks)
+├── checkpoints\            # local task recovery archives and manifests
+├── attachments\            # durable pasted images referenced by prompts
+└── backups\                # .zip exports: manual (everything) and automatic yard-auto-* (light)
 ```
+
+A manual backup export carries everything: the database, current and archived
+output, scores, checkpoints and attachments. Automatic backups (`yard-auto-*`,
+kept several times over by their retention count) are light: `app.db` (with the
+preferences), attachments and scores, without terminal output, archived
+sessions or code checkpoints. Entries that are already compressed (`.zip`,
+`.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`) are stored instead of deflated again.
+
+Backup export includes a versioned `manifest.json` with the byte count and
+SHA-256 digest of every owned file, and a `folders` list naming the owned
+folders the backup covers. A restore replaces exactly those folders (plus
+`app.db`) and leaves the others as they are, so restoring a light backup keeps
+the live output and checkpoints. A manifest without `folders` (written before
+the list existed) covers every owned folder, and an archive without a manifest
+replaces only the folders it carries. Manual backups use inventory version 1;
+light backups use version 2, which builds from before the `folders` list refuse
+instead of emptying the folders it leaves out. Import accepts legacy archives without a
+manifest, validates SQLite integrity and migrates the staged workspace before
+arming a restore, and rejects unowned
+paths or names that alias on Windows. Validation runs before extraction.
+Metadata JSON entries are limited to 16 MiB, other entries to 2 GiB, the
+expanded archive to 4 GiB and the inventory to 100,000 entries. A failed import
+retains any previously validated pending restore. Adoption prepares copies
+before swapping files and records a durable journal. Interrupted, uncommitted
+swaps are rolled back on the next boot; `restore-previous` and `app.db.bak`
+retain recovery copies. A failed recovery that leaves a journal blocks opening
+the disk database, rather than creating an empty replacement over recoverable
+data. New archives record their source data root. After integrity validation,
+managed image references in staged preferences, notes, workspace metadata, work
+requests and scores are rebased to the restore destination. External project
+references are preserved. Legacy archives without a source root retain their
+existing references.
+
+SSH transport normalization treats quoted prompts and folder names as data.
+Only the generated environment prefix and its bridge forwarding are refreshed.
+If the optional TCP listener is unavailable, that forwarding and credential
+prefix are omitted so the remote agent can still launch. Maintenance of legacy
+score files is best-effort and cannot replace a valid workspace connection with
+an empty database.
 
 Base schema of `app.db` (versioned migrations in `persistence/db.rs`):
 
@@ -403,6 +651,299 @@ count also means the consumer must resynchronize: invalidate root diffs,
 refresh loaded directories and clean open documents, mark dirty drafts stale,
 and age or repeat the file index. Shared directory exclusions retain explicit
 watcher/index differences.
+
+### Reported cache duration in cost estimates
+
+Codex records total input including cache reads and reported cache writes. Token normalization first
+calculates the increment against raw cumulative totals, then separates cached
+reads and writes from ordinary input. This keeps the category totals disjoint and prevents
+charging cached tokens at both input and cache rates, matching the
+[Codex usage formatter](https://github.com/openai/codex/blob/main/codex-rs/tui/src/token_usage.rs)
+and the [OpenAI caching calculation](https://developers.openai.com/api/docs/guides/prompt-caching).
+
+Custom rates are stored in `kv` under `pricing.customRates.v1`, separately from
+the official reference. `pricing_settings_save` validates all five USD-per-million
+categories and commits a compare-and-set revision in an immediate transaction.
+Rates become active only after that transaction succeeds. Invalid persisted rates
+produce a read error and are retained, rather than rewritten. Startup loads the
+acknowledged settings before background services begin. Session reads reprice the
+cached token ledger, daily history captures one rate snapshot for its result and
+new live events use the active rates. Removing an override returns that exact
+model to the reference table, or to an unpriced value when no reference exists.
+Release overrides also apply to optional dated snapshots of that release; an exact
+dated override takes precedence. Other releases do not inherit the price. Codex
+session scans retain each turn's model across incremental reads, so a model change
+does not retroactively change the earlier turn's rates.
+
+The editor captures its reviewed revision when opened. A delayed earlier read
+cannot replace acknowledged settings, and a stale editor cannot silently adopt
+a newer revision. Custom rows are labelled separately and do not inherit official
+source or verification metadata. The costs panel identifies active custom rates.
+
+`pricing_reference` exposes the same rate table used by the estimator, including
+version, provider, currency, API scope and per-model provenance. Current rows were
+checked on 2026-10-06; three Claude 3 legacy rows are marked as inherited from
+2026-08-12 instead of receiving a current verification date. Cache-read rates are
+model-specific. Explicit release IDs and optional date suffixes match the table;
+bare ambiguous family names do not select a later release's price. The frontend
+reference store preserves the last acknowledged snapshot on errors and ignores
+superseded reads. Its modal can be searched and returns to its parent costs panel.
+
+Accepted Claude usage records retain `usage.cache_creation.ephemeral_1h_input_tokens`
+alongside total cache writes, per model and per message ID. Session summaries,
+incremental daily history and the live tail price reported one-hour writes at twice
+base input cost, while the existing five-minute reference remains 1.25 times input.
+The one-hour subtotal remains part of total cache writes. Inconsistent duration
+totals remain unpriced. Duplicate API messages do not add duration counts twice.
+
+Records without duration metadata retain the existing five-minute reference;
+their actual cache lifetime cannot be reconstructed. These are reference-price
+estimates, with unknown model prices represented as missing values and aggregate
+costs presented as lower bounds. The public pricing and duration fields are
+documented by the [Claude pricing reference](https://platform.claude.com/docs/en/about-claude/pricing)
+and [prompt caching documentation](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).
+
+### Agent integration diagnostics
+
+`agentCapabilities` describes the adapters implemented in Yard separately from
+executable availability. Resume and continuation follow explicit catalog metadata;
+transcript discovery, MCP configuration management, native hook injection and
+account-limit reads describe the local Windows environment. Local catalog paths
+and versions do not establish availability inside WSL or SSH. Settings shows this
+scope beside the selected agent's integration table and offers an explicit refresh.
+
+Agent discovery keeps the last catalog on failure, exposes pending and error
+states and ignores results from superseded reads. A newer successful discovery
+clears the error and supplies the current executable and version diagnostics.
+
+### Native CLI hook state
+
+Authenticated Claude and Codex hook requests update native automation state before
+their acknowledgment. A closed or reloading page cannot delay the provider's hook.
+The event stream and boot snapshot carry monotonic sequence numbers and the
+original event time. A late snapshot cannot replace a newer permission, and an
+old completion cannot become a fresh completion simply because the page reloaded.
+Process startup and exit discard the previous native hook state.
+
+The frontend applies native work and permission before inferring state from
+terminal silence. A repeated attach to the same PID preserves that information;
+a newly started process clears the previous process's state. The isolated native
+check unloads the page, invokes the real authenticated CLI, and confirms hook
+acknowledgments and the subsequent native snapshot.
+
+`yard task show`, `history`, `link` and `submit` also execute natively. The authenticated
+terminal must belong to the task's explicit assignments. Submission additionally
+checks the current executor and exact attempt, retains immutable delivery history
+and enters human review. A missing page cannot block the agent's request, report
+or history reads. Workspace and canvas commands retain their frontend dispatcher.
+
+Task links retain typed `front`, `flow`, `checkpoint`, `diff` and `pull_request`
+references with an ID, optional root and display label. `task_link` requires the
+current task revision; native CLI linking requires the current executor. Pull
+request references accept HTTPS review URLs. Checkpoint and diff navigation use
+the saved directory rather than the active project's directory. Removed fronts
+remain recorded but cannot be opened.
+
+Both bridge transports share 64 connection slots. Incomplete request reads and
+unconsumed replies expire after five seconds. A slot remains owned through the
+authenticated request and is returned when the connection closes.
+
+### Native queue delivery ownership
+
+The native preference transport submits a queue identity and destination to
+`queue_dispatch`. Rust reads the authoritative head, commits a `sending`
+reservation, claims its exact managed task, writes the complete prompt and
+submission through one PTY operation, and only then removes and retires that
+identity. The command shares the destination's input lane, while database locks
+cover only the short persistence operations. Independent queue entries survive
+every boundary. Invalid task references refuse persistence.
+
+Reservations carry `owner: "native"`. A renderer reload preserves an active
+native reservation and polls `queue_read` to reconcile its outcome without
+replaying input. The in-memory operation registry distinguishes an active write
+from a finished operation whose acknowledgment could not be recorded. The latter
+requires review; native process startup also changes unfinished reservations to
+`uncertain`. A failed managed input blocks only its matching execution attempt.
+Legacy preference adapters retain the existing renderer delivery contract.
+
+Queue selection runs in the native process, including while the page is
+unloaded. The loop keeps a two-second cadence only while work is pending
+(queued items without a delivery, an active flow run, or a due routine waiting
+on a live terminal); otherwise it waits on a condition variable until the next
+routine deadline, at most 30 s, and is woken at once by IPC commands that
+changed the queue, a flow or the pause, by `save_workspace`, by the bridge
+flow CLI and by hook, idle and exit events (`scheduler::next_wait`,
+`scheduler::Wakeup`). `execution_resources` is skipped while the queue is
+empty, and a repeated loop error is logged once until it changes or clears. One eligible head per terminal enters its existing
+input lane. Pending lane jobs keep their identities reserved and the current
+dispatch budget limits simultaneous input jobs to two. The configured global
+agent limit (one through sixteen, default two) also counts active agent turns
+and pending input jobs. A live executor with a durable task still in `running`
+retains its slot and remains unavailable for automatic delivery until an accepted
+report, cancellation or interruption changes that task state. Quiet output or a
+completion hook alone cannot release an unreported managed execution.
+Directory protection is enabled by default: canonical
+initial working directories are held by active turns and pending jobs, and
+selection reserves only one head per free directory.
+Unconfirmed deliveries retain their live terminal's slot and directory until
+explicit queue review, even when the readiness heuristic considers it idle.
+Jobs recheck admission before and after checkpoint preparation. These limits control automatic queue,
+routine and native flow execution (a flow stage only gets the slots left by
+agents already busy with automation), and trigger prompts, which travel
+through the queue tagged `source: "trigger"`; direct user input remains
+available.
+
+**Automation pause.** The kv record `automation.paused`
+(`{"reason":"budget"|"quota"|"user","at":<ms>}`; anything that is not a JSON
+object reads as running) stops every automatic sender. The native scheduler
+delivers no queue item and enqueues no routine occurrence (queued work stays
+queued), `flows::schedule` starts no new stage (a running one is still
+observed), and the front end refuses trigger asks and the agent-to-agent
+commands of the `yard` CLI. The page writes it when the daily budget is
+exceeded (`budgetPauseAutomation`, default on) or when a provider's five-hour
+window reaches `quotaPausePct` (default 90); only the user resumes it, from the
+status bar, and a resumed reason does not pause again that local day
+(`automation.resumedToday`). Agents without
+native completion hooks use the existing quiet-output readiness heuristic.
+Readiness combines live process
+state, recent input and output, native hooks and a bounded permission-prompt scan.
+The native adapter's frontend timer reconciles state without dispatching work;
+legacy adapters retain their prior renderer scheduler.
+
+The same native timer reads saved routine definitions. A due routine on a ready
+terminal with an empty queue reserves one occurrence and its queue request in
+one SQLite transaction. Execution records use definition-specific identities
+under `routine.run.*`; they supplement the canvas instead of overwriting edits.
+Delivery acknowledgment records `lastRunAt` in the transaction that retires the
+queue request. Uncertain occurrences block automatic repetition and retain the
+explicit reviewed retry contract. Pending occurrences are cancelled when their
+definition is paused, removed, replaced or its group is suspended. Repeating
+occurrences cancelled by the user wait for the next interval. A consumed one-time
+routine must be explicitly rearmed with a fresh deadline. Repeating routines
+run at least five minutes apart (`routine_due` clamps a smaller `everyMin`),
+and a repeating routine missed by more than one full interval while the app was
+closed is re-armed at startup instead of being caught up; a one-time reminder
+is still delivered. `routine_snapshot`
+reports the current execution result; the native frontend reads it only while
+the routines sheet is open (on `routine://changed`), while legacy adapters
+retain their prior routine timer.
+
+Retired queue identities live in the `queue_retired` table (pruned after 30
+days at boot, where saved `queue.retired.*` kv rows are moved into it), a
+routine edit deletes the run record it superseded unless queued work still
+references it, the checkpoint notice history keeps its newest 200 entries,
+and `read_prefs` leaves out the internal prefixes `queue.retired.`,
+`native.flow.run.`, `routine.run.` and `checkpoint.notice.`.
+
+### Native pipeline execution
+
+`flows.rs` freezes the accepted request, stage definitions and labels in
+`native.flow.run.*` records. The native timer schedules one operation per flow on
+its executor's input lane. A stage's full briefing, output baseline, process
+identity and unique attempt are committed before its stamp reaches ConPTY.
+Database locks are released during input. Process identity includes both PID
+and creation time; a recycled PID cannot continue an earlier execution.
+
+`flow_start`, `flow_snapshot`, `flow_cancel`, `flow_resume` and `flow_dismiss`
+provide the interface contract. A typed first stage is appended and submitted
+on the same input lane before subsequent keystrokes. Acceptance is acknowledged
+only after persistence. An unconfirmed response never causes an automatic extra
+Enter. The carry handed to the next stage keeps at most its last 8000
+characters. The interface reads authoritative snapshots on `flow://changed`, ignores superseded reads
+and preserves the current language for generated stage labels.
+
+The task panel can start a connected pipeline with `taskId` and `taskRevision`.
+Acceptance atomically binds its original request, executor and flow reference.
+`links.executionId` identifies the task execution independently of individual
+stage delivery attempts. Every reviewed resume gets a new execution ID, even
+when another interruption occurs before input. Pipeline-owned interrupted work
+cannot bypass review through the queue API, and another running task protects
+its executor from pipeline acceptance. Cancellation propagates in both directions.
+
+The final briefing asks the executor to submit structured evidence with
+`yard task submit`. Finishing without that report records the received summary
+for human review with no claimed validation results or criterion evidence.
+Approval still requires evidence for every criterion and passing checks.
+
+Authenticated `yard flow run`, `stage`, `status` and `cancel` execute natively.
+Stage reads are assigned to the executor. Cancellation requires the executor
+or an existing canvas connection. Status uses the saved run even after its
+canvas definition changes. Other canvas commands retain their frontend routing.
+
+Stage completion requires output newer than its baseline and a ready process.
+Native hooks prevent advancement during work or permission requests; adapters
+without hooks retain the quiet-output heuristic. The last summary is carried
+to the next stage. A permission question pauses the stage. An hour without
+output interrupts it for review instead of leaving silent work indefinitely.
+
+A renderer reload does not stop execution. Backend startup or executor loss
+preserves completed stages and marks the current stage interrupted. An
+unacknowledged write becomes uncertain and is never sent again automatically.
+Interrupted work reserves its live executor against automatic queue delivery
+until reviewed. Resumption requires explicit confirmation, an observed attempt
+and a fresh input window; it reissues only the current stage and retains the
+original request and prior evidence. Cancellation and replaced executions reject
+late acknowledgments. Dismissing a finished result persists its hidden state
+without deleting the identity needed to reject stale actions.
+
+### MCP configuration context
+
+Project and local MCP mutations capture their source project. Their completion
+can refresh or report an error only while that project remains selected. A new
+project clears the previous project's rows immediately; a failed refresh within
+the same project keeps its last successful listing. User-scope mutations refresh
+the currently selected project because their configuration is shared.
+
+Editors capture both the source root and a selection generation. Delayed secret
+reads cannot replace a newer editor. Saving a project-scoped form after changing
+projects refuses the write and preserves the form for review. The native MCP
+check holds a real save acknowledgment, switches projects, and verifies both
+configuration files and the visible listing after the acknowledgment completes.
+
+The explicit connection check starts the selected local stdio command or opens
+its configured Streamable HTTP endpoint. It negotiates initialization, sends
+`notifications/initialized`, and reads the advertised tool list without calling
+tools. Tool pagination is bounded to 32 pages and each message to 64 KiB. The
+connection has a ten-second deadline. Stdio children belong to a Windows Job
+Object and are reaped on completion or failure. HTTP requests retain the negotiated
+session and protocol headers, accept JSON or SSE responses, and attempt session
+termination with a bounded DELETE. Redirects are disabled. Failures return fixed
+codes rather than remote bodies or configuration secrets. Configuration refreshes
+invalidate the displayed diagnostic. Legacy separate-endpoint SSE and WebSocket
+probes are not implemented by this check.
+
+Protocol behavior follows the [MCP lifecycle](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle)
+and [transport specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports).
+
+### Terminal chat topics and delivery recovery
+
+Each terminal owns seven durable topics in `chat.terminal.<terminalId>` preferences.
+Optional topic names retain their numeric CLI identity. Clearing messages preserves
+the chosen name. JSON and Markdown exports include only the selected topic and its
+attachment references, without copying unrelated conversations or attachment files.
+
+The request and its turn identifier reach SQLite before PTY input. Delivery advances
+from `sending` to `waiting` only after the input write completes. A failed write or
+interrupted process retains the request as `uncertain`; hydration also changes a
+saved `sending` reservation to `uncertain`. Reloading a still-live process preserves
+its matching reply reservation. `yard chat reply` must identify the exact terminal,
+topic and turn, including for a late reply after an unconfirmed write.
+
+Interruption sends Escape but does not assert that the provider stopped. The user
+reviews the terminal before releasing the reservation. Release restores the request
+as a draft only when there is no newer draft, retains the original transcript and
+never sends automatically. A reply received before release wins and is preserved.
+Malformed saved data blocks editing instead of replacing the transcript with a
+new conversation. Names, requests and exports travel with the existing backup.
+
+Topics can reference a task explicitly assigned to their terminal. Association
+checks the native assignment before persisting and refuses a choice made stale by
+a topic switch. Each subsequent request and reply retains its original `taskId`,
+so relinking a topic does not rewrite older work. The prompt points the agent to
+`yard task show`; chat replies never transition, submit or approve that task.
+The work panel derives related conversations from current associations and saved
+message references. Opening one selects its exact topic and reveals its owning
+card; a different pending topic or a removed terminal refuses navigation.
 
 ### Canvas item sizing
 

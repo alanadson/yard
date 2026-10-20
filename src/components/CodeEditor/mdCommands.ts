@@ -16,7 +16,7 @@ import { EditorSelection, Prec } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
 import { changedSpan } from "../../lib/diff";
-import { applyMd, blockOf, type BlockKind, type MdCommand } from "../../lib/mdedit";
+import { applyMd, blockOfLine, type BlockKind, type MdCommand } from "../../lib/mdedit";
 
 /** Runs one command against the view and puts the caret where it belongs. */
 export function runMd(view: EditorView | null, cmd: MdCommand): boolean {
@@ -40,7 +40,7 @@ export function runMd(view: EditorView | null, cmd: MdCommand): boolean {
 /** The block marker the caret is inside — the button the bar shows pressed. */
 export function blockAt(view: EditorView | null): BlockKind {
   if (!view) return "paragraph";
-  return blockOf(view.state.doc.toString(), view.state.selection.main.head);
+  return blockOfLine(view.state.doc.lineAt(view.state.selection.main.head).text);
 }
 
 /**

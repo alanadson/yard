@@ -43,6 +43,8 @@ import { isLive, useTerminals } from "../stores/terminalsStore";
 import { useProjects } from "../stores/projectsStore";
 import { useUI } from "../stores/uiStore";
 import { t } from "./i18n";
+import { nativeQueueScheduling } from "./prefs";
+import { ask } from "./confirmation";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -66,6 +68,27 @@ export interface FlowStartResult {
   message: string;
 }
 
+export function flowErrorText(error: unknown): string {
+  const code = error instanceof Error ? error.message : String(error);
+  const messages: Record<string, string> = {
+    FLOW_DELIVERY_UNCERTAIN: "A entrega da etapa ficou incerta. Confira o terminal antes de retomar.",
+    FLOW_PROCESS_INTERRUPTED: "O processo executor foi interrompido. Confira o terminal antes de retomar.",
+    FLOW_STAGE_STALLED: "A etapa ficou sem produzir saída por muito tempo. Confira o terminal antes de retomar.",
+    FLOW_ALREADY_RUNNING: "O agente ou o fluxo já pertence a uma execução. Aguarde, revise ou cancele esse fluxo antes de iniciar outro pedido.",
+    FLOW_EXECUTOR_NOT_RUNNING: "Inicie o agente executor antes de rodar o fluxo.",
+    FLOW_EXECUTOR_NOT_CONNECTED: "Conecte o agente ao cartão do fluxo antes de executá-lo.",
+    FLOW_ATTEMPT_CHANGED: "O fluxo mudou. Atualize seu estado e confira a etapa antes de continuar.",
+    FLOW_REVIEW_REQUIRED: "O fluxo mudou. Atualize seu estado e confira a etapa antes de continuar.",
+    FLOW_INPUT_INVALID: "Preencha um pedido válido e pelo menos uma etapa com instruções.",
+    FLOW_TASK_REQUEST_CHANGED: "O pedido da tarefa mudou. Atualize o painel antes de iniciar o fluxo.",
+  };
+  return messages[code] ? t(messages[code]) : code;
+}
+
+export function flowRunStageLabel(run: FlowRun, index: number): string {
+  return stageLabelOf(run.definition?.[index] ?? { label: run.stages[index]?.label, prompt: "" }, index);
+}
+
 function toast(message: string, kind: "info" | "error" = "info") {
   useUI.getState().showToast(message, kind);
 }
@@ -82,13 +105,14 @@ function notify(body: string) {
  * cannot walk: no stages, executor missing/stopped/already busy in a run,
  * or the flow itself already running.
  */
-export function startFlow(
+export async function startFlow(
   groupId: string,
   flow: FlowItem,
   task: string,
   opts: {
     terminalId: string;
     callerId?: string;
+    work?: { id: string; revision: number };
     /**
      * The intercepted Enter: the task is already sitting in the CLI's box, so
      * stage 1 is APPENDED to the same message and submitted with it — without
@@ -97,7 +121,7 @@ export function startFlow(
      */
     typed?: boolean;
   },
-): FlowStartResult {
+): Promise<FlowStartResult> {
   const st = useFlows.getState();
   const s = useProjects.getState();
 
@@ -159,6 +183,16 @@ export function startFlow(
     };
   }
 
+  if (nativeQueueScheduling()) {
+    try {
+      const accepted = await ipc.flowStart(groupId, flow.id, term.id, task, !!opts.typed, opts.callerId, opts.work);
+      st.begin(accepted);
+      return { ok: true, message: t('Fluxo "{name}" iniciado em "{term}", {n} etapa(s).', { name: flow.name, term: baseName(term), n: accepted.stages.length }) };
+    } catch (error) {
+      return { ok: false, message: t("Não foi possível iniciar o fluxo: {reason}.", { reason: flowErrorText(error) }) };
+    }
+  }
+
   const run: FlowRun = {
     flowId: flow.id,
     groupId,
@@ -196,7 +230,28 @@ export function startFlow(
 
 /** Asks a live run to stop after the current wait tick. */
 export function cancelFlow(flowId: string) {
+  const run = useFlows.getState().runs[flowId];
+  if (run?.owner === "native") {
+    void ipc.flowCancel(run.groupId, flowId, run.attempt ?? 0).then((run) => useFlows.getState().begin(run)).catch((error) => toast(flowErrorText(error), "error"));
+    return;
+  }
   useFlows.getState().requestCancel(flowId);
+}
+
+export function canResumeFlow(run: FlowRun): boolean {
+  return run.owner === "native" && run.phase === "interrupted";
+}
+
+export async function resumeFlow(run: FlowRun): Promise<void> {
+  if (!canResumeFlow(run)) return;
+  const confirmed = await ask(t("Retomar este fluxo reenviará a etapa atual e pode repetir trabalho. Confira o terminal antes de continuar."), {
+    title: t("Revisar e retomar fluxo"), kind: "warning", okLabel: t("Retomar etapa"),
+  });
+  if (!confirmed) return;
+  try {
+    const accepted = await ipc.flowResume(run.groupId, run.flowId, run.attempt ?? 0, true);
+    useFlows.getState().begin(accepted);
+  } catch (error) { toast(flowErrorText(error), "error"); }
 }
 
 /**

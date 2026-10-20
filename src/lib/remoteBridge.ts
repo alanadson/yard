@@ -34,6 +34,9 @@
 /** Where the shim lives on the other machine. */
 export const REMOTE_DIR = "$HOME/.yard/bin";
 
+/** Resolved by the native launcher; persisted commands never contain a credential. */
+export const BRIDGE_TOKEN_MARK = "{{YARD_BRIDGE_TOKEN}}";
+
 /** Heredoc delimiter. Must not appear inside the shim body. */
 const EOF = "YARD_SHIM_EOF";
 
@@ -95,7 +98,7 @@ export function remoteCommand(input: {
     prefix =
       `PATH=${REMOTE_DIR}:$PATH ` +
       `YARD_PTY_ID=${shQuote(input.bridge.ptyId)} ` +
-      `YARD_TOKEN=${shQuote(input.bridge.token)} ` +
+      `YARD_TOKEN=${shQuote(BRIDGE_TOKEN_MARK)} ` +
       `YARD_PORT=${port} `;
   }
 

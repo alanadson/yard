@@ -17,6 +17,7 @@
  */
 import type { TriggerAction, TriggerDef, TriggerEvent } from "./canvas";
 import { parseFlags } from "./bridgeCore";
+import { localDay } from "./costs";
 import type { TerminalRuntime } from "../stores/terminalsStore";
 import { t } from "./i18n";
 
@@ -31,9 +32,10 @@ export interface TriggerFire {
  * The loop guard. "When I finish, ask me to go on" is a legitimate nudge —
  * and, with no floor, a treadmill: the answer finishes, fires again, one
  * turn of tokens per lap, forever. A trigger whose `ask` lands on the very
- * terminal that fired it waits at least this long between laps.
+ * terminal that fired it waits at least this long between laps: ten minutes,
+ * because every lap is a paid turn.
  */
-export const SELF_ASK_MIN_COOLDOWN_SEC = 60;
+export const SELF_ASK_MIN_COOLDOWN_SEC = 600;
 
 function live(rt: TerminalRuntime | undefined): boolean {
   return rt?.state === "running" || rt?.state === "starting";
@@ -63,21 +65,105 @@ export function transitions(
   return out;
 }
 
-function targetsItself(def: TriggerDef, fire: TriggerFire): boolean {
+/**
+ * The floor under a trigger that sits in a loop of asks: "A finished → ask
+ * B" plus "B finished → ask A" is a ping-pong that bills one turn per lap.
+ */
+export const CYCLE_MIN_COOLDOWN_SEC = 300;
+
+/** Fires of one `ask` trigger in one local day. Past this it waits for tomorrow. */
+export const ASK_DAILY_CAP = 50;
+
+/**
+ * The cooldown the "Gatilhos" form offers for a new trigger: a prompt typed
+ * into a CLI is a paid turn, so an `ask` starts at five minutes.
+ */
+export function defaultCooldownSec(kind: TriggerAction["kind"]): number {
+  return kind === "ask" ? CYCLE_MIN_COOLDOWN_SEC : 0;
+}
+
+function targetsItself(def: TriggerDef): boolean {
+  return def.action.kind === "ask" && def.action.targetId === def.sourceId;
+}
+
+/** An `ask` that can still fire on a terminal's edge: an arrow of the loop graph. */
+function liveAsk(def: TriggerDef): def is TriggerDef & { action: { kind: "ask"; targetId: string } } {
+  return def.enabled && def.event !== "budget" && def.action.kind === "ask" && !(def.once && def.lastRunAt);
+}
+
+/**
+ * The ids of the group's `ask` triggers that belong to a loop. Each one is an
+ * arrow source → target, and `"*"` is an arrow from every other terminal; a
+ * trigger is in a loop when its target can walk back, through other asks, to
+ * a terminal its arrow leaves from.
+ */
+export function cyclicTriggerIds(defs: readonly TriggerDef[]): Set<string> {
+  const asks = defs.filter(liveAsk);
+  const nodes = new Set<string>();
+  for (const d of asks) {
+    nodes.add(d.action.targetId);
+    if (d.sourceId !== "*") nodes.add(d.sourceId);
+  }
+  const next = (from: string) =>
+    asks
+      .filter((d) => d.sourceId === from || (d.sourceId === "*" && d.action.targetId !== from))
+      .map((d) => d.action.targetId);
+  const reaches = (from: string, to: string): boolean => {
+    const seen = new Set<string>([from]);
+    const queue = [from];
+    if (from === to) return true;
+    while (queue.length) {
+      for (const step of next(queue.shift()!)) {
+        if (step === to) return true;
+        if (!seen.has(step)) {
+          seen.add(step);
+          queue.push(step);
+        }
+      }
+    }
+    return false;
+  };
+  const out = new Set<string>();
+  for (const d of asks) {
+    const target = d.action.targetId;
+    const looped =
+      d.sourceId === "*"
+        ? [...nodes].some((node) => node !== target && reaches(target, node))
+        : reaches(target, d.sourceId);
+    if (looped) out.add(d.id);
+  }
+  return out;
+}
+
+function spentForToday(def: TriggerDef, now: number): boolean {
   if (def.action.kind !== "ask") return false;
-  const source = def.sourceId === "*" ? fire.terminalId : def.sourceId;
-  return def.action.targetId === source;
+  return def.firedDay === localDay(new Date(now)) && (Number(def.firedToday) || 0) >= ASK_DAILY_CAP;
+}
+
+/**
+ * A wildcard `ask` never hears its own target: "when any CLI finishes, ask
+ * Codex to review" would otherwise also fire on Codex's own finish, and Codex
+ * would review its own review forever.
+ */
+function feedsItself(def: TriggerDef, fire: TriggerFire): boolean {
+  return def.sourceId === "*" && def.action.kind === "ask" && def.action.targetId === fire.terminalId;
 }
 
 /** Which of the group's triggers fire on this edge, right now. */
 export function dueTriggers(defs: readonly TriggerDef[], fire: TriggerFire, now: number): TriggerDef[] {
+  const looped = cyclicTriggerIds(defs);
   return defs.filter((def) => {
     if (!def.enabled) return false;
     if (def.event !== fire.event) return false;
     if (def.sourceId !== "*" && def.sourceId !== fire.terminalId) return false;
+    if (feedsItself(def, fire)) return false;
     if (def.once && def.lastRunAt) return false;
+    if (spentForToday(def, now)) return false;
     if (def.lastRunAt) {
-      const floor = targetsItself(def, fire) ? SELF_ASK_MIN_COOLDOWN_SEC : 0;
+      const floor = Math.max(
+        targetsItself(def) ? SELF_ASK_MIN_COOLDOWN_SEC : 0,
+        looped.has(def.id) ? CYCLE_MIN_COOLDOWN_SEC : 0,
+      );
       const cooldown = Math.max(def.cooldownSec ?? 0, floor) * 1000;
       if (now - def.lastRunAt < cooldown) return false;
     }
@@ -85,14 +171,39 @@ export function dueTriggers(defs: readonly TriggerDef[], fire: TriggerFire, now:
   });
 }
 
+/**
+ * The sheet's pause/resume button. Switching on is also the user's approval
+ * of a trigger an agent created, so `awaitingApproval` goes with it.
+ */
+export function toggledTrigger(def: TriggerDef): TriggerDef {
+  if (def.enabled) return { ...def, enabled: false };
+  const { awaitingApproval: _pending, ...approved } = def;
+  return { ...approved, enabled: true };
+}
+
+/**
+ * A trigger whose action is a paid turn (a prompt into a CLI, a flow). These
+ * are held while automation is paused; a notification costs nothing and goes.
+ */
+export function spendsTokens(def: TriggerDef): boolean {
+  return def.action.kind !== "notify";
+}
+
 /** `{name}` and `{ask}` in a trigger's text — nothing else is interpolated. */
 export function renderText(text: string, ctx: { name: string; ask?: string | null }): string {
   return text.replace(/\{name\}/g, ctx.name).replace(/\{ask\}/g, ctx.ask ?? "");
 }
 
-/** The trigger after it fired: stamped, and switched off when it was a one-shot. */
+/**
+ * The trigger after it fired: stamped, switched off when it was a one-shot,
+ * and, for an `ask`, one more fire counted against the local day's cap.
+ */
 export function afterFire(def: TriggerDef, now: number): TriggerDef {
-  return { ...def, lastRunAt: now, enabled: def.once ? false : def.enabled };
+  const stamped = { ...def, lastRunAt: now, enabled: def.once ? false : def.enabled };
+  if (def.action.kind !== "ask") return stamped;
+  const today = localDay(new Date(now));
+  const before = def.firedDay === today ? Number(def.firedToday) || 0 : 0;
+  return { ...stamped, firedDay: today, firedToday: before + 1 };
 }
 
 // i18n-scan: tables — the labels below are wrapped with t() where they are rendered

@@ -39,6 +39,7 @@ import {
   EditorState,
   Prec,
   type StateEffect,
+  type Text,
 } from "@codemirror/state";
 import { EditorView, highlightTrailingWhitespace, keymap } from "@codemirror/view";
 import { indentWithTab } from "@codemirror/commands";
@@ -99,7 +100,8 @@ import { applyBookmarks, bookmarkExt } from "./bookmarkGutter";
 import { foldEffectsFor, foldsOf } from "./foldMemory";
 import { parseRulers, rulers } from "./rulers";
 import { snippetCompletions } from "./snippets";
-import { blockOf, type BlockKind } from "../../lib/mdedit";
+import { blockOfLine, type BlockKind } from "../../lib/mdedit";
+import { createCoalescer, textTimer, type Coalescer } from "../../lib/coalesce";
 import { openWebAddress } from "../../lib/openLink";
 import { fileSize, mediaKind } from "../../lib/media";
 import { closeDocTab, docTabMenu } from "../../lib/editorActions";
@@ -1421,6 +1423,20 @@ function CmSurface({
   const idRef = useRef(doc.id);
   const languageRequest = useRef(0);
   const lastPublished = useRef<{ id: string; text: string } | null>(null);
+  /**
+   * Typed text reaches the store at most once per window (`lib/coalesce`):
+   * `doc.toString()` of the whole file and a store write per keystroke were
+   * paid by every subscriber. Flushed whenever something may read the store
+   * right away: Ctrl+S, any shortcut, a blur, a tab switch, the unmount.
+   */
+  const textOut = useRef<Coalescer<{ id: string; doc: Text }> | null>(null);
+  if (!textOut.current) {
+    textOut.current = createCoalescer(({ id, doc: typed }) => {
+      const text = typed.toString();
+      lastPublished.current = { id, text };
+      useEditor.getState().setText(id, text);
+    }, textTimer);
+  }
   // The handlers go into the `EditorState`, created once per file: without
   // the refs, an old tab would keep calling their stale version.
   const saveRef = useRef(onSave);
@@ -1631,17 +1647,29 @@ function CmSurface({
                 key: "Mod-s",
                 preventDefault: true,
                 run: () => {
+                  textOut.current?.flush();
                   saveRef.current();
                   return true;
                 },
               },
             ]),
           ),
+          // Whatever happens next may read the store: a global shortcut (its
+          // listener sits on the window, after this one) or a click elsewhere
+          // (the blur comes first). The typed text goes out before it.
+          EditorView.domEventHandlers({
+            keydown: (event) => {
+              if (event.ctrlKey || event.metaKey || event.altKey) textOut.current?.flush();
+              return false;
+            },
+            blur: () => {
+              textOut.current?.flush();
+              return false;
+            },
+          }),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) {
-              const text = u.state.doc.toString();
-              lastPublished.current = { id: d.id, text };
-              useEditor.getState().setText(d.id, text);
+              textOut.current?.push({ id: d.id, doc: u.state.doc });
               // The git gutter follows the typing on a debounce — from the
               // cached HEAD text only, never IPC on a keystroke.
               gitRef.current(u.view, d.id);
@@ -1670,11 +1698,11 @@ function CmSurface({
               if (publish) {
                 const at = {
                   line: line.number - 1,
-                  // `blockOf` reads the whole text to name the markdown block
-                  // under the caret — a cost only the markdown bar needs. In
-                  // code the caret feeds the symbols rail, which is per-line.
+                  // The markdown block under the caret, from its line alone;
+                  // only the markdown bar needs it. In code the caret feeds
+                  // the symbols rail, which is per-line.
                   block: isMarkdown(d.path)
-                    ? blockOf(u.state.doc.toString(), sel.head)
+                    ? blockOfLine(line.text)
                     : ("paragraph" as BlockKind),
                 };
                 const before = lastCaret.current;
@@ -1709,6 +1737,7 @@ function CmSurface({
     const stopScroll = observeVisibleLine(view, () => scrollRef.current);
 
     return () => {
+      textOut.current?.flush();
       languageRequest.current++;
       if (gitTimer.current) clearTimeout(gitTimer.current);
       stopScroll();
@@ -1724,6 +1753,8 @@ function CmSurface({
   useEffect(() => {
     const view = viewRef.current;
     if (!view || idRef.current === doc.id) return;
+    // The file being left gets its last keystrokes before anything else.
+    textOut.current?.flush();
     // The file being left: its state, where it was scrolled to, and what it
     // had folded, the last one because folds outlive the window.
     useEditor.getState().setFolds(idRef.current, foldsOf(view.state));
@@ -1763,7 +1794,7 @@ function CmSurface({
     caretRef.current?.({
       line: view.state.doc.lineAt(sel.head).number - 1,
       block: isMarkdown(doc.path)
-        ? blockOf(view.state.doc.toString(), sel.head)
+        ? blockOfLine(view.state.doc.lineAt(sel.head).text)
         : ("paragraph" as BlockKind),
     });
     // The whole `doc` would change on every key; only the path matters here.

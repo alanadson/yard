@@ -1,15 +1,16 @@
 /**
  * The runtime side of triggers (`lib/triggers.ts`): watches the terminals'
  * runtime mirror, turns each snapshot pair into edges, and delivers the
- * actions of whatever trigger is due — a prompt typed into another CLI (through
- * the same sendability gate a routine goes through), a native notification, or
- * a flow started on the terminal that fired.
+ * actions of whatever trigger is due: a prompt queued for another CLI (the
+ * native queue types it in when the target is ready, under the admission of
+ * `automationMaxAgents`, like a routine), a native notification, or a flow
+ * started on the terminal that fired. While automation is paused, the
+ * actions that spend a turn are held.
  *
- * The stamp (`lastRunAt`, `enabled` for a one-shot) is written *before* the
- * delivery starts: the delivery waits on the target being idle, and a second
- * edge arriving meanwhile must find the trigger already spent. Failures are
- * reported with a toast and stay stamped — the cooldown is the retry policy,
- * not the failure.
+ * The stamp (`lastRunAt`, the daily count, `enabled` for a one-shot) is
+ * written *before* the delivery starts, so a second edge arriving meanwhile
+ * finds the trigger already spent. Failures are reported with a toast and
+ * stay stamped: the cooldown is the retry policy, not the failure.
  */
 import { useEffect } from "react";
 import { notify as deliverNotice } from "../lib/notifications";
@@ -18,24 +19,37 @@ import { commitCanvasExternal } from "../lib/canvasWrite";
 import { findFlow } from "../lib/flow";
 import { startFlow } from "../lib/flowRun";
 import { t } from "../lib/i18n";
-import { injectPrompt } from "../lib/inject";
 import { uiLog } from "../lib/log";
-import { waitUntilSendable } from "../lib/sendable";
 import { baseName } from "../lib/terminals";
 import {
   afterFire,
   dueTriggers,
   renderText,
+  spendsTokens,
   transitions,
   type TriggerFire,
 } from "../lib/triggers";
 import type { TriggerDef } from "../lib/canvas";
+import { useAutomation } from "../stores/automationStore";
 import { useProjects } from "../stores/projectsStore";
+import { useQueue } from "../stores/queueStore";
 import { useTerminals, type TerminalRuntime } from "../stores/terminalsStore";
 import { useUI } from "../stores/uiStore";
 
 /** Deliveries in progress, by trigger id — an edge never overlaps its own delivery. */
 const inFlight = new Set<string>();
+
+/**
+ * While automation is paused (`lib/automationPause.ts`), the triggers that
+ * would spend a turn are left out, unstamped: they did not fire, so their
+ * cooldown and daily count stay as they were. Notifications still go.
+ */
+function heldByPause(due: TriggerDef[]): TriggerDef[] {
+  if (!useAutomation.getState().paused) return due;
+  const held = due.filter(spendsTokens);
+  if (held.length) uiLog.info(`gatilhos retidos pela pausa da automação: ${held.map((d) => d.id).join(", ")}`);
+  return due.filter((d) => !spendsTokens(d));
+}
 
 async function notifyUser(body: string): Promise<void> {
   useUI.getState().showToast(body);
@@ -57,9 +71,19 @@ async function deliver(groupId: string, def: TriggerDef, fire: TriggerFire): Pro
     case "ask": {
       const target = s.terminal(def.action.targetId);
       if (!target) throw new Error(t("a CLI alvo não existe mais"));
-      const gate = await waitUntilSendable(target.id);
-      if (!gate.ok) throw new Error(gate.message ?? `${baseName(target)}: ${gate.reason ?? t("indisponível")}`); // i18n-ok — a name and a reason, both already in the user's language
-      await injectPrompt(target.id, renderText(def.action.text, ctx));
+      // Through the queue, like every other automatic sender: the native
+      // scheduler delivers it when the target is ready, under the admission
+      // of `automationMaxAgents` and the automation pause.
+      const queued = await useQueue
+        .getState()
+        .enqueue(target.id, renderText(def.action.text, ctx), "trigger", t("gatilho {id}", { id: def.id }));
+      if (!queued.ok) {
+        throw new Error(
+          queued.reason === "cheia"
+            ? t("a fila de {name} está cheia", { name: baseName(target) })
+            : t("não consegui pôr o prompt na fila de {name}", { name: baseName(target) }),
+        );
+      }
       return;
     }
     case "notify":
@@ -69,7 +93,7 @@ async function deliver(groupId: string, def: TriggerDef, fire: TriggerFire): Pro
       const flow = findFlow(s.layoutOf(groupId).canvas, def.action.flowId);
       if (!flow) throw new Error(t("o fluxo não existe mais neste grupo"));
       const terminalId = def.sourceId === "*" ? fire.terminalId : def.sourceId;
-      const r = startFlow(groupId, flow, renderText(def.action.text, ctx), { terminalId });
+      const r = await startFlow(groupId, flow, renderText(def.action.text, ctx), { terminalId });
       if (!r.ok) throw new Error(r.message);
       return;
     }
@@ -84,7 +108,9 @@ function fireFor(id: string, fire: TriggerFire): void {
   const defs = s.layoutOf(groupId).canvas?.triggers;
   if (!defs?.length) return;
   const now = Date.now();
-  const due = dueTriggers(defs, { ...fire, terminalId: id }, now).filter((d) => !inFlight.has(d.id));
+  const due = heldByPause(
+    dueTriggers(defs, { ...fire, terminalId: id }, now).filter((d) => !inFlight.has(d.id)),
+  );
   if (!due.length) return;
 
   const ids = new Set(due.map((d) => d.id));
@@ -130,8 +156,8 @@ export function fireBudgetEdge(level: "warn" | "over"): void {
   for (const group of s.groups) {
     const defs = s.layoutOf(group.id).canvas?.triggers;
     if (!defs?.length) continue;
-    const due = dueTriggers(defs, fire, now).filter(
-      (d) => !inFlight.has(d.id) && d.action.kind !== "flow",
+    const due = heldByPause(
+      dueTriggers(defs, fire, now).filter((d) => !inFlight.has(d.id) && d.action.kind !== "flow"),
     );
     if (!due.length) continue;
 

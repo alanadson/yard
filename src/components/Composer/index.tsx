@@ -69,7 +69,7 @@ import { useBench } from "../../stores/benchStore";
 import { useProjects } from "../../stores/projectsStore";
 import { useTerminals } from "../../stores/terminalsStore";
 import { useQueue } from "../../stores/queueStore";
-import { composerAction } from "./action";
+import { composerAction, createComposerSubmissionGate, queuedDraftDisposition } from "./action";
 import { COMPOSER_SCRATCH, useUI } from "../../stores/uiStore";
 import { useT } from "../../hooks/useT";
 
@@ -176,6 +176,9 @@ export function Composer() {
 
   /** Where the text being edited lives: the destination, or the scratch. */
   const slot = target?.id ?? COMPOSER_SCRATCH;
+  const activeSlot = useRef(slot);
+  const submissionGate = useRef(createComposerSubmissionGate());
+  useEffect(() => { activeSlot.current = slot; }, [slot]);
   const draft = drafts[slot] ?? "";
   const mentioned = useMemo(
     () => (ctx ? composerMentions(draft, ctx.agents.map((a) => a.name)) : []),
@@ -343,26 +346,29 @@ export function Composer() {
       showToast(ready.message ?? t("{name} não pode receber agora.", { name: baseName(target) }), "error");
       return;
     }
+    if (!submissionGate.current.claim()) return;
     if (what === "queue") {
-      const parked = useQueue.getState().enqueue(target.id, theText, "user");
-      if (!parked.ok) {
+      setSending(true);
+      try {
+        const parked = await useQueue.getState().enqueue(target.id, theText, "user");
+        if (!parked.ok) {
+          showToast(
+            parked.reason === "failed" ? t("Não consegui salvar o pedido na fila. Seu texto foi preservado.")
+              : t("A fila de {name} está cheia, espere ela andar.", { name: baseName(target) }),
+            "error",
+          );
+          return;
+        }
         showToast(
-          t("A fila de {name} está cheia, espere ela andar.", { name: baseName(target) }),
-          "error",
+          t("Na fila de {name} ({n}º), entra sozinho quando ele estiver livre.", {
+            name: baseName(target),
+            n: parked.position ?? 1,
+          }),
         );
-        return;
-      }
-      showToast(
-        t("Na fila de {name} ({n}º), entra sozinho quando ele estiver livre.", {
-          name: baseName(target),
-          n: parked.position ?? 1,
-        }),
-      );
-      // Same ending as a real send: the sentence is finished, and the sheet
-      // covers the very agent the work was just handed to.
-      setDraft(slot, "");
-      setMenu(null);
-      setOpen(false);
+        const disposition = queuedDraftDisposition(draft, useUI.getState().composerDrafts[slot] ?? "", activeSlot.current, slot);
+        if (disposition.clear) setDraft(slot, "");
+        if (disposition.close) { setMenu(null); setOpen(false); }
+      } finally { submissionGate.current.release(); setSending(false); }
       return;
     }
     setSending(true);
@@ -400,12 +406,17 @@ export function Composer() {
       // agent you just gave work to. It closes here for the same reason
       // "Deixar na CLI" does: the sentence is finished.
       if (primaryOk) {
-        setDraft(slot, "");
-        setMenu(null);
-        setOpen(false);
-        // And the eye lands where the answer will appear.
-        useProjects.getState().setActiveTab(target.groupId, target.slot, target.id);
-        useUI.getState().focusTerminal(target.id, target.slot);
+        const disposition = queuedDraftDisposition(draft, useUI.getState().composerDrafts[slot] ?? "", activeSlot.current, slot);
+        if (disposition.clear) setDraft(slot, "");
+        if (disposition.close) {
+          setMenu(null);
+          setOpen(false);
+          const current = useProjects.getState().terminal(target.id);
+          if (current) {
+            useProjects.getState().setActiveTab(current.groupId, current.slot, current.id);
+            useUI.getState().focusTerminal(current.id, current.slot);
+          }
+        }
       }
 
       const warnings: string[] = [];
@@ -428,6 +439,7 @@ export function Composer() {
     } catch (e) {
       showToast(t("Falha ao enviar: {e}", { e: String(e) }), "error");
     } finally {
+      submissionGate.current.release();
       setSending(false);
     }
   };
@@ -459,19 +471,25 @@ export function Composer() {
       showToast(t("{name} não está rodando — inicie antes.", { name: baseName(target) }), "error");
       return;
     }
+    if (!submissionGate.current.claim()) return;
     setSending(true);
     try {
       await injectPrompt(target.id, text, { submit: false, checkpoint: await prepareTaskCheckpoint(target.id) });
-      setDraft(slot, "");
-      setMenu(null);
-      setOpen(false);
-      // Back to the CLI with its tab in front: the next key belongs to the
-      // prompt line that just filled up.
-      useProjects.getState().setActiveTab(target.groupId, target.slot, target.id);
-      useUI.getState().focusTerminal(target.id, target.slot);
+      const disposition = queuedDraftDisposition(draft, useUI.getState().composerDrafts[slot] ?? "", activeSlot.current, slot);
+      if (disposition.clear) setDraft(slot, "");
+      if (disposition.close) {
+        setMenu(null);
+        setOpen(false);
+        const current = useProjects.getState().terminal(target.id);
+        if (current) {
+          useProjects.getState().setActiveTab(current.groupId, current.slot, current.id);
+          useUI.getState().focusTerminal(current.id, current.slot);
+        }
+      }
     } catch (e) {
       showToast(t("Não consegui escrever na CLI: {e}", { e: String(e) }), "error");
     } finally {
+      submissionGate.current.release();
       setSending(false);
     }
   };

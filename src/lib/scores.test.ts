@@ -48,6 +48,26 @@ beforeEach(() => {
 });
 
 describe("applyScore", () => {
+  /**
+   * A score is a file anyone can hand over, and its routines land armed. One
+   * written with a one-minute routine keeps it, at the five-minute floor.
+   */
+  it("brings a routine below the five-minute floor in at the floor", () => {
+    const s = useProjects.getState();
+    const board = s.addBoard("Quadro");
+    const fast: ScoreFile = {
+      ...score,
+      canvas: {
+        ...score.canvas,
+        routines: [{ id: "r", terminalId: "a", text: "status", everyMin: 1, enabled: true, createdAt: 0 }],
+      },
+    };
+
+    applyScore(fast, board);
+
+    expect(useProjects.getState().layoutOf(board).canvas?.routines?.map((r) => r.everyMin)).toEqual([5]);
+  });
+
   it("refuses a project's group: a score is an arrangement of the canvas, which only a board has", () => {
     const s = useProjects.getState();
     const projectId = s.addProject("proj", "C:/proj")!;

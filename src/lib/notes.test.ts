@@ -4,6 +4,7 @@ import {
   descendantsOf,
   fallbackTitle,
   fold,
+  foldedNote,
   matchNote,
   nextTagColor,
   notebookPath,
@@ -86,6 +87,26 @@ describe("parseNotesQuery", () => {
     const q = parseNotesQuery("status:qualquercoisa");
     expect(q.statuses).toHaveLength(0);
     expect(q.terms).toEqual([{ text: "qualquercoisa", not: false }]);
+  });
+});
+
+/**
+ * The notes search folded (lower case, no accents) the body of every note on
+ * every keystroke of the query. A note object never changes (an edit makes a
+ * new one), so its folded text is worked out once per object.
+ */
+describe("foldedNote", () => {
+  it("folds a note once and hands back the same answer while the note is the same object", () => {
+    const n = note({ title: "Ação", body: "Coração" });
+    const first = foldedNote(n);
+    expect(first).toEqual({ title: "acao", text: "acao\ncoracao" });
+    expect(foldedNote(n)).toBe(first);
+  });
+
+  it("an edited note (a new object) is folded again, with its new text", () => {
+    const n = note({ body: "antes" });
+    foldedNote(n);
+    expect(foldedNote({ ...n, body: "Depois" }).text).toContain("depois");
   });
 });
 

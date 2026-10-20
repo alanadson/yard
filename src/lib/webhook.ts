@@ -59,3 +59,31 @@ export function webhookPayload(
     event,
   };
 }
+
+/** One notification that went out: what it said (as a key) and when. */
+export interface SentWebhook {
+  key: string;
+  at: number;
+}
+
+/** The same notification twice inside this window goes once. */
+export const WEBHOOK_REPEAT_MS = 60_000;
+/** Ceiling of posts in any one-minute window. */
+export const WEBHOOK_PER_MINUTE = 10;
+
+/**
+ * Whether a notification may go out now, and the record after it. A looping
+ * trigger or a CLI stuck on the same question would otherwise post the same
+ * sentence to a phone every few seconds. `now` comes from the caller.
+ */
+export function admitWebhook(
+  sent: readonly SentWebhook[],
+  key: string,
+  now: number,
+): { send: boolean; sent: SentWebhook[] } {
+  const recent = sent.filter((entry) => now - entry.at < WEBHOOK_REPEAT_MS);
+  if (recent.some((entry) => entry.key === key) || recent.length >= WEBHOOK_PER_MINUTE) {
+    return { send: false, sent: recent };
+  }
+  return { send: true, sent: [...recent, { key, at: now }] };
+}

@@ -9,7 +9,8 @@
  * says out loud what the target cannot express. The backend (`mcp.rs`) owns
  * the dialects; this side owns the neutral model and the screen's order.
  */
-import { locale, t } from "./i18n";
+import { locale, t, tn } from "./i18n";
+import type { McpProbeState } from "../stores/mcpStore";
 import type { AgentInfo, McpRow, McpSecrets, McpServer } from "./ipc";
 import { quoteArgs, tokenizeArgs } from "./termArgs";
 
@@ -21,6 +22,24 @@ export type McpCli = (typeof MCP_SUPPORTED)[number];
 
 export type McpTransport = "stdio" | "http" | "sse";
 export type McpScope = "user" | "local" | "project";
+
+/** An editor response belongs to the project and selection that requested it. */
+export function canApplyMcpEdit(requested: { root: string | null; version: number }, current: { root: string | null; version: number }): boolean {
+  return requested.root === current.root && requested.version === current.version;
+}
+
+export function mcpHealthLabel(health: McpProbeState | undefined): string {
+  if (!health) return "";
+  if (health.state === "pending") return t("Testando conexão…");
+  if (health.state === "failed") {
+    return health.error === "MCP_TIMEOUT"
+      ? t("O servidor MCP não respondeu dentro de 10 segundos.")
+      : t("Não consegui confirmar a conexão MCP.");
+  }
+  const { serverName, serverVersion, tools } = health.result;
+  const capabilities = tools === null ? t("sem capacidade de ferramentas") : tn(tools, "{n} ferramenta", "{n} ferramentas");
+  return t("Conectado: {name} {version}, {capabilities}.", { name: serverName, version: serverVersion, capabilities });
+}
 
 /** What the form holds while the user types. */
 export interface McpDraft {

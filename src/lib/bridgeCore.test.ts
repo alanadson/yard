@@ -17,6 +17,7 @@ import {
   findMentions,
   findNote,
   findPortal,
+  bridgeLogLine,
   makeCtx,
   reaches,
   stripAnsi,
@@ -420,5 +421,22 @@ describe("parseFlags — text that looks like a flag", () => {
   it("--file without a value still marks stdin (the shim already consumed the path)", () => {
     expect(parseFlags(["Nota", "--file"], SPEC).fromStdin).toBe(true);
     expect(parseFlags(["Nota", "--stdin"], SPEC).positional).toEqual(["Nota"]);
+  });
+});
+
+/**
+ * The regression: every `yard` call was logged with its whole argv at info,
+ * so each prompt one agent typed into another landed in `yard.log` in full.
+ * The log needs to know what was called, not what was said.
+ */
+describe("bridgeLogLine", () => {
+  it("names the caller, the verb and the argument count, never the arguments", () => {
+    const line = bridgeLogLine("Claude", ["ask", "Codex", "the secret plan"]);
+    expect(line).toBe("bridge: Claude -> ask (2 args)");
+    expect(line).not.toContain("secret");
+  });
+
+  it("says help when there is no verb", () => {
+    expect(bridgeLogLine("Claude", [])).toBe("bridge: Claude -> help (0 args)");
   });
 });

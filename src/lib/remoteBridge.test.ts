@@ -35,6 +35,11 @@ describe("remotePortFor", () => {
 });
 
 describe("remoteCommand", () => {
+  it("keeps session credentials out of the persisted SSH launch command", () => {
+    const cmd = remoteCommand(base);
+    expect(cmd).not.toContain(base.bridge.token);
+    expect(cmd).toContain("YARD_TOKEN='{{YARD_BRIDGE_TOKEN}}'");
+  });
   it("runs the CLI in the folder that was asked for", () => {
     const cmd = remoteCommand({ ...base, bridge: null });
     expect(cmd).toContain("cd '/home/alguem/projeto'");
@@ -63,7 +68,7 @@ describe("remoteCommand", () => {
     expect(cmd).toContain(REMOTE_DIR);
     expect(cmd).toContain("chmod +x");
     expect(cmd).toContain("YARD_PTY_ID='t-1'");
-    expect(cmd).toContain("YARD_TOKEN='abc123'");
+    expect(cmd).toContain("YARD_TOKEN='{{YARD_BRIDGE_TOKEN}}'");
     expect(cmd).toContain(`YARD_PORT=${remotePortFor(51515)}`);
     expect(cmd).toContain("PATH=");
   });

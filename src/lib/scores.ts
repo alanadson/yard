@@ -21,6 +21,7 @@ import { t } from "./i18n";
 import { ipc, type PtyKind } from "./ipc";
 import { baseName } from "./terminals";
 import {
+  clampedRoutine,
   EMPTY_CANVAS,
   itemBounds,
   normalizeCanvas,
@@ -210,7 +211,7 @@ export function applyScore(
   const routines = (score.canvas.routines ?? [])
     .filter((r) => idMap.has(r.terminalId))
     .map((r) => ({
-      ...r,
+      ...clampedRoutine(r),
       id: nanoid(8),
       terminalId: idMap.get(r.terminalId)!,
       createdAt: Date.now(),

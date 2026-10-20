@@ -1,6 +1,8 @@
 // Partial native registration must not leak the listener that succeeded.
 import { expect, it, vi } from "vitest";
-import { ipc, on, type ActivityPayload } from "./ipc";
+import { ipc, on, type ActivityPayload, type ExitPayload } from "./ipc";
+import { beginTurn, createChat, setChatDelivery } from "./chat";
+import { useChats } from "../stores/chatsStore";
 import { startPtyWatch } from "./ptyWatch";
 import { useProjects } from "../stores/projectsStore";
 import { getActivity, useTerminals } from "../stores/terminalsStore";
@@ -131,4 +133,23 @@ it("a terminal with no live process has no snapshot to apply", async () => {
     await Promise.resolve();
     expect(getActivity("watch-dead")).toEqual({ lastByteAt: 0, idleMs: 0 });
   });
+});
+
+it("an offscreen process exit makes its pending chat reviewable without erasing the request", async () => {
+  let exited: ((payload: ExitPayload) => void) | undefined;
+  vi.spyOn(on, "exit").mockImplementation(async (_id, callback) => { exited = callback; return () => {}; });
+  vi.spyOn(on, "activity").mockResolvedValue(() => {});
+  vi.spyOn(ipc, "ptyActivity").mockResolvedValue(null);
+  const persisted = new Map<string, string>();
+  vi.spyOn(ipc, "writePref").mockImplementation(async (key, value) => { persisted.set(key, value); });
+  const document = setChatDelivery(beginTurn(createChat(), "request", "Review", 1000), "request", "waiting");
+  useChats.getState().load({ "chat.terminal.watch-chat": JSON.stringify(document) });
+  await watching("watch-chat", async () => {
+    await vi.waitFor(() => expect(exited).toBeTypeOf("function"));
+    exited!({ id: "watch-chat", reason: "killed", code: null });
+    await vi.waitFor(() => expect(useChats.getState().byTerminal["watch-chat"].pending?.delivery).toBe("uncertain"));
+    expect(useChats.getState().byTerminal["watch-chat"].threads).toEqual(document.threads);
+    expect(JSON.parse(persisted.get("chat.terminal.watch-chat")!).pending.delivery).toBe("uncertain");
+  });
+  useChats.getState().load({});
 });

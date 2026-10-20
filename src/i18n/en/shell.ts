@@ -357,4 +357,7 @@ export default {
   "{pct}% da memória em uso — suspenda grupos ociosos para liberar RAM": "{pct}% of memory in use — suspend idle groups to free RAM",
   "— executando o fluxo {name}, etapa {step} de {total}": "— running flow {name}, stage {step} of {total}",
   "— o Enter desta CLI entra no fluxo {name}": "— Enter in this CLI goes into the flow {name}",
+  // StatusBar: the automation pause chip
+  "Automação pausada": "Automation paused",
+  "Clique para retomar.": "Click to resume.",
 } satisfies Record<string, string>;

@@ -1,11 +1,11 @@
 // Applying a role must report delivery only after the PTY accepted the prompt and Enter.
 import { afterEach, expect, it, vi } from "vitest";
-const { writes } = vi.hoisted(() => ({ writes: [] as string[] }));
+const { writes } = vi.hoisted(() => ({ writes: [] as unknown[][] }));
 vi.mock("./ipc", () => ({
   ipc: {
     ptyProbe: async () => ({ alive: true }),
-    writePty: async (_id: string, text: string) => {
-      writes.push(text);
+    writePty: async (...request: unknown[]) => {
+      writes.push(request);
     },
   },
 }));
@@ -43,5 +43,6 @@ it("keeps role delivery pending until the prompt has been submitted", async () =
   expect(result).toBeInstanceOf(Promise);
   await vi.advanceTimersByTimeAsync(2_000);
   await expect(result).resolves.toBe(true);
-  expect(writes.at(-1)).toBe("\r");
+  expect(writes).toHaveLength(1);
+  expect(writes[0][2]).toBe(true);
 });

@@ -10,7 +10,7 @@
  * is markup over the store. The labels that module keeps as tables (scope,
  * transport) are translated here, where they are drawn.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ask } from "../../../lib/confirmation";
 import { Pencil, Plus, Power, Trash2 } from "lucide-react";
 
@@ -19,9 +19,11 @@ import { busyState, isBusy, refusesClick } from "../../../lib/busy";
 import { tn } from "../../../lib/i18n";
 import {
   copyTo,
+  canApplyMcpEdit,
   draftOf,
   EMPTY_DRAFT,
   groupByCli,
+  mcpHealthLabel,
   MCP_SUPPORTED,
   scopeHint,
   scopeLabel,
@@ -34,13 +36,14 @@ import {
   type McpScope,
 } from "../../../lib/mcp";
 import { useAgents } from "../../../stores/agentsStore";
-import { useMcp } from "../../../stores/mcpStore";
+import { useMcp, type McpProbeState } from "../../../stores/mcpStore";
 import { useProjects } from "../../../stores/projectsStore";
 import { useUI } from "../../../stores/uiStore";
 import { Select } from "../../Select";
 import { Card, GroupTitle } from "../rows";
 
 interface Editing {
+  root: string | null;
   cli: string;
   scope: McpScope;
   draft: McpDraft;
@@ -51,6 +54,7 @@ interface Editing {
 export function SecMcp() {
   const t = useT();
   const rows = useMcp((s) => s.rows);
+  const health = useMcp((s) => s.health);
   const fileErrors = useMcp((s) => s.fileErrors);
   const loading = useMcp((s) => s.loading);
   const error = useMcp((s) => s.error);
@@ -62,11 +66,13 @@ export function SecMcp() {
 
   const project = projects.find((p) => p.id === activeProjectId) ?? null;
   const root = project?.path ?? null;
+  const editVersion = useRef(0);
 
   useEffect(() => {
     void useAgents.getState().load();
   }, []);
   useEffect(() => {
+    editVersion.current++;
     void load(root);
   }, [root, load]);
 
@@ -82,19 +88,24 @@ export function SecMcp() {
   const [busy, setBusy] = useState<string | null>(null);
 
   const startAdd = (cli: string) => {
-    setEditing({ cli, scope: "user", draft: { ...EMPTY_DRAFT }, original: null });
+    editVersion.current++;
+    setEditing({ root, cli, scope: "user", draft: { ...EMPTY_DRAFT }, original: null });
   };
 
   const startEdit = async (row: McpRow) => {
+    const requested = { root, version: ++editVersion.current };
     try {
-      const secrets = await useMcp.getState().secrets(row.cli, row.scope, row.name);
+      const secrets = await useMcp.getState().secrets(row.cli, row.scope, row.name, requested.root);
+      if (!canApplyMcpEdit(requested, { root: useMcp.getState().root, version: editVersion.current })) return;
       setEditing({
+        root: requested.root,
         cli: row.cli,
         scope: row.scope as McpScope,
         draft: draftOf(row, secrets),
         original: row,
       });
     } catch (e) {
+      if (!canApplyMcpEdit(requested, { root: useMcp.getState().root, version: editVersion.current })) return;
       showToast(t("Não consegui ler o servidor: {error}", { error: String(e) }), "error");
     }
   };
@@ -114,13 +125,13 @@ export function SecMcp() {
     );
     if (!ok) return;
     setBusy(`remove:${rowKey(row)}`);
-    const done = await useMcp.getState().remove(row.cli, row.scope, row.name);
+    const done = await useMcp.getState().remove(row.cli, row.scope, row.name, root);
     setBusy(null);
     if (done) showToast(t("Servidor “{name}” removido.", { name: row.name }));
   };
 
   const toggle = async (row: McpRow) => {
-    const secrets = await useMcp.getState().secrets(row.cli, row.scope, row.name).catch(() => null);
+    const secrets = await useMcp.getState().secrets(row.cli, row.scope, row.name, root).catch(() => null);
     if (!secrets) {
       showToast(t("Não consegui ler o servidor para ligá-lo/desligá-lo."), "error");
       return;
@@ -135,7 +146,7 @@ export function SecMcp() {
       env: secrets.env,
       headers: secrets.headers,
       enabled: !row.enabled,
-    });
+    }, root);
     setBusy(null);
     if (done) {
       showToast(
@@ -147,7 +158,7 @@ export function SecMcp() {
   };
 
   const copy = async (row: McpRow, targetCli: string) => {
-    const secrets = await useMcp.getState().secrets(row.cli, row.scope, row.name).catch(() => null);
+    const secrets = await useMcp.getState().secrets(row.cli, row.scope, row.name, root).catch(() => null);
     if (!secrets) {
       showToast(t("Não consegui ler o servidor para copiá-lo."), "error");
       return;
@@ -189,7 +200,7 @@ export function SecMcp() {
       return;
     }
     setBusy("submit");
-    const done = await useMcp.getState().save(editing.cli, editing.scope, v.server);
+    const done = await useMcp.getState().save(editing.cli, editing.scope, v.server, editing.root);
     setBusy(null);
     if (done) {
       showToast(
@@ -255,6 +266,8 @@ export function SecMcp() {
                     row={row}
                     groups={groups}
                     busy={busy}
+                    health={health[rowKey(row)]}
+                    onProbe={() => void useMcp.getState().probe(row)}
                     onEdit={() => void startEdit(row)}
                     onRemove={() => void remove(row)}
                     onToggle={() => void toggle(row)}
@@ -272,6 +285,7 @@ export function SecMcp() {
                       setErrors({});
                     }}
                     onCancel={() => {
+                      editVersion.current++;
                       setEditing(null);
                       setErrors({});
                     }}
@@ -311,6 +325,8 @@ function McpRowView({
   row,
   groups,
   busy,
+  health,
+  onProbe,
   onEdit,
   onRemove,
   onToggle,
@@ -319,6 +335,8 @@ function McpRowView({
   row: McpRow;
   groups: CliGroup[];
   busy: string | null;
+  health: McpProbeState | undefined;
+  onProbe: () => void;
   onEdit: () => void;
   onRemove: () => void;
   onToggle: () => void;
@@ -355,8 +373,14 @@ function McpRowView({
           {secretsCount > 0 &&
             ` · ${tn(secretsCount, "{n} valor guardado", "{n} valores guardados")} (${[...row.envKeys, ...row.headerKeys].join(", ")})`}
         </small>
+        {health && <small className="set-row-desc" role="status">{mcpHealthLabel(health)}</small>}
       </div>
       <div className="set-actions set-mcp-actions">
+        <button className="btn" disabled={!!busy || !row.enabled || health?.state === "pending"}
+          aria-busy={health?.state === "pending"} onClick={onProbe}
+          title={t("Inicia o servidor configurado e verifica o protocolo, sem executar ferramentas")}>
+          {health?.state === "pending" ? t("Testando conexão…") : t("Testar conexão")}
+        </button>
         <Select
           className="set-picker set-mcp-copy"
           value=""

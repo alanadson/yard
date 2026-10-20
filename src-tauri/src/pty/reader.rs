@@ -601,6 +601,8 @@ pub fn spawn_pump(
                         title: title.clone(),
                         idle_ms,
                     });
+                    // An agent that went quiet may be ready for queued work.
+                    crate::scheduler::wake();
                 }
                 last_activity = Instant::now();
             }

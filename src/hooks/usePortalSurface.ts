@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 
 import type { MenuAnchor } from "../components/ContextMenu";
 import { ipc, type PortalOpen, type PortalRect } from "../lib/ipc";
+import { hiddenPortals } from "../lib/hiddenPortals";
 import { watchPortalMenu } from "../lib/portalEvents";
 import { watchPortal } from "../lib/portalLive";
 
@@ -76,6 +77,9 @@ export function usePortalSurface({
     opening.current = true;
     setReady(false);
     setFailed(false);
+    // On screen again: out of the hidden line (`lib/hiddenPortals`). An
+    // engine the line closed meanwhile is re-opened by this very call.
+    hiddenPortals.shown(id);
     void ipc
       .portalOpen(getOpenRef.current())
       .then(() => {
@@ -98,6 +102,9 @@ export function usePortalSurface({
   useEffect(
     () => () => {
       void ipc.portalSetBounds(id, { x: 0, y: 0, w: 1, h: 1, visible: false }).catch(() => {});
+      // Hidden, not closed: the four hidden most recently keep their page;
+      // past that the oldest engine is closed (its card re-opens it).
+      hiddenPortals.hidden(id);
     },
     [id],
   );

@@ -20,6 +20,8 @@ pub mod git;
 pub mod globs;
 pub mod media;
 pub mod paths;
+pub mod work;
+pub mod queue;
 pub mod persistence;
 pub mod portal;
 pub mod power;
@@ -38,12 +40,19 @@ pub mod support;
 pub mod updater;
 pub mod costs;
 pub mod mcp;
+pub mod mcp_health;
+pub mod scheduler;
+pub mod routines;
+pub mod flows;
+pub mod bridge_task;
 pub mod ssh;
 pub mod lsp;
 pub mod checkpoints;
 mod checkpoint_commands;
 
 mod logging;
+mod http;
+mod retention;
 mod bounded_cache;
 mod dir_entries;
 mod file_policy;
@@ -56,7 +65,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use tauri::{AppHandle, Manager, RunEvent, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 
 use agents::resolver::AgentInfo;
 use agents::sessions::{AgentSession, SessionUsage};
@@ -88,10 +97,13 @@ async fn spawn_pty(app: AppHandle, opts: SpawnOptions) -> Result<PtySnapshot, St
 /// Runs on the terminal's own lane (`lanes.rs`), not on the UI thread: a paste
 /// into a console that stopped reading blocks this write, and only this
 /// terminal's writes queue behind it. The promise still settles when the bytes
-/// are in the ConPTY, which is what `inject.ts` times its Enter from.
+/// are in the ConPTY. An explicit prompt submission completes inside this call.
 #[tauri::command]
-fn write_pty(state: State<'_, Arc<AppState>>, id: String, data: String) -> Result<(), String> {
-    pty::write(&state, &id, &data)
+fn write_pty(state: State<'_, Arc<AppState>>, id: String, data: String, submit_prompt: Option<bool>) -> Result<(), String> {
+    match submit_prompt {
+        Some(submit) => pty::inject(&state, &id, &data, submit),
+        None => pty::write(&state, &id, &data),
+    }
 }
 
 #[tauri::command]
@@ -277,8 +289,10 @@ async fn get_pty_tree_info(app: AppHandle, id: String) -> Result<events::PtyReso
     .map_err(|e| format!("leitura da arvore interrompida: {e}"))?
 }
 
-/// Deletes the on-disk scrollback of a terminal that was removed for good.
-/// On the terminal's own lane (`lanes.rs`), like its writes.
+/// Deletes the live on-disk scrollback of a terminal that was removed for
+/// good. Its archived sessions stay: the global "Histórico de saída" lists
+/// them, and the startup housekeeping ages them out after 30 days. On the
+/// terminal's own lane (`lanes.rs`), like its writes.
 #[tauri::command]
 fn forget_pty(state: State<'_, Arc<AppState>>, id: String) {
     state.statuses.lock().remove(&id);
@@ -296,6 +310,30 @@ async fn pty_export(app: AppHandle, id: String, dest: String, plain: bool) -> Re
     })
     .await
     .map_err(|e| format!("exportação interrompida: {e}"))?
+}
+
+#[tauri::command]
+fn pty_archives(id: Option<String>) -> Result<Vec<pty::history::ArchivedOutput>, String> {
+    let directory = paths::scrollback_archives_dir();
+    match id {
+        Some(id) => pty::history::list_in(&directory, &paths::sanitize_id(&id)),
+        None => pty::history::list_all_in(&directory),
+    }.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn pty_archive_preview(id: String, name: String, max_bytes: usize) -> Result<pty::history::ArchivedPreview, String> {
+    pty::history::preview_in(&paths::scrollback_archives_dir(), &paths::sanitize_id(&id), &name, max_bytes).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn pty_archive_export(id: String, name: String, dest: String, plain: bool) -> Result<u64, String> {
+    pty::history::export_in(&paths::scrollback_archives_dir(), &paths::sanitize_id(&id), &name, std::path::Path::new(&dest), plain).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn pty_archive_delete(id: String, name: String) -> Result<bool, String> {
+    pty::history::delete_in(&paths::scrollback_archives_dir(), &paths::sanitize_id(&id), &name).map_err(|error| error.to_string())
 }
 
 /// Searches what the terminals said (`scrollback_search.rs`). Reads the live
@@ -337,14 +375,14 @@ async fn webhook_post(url: String, body: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
-/// The loopback door of the bridge and the session token, for the SSH launch
+/// The loopback door and persisted token marker, for the SSH launch
 /// to carry across (`bridge.rs`, `src/lib/remoteBridge.ts`). `port` is null
 /// while the listener has not come up (or could not).
 #[tauri::command]
 fn bridge_remote() -> serde_json::Value {
     serde_json::json!({
         "port": bridge::tcp_port(),
-        "token": bridge::tcp_token(),
+        "token": "{{YARD_BRIDGE_TOKEN}}",
     })
 }
 
@@ -420,7 +458,10 @@ fn save_workspace(
     snapshot: WorkspaceSnapshot,
 ) -> Result<SaveResult, String> {
     let mut conn = state.db.lock();
-    persistence::workspace::save(&mut conn, &snapshot).map_err(|e| e.to_string())
+    let saved = persistence::workspace::save(&mut conn, &snapshot).map_err(|e| e.to_string());
+    // Routines live in the saved layouts: the scheduler looks at them again.
+    scheduler::wake();
+    saved
 }
 
 #[tauri::command]
@@ -430,9 +471,148 @@ fn load_workspace(state: State<'_, Arc<AppState>>) -> Result<WorkspaceSnapshot, 
 }
 
 #[tauri::command]
+fn task_create(state: State<'_, Arc<AppState>>, input: work::NewTask) -> Result<work::Task, work::TaskError> {
+    work::create(&mut state.db.lock(), input, chrono::Utc::now().timestamp_millis())
+}
+
+#[tauri::command]
+fn task_list(state: State<'_, Arc<AppState>>, cursor: Option<work::TaskCursor>, limit: usize, attention: Option<bool>) -> Result<work::TaskPage, work::TaskError> {
+    if attention.unwrap_or(false) { work::list_attention(&state.db.lock(), cursor.as_ref(), limit) }
+    else { work::list(&state.db.lock(), cursor.as_ref(), limit) }
+}
+
+#[tauri::command]
+fn task_get(state: State<'_, Arc<AppState>>, id: String) -> Result<work::Task, work::TaskError> {
+    work::get(&state.db.lock(), &id)
+}
+
+#[tauri::command]
+fn task_link(state: State<'_, Arc<AppState>>, id: String, revision: i64, resource: work::TaskResource) -> Result<work::Task, work::TaskError> {
+    work::link(&mut state.db.lock(), &id, revision, resource, chrono::Utc::now().timestamp_millis())
+}
+
+#[tauri::command]
+fn checkpoint_notices(state: State<'_, Arc<AppState>>) -> Result<Vec<serde_json::Value>, work::TaskError> {
+    work::checkpoint_notices(&state.db.lock())
+}
+
+#[tauri::command]
+fn checkpoint_acknowledge_notices(state: State<'_, Arc<AppState>>, notices: Vec<serde_json::Value>) -> Result<(), work::TaskError> {
+    work::acknowledge_checkpoint_notices(&state.db.lock(), &notices)
+}
+
+#[tauri::command]
+fn checkpoint_notice_history(state: State<'_, Arc<AppState>>) -> Result<Vec<serde_json::Value>, work::TaskError> {
+    work::checkpoint_notice_history(&state.db.lock())
+}
+
+#[tauri::command]
+fn task_events(state: State<'_, Arc<AppState>>, id: String) -> Result<Vec<work::TaskEvent>, work::TaskError> {
+    work::events(&state.db.lock(), &id)
+}
+
+#[tauri::command]
+fn task_deliveries(state: State<'_, Arc<AppState>>, id: String) -> Result<Vec<work::DeliveryRecord>, work::TaskError> {
+    work::deliveries(&state.db.lock(), &id)
+}
+
+#[tauri::command]
+fn task_retry_delivery(state: State<'_, Arc<AppState>>, id: String, revision: i64, terminal_id: String, previous_queue_id: String, queue_id: String) -> Result<work::TaskQueueResult, work::TaskError> {
+    work::retry_delivery(&mut state.db.lock(), &id, revision, &terminal_id, &previous_queue_id, &queue_id, chrono::Utc::now().timestamp_millis())
+}
+
+#[tauri::command]
+fn task_transition(state: State<'_, Arc<AppState>>, id: String, revision: i64, status: String) -> Result<work::Task, work::TaskError> {
+    work::transition(&mut state.db.lock(), &id, revision, &status, chrono::Utc::now().timestamp_millis())
+}
+
+#[tauri::command]
+fn task_submit(state: State<'_, Arc<AppState>>, id: String, revision: i64, submission: work::Submission) -> Result<work::Task, work::TaskError> {
+    work::submit(&mut state.db.lock(), &id, revision, submission, chrono::Utc::now().timestamp_millis())
+}
+
+#[tauri::command]
+fn task_approve(state: State<'_, Arc<AppState>>, id: String, revision: i64, note: String) -> Result<work::Task, work::TaskError> {
+    work::approve(&mut state.db.lock(), &id, revision, &note, chrono::Utc::now().timestamp_millis())
+}
+
+#[tauri::command]
+fn task_enqueue(state: State<'_, Arc<AppState>>, id: String, revision: i64, terminal_id: String, queue_id: String) -> Result<work::TaskQueueResult, work::TaskError> {
+    work::enqueue(&mut state.db.lock(), &id, revision, &terminal_id, &queue_id, chrono::Utc::now().timestamp_millis())
+}
+
+#[tauri::command]
+fn task_claim(state: State<'_, Arc<AppState>>, id: String, queue_id: String, terminal_id: String) -> Result<work::Task, work::TaskError> {
+    work::claim(&mut state.db.lock(), &id, &queue_id, &terminal_id, chrono::Utc::now().timestamp_millis())
+}
+
+#[tauri::command]
+fn queue_patch(state: State<'_, Arc<AppState>>, before: Vec<serde_json::Value>, after: Vec<serde_json::Value>) -> Result<Vec<serde_json::Value>, String> {
+    queue::apply(&mut state.db.lock(), &before, &after)
+}
+
+#[tauri::command]
+fn queue_dispatch(state: State<'_, Arc<AppState>>, id: String, terminal_id: String, attempted_at: i64) -> Result<queue::DispatchResult, String> {
+    queue::dispatch_owned(&state, &id, &terminal_id, attempted_at)
+}
+
+#[tauri::command]
+fn queue_read(state: State<'_, Arc<AppState>>) -> Result<Vec<serde_json::Value>, String> {
+    let active = state.native_queue_dispatches.lock();
+    queue::reconcile_native(&mut state.db.lock(), &active)
+}
+
+#[tauri::command]
+fn native_hook_snapshot(state: State<'_, Arc<AppState>>) -> Vec<scheduler::HookReport> { state.scheduler.snapshot() }
+
+#[tauri::command]
+fn routine_snapshot(state: State<'_, Arc<AppState>>) -> Result<Vec<serde_json::Value>, String> { routines::snapshot(&state.db.lock()) }
+
+#[tauri::command]
+fn flow_start(state: State<'_, Arc<AppState>>, input: flows::StartInput) -> Result<serde_json::Value, String> {
+    if !pty::probe(&state, &input.terminal_id).alive { return Err("FLOW_EXECUTOR_NOT_RUNNING".into()); }
+    let run = flows::start_input(&mut state.db.lock(), &input, chrono::Utc::now().timestamp_millis())?;
+    if input.typed {
+        flows::drive(&state, &input.group_id, &input.flow_id, &input.terminal_id)?;
+        return flows::snapshot(&state.db.lock())?.into_iter().find(|run| run["groupId"] == input.group_id && run["flowId"] == input.flow_id).ok_or("FLOW_RUN_NOT_FOUND".into());
+    }
+    Ok(run)
+}
+
+#[tauri::command]
+fn flow_snapshot(state: State<'_, Arc<AppState>>) -> Result<Vec<serde_json::Value>, String> {
+    Ok(flows::snapshot(&state.db.lock())?.into_iter().filter(|run| run["hidden"] != true).collect())
+}
+
+#[tauri::command]
+fn flow_dismiss(state: State<'_, Arc<AppState>>, group_id: String, flow_id: String, attempt: u64) -> Result<(), String> {
+    flows::dismiss(&mut state.db.lock(), &group_id, &flow_id, attempt)
+}
+
+#[tauri::command]
+fn flow_cancel(state: State<'_, Arc<AppState>>, group_id: String, flow_id: String, attempt: u64) -> Result<serde_json::Value, String> {
+    flows::cancel(&mut state.db.lock(), &group_id, &flow_id, attempt, chrono::Utc::now().timestamp_millis())
+}
+
+#[tauri::command]
+fn flow_resume(state: State<'_, Arc<AppState>>, group_id: String, flow_id: String, attempt: u64, confirmed: bool) -> Result<serde_json::Value, String> {
+    flows::resume(&mut state.db.lock(), &group_id, &flow_id, attempt, confirmed, chrono::Utc::now().timestamp_millis())
+}
+
+#[tauri::command]
+fn queue_retry(state: State<'_, Arc<AppState>>, id: String, new_id: String, attempted_at: i64) -> Result<Vec<serde_json::Value>, String> {
+    queue::retry_reviewed(&mut state.db.lock(), &id, &new_id, attempted_at)
+}
+
+#[tauri::command]
+fn queue_remove(state: State<'_, Arc<AppState>>, id: String, attempted_at: Option<i64>) -> Result<Vec<serde_json::Value>, String> {
+    queue::remove_reviewed(&mut state.db.lock(), &id, attempted_at)
+}
+
+#[tauri::command]
 fn read_prefs(state: State<'_, Arc<AppState>>) -> Result<HashMap<String, String>, String> {
     let conn = state.db.lock();
-    persistence::db::kv_all(&conn)
+    persistence::db::kv_page(&conn)
         .map(|rows| rows.into_iter().collect())
         .map_err(|e| e.to_string())
 }
@@ -569,9 +749,11 @@ async fn note_export(dest: String, text: String) -> Result<(), String> {
 
 /// Keep-awake ("modo energético"): the *decision* — always / only with an
 /// agent working / off — lives in the frontend; here is just the OS side.
+/// `display` also keeps the screen on; a caller that does not send it keeps
+/// the behaviour it had before the flag existed (display held).
 #[tauri::command]
-fn set_keep_awake(on: bool) {
-    power::set_keep_awake(on);
+fn set_keep_awake(on: bool, display: Option<bool>) {
+    power::set_keep_awake(on, display.unwrap_or(true));
 }
 
 /// Closes and reopens the app. The only way to adopt a restored backup
@@ -659,6 +841,24 @@ fn agent_resume_args(agent: String, session_id: String) -> Option<Vec<String>> {
     agents::resolver::resume_args(&agent, &session_id)
 }
 
+#[tauri::command]
+fn pricing_reference() -> agents::sessions::PricingReference {
+    agents::sessions::pricing_reference()
+}
+
+#[tauri::command]
+fn pricing_settings(state: State<'_, Arc<AppState>>) -> Result<agents::pricing::PricingSettings, String> {
+    agents::pricing::load(&state.db.lock())
+}
+
+#[tauri::command]
+fn pricing_settings_save(state: State<'_, Arc<AppState>>, revision: u64, rates: Vec<agents::pricing::CustomRate>) -> Result<agents::pricing::PricingSettings, String> {
+    let mut connection = state.db.lock();
+    let settings = agents::pricing::save(&mut connection, revision, rates)?;
+    agents::pricing::publish(settings.clone());
+    Ok(settings)
+}
+
 /// Starts the live tail on a `.jsonl` session. Calling again with the same
 /// `tail_id` switches the followed file (the previous tail is shut down).
 #[tauri::command]
@@ -668,7 +868,7 @@ fn session_tail_start(
     tail_id: String,
     file: String,
 ) {
-    let stop = agents::tail::start(app, tail_id.clone(), file);
+    let stop = agents::tail::start(app, tail_id.clone(), file, state.window_shown.clone());
     if let Some(old) = state.session_tails.lock().insert(tail_id, stop) {
         old.store(true, std::sync::atomic::Ordering::Relaxed);
     }
@@ -1458,8 +1658,8 @@ fn usage_snapshot() -> usage::UsageSnapshot {
 
 /// Asks for an immediate collection cycle; the result arrives via `usage://update`.
 #[tauri::command]
-fn usage_refresh() {
-    usage::request_refresh();
+fn usage_refresh(provider: Option<String>) {
+    usage::request_refresh(provider.as_deref());
 }
 
 /// UI log channel into the app's log file.
@@ -1469,6 +1669,7 @@ fn usage_refresh() {
 /// a line in `yard.log` like any other.
 #[tauri::command]
 fn ui_log(level: String, message: String) {
+    let message = logging::bounded_message(&message);
     match level.as_str() {
         "error" => tracing::error!(target: "ui", "{message}"),
         "warn" => tracing::warn!(target: "ui", "{message}"),
@@ -1480,6 +1681,30 @@ fn ui_log(level: String, message: String) {
 // ---------------------------------------------------------------------------
 // bootstrap
 // ---------------------------------------------------------------------------
+
+/// Startup cleanup of files only this app writes and nothing else removes:
+/// week-old large `yard ask` prompts, the WebView2 profiles of portals no
+/// saved layout or tab names any more, and month-old archived sessions of
+/// terminals the workspace no longer has. On its own thread, off the boot
+/// path; the database lock is held only to read the saved ids.
+fn start_housekeeping(app: AppHandle) {
+    let spawned = std::thread::Builder::new().name("yard-housekeeping".into()).spawn(move || {
+        let now = chrono::Utc::now().timestamp_millis();
+        let app_dir = paths::app_dir();
+        let prompts = clipboard::prune_ask_prompts_in(&app_dir, now);
+        let state = app.state::<Arc<AppState>>();
+        let (referenced, terminals) = {
+            let db = state.db.lock();
+            (portal::saved_portal_ids(&db), pty::history::saved_terminal_ids(&db))
+        };
+        let profiles = portal::prune_instance_profiles_in(&app_dir, referenced.as_ref(), now);
+        let archives = pty::history::prune_orphans_in(&paths::scrollback_archives_dir(), terminals.as_ref(), now);
+        tracing::info!(prompts = prompts.len(), profiles = profiles.len(), archives = archives.len(), "startup housekeeping finished");
+    });
+    if let Err(error) = spawned {
+        tracing::warn!(%error, "startup housekeeping could not start");
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -1519,7 +1744,7 @@ pub fn run() {
     // Every command the UI can call. `lanes::dispatch` sends the blocking ones
     // that must keep their arrival order to a lane (`lanes.rs`) and runs the
     // rest in place, exactly as this table would on its own.
-    let commands = lanes::commands::<tauri::Wry, _>(tauri::generate_handler![
+    let table = lanes::commands::<tauri::Wry, _>(tauri::generate_handler![
         spawn_pty,
         write_pty,
         resize_pty,
@@ -1528,6 +1753,10 @@ pub fn run() {
         pty_probe,
         pty_activity,
         pty_read_since,
+        pty_archives,
+        pty_archive_preview,
+        pty_archive_export,
+        pty_archive_delete,
         pty_exists,
         list_ptys,
         kill_pty,
@@ -1548,6 +1777,33 @@ pub fn run() {
         list_fonts,
         save_workspace,
         load_workspace,
+        task_create,
+        task_list,
+        task_get,
+        task_link,
+        checkpoint_notices,
+        checkpoint_acknowledge_notices,
+        checkpoint_notice_history,
+        task_events,
+        task_deliveries,
+        task_retry_delivery,
+        task_transition,
+        task_submit,
+        task_approve,
+        task_enqueue,
+        task_claim,
+        queue_patch,
+        queue_dispatch,
+        queue_read,
+        native_hook_snapshot,
+        routine_snapshot,
+        flow_start,
+        flow_snapshot,
+        flow_cancel,
+        flow_resume,
+        flow_dismiss,
+        queue_retry,
+        queue_remove,
         read_prefs,
         write_pref,
         write_prefs,
@@ -1573,6 +1829,9 @@ pub fn run() {
         detect_agents,
         list_agent_sessions,
         get_session_usage,
+        pricing_reference,
+        pricing_settings,
+        pricing_settings_save,
         agent_resume_args,
         session_tail_start,
         session_tail_stop,
@@ -1684,6 +1943,7 @@ pub fn run() {
         costs::usage_history,
         agents::read::session_events,
         mcp::mcp_list,
+        mcp_health::mcp_probe,
         mcp::mcp_save,
         mcp::mcp_delete,
         mcp::mcp_env_values,
@@ -1699,6 +1959,18 @@ pub fn run() {
         checkpoint_commands::checkpoint_restore,
         checkpoint_commands::checkpoint_delete,
     ]);
+    // A sync command runs to its end inside the table, on the thread that
+    // called it (its lane): whatever it changed in the queue, flows, routines
+    // or checkpoint notices is announced right after (`events::KvChanges`),
+    // and the scheduler looks again when there is new work or the pause moved.
+    let commands = lanes::commands::<tauri::Wry, _>(move |invoke| {
+        let app = invoke.message.webview().app_handle().clone();
+        let handled = table(invoke);
+        if events::publish_kv_changes(&app).wakes_scheduler() {
+            scheduler::wake();
+        }
+        handled
+    });
 
     builder
         .plugin(tauri_plugin_dialog::init())
@@ -1721,10 +1993,43 @@ pub fn run() {
             // boot are born with the columns of a 1280 px window.
             window_state::restore(&handle);
             window_state::watch(&handle);
+            // Single-instance ownership is established by plugin setup before this callback.
+            let state = app.state::<Arc<AppState>>();
+            let hook_handle = handle.clone();
+            state.scheduler.install_hook_sink(Arc::new(move |report| {
+                if let Err(error) = hook_handle.emit(events::NATIVE_HOOK, report) {
+                    tracing::warn!(%error, "native hook state could not be delivered to the page");
+                }
+            }));
+            match agents::pricing::load(&state.db.lock()) {
+                Ok(settings) => agents::pricing::publish(settings),
+                Err(error) => tracing::warn!(%error, "custom pricing settings unavailable"),
+            }
+            let recovery = work::recover_interrupted_on_boot(&mut state.db.lock(), chrono::Utc::now().timestamp_millis());
+            match recovery {
+                Ok(count) if count > 0 => tracing::warn!(count, "unfinished agent work requires review after startup"),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(%error, "task startup recovery unavailable"),
+            }
             resources::start(handle.clone());
+            match queue::recover_on_boot(&mut state.db.lock()) {
+                Ok(count) if count > 0 => tracing::warn!(count, "unfinished queue deliveries require review after startup"),
+                Ok(_) => {},
+                Err(error) => tracing::warn!(%error, "queue startup recovery unavailable"),
+            }
+            start_housekeeping(handle.clone());
             watcher::start(handle.clone());
             usage::start(handle.clone());
             tray::start(handle.clone());
+            match flows::recover_on_boot(&mut state.db.lock(), chrono::Utc::now().timestamp_millis()) {
+                Ok(count) if count > 0 => tracing::warn!(count, "unfinished flows require review after startup"),
+                Ok(_) => {},
+                Err(error) => tracing::warn!(%error, "flow startup recovery unavailable"),
+            }
+            // What the recoveries above marked for review, announced like
+            // any other change (a page that is already up refetches it).
+            events::publish_kv_changes(&handle);
+            scheduler::start(handle.clone());
             // Signed updates from GitHub Releases (updater.rs holds the config
             // lock). Desktop only, as the plugin's own docs register it.
             #[cfg(desktop)]

@@ -27,12 +27,16 @@ vi.mock("./ipc", () => ({
     readPrefs: vi.fn(async () => ({}) as Record<string, string>),
     writePref: vi.fn(async () => undefined),
     listPtys: vi.fn(async () => []),
+    portalRetain: vi.fn(async () => []),
+    unwatchProject: vi.fn(async () => undefined),
   },
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ ask: vi.fn(async () => true) }));
 
-import { closeTerminal } from "./lifecycle";
+import { closeGroup, closeProject, closeTerminal, reconcileAliveFlags } from "./lifecycle";
+import { useChats } from "../stores/chatsStore";
+import { beginTurn, createChat, setChatDelivery } from "./chat";
 import { DEFAULT_LAYOUT, useProjects } from "../stores/projectsStore";
 import type { CanvasData } from "./canvas";
 import type { TerminalRow } from "./ipc";
@@ -94,6 +98,7 @@ const canvas: CanvasData = {
 
 describe("closeTerminal", () => {
   beforeEach(() => {
+    useChats.getState().load({});
     saveWorkspace.mockClear();
     useProjects.setState({
       rev: 1,
@@ -128,6 +133,24 @@ describe("closeTerminal", () => {
     expect(c.items.map((i) => i.id)).toEqual(["n1", "c3"]);
   });
 
+  it("deletes the terminal's chat while keeping the other terminal's conversations", async () => {
+    useChats.getState().load({ "chat.terminal.t1": JSON.stringify(createChat()), "chat.terminal.t2": JSON.stringify(createChat()) });
+    await closeTerminal("t1");
+    expect(useChats.getState().byTerminal.t1).toBeUndefined();
+    expect(useChats.getState().byTerminal.t2).toEqual(createChat());
+  });
+
+  it.each(["group", "project"])("deletes the chats owned by a removed %s while preserving other projects", async (owner) => {
+    const state = useProjects.getState();
+    const projectId = state.addProject("Other", "C:/other")!;
+    const groupId = useProjects.getState().groupsOf(projectId)[0].id;
+    const other = useProjects.getState().addTerminal({ groupId, kind: "agent", program: "agent.exe", cwd: "C:/other" });
+    useChats.getState().load({ "chat.terminal.t1": JSON.stringify(createChat()), "chat.terminal.t2": JSON.stringify(createChat()), [`chat.terminal.${other}`]: JSON.stringify(createChat()) });
+    if (owner === "group") await closeGroup("g1");
+    else await closeProject("p1");
+    expect(Object.keys(useChats.getState().byTerminal)).toEqual([other]);
+  });
+
   it("does not touch what belongs to the others", async () => {
     await closeTerminal("t1");
 
@@ -152,5 +175,13 @@ describe("closeTerminal", () => {
     const c = useProjects.getState().layoutOf("g1").canvas!;
     expect(Object.keys(c.nodes).sort()).toEqual(["t1", "t2"]);
     expect(useProjects.getState().terminals).toHaveLength(2);
+  });
+
+  it("startup reconciles a pending conversation whose saved terminal no longer has a native process", async () => {
+    const document = setChatDelivery(beginTurn(createChat(), "request", "Review", 1000), "request", "waiting");
+    useChats.getState().load({ "chat.terminal.t1": JSON.stringify(document) });
+    await reconcileAliveFlags();
+    expect(useChats.getState().byTerminal.t1.pending?.delivery).toBe("uncertain");
+    expect(useChats.getState().byTerminal.t1.threads).toEqual(document.threads);
   });
 });

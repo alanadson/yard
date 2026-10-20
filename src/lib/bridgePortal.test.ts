@@ -187,3 +187,35 @@ it("captures the connected Android screen instead of opening a browser", async (
   ]);
   expect(response).toEqual({ code: 0, output: "C:/Temp/android.png\n" });
 });
+
+/**
+ * A browser portal an agent opens with `yard portal create` used to get its
+ * own WebView2 profile ("instance"): a separate browser process tree per
+ * portal, and a folder on disk nobody ever deletes. Like the dialog, the CLI
+ * now opens it in the project's shared profile.
+ */
+it("creates a browser portal from the CLI in the project's shared profile, like the dialog", async () => {
+  vi.stubGlobal("window", { dispatchEvent: () => true });
+  boundary.portalOpen.mockResolvedValueOnce(undefined as never);
+  useProjects.setState({
+    groups: [
+      {
+        id: "board",
+        projectId: null,
+        name: "Board",
+        sort: 0,
+        layoutJson: JSON.stringify({ canvas }),
+        suspended: false,
+      },
+    ],
+    terminals: [caller],
+  });
+  await cmdPortal(makeCtx(caller, "board", canvas, [caller]), [
+    "create",
+    "https://example.com",
+    "Docs",
+  ]);
+  const fresh = useProjects.getState().layoutOf("board").canvas!;
+  const created = fresh.items.find((item) => item.type === "portal" && item.name === "Docs");
+  expect(created).toMatchObject({ storage: "workspace" });
+});

@@ -29,6 +29,7 @@ import {
   GitPullRequest,
   Keyboard,
   MemoryStick,
+  PauseCircle,
   SquarePen,
   Wallet,
   Workflow,
@@ -45,8 +46,10 @@ import { useChanges } from "../../stores/changesStore";
 import { useEditor } from "../../stores/editorStore";
 import { useForge } from "../../stores/forgeStore";
 import { prBadge } from "../../lib/forge";
-import { budgetMessage, budgetState } from "../../lib/budget";
-import { localDay, totals } from "../../lib/costs";
+import { budgetChip, budgetMessage, budgetOfDay } from "../../lib/budget";
+import { pauseMessage } from "../../lib/automationPause";
+import { localDay } from "../../lib/costs";
+import { useAutomation } from "../../stores/automationStore";
 import { useCosts } from "../../stores/costsStore";
 import { useFlows } from "../../stores/flowStore";
 import { useNotes } from "../../stores/notesStore";
@@ -87,6 +90,7 @@ export function StatusBar() {
         <GitChipView />
         <FrontsChipView />
         <FlowChipView />
+        <AutomationPausedChip />
         <BudgetChip />
       </div>
 
@@ -240,16 +244,13 @@ function FrontsChipView() {
 function BudgetChip() {
   const limit = useUI((s) => s.prefs.budgetDaily);
   const rows = useCosts((s) => s.rows);
-  const t = useT();
-  const today = localDay(new Date());
-  const state = budgetState(
-    totals(rows.filter((row) => row.day === today)).costUsd ?? 0,
-    limit,
-  );
-  if (state.level !== "warn" && state.level !== "over") return null;
+  const state = budgetOfDay(rows, limit, localDay(new Date()));
+  // `budgetChip` decides; a floor reads "≥" and a day with no price says so.
+  const chip = budgetChip(state);
+  if (!chip) return null;
   return (
     <button
-      className={`sb-chip sb-budget is-${state.level}`}
+      className={`sb-chip sb-budget is-${chip.tone}`}
       data-tip={budgetMessage(state)}
       data-tip-side="top"
       data-tip-wrap=""
@@ -257,7 +258,32 @@ function BudgetChip() {
       onClick={() => void useCosts.getState().open()}
     >
       <Wallet size={12} aria-hidden="true" />
-      <span>{t("{pct}% do orçamento", { pct: state.pct })}</span>
+      <span>{chip.label}</span>
+    </button>
+  );
+}
+
+/**
+ * Automation stopped (`lib/automationPause.ts`): the ceiling was reached or
+ * the plan's five-hour window is almost gone. The chip is the way back: a
+ * click resumes, and the same reason does not pause again until tomorrow.
+ */
+function AutomationPausedChip() {
+  const paused = useAutomation((s) => s.paused);
+  const t = useT();
+  if (!paused) return null;
+  const message = pauseMessage(paused);
+  return (
+    <button
+      className="sb-chip sb-paused"
+      data-tip={`${message} ${t("Clique para retomar.")}`}
+      data-tip-side="top"
+      data-tip-wrap=""
+      aria-label={`${message} ${t("Clique para retomar.")}`}
+      onClick={() => void useAutomation.getState().resume(Date.now())}
+    >
+      <PauseCircle size={12} aria-hidden="true" />
+      <span>{t("Automação pausada")}</span>
     </button>
   );
 }

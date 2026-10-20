@@ -17,6 +17,7 @@
 import { nanoid } from "nanoid";
 import { notify } from "./notifications";
 
+import { setRoutineEnabled } from "./routineExecution";
 import {
   ipc,
   type BridgeRequest,
@@ -52,6 +53,7 @@ import {
 import { bridgeCallerRect as callerRect, commitBridgeCanvas as commitCanvas } from "./bridgeCanvas";
 import { boardElements, CANVAS_CAMERA_EVENT, runCanvasCommand } from "./bridgeCanvasCmd";
 import { parseHookEvent } from "./hookEvents";
+import { applyHookEvent } from "./nativeHooks";
 import {
   findWorker,
   formatWorkerInspect,
@@ -100,6 +102,7 @@ import { findFlow, flowsOf } from "./flow";
 import { cancelFlow, startFlow } from "./flowRun";
 import { useFlows, type FlowRun } from "../stores/flowStore";
 import {
+  bridgeLogLine,
   connectedAgents,
   connectedNotes,
   connectedPortals,
@@ -124,9 +127,84 @@ import { useChanges } from "../stores/changesStore";
 import { waitUntilSendable } from "./sendable";
 import { QUEUE_CAP } from "./queue";
 import { useQueue } from "../stores/queueStore";
+import { clearTaskPrompts } from "./taskQueue";
 import { baseName } from "./terminals";
+import { pausedReply } from "./automationPause";
+import { askStamp, emptyLedger, planAsk, recordAsk } from "./askHops";
+import {
+  agentCapReply,
+  askReplyChars,
+  largePromptMessage,
+  mapLimited,
+  needsPromptFile,
+  workerDepthReply,
+} from "./bridgeGuards";
+import { toOsPath } from "./paths";
+import { isWorkerFloor } from "./workerRuns";
+import { useAutomation } from "../stores/automationStore";
+import { useUI } from "../stores/uiStore";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// ---------------------------------------------------------------------------
+// cost limits (the rules are in automationPause.ts, askHops.ts, bridgeGuards.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * The refusal of an automatic send while automation is paused, or `null`.
+ * Only for what agents start: the user's own typing never comes through here.
+ */
+function pauseRefusal(): BridgeResponse | null {
+  const paused = useAutomation.getState().paused;
+  return paused ? err(pausedReply(paused)) : null;
+}
+
+/** Live agent terminals of the caller's project (or of its board, outside one). */
+function liveAgents(ctx: Ctx): number {
+  const s = useProjects.getState();
+  const project = s.projectOfGroup(ctx.groupId);
+  const groups = project ? s.groupsOf(project.id).map((g) => g.id) : [ctx.groupId];
+  return groups.flatMap((id) => s.terminalsOf(id)).filter((t) => t.kind === "agent" && t.alive).length;
+}
+
+/**
+ * Everything a command that raises agents checks first: the pause, that the
+ * caller is not a worker (a worker does not raise its own team), and the
+ * project's cap on live agents.
+ */
+function raiseRefusal(ctx: Ctx, verb: string, adding: number): BridgeResponse | null {
+  const paused = pauseRefusal();
+  if (paused) return paused;
+  const isWorker = isWorkerFloor(useProjects.getState().layoutOf(ctx.groupId).floor);
+  const depth = workerDepthReply(isWorker, verb);
+  if (depth) return err(depth);
+  const cap = agentCapReply(liveAgents(ctx), adding);
+  return cap ? err(cap) : null;
+}
+
+/** The hop ledger of this session's `yard ask`s (`askHops.ts`). */
+let hops = emptyLedger();
+
+/**
+ * A prompt too large to paste goes into the app's `attachments` folder (the
+ * one pasted images already use) and the agent is told where it is.
+ */
+async function writePromptFile(text: string): Promise<string> {
+  const { appDir } = await ipc.appPaths();
+  const rel = `attachments/yard-ask-${Date.now()}-${nanoid(6)}.md`;
+  await ipc.fsWriteText(appDir, rel, text, null, false, false);
+  return toOsPath(appDir, rel);
+}
+
+/** What `yard ask` types in: the hop stamp, then the prompt (or where to read it). */
+async function outgoingPrompt(ctx: Ctx, prompt: string, hop: number, raw: boolean): Promise<string> {
+  // A raw ask is keystrokes (an answer, an Escape), not a prompt: no stamp.
+  if (raw) return prompt;
+  const body = needsPromptFile(prompt)
+    ? largePromptMessage(await writePromptFile(prompt), new TextEncoder().encode(prompt).length)
+    : prompt;
+  return `${askStamp(ctx.nameOf.get(ctx.caller.id) ?? ctx.caller.id, hop)}\n${body}`;
+}
 
 // ---------------------------------------------------------------------------
 // caller context
@@ -245,9 +323,13 @@ export async function handleBridgeRequest(req: BridgeRequest): Promise<BridgeRes
     return err(ctxOr);
   }
   const ctx = ctxOr;
-  uiLog.info(`bridge: ${ctx.nameOf.get(ctx.caller.id)} -> ${argv.join(" ")}`);
+  uiLog.info(bridgeLogLine(ctx.nameOf.get(ctx.caller.id) ?? ctx.caller.id, argv));
 
   switch (cmd) {
+    case "task":
+      return import("./bridgeTask").then(({ cmdTask }) => cmdTask(ctx, argv.slice(1), req));
+    case "chat":
+      return import("./bridgeChat").then(({ cmdChat }) => cmdChat(ctx, argv.slice(1), req));
     case "list":
       return cmdList(ctx);
     case "search":
@@ -344,6 +426,8 @@ async function cmdWorker(ctx: Ctx, args: string[], req: BridgeRequest): Promise<
     const name = p.positional[0];
     const prompt = (p.fromStdin ? req.stdin : (p.string.task ?? p.string.prompt)) ?? "";
     if (!name || !prompt.trim()) return { code: 2, output: WORKER_USAGE };
+    const refused = raiseRefusal(ctx, "worker create", 1);
+    if (refused) return refused;
 
     // Without `--agent` the worker is the same CLI as the caller, which is
     // what makes `yard worker create "X" --task "…"` a one-line delegation.
@@ -426,17 +510,19 @@ async function cmdWorker(ctx: Ctx, args: string[], req: BridgeRequest): Promise<
     }
 
     case "send": {
+      const paused = pauseRefusal();
+      if (paused) return paused;
       const p = parseFlags(args.slice(2), { "--queue": "bool", "--stdin": "stdin" });
       const text = p.fromStdin ? (req.stdin ?? "") : (p.positional[0] ?? "");
       if (!text.trim()) return { code: 2, output: WORKER_USAGE };
       if (!row.terminalId) return err(`yard: o worker "${row.name}" não tem cartão para receber.\n`);
       if (p.bool.queue) {
-        const queued = useQueue
+        const queued = await useQueue
           .getState()
           .enqueue(row.terminalId, text, "bridge", ctx.nameOf.get(ctx.caller.id));
         return queued.ok
           ? ok(queuedLine(row.name, queued.position ?? 1))
-          : err(`yard: a fila de "${row.name}" está cheia.\n`);
+          : err(queued.reason === "failed" ? t("Não consegui salvar o pedido na fila. O prompt não foi aceito.") + "\n" : `yard: a fila de "${row.name}" está cheia.\n`);
       }
       const can = await waitUntilSendable(row.terminalId);
       if (!can.ok) {
@@ -516,24 +602,7 @@ async function cmdWorker(ctx: Ctx, args: string[], req: BridgeRequest): Promise<
 function cmdHook(ctx: Ctx, args: string[], req: BridgeRequest): BridgeResponse {
   const event = parseHookEvent(args, req.stdin);
   if (!event) return err("yard: hook desconhecido.\n");
-  const mirror = useTerminals.getState();
-  const id = ctx.caller.id;
-  switch (event.kind) {
-    case "turn-start":
-      mirror.hookTurnStart(id);
-      break;
-    case "turn-end":
-      mirror.markFinished(id);
-      break;
-    case "permission":
-      mirror.markPermission(id, event.ask || t("Pedindo permissão"));
-      break;
-    case "working":
-      mirror.hookWorking(id);
-      break;
-    case "session":
-      break;
-  }
+  applyHookEvent(ctx.caller.id, event);
   return ok("");
 }
 
@@ -587,6 +656,8 @@ async function cmdHandoff(
   });
   const target = p.positional[0];
   const left = p.fromStdin ? (req.stdin ?? "") : (p.positional[1] ?? "");
+  const paused = pauseRefusal();
+  if (paused) return paused;
   if (!target) {
     return err(
       'uso: yard handoff "Alvo" ["o que falta"] [--queue]\n' +
@@ -630,12 +701,12 @@ async function cmdHandoff(
   const label = ctx.nameOf.get(to.id) ?? target;
 
   if (p.bool.queue) {
-    const queued = useQueue
+    const queued = await useQueue
       .getState()
       .enqueue(to.id, message, "bridge", ctx.nameOf.get(me.id));
     return queued.ok
       ? ok(queuedLine(label, queued.position ?? 1))
-      : err(`yard: a fila de "${label}" está cheia.\n`);
+      : err(queued.reason === "failed" ? t("Não consegui salvar o pedido na fila. O prompt não foi aceito.") + "\n" : `yard: a fila de "${label}" está cheia.\n`);
   }
 
   // The baton is one message and there is no second copy of it: a CLI that is
@@ -661,7 +732,7 @@ async function cmdHandoff(
  * something *in* the queue is `--queue` on the command that had something to
  * say.
  */
-function cmdQueue(ctx: Ctx, args: string[]): BridgeResponse {
+async function cmdQueue(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
   const sub = (args[0] ?? "list").toLowerCase();
   const mine = [ctx.caller, ...connectedAgents(ctx)];
   const nameOf = (id: string) => ctx.nameOf.get(id) ?? id;
@@ -680,11 +751,12 @@ function cmdQueue(ctx: Ctx, args: string[]): BridgeResponse {
     const target = who ? findAgent(ctx, who) : ctx.caller;
     if (!target) return err(`yard: "${who}" não está conectado a você.\n`);
     const had = useQueue.getState().count(target.id);
-    useQueue.getState().clear(target.id);
+    await clearTaskPrompts(target.id);
+    const removed = had - useQueue.getState().count(target.id);
     return ok(
       had === 0
         ? `A fila de "${nameOf(target.id)}" já estava vazia.\n`
-        : `Fila de "${nameOf(target.id)}" limpa (${had} item${had === 1 ? "" : "s"}).\n`,
+        : `Fila de "${nameOf(target.id)}": ${removed} item${removed === 1 ? "" : "s"} removido${removed === 1 ? "" : "s"}.\n`,
     );
   }
 
@@ -796,6 +868,7 @@ const ASK_SPEC = {
   "--stdin": "stdin",
   "--file": "stdin",
   "--timeout": "number",
+  "--max-chars": "number",
 } as const;
 
 interface AskFlags {
@@ -804,6 +877,8 @@ interface AskFlags {
   queue: boolean;
   fromStdin: boolean;
   timeoutMs: number;
+  /** `--max-chars`: how much of the answer comes back (`askReplyChars`). */
+  maxChars: number | undefined;
 }
 
 /**
@@ -823,6 +898,7 @@ function parseAsk(argv: string[], reqTimeout?: number): { rest: string[]; flags:
       queue: !!args.bool.queue,
       fromStdin: args.fromStdin,
       timeoutMs: asked && asked > 0 ? asked * 1_000 : Math.max(30_000, (reqTimeout ?? 600_000) - 15_000),
+      maxChars: args.number["max-chars"],
     },
   };
 }
@@ -833,11 +909,16 @@ async function cmdAsk(
   req: BridgeRequest,
 ): Promise<BridgeResponse> {
   const { rest, flags } = parseAsk(argv, req.timeoutMs);
+  // An agent asking an agent is automation: it stops with the pause.
+  const paused = pauseRefusal();
+  if (paused) return paused;
 
   // `--batch` is the one place several agents are addressed at once. They run
-  // in parallel because they are different processes; the answer keeps each
-  // one under its own name, so a failure of the third does not read as a
-  // failure of all four.
+  // in parallel because they are different processes, but at most
+  // `automationMaxAgents` at a time: the same admission the native queue
+  // applies, so a batch of ten does not wake ten paid turns in one instant.
+  // The answer keeps each one under its own name, so a failure of the third
+  // does not read as a failure of all four.
   if (rest[0] === "--batch") {
     let table: Record<string, unknown>;
     try {
@@ -845,13 +926,15 @@ async function cmdAsk(
     } catch {
       return err('yard: --batch espera um JSON {"Agente": "prompt", ...}\n');
     }
-    const results = await Promise.all(
-      Object.entries(table).map(async ([name, prompt]) => {
+    const results = await mapLimited(
+      Object.entries(table),
+      useUI.getState().prefs.automationMaxAgents,
+      async ([name, prompt]) => {
         const r = await askOne(ctx, name, String(prompt), flags);
         return r.code === 0
           ? { name, output: r.output }
           : { name, error: r.output.trim() };
-      }),
+      },
     );
     return ok(JSON.stringify(results, null, 2) + "\n");
   }
@@ -860,7 +943,7 @@ async function cmdAsk(
   const prompt = flags.fromStdin ? (req.stdin ?? "") : inline;
   if (!name || prompt == null) {
     return err(
-      'uso: yard ask "Agente" "prompt" [--raw] [--no-wait] [--timeout s]\n' +
+      'uso: yard ask "Agente" "prompt" [--raw] [--no-wait] [--timeout s] [--max-chars N]\n' +
         '     yard ask "Agente" --file prompt.md   (texto longo/multi-linha)\n' +
         '     yard ask "Agente" --stdin            (le da entrada padrão)\n',
     );
@@ -897,15 +980,30 @@ async function askOne(
     );
   }
 
+  // The hop guard: how deep in an agent-to-agent chain this is, and how
+  // often this pair has talked lately (`askHops.ts`).
+  const plan = planAsk(hops, ctx.caller.id, target.id, Date.now());
+  if (!plan.ok) return err(plan.message);
+  let outgoing: string;
+  try {
+    outgoing = await outgoingPrompt(ctx, prompt, plan.hop, flags.raw);
+  } catch (e) {
+    return err(`yard: o pedido é grande demais para colar e não consegui gravá-lo num arquivo: ${e}\n`);
+  }
+  const sent = () => {
+    hops = recordAsk(hops, ctx.caller.id, target.id, plan.hop, Date.now());
+  };
+
   if (flags.queue) {
     const label = ctx.nameOf.get(target.id) ?? name;
-    const queued = useQueue
+    const queued = await useQueue
       .getState()
-      .enqueue(target.id, prompt, "bridge", ctx.nameOf.get(ctx.caller.id));
+      .enqueue(target.id, outgoing, "bridge", ctx.nameOf.get(ctx.caller.id));
+    if (queued.ok) sent();
     return queued.ok
       ? ok(queuedLine(label, queued.position ?? 1))
       : err(
-          queued.reason === "cheia"
+          queued.reason === "failed" ? t("Não consegui salvar o pedido na fila. O prompt não foi aceito.") + "\n" : queued.reason === "cheia"
             ? `yard: a fila de "${label}" está cheia (${QUEUE_CAP}). ` +
                 "Espere ela andar ou peça ao usuário para limpá-la.\n"
             : "yard: nada para enfileirar (prompt vazio).\n",
@@ -919,7 +1017,8 @@ async function askOne(
   const baseline = before.totalBytes;
   const t0 = Date.now();
 
-  await injectPrompt(target.id, prompt, { raw: flags.raw });
+  await injectPrompt(target.id, outgoing, { raw: flags.raw });
+  sent();
   if (flags.noWait) return ok(`enviado para "${ctx.nameOf.get(target.id)}".\n`);
 
   let seen = baseline;
@@ -961,7 +1060,8 @@ async function askOne(
         "para ver o estado.\n",
     );
   }
-  return ok(tail(text, 30_000) + "\n");
+  // What the caller pays to read: 8000 characters unless it asked for more.
+  return ok(tail(text, askReplyChars(flags.maxChars)) + "\n");
 }
 
 // --- check ------------------------------------------------------------------
@@ -1311,6 +1411,17 @@ function cmdConnect(ctx: Ctx, args: string[]): BridgeResponse {
   const right = resolve(b);
   if (!right) return err(`yard: não achei "${b}" neste grupo.\n`);
   if (left.id === right.id) return err("yard: os dois lados são a mesma coisa.\n");
+  // The wire between a CLI and a flow card is what lets the pipeline run on
+  // that CLI: every stage is a paid turn, so only the user draws it.
+  if (
+    (left.kind === "flow" && right.kind === "terminal") ||
+    (right.kind === "flow" && left.kind === "terminal")
+  ) {
+    return err(
+      "yard: ligar uma CLI a um cartão de fluxo é decisão do usuário (cada etapa é um turno pago). " +
+        "Peça a ele para desenhar essa conexão no canvas.\n",
+    );
+  }
 
   if (!reaches(ctx, left.id) && !reaches(ctx, right.id)) {
     return err(
@@ -1365,6 +1476,11 @@ async function cmdRecruit(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
       "yard: --replace e --floor não combinam — o cartão substituído já mora num grupo.\n",
     );
   }
+  // `--replace` swaps the process of a card that already counts, so it adds
+  // nothing to the cap; it still spawns an agent, so the pause and the
+  // worker rule apply.
+  const refused = raiseRefusal(ctx, "recruit", replace ? 0 : 1);
+  if (refused) return refused;
 
   // Without `--agent`, the recruit is a copy of the caller: same binary, same
   // kind. That is what makes `yard recruit "Segundo"` a one-word command.
@@ -1820,31 +1936,28 @@ async function cmdFloor(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
     });
     const name = p.positional[0];
     const prompt = p.string.prompt;
-    if (!name || !prompt) {
+    const wanted = (p.string.agents ?? "")
+      .split(",")
+      .map((x) => x.trim().toLowerCase())
+      .filter(Boolean);
+    // `--agents` is required: without it the fan-out used every CLI installed
+    // on the machine, each one a paid worker nobody chose.
+    if (!name || !prompt || wanted.length === 0) {
       return err(
-        'uso: yard floor fanout "Nome" --prompt "pedido" [--agents claude,codex] [--copy-ground]\n',
+        'uso: yard floor fanout "Nome" --prompt "pedido" --agents claude,codex [--copy-ground]\n' +
+          "     (--agents é obrigatório: diga quais CLIs recebem a tarefa)\n",
       );
     }
+    const refused = raiseRefusal(ctx, "floor fanout", wanted.length);
+    if (refused) return refused;
     try {
       const detected = await ipc.detectAgents(false);
-      const wanted = (p.string.agents ?? "")
-        .split(",")
-        .map((x) => x.trim().toLowerCase())
-        .filter(Boolean);
       const pool = detected.filter((a) => a.installed && a.bin);
-      const chosen = wanted.length
-        ? pool.filter(
-            (a) =>
-              wanted.includes(a.id.toLowerCase()) ||
-              wanted.includes(a.name.toLowerCase()),
-          )
-        : pool;
+      const chosen = pool.filter(
+        (a) => wanted.includes(a.id.toLowerCase()) || wanted.includes(a.name.toLowerCase()),
+      );
       if (chosen.length === 0) {
-        return err(
-          wanted.length
-            ? `yard: nenhum dos agentes (${wanted.join(", ")}) está instalado.\n`
-            : "yard: nenhuma CLI de agente instalada nesta máquina.\n",
-        );
+        return err(`yard: nenhum dos agentes (${wanted.join(", ")}) está instalado.\n`);
       }
       const result = await fanOutTask({
         projectId: project.id,
@@ -1868,7 +1981,7 @@ async function cmdFloor(ctx: Ctx, args: string[]): Promise<BridgeResponse> {
       "                       [--dry-run] [--json]\n" +
       '     yard floor land "Nome" [--close] [--keep-losers]\n' +
       "     yard floor compare\n" +
-      '     yard floor fanout "Nome" --prompt "pedido" [--agents claude,codex]\n',
+      '     yard floor fanout "Nome" --prompt "pedido" --agents claude,codex\n',
   );
 }
 
@@ -2011,7 +2124,8 @@ function cmdRoutine(ctx: Ctx, args: string[], req: BridgeRequest): BridgeRespons
         : "";
       out +=
         `  [${r.id}] "${targetName(r.terminalId)}" ${when}` +
-        `${r.enabled ? "" : " (pausada)"}${last}\n      ${r.text.split("\n")[0].slice(0, 70)}\n`;
+        `${r.awaitingApproval ? " (aguarda aprovação do usuário)" : r.enabled ? "" : " (pausada)"}` +
+        `${last}\n      ${r.text.split("\n")[0].slice(0, 70)}\n`;
     }
     return ok(out);
   }
@@ -2041,20 +2155,32 @@ function cmdRoutine(ctx: Ctx, args: string[], req: BridgeRequest): BridgeRespons
       ctx.nameOf.get(ctx.caller.id)!.toLowerCase() === nameOfTarget.trim().toLowerCase();
     const target = isSelf ? ctx.caller : findAgent(ctx, nameOfTarget);
     if (!target) return err(`yard: "${nameOfTarget}" não está conectado a você.\n`);
+    // Saved switched off: a routine fires paid turns while nobody watches, so
+    // one an agent wrote waits for the user to switch it on.
     const newOne: RoutineDef = {
       id: nanoid(6),
       terminalId: target.id,
       text,
       everyMin,
-      enabled: true,
+      enabled: false,
+      awaitingApproval: true,
       once,
       createdAt: Date.now(),
     };
     commitCanvas(ctx.groupId, (c) => ({ ...c, routines: [...(c.routines ?? []), newOne] }));
+    const who = ctx.nameOf.get(ctx.caller.id) ?? ctx.caller.id;
+    const targetLabel = ctx.nameOf.get(target.id) ?? nameOfTarget;
+    useUI.getState().showToast(
+      t('{who} criou uma rotina para "{target}" que aguarda a sua aprovação. Ligue em Rotinas e gatilhos para valer.', {
+        who,
+        target: targetLabel,
+      }),
+    );
     return ok(
-      `Rotina [${newOne.id}] criada para "${ctx.nameOf.get(target.id)}" ` +
-        `${once ? `daqui a ${everyMin} min (uma vez)` : `a cada ${everyMin} min`}. ` +
-        "Só dispara com o terminal rodando e ocioso.\n",
+      `Rotina [${newOne.id}] criada para "${targetLabel}" ` +
+        `${once ? `daqui a ${everyMin} min (uma vez)` : `a cada ${everyMin} min`}, desligada: ` +
+        "aguarda a aprovação do usuário, que a liga em Rotinas e gatilhos. " +
+        "Depois disso, só dispara com o terminal rodando e ocioso.\n",
     );
   }
 
@@ -2070,9 +2196,12 @@ function cmdRoutine(ctx: Ctx, args: string[], req: BridgeRequest): BridgeRespons
       return ok(`Rotina [${id}] removida.\n`);
     }
     const enabled = sub === "resume";
+    if (enabled && target.awaitingApproval) {
+      return err(`yard: a rotina [${id}] aguarda a aprovação do usuário; só ele pode ligá-la.\n`);
+    }
     commitCanvas(ctx.groupId, (c) => ({
       ...c,
-      routines: (c.routines ?? []).map((r) => (r.id === id ? { ...r, enabled } : r)),
+      routines: (c.routines ?? []).map((r) => (r.id === id ? setRoutineEnabled(r, enabled, Date.now()) : r)),
     }));
     return ok(`Rotina [${id}] ${enabled ? "retomada" : "pausada"}.\n`);
   }
@@ -2131,7 +2260,7 @@ function cmdTrigger(ctx: Ctx, args: string[], req: BridgeRequest): BridgeRespons
     for (const t of triggers) {
       const last = t.lastRunAt ? ` último: ${new Date(t.lastRunAt).toLocaleTimeString()}` : "";
       const extra = [
-        t.enabled ? "" : "(pausado)",
+        t.awaitingApproval ? "(aguarda aprovação do usuário)" : t.enabled ? "" : "(pausado)",
         t.once ? "(uma vez)" : "",
         t.cooldownSec ? `(mín. ${t.cooldownSec} s)` : "",
       ]
@@ -2179,20 +2308,31 @@ function cmdTrigger(ctx: Ctx, args: string[], req: BridgeRequest): BridgeRespons
       action = { kind: "notify", text: spec.action.text };
     }
 
+    // Saved switched off: a trigger fires paid turns while nobody watches, so
+    // one an agent wrote waits for the user to switch it on.
     const fresh: TriggerDef = {
       id: nanoid(6),
       sourceId,
       event: spec.event,
       action,
-      enabled: true,
+      enabled: false,
+      awaitingApproval: true,
       once: spec.once,
       ...(spec.cooldownSec ? { cooldownSec: spec.cooldownSec } : {}),
       createdAt: Date.now(),
     };
     commitCanvas(ctx.groupId, (c) => ({ ...c, triggers: [...(c.triggers ?? []), fresh] }));
+    const summary = triggerSummary(fresh, nameOf, flowNameOf);
+    useUI.getState().showToast(
+      t("{who} criou um gatilho que aguarda a sua aprovação: {summary}. Ligue em Rotinas e gatilhos para valer.", {
+        who: me,
+        summary,
+      }),
+    );
     return ok(
-      `Gatilho [${fresh.id}] criado: ${triggerSummary(fresh, nameOf, flowNameOf)}. ` +
-        "Um prompt só é entregue com o alvo rodando e ocioso.\n",
+      `Gatilho [${fresh.id}] criado, desligado: ${summary}. ` +
+        "Aguarda a aprovação do usuário, que o liga em Rotinas e gatilhos. " +
+        "Depois disso, um prompt só é entregue com o alvo rodando e ocioso.\n",
     );
   }
 
@@ -2208,6 +2348,9 @@ function cmdTrigger(ctx: Ctx, args: string[], req: BridgeRequest): BridgeRespons
       return ok(`Gatilho [${id}] removido.\n`);
     }
     const enabled = sub === "resume";
+    if (enabled && target.awaitingApproval) {
+      return err(`yard: o gatilho [${id}] aguarda a aprovação do usuário; só ele pode ligá-lo.\n`);
+    }
     commitCanvas(ctx.groupId, (c) => ({
       ...c,
       triggers: (c.triggers ?? []).map((t) => (t.id === id ? { ...t, enabled } : t)),
@@ -2330,7 +2473,7 @@ async function cmdFlow(
     }
     // The pipeline runs on the CLI that asked: the flow is a sequence of
     // prompts, and the one walking through it is you.
-    const r = startFlow(ctx.groupId, flow, task, {
+    const r = await startFlow(ctx.groupId, flow, task, {
       terminalId: ctx.caller.id,
       callerId: ctx.caller.id,
     });
@@ -2453,9 +2596,14 @@ const HELP = `yard — ponte entre agentes, notas e o canvas do Yard
   yard ask "Agente" --no-wait "prompt"         envia sem esperar
   yard ask "Agente" --queue "prompt"           enfileira para quando ele estiver livre
   yard queue [list] | queue clear ["Agente"]   o que está esperando
+  yard task show ID                           request, acceptance criteria and delivery
+  yard task history ID                        previous reports and their evidence
+  yard task submit ID --attempt ATTEMPT_ID --file delivery.json
+  yard task submit ID --attempt ATTEMPT_ID --stdin
   yard handoff "Alvo" ["o que falta"]          passa o bastão (papel, árvore, últimos turnos)
   yard ask --batch '{"A":"p1","B":"p2"}'       vários em paralelo
   yard ask … --timeout 600                     segundos de espera
+  yard ask … --max-chars 20000                 quanto da resposta volta (padrão 8000, máx. 30000)
   yard check "Agente"                          lê a tela atual do agente
   yard search "texto" [--all] [--limit 4]      procura no histórico dos terminais
   yard wait "Agente"                           bloqueia até ele parar
@@ -2492,7 +2640,7 @@ const HELP = `yard — ponte entre agentes, notas e o canvas do Yard
   yard worker apply "Nome" [--keep-front] [--close-siblings] | keep | discard | stop
                                                merge no chão; --close encerra a frente
   yard floor compare                           diffstat de cada frente vs o chão
-  yard floor fanout "Nome" --prompt "…" [--agents a,b]
+  yard floor fanout "Nome" --prompt "…" --agents a,b
                                                um pedido, N frentes, um agente cada
   yard role show ["Agente"] | role set "Agente" "texto|papel salvo"
   yard role create|edit "Papel" "texto" [--scope global|current]
@@ -2505,6 +2653,7 @@ const HELP = `yard — ponte entre agentes, notas e o canvas do Yard
                       --ask "Alvo" "prompt" | --notify "texto" | --flow "Fluxo" "tarefa"
                       [--once] [--cooldown 60]   ({name} e {ask} viram quem disparou e a pergunta)
   yard trigger pause|resume|delete <id>
+  yard chat history [--thread N] [--last 50]   as últimas mensagens do tópico
   yard flow list                               fluxos (correntes de agentes) do grupo
   yard flow run "Fluxo" "tarefa"               dispara a corrente etapa por etapa
   yard flow stage                              briefing da etapa em execução NESTA CLI
@@ -2524,5 +2673,9 @@ const HELP = `yard — ponte entre agentes, notas e o canvas do Yard
 
 Comunicação exige conexão desenhada no canvas (ou criada por connect/recruit).
 Notas travadas pelo usuário recusam escrita — peça a mudança a ele.
+Rotinas e gatilhos criados por você nascem desligados até o usuário aprovar.
+Com a automação pausada (orçamento ou cota), ask, handoff, recruit, worker e fanout recusam.
+Cada pedido de ask chega com "[Yard · de \"Você\" · salto N]"; o limite é 3 saltos e 6 pedidos por dupla em 10 min.
+Agentes criados por agentes: no máximo 8 vivos por projeto; um worker não cria outros.
 Use \`--\` para mandar texto que começa com \`-\`: yard ask "A" -- --raw
 `;

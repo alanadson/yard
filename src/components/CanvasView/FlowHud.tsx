@@ -18,7 +18,8 @@ import { useOccluder } from "../../hooks/useOccluder";
 import { goToTerminalId } from "../../lib/navigate";
 import { useNow } from "../../hooks/useNow";
 import { flowAgents, type FlowItem } from "../../lib/flow";
-import { cancelFlow, startFlow } from "../../lib/flowRun";
+import { runState } from "./runState";
+import { canResumeFlow, cancelFlow, flowErrorText, flowRunStageLabel, resumeFlow, startFlow } from "../../lib/flowRun";
 import { isLive, useTerminals } from "../../stores/terminalsStore";
 import { useFlows, type FlowRun } from "../../stores/flowStore";
 import { useProjects } from "../../stores/projectsStore";
@@ -41,6 +42,12 @@ function elapsedLabel(since: number, now: number): string {
   return m < 60 ? `${m}min` : `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}min` : ""}`;
 }
 
+/** The one leaf that ticks: the elapsed time of a run still going. */
+function Elapsed({ since }: { since: number }) {
+  const now = useNow(1_000);
+  return <>{elapsedLabel(since, now)}</>;
+}
+
 export function RunRow({
   run,
   onReveal,
@@ -49,15 +56,15 @@ export function RunRow({
   onReveal: (id: string) => void;
 }) {
   const t = useT();
-  const now = useNow(1_000);
   const live = !run.finishedAt;
-  const state = run.error
-    ? t("falhou")
-    : run.cancelled
-      ? t("cancelado")
-      : live
-        ? elapsedLabel(run.startedAt, now)
-        : t("concluído");
+  // Only a run still going needs the clock (`runState`): the others are a
+  // fixed word and their rows stay still.
+  const current = runState(run);
+  const state =
+    current.kind === "running" ? <Elapsed since={current.since} />
+      : current.kind === "failed" ? t("falhou")
+        : current.kind === "cancelled" ? t("cancelado")
+          : t("concluído");
 
   return (
     <div className={`cv-flowrun ${run.error ? "is-error" : ""}`}>
@@ -77,14 +84,15 @@ export function RunRow({
             key={i}
             className={`cv-flowchip is-${s.status}`}
             data-tip-wrap=""
-            data-tip={t("{label} — etapa {n}/{total}", { label: s.label, n: i + 1, total: run.stages.length })}
+            data-tip={t("{label}: etapa {n}/{total}", { label: flowRunStageLabel(run, i), n: i + 1, total: run.stages.length })}
           >
             <span className="cv-flowchip-dot" aria-hidden="true" />
-            {i + 1} {s.label}
+            {i + 1} {flowRunStageLabel(run, i)}
           </span>
         ))}
       </div>
-      {live ? (
+      {canResumeFlow(run) && <button className="btn btn--sm" onClick={() => void resumeFlow(run)}>{t("Revisar e retomar")}</button>}
+      {live || canResumeFlow(run) ? (
         <button
           className="icon-btn"
           data-tip={t("Cancelar o fluxo")}
@@ -98,7 +106,7 @@ export function RunRow({
           className="icon-btn"
           data-tip={t("Dispensar")}
           aria-label={t("Dispensar este resultado")}
-          onClick={() => useFlows.getState().clear(run.flowId)}
+          onClick={() => void useFlows.getState().clear(run.flowId).catch((error) => useUI.getState().showToast(flowErrorText(error), "error"))}
         >
           {run.error || run.cancelled ? <X size={12} /> : <Check size={12} />}
         </button>
@@ -133,7 +141,7 @@ export const FlowHud = memo(function FlowHud({ groupId, flows, onReveal, onDraw 
     );
   };
 
-  const runAction = (flow: FlowItem) => {
+  const runAction = async (flow: FlowItem) => {
     const target = executorOf(flow.id);
     if (!target) {
       useUI
@@ -144,7 +152,7 @@ export const FlowHud = memo(function FlowHud({ groupId, flows, onReveal, onDraw 
         );
       return;
     }
-    const r = startFlow(groupId, flow, task, { terminalId: target.id });
+    const r = await startFlow(groupId, flow, task, { terminalId: target.id });
     useUI.getState().showToast(r.message, r.ok ? "info" : "error");
     if (r.ok) {
       setRunFor(null);

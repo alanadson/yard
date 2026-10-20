@@ -10,12 +10,15 @@ import { describe, expect, it } from "vitest";
 import type { TriggerDef } from "./canvas";
 import {
   afterFire,
+  ASK_DAILY_CAP,
+  defaultCooldownSec,
   dueTriggers,
   parseTriggerCreate,
   renderText,
   SELF_ASK_MIN_COOLDOWN_SEC,
   TRIGGER_EVENT_OPTIONS,
   transitions,
+  toggledTrigger,
   triggerSummary,
 } from "./triggers";
 import type { TerminalRuntime } from "../stores/terminalsStore";
@@ -136,6 +139,105 @@ describe("dueTriggers", () => {
     // `*` reaches the target too, when the target is the one that fired.
     const anySelf = def({ sourceId: "*", action: { kind: "ask", targetId: "a", text: "x" }, lastRunAt: 10_000 });
     expect(dueTriggers([anySelf], fire, tooSoon)).toEqual([]);
+  });
+
+  /** One lap of "ask myself" is one paid turn: ten minutes is the floor between two. */
+  it("a trigger that asks its own source waits ten minutes between laps", () => {
+    const selfAsk = def({ action: { kind: "ask", targetId: "a", text: "go on" }, lastRunAt: 10_000 });
+    expect(dueTriggers([selfAsk], fire, 10_000 + 599_000)).toEqual([]);
+    expect(dueTriggers([selfAsk], fire, 10_000 + 600_000)).toEqual([selfAsk]);
+  });
+
+  /**
+   * The regression: "when any CLI finishes, ask Codex to review" also heard
+   * Codex's own finish, so Codex reviewed its own review, forever. A wildcard
+   * never feeds a target the edge that target fired.
+   */
+  it("a wildcard ask ignores the edge fired by its own target", () => {
+    const review = def({ sourceId: "*", action: { kind: "ask", targetId: "a", text: "revise" } });
+    expect(dueTriggers([review], { event: "finished", terminalId: "a" }, 2_000)).toEqual([]);
+    expect(dueTriggers([review], { event: "finished", terminalId: "b" }, 2_000)).toEqual([review]);
+  });
+});
+
+/**
+ * The loops nobody drew on purpose. "A finished → ask B" and "B finished →
+ * ask A" are each a sensible nudge, and together a ping-pong that bills one
+ * turn per lap until someone notices. A trigger that sits in such a loop
+ * waits at least five minutes between fires, whatever cooldown it was given.
+ */
+describe("trigger loops", () => {
+  const ask = (id: string, sourceId: string, targetId: string, patch: Partial<TriggerDef> = {}) =>
+    def({ id, sourceId, action: { kind: "ask", targetId, text: "x" }, ...patch });
+
+  it("two CLIs asking each other on finish fire at most every five minutes", () => {
+    const aToB = ask("g1", "a", "b", { lastRunAt: 10_000 });
+    const bToA = ask("g2", "b", "a");
+    const fromA = { event: "finished" as const, terminalId: "a" };
+    expect(dueTriggers([aToB, bToA], fromA, 10_000 + 299_000)).toEqual([]);
+    expect(dueTriggers([aToB, bToA], fromA, 10_000 + 300_000)).toEqual([aToB]);
+  });
+
+  it("a wildcard that closes the loop counts as part of it", () => {
+    const anyToA = ask("g1", "*", "a");
+    const aToC = ask("g2", "a", "c", { lastRunAt: 10_000 });
+    const fromA = { event: "finished" as const, terminalId: "a" };
+    expect(dueTriggers([anyToA, aToC], fromA, 10_000 + 60_000)).toEqual([]);
+  });
+
+  it("a chain with no way back keeps the cooldown it was given", () => {
+    const aToB = ask("g1", "a", "b", { lastRunAt: 10_000 });
+    const bToC = ask("g2", "b", "c");
+    const fromA = { event: "finished" as const, terminalId: "a" };
+    expect(dueTriggers([aToB, bToC], fromA, 10_000 + 1_000)).toEqual([aToB]);
+  });
+
+  it("a paused trigger does not close a loop: it cannot fire", () => {
+    const aToB = ask("g1", "a", "b", { lastRunAt: 10_000 });
+    const bToA = ask("g2", "b", "a", { enabled: false });
+    const fromA = { event: "finished" as const, terminalId: "a" };
+    expect(dueTriggers([aToB, bToA], fromA, 10_000 + 1_000)).toEqual([aToB]);
+  });
+});
+
+/**
+ * A per-day ceiling on what one `ask` trigger may spend: even a well-spaced
+ * nudge is fifty paid turns by the end of the day, and that is where it
+ * stops until the next local day.
+ */
+describe("the cooldown the form starts with", () => {
+  /** A prompt into a CLI is a paid turn; a notification and a flow start from zero as before. */
+  it("is five minutes for an ask and nothing for the other actions", () => {
+    expect(defaultCooldownSec("ask")).toBe(300);
+    expect(defaultCooldownSec("notify")).toBe(0);
+    expect(defaultCooldownSec("flow")).toBe(0);
+  });
+});
+
+describe("the daily cap of an ask trigger", () => {
+  const morning = new Date(2026, 9, 19, 9, 0).getTime();
+  const evening = new Date(2026, 9, 19, 21, 0).getTime();
+  const nextDay = new Date(2026, 9, 20, 9, 0).getTime();
+  const fire = { event: "finished" as const, terminalId: "a" };
+
+  it("stops firing after fifty fires in the same local day", () => {
+    const spent = def({ lastRunAt: morning, firedDay: "2026-10-19", firedToday: ASK_DAILY_CAP });
+    const almost = def({ lastRunAt: morning, firedDay: "2026-10-19", firedToday: ASK_DAILY_CAP - 1 });
+    expect(ASK_DAILY_CAP).toBe(50);
+    expect(dueTriggers([spent], fire, evening)).toEqual([]);
+    expect(dueTriggers([almost], fire, evening)).toEqual([almost]);
+  });
+
+  it("starts over on the next local day", () => {
+    const spent = def({ lastRunAt: evening, firedDay: "2026-10-19", firedToday: ASK_DAILY_CAP });
+    expect(dueTriggers([spent], fire, nextDay)).toEqual([spent]);
+  });
+
+  it("afterFire counts the fires of the day and restarts the count on a new day", () => {
+    const first = afterFire(def(), morning);
+    expect(first).toMatchObject({ firedDay: "2026-10-19", firedToday: 1 });
+    expect(afterFire(first, evening)).toMatchObject({ firedDay: "2026-10-19", firedToday: 2 });
+    expect(afterFire(afterFire(first, evening), nextDay)).toMatchObject({ firedDay: "2026-10-20", firedToday: 1 });
   });
 });
 
@@ -285,5 +387,21 @@ describe("the budget edge", () => {
       undefined,
     );
     expect(parsed.ok).toBe(false);
+  });
+});
+
+/**
+ * A trigger an agent created waits switched off until the user turns it on
+ * (`awaitingApproval`). Turning it on in the sheet *is* the approval, so the
+ * flag goes with it; turning it off again does not bring the flag back.
+ */
+describe("toggledTrigger", () => {
+  it("switching on approves a trigger an agent created", () => {
+    const pending = def({ enabled: false, awaitingApproval: true });
+    const on = toggledTrigger(pending);
+    expect(on.enabled).toBe(true);
+    expect(on.awaitingApproval).toBeUndefined();
+    expect(toggledTrigger(on)).toMatchObject({ enabled: false });
+    expect(toggledTrigger(on).awaitingApproval).toBeUndefined();
   });
 });

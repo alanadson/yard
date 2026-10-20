@@ -6,7 +6,7 @@ import { RotateCcw } from "lucide-react";
 
 import { useT } from "../../../hooks/useT";
 import { useUI } from "../../../stores/uiStore";
-import { Card, GroupTitle, Row, SwitchRow } from "../rows";
+import { Card, GroupTitle, NumberRow, Row, SwitchRow } from "../rows";
 
 export function SecBehavior() {
   const t = useT();
@@ -27,6 +27,14 @@ export function SecBehavior() {
             "O X esconde a janela; as CLIs continuam. Sair fica no menu do ícone da bandeja (e na busca).",
           )}
         />
+      </Card>
+
+      <GroupTitle>{t("Execução automática")}</GroupTitle>
+      <p className="hint">{t("A fila e as rotinas aguardam uma vaga quando o limite de agentes ativos é atingido.")}</p>
+      <Card>
+        <NumberRow pref="automationMaxAgents" label={t("Máximo de agentes ativos")} min={1} max={16} />
+        <SwitchRow pref="automationLockDirectories" label={t("Um agente por pasta durante a execução automática")}
+          desc={t("Pedidos automáticos aguardam enquanto outro agente trabalha na mesma pasta inicial.")} />
       </Card>
 
       <GroupTitle>{t("Restaurar")}</GroupTitle>

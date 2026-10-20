@@ -8,7 +8,7 @@
  * in the window has a price), tabular figures in the tables, and the caveat
  * the rest of the app already states: list prices, not the invoice.
  */
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import "./costs.css";
 import { RefreshCw } from "lucide-react";
 
@@ -28,6 +28,7 @@ import {
 import { since } from "../../lib/format";
 import { useCosts } from "../../stores/costsStore";
 import { useUI } from "../../stores/uiStore";
+import { usePricingSettings } from "../../stores/pricingSettingsStore";
 
 /** A bucket's cost, with the floor marked when part of it had no price. */
 function cost(b: Bucket): string {
@@ -38,6 +39,9 @@ function cost(b: Bucket): string {
 export function CostsModal() {
   const t = useT();
   const closeModal = useUI((s) => s.closeModal);
+  const openChildModal = useUI((s) => s.openChildModal);
+  const pricingSettings = usePricingSettings((state) => state.settings);
+  useEffect(() => { void usePricingSettings.getState().load(); }, []);
   const days = useCosts((s) => s.days);
   const rows = useCosts((s) => s.rows);
   const loading = useCosts((s) => s.loading);
@@ -90,6 +94,7 @@ export function CostsModal() {
             ? t("atualizado {ago}", { ago: since(Math.floor(loadedAt / 1000), Date.now()) })
             : ""}
       </span>
+      <button className="btn btn--sm" onClick={() => openChildModal("pricing")}>{t("Referência de preços")}</button>
       <button
         className="icon-btn"
         data-tip={t("Ler as sessões de novo")}
@@ -142,9 +147,11 @@ export function CostsModal() {
       toolbar={toolbar}
       footer={
         <p className="hint costs-note">
+          {pricingSettings && pricingSettings.rates.length > 0 && <span>{t("{n} tarifa(s) personalizada(s) ativa(s).", { n: pricingSettings.rates.length })}{" "}</span>}
           {t(
-            "Estimativa com preços de tabela (Opus 5, Sonnet 5, Haiku 4.5; cache 1,25× na gravação e 0,1× na leitura) — não bate com a fatura. Um modelo fora da tabela (o Codex, por exemplo) conta tokens e fica sem preço; nas somas ele aparece como piso (≥). Uma sessão que atravessa a meia-noite conta nos dois dias.",
+            "Estimativa com preços de referência por modelo. Gravações de cache informadas como 1 hora usam tarifa própria; registros sem duração usam a referência de 5 minutos. Modelos sem preço tornam as somas um piso (≥). Uma sessão pode contribuir para mais de um dia.",
           )}
+          {" "}{t("Registros de tokens inconsistentes também ficam sem estimativa.")}
         </p>
       }
     >
@@ -177,6 +184,7 @@ export function CostsModal() {
         <div className="costs-tile">
           <small>{t("Cache gravado")}</small>
           <strong>{formatTokens(view.total.cacheWrite)}</strong>
+          <span className="hint">{t("1 h informado: {tokens}", { tokens: formatTokens(view.total.cacheWriteOneHour) })}</span>
         </div>
         <div className="costs-tile">
           <small>{t("Sessões")}</small>

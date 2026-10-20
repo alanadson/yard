@@ -91,7 +91,10 @@ pub struct UsageSnapshot {
 // ---------------------------------------------------------------------------
 
 static SNAPSHOT: Mutex<Option<UsageSnapshot>> = Mutex::new(None);
-static WAKE: OnceLock<mpsc::Sender<()>> = OnceLock::new();
+/// Each message is the set of providers a refresh forces.
+static WAKE: OnceLock<mpsc::Sender<Vec<&'static str>>> = OnceLock::new();
+
+const PROVIDERS: [&str; 3] = ["claude", "codex", "grok"];
 
 /// Current snapshot (empty before the first cycle finishes).
 pub fn snapshot() -> UsageSnapshot {
@@ -101,16 +104,42 @@ pub fn snapshot() -> UsageSnapshot {
     })
 }
 
-/// Asks for an immediate cycle. Cheap: if the thread is already in the middle
-/// of one, the signal just brings the next `recv_timeout` forward.
-pub fn request_refresh() {
+/// Asks for an immediate cycle for one provider (`"claude"`, `"codex"`,
+/// `"grok"`) or, with `None`, for all of them. Cheap: if the thread is already
+/// in the middle of one, the signal just brings the next `recv_timeout`
+/// forward. An unknown provider asks for nothing.
+pub fn request_refresh(provider: Option<&str>) {
+    let forced = forced_by(provider);
+    if forced.is_empty() {
+        return;
+    }
     if let Some(tx) = WAKE.get() {
-        let _ = tx.send(());
+        let _ = tx.send(forced);
+    }
+}
+
+/// The providers a refresh request forces: the one named, or every provider
+/// for `None`; none for a name that is not a provider.
+fn forced_by(provider: Option<&str>) -> Vec<&'static str> {
+    match provider {
+        None => PROVIDERS.to_vec(),
+        Some(name) => PROVIDERS.iter().copied().filter(|id| *id == name).collect(),
+    }
+}
+
+/// Whether a cycle fetches this provider: a forced one when its own rules
+/// allow (`ProviderPoll::due`), any other by its timer, and the timer only
+/// for a window on screen.
+fn selected(poll: &ProviderPoll, now: Instant, forced: &[&str], window_shown: bool) -> bool {
+    if forced.contains(&poll.id) {
+        poll.due(now, true)
+    } else {
+        window_shown && poll.due(now, false)
     }
 }
 
 pub fn start(app: AppHandle) {
-    let (tx, rx) = mpsc::channel::<()>();
+    let (tx, rx) = mpsc::channel::<Vec<&'static str>>();
     // A second `start` (does not happen today) would keep the old sender;
     // harmless, the new loop still wakes up on the timeout.
     let _ = WAKE.set(tx);
@@ -118,35 +147,49 @@ pub fn start(app: AppHandle) {
     std::thread::Builder::new()
         .name("usage-poller".into())
         .spawn(move || {
-            let agent = ureq::AgentBuilder::new().timeout(HTTP_TIMEOUT).build();
+            let agent = match http_client() {
+                Ok(agent) => agent,
+                Err(error) => {
+                    tracing::warn!(%error, "usage poller has no HTTP client");
+                    return;
+                }
+            };
             let mut providers = [
                 ProviderPoll::new("claude"),
                 ProviderPoll::new("codex"),
                 ProviderPoll::new("grok"),
             ];
-            let mut forced = true; // the first cycle fetches everything right away
+            // The first cycle fetches everything right away.
+            let mut forced: Vec<&'static str> = PROVIDERS.to_vec();
             loop {
-                if cycle_runs(forced, window_on_screen(&app)) {
+                let shown = window_on_screen(&app);
+                if cycle_runs(!forced.is_empty(), shown) {
                     let now = Instant::now();
                     let mut changed = false;
                     for p in providers.iter_mut() {
-                        if !p.due(now, forced) {
+                        if !selected(p, now, &forced, shown) {
                             continue;
                         }
                         changed |= p.fetch(&agent);
                     }
-                    if changed || forced {
+                    if changed || !forced.is_empty() {
                         publish(&app, &providers);
                     }
                 }
                 forced = match rx.recv_timeout(POLL_INTERVAL) {
-                    Ok(()) => true,
-                    Err(mpsc::RecvTimeoutError::Timeout) => false,
+                    Ok(asked) => asked,
+                    Err(mpsc::RecvTimeoutError::Timeout) => Vec::new(),
                     Err(mpsc::RecvTimeoutError::Disconnected) => return,
                 };
                 // Collapse a burst of requests (focus + idle + button) into a
                 // single cycle.
-                while rx.try_recv().is_ok() {}
+                while let Ok(more) = rx.try_recv() {
+                    for id in more {
+                        if !forced.contains(&id) {
+                            forced.push(id);
+                        }
+                    }
+                }
             }
         })
         .expect("thread usage-poller");
@@ -186,6 +229,9 @@ struct ProviderPoll {
     last_ok: Option<ProviderUsage>,
     next_allowed: Instant,
     last_attempt: Option<Instant>,
+    /// Whether the last fetch failed (429, auth, network...): its backoff then
+    /// holds even for a forced refresh.
+    failed: bool,
 }
 
 impl ProviderPoll {
@@ -196,12 +242,15 @@ impl ProviderPoll {
             last_ok: None,
             next_allowed: Instant::now(),
             last_attempt: None,
+            failed: false,
         }
     }
 
     fn due(&self, now: Instant, forced: bool) -> bool {
-        if forced {
-            // Even when forced, respect the anti-burst floor.
+        if forced && !self.failed {
+            // Even when forced, respect the anti-burst floor. A provider whose
+            // last fetch failed keeps its backoff: asking again early is what
+            // keeps a 429 going.
             return self
                 .last_attempt
                 .is_none_or(|t| now.duration_since(t) >= FORCED_MIN_GAP);
@@ -210,7 +259,7 @@ impl ProviderPoll {
     }
 
     /// Fetches and applies the stale-data policy. Returns whether the snapshot changed.
-    fn fetch(&mut self, agent: &ureq::Agent) -> bool {
+    fn fetch(&mut self, agent: &crate::http::Client) -> bool {
         let now = Instant::now();
         self.last_attempt = Some(now);
         let outcome = match self.id {
@@ -220,11 +269,13 @@ impl ProviderPoll {
         };
         let fresh = match outcome {
             Ok(usage) => {
+                self.failed = false;
                 self.next_allowed = now + POLL_INTERVAL;
                 self.last_ok = Some(usage.clone());
                 usage
             }
             Err(e) => {
+                self.failed = true;
                 self.next_allowed = now
                     + match e.kind {
                         FetchErrorKind::RateLimited => RATE_LIMITED_BACKOFF,
@@ -321,31 +372,37 @@ impl FetchError {
     }
 }
 
+/// The poller's client, made once per poller thread.
+fn http_client() -> Result<crate::http::Client, String> {
+    crate::http::client(HTTP_TIMEOUT, None, true)
+}
+
+/// The most of a usage answer that is read (they are a few hundred bytes).
+const MAX_BODY: u64 = 10 * 1024 * 1024;
+
 /// GET with Bearer + extra headers; classifies 401/403/429 for the backoff
 /// policy. Returns the body already parsed.
-fn get_json(agent: &ureq::Agent, url: &str, headers: &[(&str, &str)]) -> Result<Value, FetchError> {
-    let mut req = agent.get(url).set("Accept", "application/json");
+fn get_json(agent: &crate::http::Client, url: &str, headers: &[(&str, &str)]) -> Result<Value, FetchError> {
+    let mut req = agent.get(url).header("Accept", "application/json");
     for (k, v) in headers {
-        req = req.set(k, v);
+        req = req.header(*k, *v);
     }
-    let resp = match req.call() {
-        Ok(r) => r,
-        Err(ureq::Error::Status(429, _)) => {
+    let resp = req.send().map_err(|e| FetchError::other(format!("Rede: {e}")))?;
+    match crate::http::refused(&resp) {
+        Some(429) => {
             return Err(FetchError {
                 kind: FetchErrorKind::RateLimited,
                 message: "Muitas consultas — aguardando para tentar de novo".into(),
             })
         }
-        Err(ureq::Error::Status(code @ (401 | 403), _)) => {
+        Some(code @ (401 | 403)) => {
             return Err(FetchError::auth(format!("Sessão recusada (HTTP {code})")))
         }
-        Err(ureq::Error::Status(code, _)) => {
-            return Err(FetchError::other(format!("Consulta falhou (HTTP {code})")))
-        }
-        Err(e) => return Err(FetchError::other(format!("Rede: {e}"))),
-    };
-    let body = resp
-        .into_string()
+        Some(code) => return Err(FetchError::other(format!("Consulta falhou (HTTP {code})"))),
+        None => {}
+    }
+    let mut body = String::new();
+    std::io::Read::read_to_string(&mut std::io::Read::take(resp, MAX_BODY), &mut body)
         .map_err(|e| FetchError::other(format!("Resposta ilegível: {e}")))?;
     serde_json::from_str(&body).map_err(|e| FetchError::other(format!("JSON inesperado: {e}")))
 }
@@ -383,10 +440,10 @@ fn percent(v: &Value) -> Option<f64> {
 fn claude_config_dir() -> PathBuf {
     std::env::var_os("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".claude"))
+        .unwrap_or_else(|| crate::paths::home_dir().unwrap_or_default().join(".claude"))
 }
 
-fn fetch_claude(agent: &ureq::Agent) -> Result<ProviderUsage, FetchError> {
+fn fetch_claude(agent: &crate::http::Client) -> Result<ProviderUsage, FetchError> {
     let creds =
         read_json_file(&claude_config_dir().join(".credentials.json")).map_err(|e| {
             match e.kind {
@@ -508,10 +565,10 @@ fn fetch_claude(agent: &ureq::Agent) -> Result<ProviderUsage, FetchError> {
 // Codex
 // ---------------------------------------------------------------------------
 
-fn fetch_codex(agent: &ureq::Agent) -> Result<ProviderUsage, FetchError> {
+fn fetch_codex(agent: &crate::http::Client) -> Result<ProviderUsage, FetchError> {
     let home = std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".codex"));
+        .unwrap_or_else(|| crate::paths::home_dir().unwrap_or_default().join(".codex"));
     let auth = read_json_file(&home.join("auth.json")).map_err(|e| match e.kind {
         FetchErrorKind::Missing => FetchError::missing("Não conectado — rode `codex` e faça login"),
         _ => e,
@@ -608,8 +665,8 @@ fn key_for_minutes(minutes: u32) -> String {
 // Grok
 // ---------------------------------------------------------------------------
 
-fn fetch_grok(agent: &ureq::Agent) -> Result<ProviderUsage, FetchError> {
-    let path = dirs::home_dir().unwrap_or_default().join(".grok/auth.json");
+fn fetch_grok(agent: &crate::http::Client) -> Result<ProviderUsage, FetchError> {
+    let path = crate::paths::home_dir().unwrap_or_default().join(".grok/auth.json");
     let auth = read_json_file(&path).map_err(|e| match e.kind {
         FetchErrorKind::Missing => FetchError::missing("Não conectado — rode `grok` e faça login"),
         _ => e,
@@ -694,6 +751,36 @@ fn fetch_grok(agent: &ureq::Agent) -> Result<ProviderUsage, FetchError> {
 mod tests {
     use super::*;
 
+    /// Pinned when the client moved from ureq to reqwest: the backoff policy
+    /// depends on these three classes, and the user reads their messages.
+    #[test]
+    fn refused_usage_requests_are_classified_for_the_backoff() {
+        use crate::http::testing::serve_once;
+        let (url, server) = serve_once("429 Too Many Requests", &[], "");
+        let error = get_json(&http_client().unwrap(), &url, &[("Authorization", "Bearer token")]).unwrap_err();
+        assert!(matches!(error.kind, FetchErrorKind::RateLimited));
+        let request = server.join().unwrap().to_ascii_lowercase();
+        assert!(request.contains("authorization: bearer token") && request.contains("accept: application/json"));
+        let (url, server) = serve_once("403 Forbidden", &[], "");
+        let error = get_json(&http_client().unwrap(), &url, &[]).unwrap_err();
+        assert!(matches!(error.kind, FetchErrorKind::Auth));
+        assert_eq!(error.message, "Sessão recusada (HTTP 403)");
+        server.join().unwrap();
+        let (url, server) = serve_once("500 Internal Server Error", &[], "");
+        let error = get_json(&http_client().unwrap(), &url, &[]).unwrap_err();
+        assert!(matches!(error.kind, FetchErrorKind::Other));
+        assert_eq!(error.message, "Consulta falhou (HTTP 500)");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn an_answered_usage_request_comes_back_parsed() {
+        let (url, server) = crate::http::testing::serve_once("200 OK", &["Content-Type: application/json"], r#"{"five_hour":{"utilization":12}}"#);
+        let value = get_json(&http_client().unwrap(), &url, &[]).map_err(|error| error.message).unwrap();
+        assert_eq!(value["five_hour"]["utilization"], 12);
+        server.join().unwrap();
+    }
+
     /// Three HTTPS requests a minute, all night, for a bar on a window hidden
     /// to the tray: the timer skips its turn while the window is off screen.
     /// A refresh someone asked for (the window coming back into focus, an
@@ -704,5 +791,54 @@ mod tests {
         assert!(!cycle_runs(false, false), "the timer, window hidden");
         assert!(cycle_runs(true, false), "an asked refresh, window hidden");
         assert!(cycle_runs(true, true));
+    }
+
+    /// A provider whose last fetch was polled at `base`, next due by its timer
+    /// at `next`, with the last result a success or a failure.
+    fn polled(id: &'static str, base: Instant, next: Duration, failed: bool) -> ProviderPoll {
+        let mut poll = ProviderPoll::new(id);
+        poll.last_attempt = Some(base);
+        poll.next_allowed = base + next;
+        poll.failed = failed;
+        poll
+    }
+
+    /// The regression: focus, an idle agent and the button each forced a
+    /// fetch, and a forced fetch ignored the backoff, so a provider answering
+    /// 429 was asked again every few seconds and stayed rate limited.
+    #[test]
+    fn a_forced_refresh_waits_out_the_backoff_of_a_provider_whose_last_fetch_failed() {
+        let base = Instant::now();
+        let limited = polled("claude", base, RATE_LIMITED_BACKOFF, true);
+        assert!(!limited.due(base + Duration::from_secs(10), true));
+        assert!(limited.due(base + RATE_LIMITED_BACKOFF, true));
+        let broken = polled("codex", base, ERROR_BACKOFF, true);
+        assert!(!broken.due(base + Duration::from_secs(10), true));
+        assert!(broken.due(base + ERROR_BACKOFF, true));
+    }
+
+    #[test]
+    fn a_forced_refresh_of_a_provider_whose_last_fetch_succeeded_only_waits_the_anti_burst_floor() {
+        let base = Instant::now();
+        let healthy = polled("claude", base, POLL_INTERVAL, false);
+        assert!(!healthy.due(base + Duration::from_secs(4), true));
+        assert!(healthy.due(base + FORCED_MIN_GAP, true));
+        assert!(!healthy.due(base + FORCED_MIN_GAP, false), "the timer still waits its full interval");
+    }
+
+    #[test]
+    fn a_refresh_asked_for_one_provider_forces_that_provider_and_none_forces_all() {
+        assert_eq!(forced_by(Some("claude")), vec!["claude"]);
+        assert_eq!(forced_by(Some("grok")), vec!["grok"]);
+        assert_eq!(forced_by(None), vec!["claude", "codex", "grok"]);
+        assert!(forced_by(Some("unknown")).is_empty());
+        let base = Instant::now();
+        let at = base + Duration::from_secs(10);
+        let claude = polled("claude", base, POLL_INTERVAL, false);
+        let codex = polled("codex", base, POLL_INTERVAL, false);
+        assert!(selected(&claude, at, &["claude"], true));
+        assert!(!selected(&codex, at, &["claude"], true), "the other providers keep their timer");
+        assert!(selected(&codex, base + POLL_INTERVAL, &["claude"], true));
+        assert!(!selected(&codex, base + POLL_INTERVAL, &["claude"], false), "and their timer skips a hidden window");
     }
 }

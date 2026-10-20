@@ -1450,6 +1450,23 @@ function actions(world: World): PaletteEntry[] {
       keywords: ["avisos", "erros", "notifications", "history", "errors"],
       run: () => ui().openModal("notifications"),
     },
+    {
+      id: "action:queue",
+      kind: "action",
+      title: t("Fila de trabalho"),
+      keywords: ["fila", "prompts", "reenviar", "queue", "retry"],
+      run: () => ui().openModal("queue"),
+    },
+    {
+      id: "action:output-history", kind: "action", title: t("Histórico de saída"),
+      keywords: ["histórico", "sessões", "saída", "arquivos", "output", "history", "archives"],
+      run: () => ui().openModal("output-history"),
+    },
+    {
+      id: "action:work", kind: "action", title: t("Tarefas e entregas"),
+      keywords: ["tarefas", "entregas", "aceite", "revisão", "tasks", "deliveries", "acceptance"],
+      run: () => ui().openModal("work"),
+    },
     ...(hasGroup
       ? [
           {

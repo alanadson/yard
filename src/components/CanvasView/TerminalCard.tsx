@@ -35,6 +35,8 @@ import {
   Maximize,
   Maximize2,
   MessageSquarePlus,
+  MessagesSquare,
+  Terminal,
   Minimize,
   MoreVertical,
   PauseCircle,
@@ -70,6 +72,8 @@ import { useAdvertised } from "../../stores/advertisedStore";
 import { useAgents } from "../../stores/agentsStore";
 import { useFlows, type FlowStageStatus } from "../../stores/flowStore";
 import { useQueue } from "../../stores/queueStore";
+import { useChats } from "../../stores/chatsStore";
+import { unreadReplies } from "../../lib/chat";
 import { openTranscriptFor } from "../../lib/transcriptOpen";
 import { useLive } from "../../stores/liveStore";
 import { useProjects } from "../../stores/projectsStore";
@@ -95,6 +99,7 @@ import { hudKind, hudLabel } from "./hud";
 
 // The same promise the boot starts (`XTermView/load.ts`), as in `TerminalPane`.
 const XTermView = lazy(loadXTermView);
+const ChatCard = lazy(() => import("./ChatCard").then((module) => ({ default: module.ChatCard })));
 
 export type { RectPhase };
 
@@ -228,6 +233,9 @@ function TerminalCardImpl({
   onFocusFront,
 }: Props) {
   const t = useT();
+  const chat = useChats((state) => state.byTerminal[term.id]);
+  const chatFace = chat?.face === "chat";
+  const chatUnread = unreadReplies(chat);
   const rt = useTerminals((s) => s.byId[term.id]);
   // The card's place in a *running* flow. Subscribed straight from the store
   // (not threaded through CanvasView): a run advancing should repaint the two
@@ -574,6 +582,7 @@ function TerminalCardImpl({
         rt?.blocked ? (rt.permission ? "is-blocked is-permission" : "is-blocked") : rt?.finished ? "is-finished" : ""
       } ${frontFocus === "off" ? "is-dim" : frontFocus === "on" ? "is-front-focus" : ""}`}
       data-id={term.id}
+      data-chat={chatFace || undefined}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -818,6 +827,12 @@ function TerminalCardImpl({
           >
             {rect.restore ? <Minimize size={13} /> : <Maximize size={13} />}
           </button>
+          {term.kind === "agent" ? <button className="icon-btn" aria-label={chatFace ? t("Mostrar terminal") : t("Mostrar conversa")}
+            data-tip={chatFace ? t("Mostrar terminal") : t("Mostrar conversa")} aria-pressed={chatFace}
+            onClick={() => void useChats.getState().update(term.id, (current) => ({ ...current, face: current.face === "chat" ? "terminal" : "chat" })).catch((error) => useUI.getState().showToast(t("Não consegui salvar a conversa: {error}", { error: String(error) }), "error"))}>
+            {chatFace ? <Terminal size={13} /> : <MessagesSquare size={13} />}
+            {!chatFace && chatUnread > 0 ? <span className="cv-chat-unread" aria-label={t("Respostas não lidas: {n}", { n: chatUnread })}>{chatUnread}</span> : null}
+          </button> : null}
           <button
             className="icon-btn"
             data-tip={t("Compositor de prompts (Ctrl+Enter)")}
@@ -890,9 +905,9 @@ function TerminalCardImpl({
         <ExitBanner
           rt={rt}
           term={term}
-          onStart={(extra) =>
+          onStart={(extra, keepScrollback = true) =>
             void handleRef.current?.start(
-              extra ? { args: [...term.args, ...extra] } : undefined,
+              { keepScrollback, ...(extra ? { args: [...term.args, ...extra] } : {}) },
             )
           }
         />
@@ -919,7 +934,7 @@ function TerminalCardImpl({
               kind={term.kind}
               title={term.title || term.program}
               autoStart={term.alive}
-              visible={visible}
+              visible={visible && !chatFace}
               // Past 100% the glyphs are drawn `scale` times bigger and
               // the wrapper above shrinks them back: crisp, same columns.
               fontSize={scale > 1 ? Math.round(fontPx * scale) : rect.fontSize}
@@ -930,6 +945,9 @@ function TerminalCardImpl({
             />
           </Suspense>
         </div>
+        {chatFace && !rect.contentHidden ? <Suspense fallback={<div className="cv-chat" />}>
+          <ChatCard terminal={term} visible={visible} focused={focused} onFocus={focusThisTerminal} />
+        </Suspense> : null}
       </div>
 
       {!rect.pinned && (

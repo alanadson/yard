@@ -11,6 +11,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import { createPtyStream } from "./ptyStream";
 import type { Surface } from "./surface";
+import type { FlowRun } from "../stores/flowStore";
 
 // ---------------------------------------------------------------------------
 // types
@@ -157,6 +158,7 @@ export interface SessionUsage {
   inputTokens: number;
   outputTokens: number;
   cacheCreationTokens: number;
+  cacheCreationOneHourTokens?: number;
   cacheReadTokens: number;
   messages: number;
   models: string[];
@@ -947,6 +949,7 @@ export interface UsageRow {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  cacheWriteOneHour?: number;
   costUsd: number | null;
   sessions: number;
 }
@@ -994,6 +997,13 @@ export interface McpListing {
 export interface McpSecrets {
   env: Record<string, string>;
   headers: Record<string, string>;
+}
+
+export interface McpHealth {
+  serverName: string;
+  serverVersion: string;
+  protocolVersion: string;
+  tools: number | null;
 }
 /**
  * Whether an agent can be told to run on another machine over SSH, and the
@@ -1090,9 +1100,33 @@ export interface ReviewNote {
 }
 
 export const ipc = {
+  flowStart: (groupId: string, flowId: string, terminalId: string, task: string, typed = false, callerId?: string, work?: { id: string; revision: number }) => invoke<FlowRun>("flow_start", { input: { groupId, flowId, terminalId, task, typed, callerId, ...(work ? { taskId: work.id, taskRevision: work.revision } : {}) } }),
+  flowSnapshot: () => invoke<FlowRun[]>("flow_snapshot"),
+  flowCancel: (groupId: string, flowId: string, attempt: number) => invoke<FlowRun>("flow_cancel", { groupId, flowId, attempt }),
+  flowResume: (groupId: string, flowId: string, attempt: number, confirmed: boolean) => invoke<FlowRun>("flow_resume", { groupId, flowId, attempt, confirmed }),
+  flowDismiss: (groupId: string, flowId: string, attempt: number) => invoke<void>("flow_dismiss", { groupId, flowId, attempt }),
+  ptyArchives: (id: string | null = null) => invoke<import("./outputHistory").ArchivedOutput[]>("pty_archives", { id }),
+  ptyArchivePreview: (id: string, name: string) => invoke<import("./outputHistory").ArchivedPreview>("pty_archive_preview", { id, name, maxBytes: 64 * 1024 }),
+  ptyArchiveExport: (id: string, name: string, dest: string, plain: boolean) => invoke<number>("pty_archive_export", { id, name, dest, plain }),
+  ptyArchiveDelete: (id: string, name: string) => invoke<boolean>("pty_archive_delete", { id, name }),
+  taskCreate: (input: import("./work").NewTask) => invoke<import("./work").WorkTask>("task_create", { input }),
+  taskList: (cursor: import("./work").TaskCursor | null = null, limit = 200, attention = false) => invoke<import("./work").TaskPage>("task_list", { cursor, limit, attention }),
+  taskGet: (id: string) => invoke<import("./work").WorkTask>("task_get", { id }),
+  taskLink: (id: string, revision: number, resource: import("./work").TaskResource) => invoke<import("./work").WorkTask>("task_link", { id, revision, resource }),
+  checkpointNotices: () => invoke<import("./checkpointNotices").CheckpointNotice[]>("checkpoint_notices"),
+  checkpointNoticeHistory: () => invoke<import("./checkpointNotices").CheckpointNotice[]>("checkpoint_notice_history"),
+  checkpointAcknowledgeNotices: (notices: import("./checkpointNotices").CheckpointNotice[]) => invoke<void>("checkpoint_acknowledge_notices", { notices }),
+  taskEvents: (id: string) => invoke<import("./work").TaskEvent[]>("task_events", { id }),
+  taskRetryDelivery: (id: string, revision: number, terminalId: string, previousQueueId: string, queueId: string) => invoke<import("./work").TaskQueueResult>("task_retry_delivery", { id, revision, terminalId, previousQueueId, queueId }),
+  taskDeliveries: (id: string) => invoke<import("./work").DeliveryRecord[]>("task_deliveries", { id }),
+  taskTransition: (id: string, revision: number, status: string) => invoke<import("./work").WorkTask>("task_transition", { id, revision, status }),
+  taskSubmit: (id: string, revision: number, submission: import("./work").Submission) => invoke<import("./work").WorkTask>("task_submit", { id, revision, submission }),
+  taskApprove: (id: string, revision: number, note: string) => invoke<import("./work").WorkTask>("task_approve", { id, revision, note }),
+  taskEnqueue: (id: string, revision: number, terminalId: string, queueId: string) => invoke<import("./work").TaskQueueResult>("task_enqueue", { id, revision, terminalId, queueId }),
+  taskClaim: (id: string, queueId: string, terminalId: string) => invoke<import("./work").WorkTask>("task_claim", { id, queueId, terminalId }),
   // PTY
   spawnPty: (opts: SpawnOptions) => invoke<PtySnapshot>("spawn_pty", { opts }),
-  writePty: (id: string, data: string) => invoke<void>("write_pty", { id, data }),
+  writePty: (id: string, data: string, submitPrompt?: boolean) => invoke<void>("write_pty", { id, data, submitPrompt: submitPrompt ?? null }),
   resizePty: (id: string, rows: number, cols: number) =>
     invoke<void>("resize_pty", { id, rows, cols }),
   attachPty: (id: string, wants?: AttachWants) =>
@@ -1145,7 +1179,9 @@ export const ipc = {
   cancelBackup: () => invoke<void>("cancel_backup"),
   restartApp: () => invoke<void>("restart_app"),
   /** Energy mode: `true` = the PC neither sleeps nor turns off the screen. */
-  setKeepAwake: (on: boolean) => invoke<void>("set_keep_awake", { on }),
+  /** Holds the PC awake; `display` keeps the screen lit as well. */
+  setKeepAwake: (on: boolean, display: boolean) =>
+    invoke<void>("set_keep_awake", { on, display }),
 
   // notebook (markdown notes)
   notesLoad: () => invoke<NotesData>("notes_load"),
@@ -1534,7 +1570,9 @@ export const ipc = {
 
   // agent usage limits
   usageSnapshot: () => invoke<UsageSnapshot>("usage_snapshot"),
-  usageRefresh: () => invoke<void>("usage_refresh"),
+  /** Brings the next usage read forward: one provider, or all when omitted. */
+  usageRefresh: (provider?: import("./usageNudge").UsageProvider) =>
+    invoke<void>("usage_refresh", { provider }),
 
   // agent<->app bridge (CLI `yard`)
   bridgeRespond: (id: number, body: BridgeResponse) =>
@@ -1580,12 +1618,24 @@ export const ipc = {
 
   // costs and usage over time (costs.rs)
   usageHistory: (days: number) => invoke<UsageRow[]>("usage_history", { days }),
+  pricingReference: () => invoke<import("./pricing").PricingReference>("pricing_reference"),
+  queuePatch: (before: readonly import("./queue").QueueItem[], after: readonly import("./queue").QueueItem[]) => invoke<import("./queue").QueueItem[]>("queue_patch", { before, after }),
+  queueDispatch: (id: string, terminalId: string, attemptedAt: number) => invoke<import("./queue").NativeQueueResult>("queue_dispatch", { id, terminalId, attemptedAt }),
+  queueRead: () => invoke<import("./queue").QueueItem[]>("queue_read"),
+  nativeHookSnapshot: () => invoke<import("./nativeHooks").NativeHookReport[]>("native_hook_snapshot"),
+  routineSnapshot: () => invoke<import("./routineExecution").RoutineExecution[]>("routine_snapshot"),
+  queueRetry: (id: string, newId: string, attemptedAt: number) => invoke<import("./queue").QueueItem[]>("queue_retry", { id, newId, attemptedAt }),
+  queueRemove: (id: string, attemptedAt?: number) => invoke<import("./queue").QueueItem[]>("queue_remove", { id, attemptedAt: attemptedAt ?? null }),
+  pricingSettings: () => invoke<import("./pricing").PricingSettings>("pricing_settings"),
+  pricingSettingsSave: (revision: number, rates: import("./pricing").CustomRate[]) => invoke<import("./pricing").PricingSettings>("pricing_settings_save", { revision, rates }),
   /** The whole session `.jsonl` as events — the "Ombro" digest and the transcript. */
   sessionEvents: (file: string) => invoke<FeedEvent[]>("session_events", { file }),
 
   // MCP manager (mcp.rs)
   mcpList: (projectRoot: string | null) =>
     invoke<McpListing>("mcp_list", { projectRoot }),
+  mcpProbe: (cli: string, scope: string, projectRoot: string | null, name: string) =>
+    invoke<McpHealth>("mcp_probe", { cli, scope, projectRoot, name }),
   mcpSave: (cli: string, scope: string, projectRoot: string | null, server: McpServer) =>
     invoke<void>("mcp_save", { cli, scope, projectRoot, server }),
   mcpDelete: (cli: string, scope: string, projectRoot: string | null, name: string) =>
@@ -1631,6 +1681,11 @@ export interface BridgeResponse {
  */
 export const topics = {
   agentsChanged: "agents://changed",
+  nativeHook: "automation://hook",
+  queueChanged: "queue://changed",
+  flowChanged: "flow://changed",
+  checkpointNotices: "checkpoint://notices",
+  routineChanged: "routine://changed",
   sessionFeed: "session://feed",
   filesActivity: "files://activity",
   resourcesTick: "resources://tick",
@@ -1710,6 +1765,15 @@ export const on = {
     ptyStream.activity(id, cb),
   agentIdle: (cb: (p: IdlePayload) => void): Promise<UnlistenFn> => ptyStream.idle(cb),
   agentsChanged: (cb: () => void) => listen(topics.agentsChanged, () => cb()),
+  nativeHook: (cb: (report: import("./nativeHooks").NativeHookReport) => void) =>
+    listen<import("./nativeHooks").NativeHookReport>(topics.nativeHook, (event) => cb(event.payload)),
+  queueChanged: (cb: () => void) => listen(topics.queueChanged, () => cb()),
+  /** A native flow run changed (empty payload: read `flowSnapshot`). */
+  flowChanged: (cb: () => void) => listen(topics.flowChanged, () => cb()),
+  /** The pending checkpoint notices changed (read `checkpointNotices`). */
+  checkpointNotices: (cb: () => void) => listen(topics.checkpointNotices, () => cb()),
+  /** A routine's run state changed (read `routineSnapshot`). */
+  routineChanged: (cb: () => void) => listen(topics.routineChanged, () => cb()),
   sessionFeed: (cb: (p: SessionFeed) => void) =>
     listen<SessionFeed>(topics.sessionFeed, (e) => cb(e.payload)),
   filesActivity: (cb: (p: FilesActivity) => void) =>

@@ -163,6 +163,8 @@ type NumPref = Extract<
   | "codeTabSize"
   | "autoBackupKeep"
   | "budgetDaily"
+  | "quotaPausePct"
+  | "automationMaxAgents"
 >;
 
 /**

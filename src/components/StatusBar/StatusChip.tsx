@@ -197,7 +197,7 @@ export function StatusChip() {
   const t = useT();
   const providers = useUsage((s) => s.providers);
   const fetchedAt = useUsage((s) => s.fetchedAt);
-  const nudge = useUsage((s) => s.nudge);
+  const refreshNow = useUsage((s) => s.refreshNow);
   const mode = usePower((s) => s.mode);
   const engaged = usePower((s) => s.engaged);
   const setMode = usePower((s) => s.setMode);
@@ -251,7 +251,7 @@ export function StatusChip() {
   }, [open]);
 
   const refresh = () => {
-    nudge();
+    refreshNow();
     setSpinning(true);
     window.setTimeout(() => setSpinning(false), 1200);
   };

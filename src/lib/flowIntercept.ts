@@ -18,7 +18,7 @@
  * task), a busy CLI, an empty Enter, and any line whose reconstruction became
  * uncertain (arrows/Tab reset the mirror — the prompt goes raw, never guessed).
  */
-import { feedTyped, flowsOf, type FlowItem } from "./flow";
+import { armsEnter, feedTyped, flowsOf, type FlowItem } from "./flow";
 import { startFlow } from "./flowRun";
 import { isConnected } from "./canvasOps";
 import { uiLog } from "./log";
@@ -27,6 +27,8 @@ import { useProjects } from "../stores/projectsStore";
 import { useTerminals } from "../stores/terminalsStore";
 import { useUI } from "../stores/uiStore";
 import { t } from "./i18n";
+import { ipc } from "./ipc";
+import { nativeQueueScheduling } from "./prefs";
 
 /** Text typed since the last submit, per terminal. Never persisted. */
 const buffers = new Map<string, string>();
@@ -42,7 +44,7 @@ export function boundFlowOf(
   if (!canvas) return null;
   const flow = flowsOf(canvas).find(
     (f) =>
-      f.trigger !== false &&
+      armsEnter(f) &&
       f.stages.length > 0 &&
       isConnected(canvas, f.id, terminalId),
   );
@@ -85,22 +87,25 @@ export function interceptFlowInput(terminalId: string, data: string): boolean {
   // already happened (stuck/active run, above) or live in `startFlow` (dead
   // CLI, flow without stages, double race).
   buffers.set(terminalId, "");
-  const r = startFlow(bound.groupId, bound.flow, buf.trim(), {
+  void startFlow(bound.groupId, bound.flow, buf.trim(), {
     terminalId,
     typed: true,
-  });
-  if (!r.ok) {
-    uiLog.info(`fluxo "${bound.flow.name}": Enter seguiu cru — ${r.message}`);
-    return false;
-  }
-  useUI
-    .getState()
-    .showToast(
-      t('Fluxo "{name}" assumiu o pedido — {n} etapa(s) nesta CLI.', {
+  }).then((r) => {
+    if (!r.ok) {
+      uiLog.info(`Flow "${bound.flow.name}" did not confirm acceptance: ${r.message}`);
+      useUI.getState().showToast(r.message, "error");
+      if (!nativeQueueScheduling()) {
+        void ipc.writePty(terminalId, "\r").catch((error) => uiLog.error(`Flow input could not be submitted: ${error}`));
+      }
+      return;
+    }
+    useUI.getState().showToast(
+      t('Fluxo "{name}" assumiu o pedido: {n} etapa(s) nesta CLI.', {
         name: bound.flow.name,
         n: bound.flow.stages.length,
       }),
     );
+  });
   return true;
 }
 

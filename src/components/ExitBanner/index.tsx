@@ -21,6 +21,7 @@ import { useAgents } from "../../stores/agentsStore";
 import { useTerminals, type TerminalRuntime } from "../../stores/terminalsStore";
 import type { TerminalRow } from "../../lib/ipc";
 import { memoryWaitMb, SPAWN_MIN_FREE_MB } from "./memoryWait";
+import { keepOutputOnStart } from "./startMode";
 
 export function ExitBanner({
   rt,
@@ -31,7 +32,7 @@ export function ExitBanner({
   /** The terminal row — it is where what the CLI can do comes from. */
   term?: TerminalRow;
   /** `extra` are arguments added only for this boot (resuming the conversation). */
-  onStart: (extra?: string[]) => void;
+  onStart: (extra?: string[], keepScrollback?: boolean) => void;
 }) {
   const t = useT();
   // A subscription, not a one-off read: the catalog arrives a few moments
@@ -82,7 +83,7 @@ export function ExitBanner({
             ? t("Não consegui iniciar: {reason}", { reason: rt.error })
             : t("Não consegui iniciar — motivo desconhecido.")}
         </span>
-        <button onClick={() => onStart()}>
+        <button onClick={() => onStart(undefined, keepOutputOnStart(!!resumeConversation, false))}>
           <Play size={11} /> {t("Tentar de novo")}
         </button>
       </div>
@@ -117,12 +118,12 @@ export function ExitBanner({
           data-tip={t("Sobe a CLI com {args} — a última conversa deste projeto volta com ela", {
             args: resumeConversation.join(" "),
           })}
-          onClick={() => onStart(resumeConversation)}
+          onClick={() => onStart(resumeConversation, keepOutputOnStart(true, true))}
         >
           <MessageSquareReply size={11} /> {t("Retomar a conversa")}
         </button>
       )}
-      <button onClick={() => onStart()}>
+      <button onClick={() => onStart(undefined, keepOutputOnStart(!!resumeConversation, false))}>
         <Play size={11} /> {resumeConversation ? t("Começar do zero") : t("Retomar")}
       </button>
     </div>

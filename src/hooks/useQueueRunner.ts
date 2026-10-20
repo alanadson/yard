@@ -11,15 +11,16 @@
  * until something unrelated happened. The tick asks the question until the
  * answer is yes.
  *
- * Failures put the item **back at the head**, once. A write that fails
- * because the PTY died is not the user's prompt to lose, and the next tick
- * finds the terminal dead and simply does not try again.
+ * Reservations remain persisted until delivery is acknowledged. A failed
+ * write leaves an uncertain item for explicit review instead of retrying
+ * text that may already have reached the agent.
  */
 import { useEffect } from "react";
 
 import { t } from "../lib/i18n";
-import { injectPrompt } from "../lib/inject";
-import { takeCheckpointedTask } from "../lib/taskCheckpoint";
+import { startWindowLiveRead } from "./useLiveRead";
+import { deliverQueueItem, refreshNativeQueue } from "../lib/queueDelivery";
+import { nativeQueueScheduling } from "../lib/prefs";
 import { uiLog } from "../lib/log";
 import { dueItems } from "../lib/queue";
 import { canSend } from "../lib/sendable";
@@ -33,27 +34,42 @@ const TICK_MS = 2_000;
 
 export function useQueueRunner() {
   useEffect(() => {
+    // The backend schedules and delivers: the page only mirrors the queue.
+    // `queue://changed` already refreshes it (`useGlobalEvents`); what is
+    // left here is the read at boot, the catch-up when the window comes back
+    // and a slow safety tick while it is shown (`lib/liveRead.ts`), instead
+    // of a `queue_read` every 2 s for the life of the app.
+    if (nativeQueueScheduling()) {
+      return startWindowLiveRead({
+        read: refreshNativeQueue,
+        onError: (error) => uiLog.warn(`queue: native read failed: ${error}`),
+      });
+    }
     let running = false;
 
     const tick = async () => {
       // `injectPrompt` writes and then presses Enter after a pause; two
       // overlapping ticks would interleave two prompts in one line.
       if (running) return;
-      const state = useQueue.getState();
+      let state = useQueue.getState();
       if (state.items.length === 0) return;
       running = true;
       try {
+        if (state.items.some((item) => item.delivery?.owner === "native")) {
+          await refreshNativeQueue();
+          state = useQueue.getState();
+        }
         const now = Date.now();
         const due = dueItems(state.items, (id) => canSend(id, now));
         for (const head of due) {
           // Taken, not read: between the decision and the write there is an
           // await, and the queue must not offer the same item to anything else.
           try {
-            const item = await takeCheckpointedTask(head, canSend);
-            if (!item) continue;
-            await injectPrompt(item.terminalId, item.text);
+            const result = await deliverQueueItem(head, canSend, now);
+            if (result.status === "skipped") continue;
+            if (result.status === "uncertain" || result.status === "failed") throw new Error(result.error);
             uiLog.info(
-              `fila: item entregue em ${item.terminalId} (origem ${item.source})`,
+              `queue: item delivered to ${head.terminalId} (source ${head.source})`,
             );
           } catch (e) {
             uiLog.error(`fila: entrega falhou em ${head.terminalId}: ${e}`);

@@ -22,32 +22,42 @@ import { uiLog } from "../lib/log";
 interface AgentsState {
   byId: Record<string, AgentInfo>;
   loaded: boolean;
+  loading: boolean;
+  error: string | null;
   /** Reads the catalog once per session (or again, on request). */
   load: (refresh?: boolean) => Promise<void>;
 }
 
 let inFlight: Promise<void> | null = null;
+let detectionVersion = 0;
 
 export const useAgents = create<AgentsState>((set) => ({
   byId: {},
   loaded: false,
+  loading: false,
+  error: null,
 
   load: (refresh = false) => {
     if (inFlight && !refresh) return inFlight;
+    const version = ++detectionVersion;
+    set({ loading: true });
     const task = ipc
       .detectAgents(refresh)
       .then((list) => {
+        if (version !== detectionVersion) return;
         const byId: Record<string, AgentInfo> = {};
         for (const a of list) byId[a.id] = a;
-        set({ byId, loaded: true });
+        set({ byId, loaded: true, error: null });
       })
       .catch((e) => {
+        if (version !== detectionVersion) return;
         // Without the catalog the whole app keeps working: readers treat
         // "don't know" as "does not offer the extra".
         uiLog.warn(`não consegui ler o catálogo de agentes: ${e}`);
-        set({ loaded: true });
+        set({ loaded: true, error: e instanceof Error ? e.message : String(e) });
       })
       .finally(() => {
+        if (version === detectionVersion) set({ loading: false });
         if (inFlight === task) inFlight = null;
       });
     inFlight = task;

@@ -109,14 +109,16 @@ const FONTS = import.meta.glob("/src/**/*.{ts,tsx}", {
 }) as Record<string, string>;
 
 describe("the whole src/", () => {
-  it("has no render hook reading a const declared later", () => {
-    const found: HookOrderViolation[] = [];
-    for (const [path, font] of Object.entries(FONTS)) {
-      if (/\.test\.tsx?$/.test(path)) continue;
-      found.push(...hookOrderViolations(font, path.replace(/^\/src\//, "")));
-    }
-    // A sweep that looked at nothing would pass silently.
+  const sources = Object.entries(FONTS).filter(([path]) => !/\.test\.tsx?$/.test(path));
+
+  it("checks a populated source inventory rather than passing an empty sweep", () => {
     expect(Object.keys(FONTS).length).toBeGreaterThan(100);
+    expect(sources.length).toBeGreaterThan(100);
+  });
+
+  // Keep the same full sweep while giving each source its own bounded check.
+  it.each(sources)("has no render hook reading a const declared later in %s", (path, font) => {
+    const found: HookOrderViolation[] = hookOrderViolations(font, path.replace(/^\/src\//, ""));
     expect(
       found.map((v) => `${v.file}:${v.line} ${v.hook}(...) lê '${v.name}'`),
     ).toEqual([]);

@@ -70,12 +70,47 @@ impl Scrollback {
         sb
     }
 
-    /// Creates an empty scrollback, deleting whatever is on disk. Used when
-    /// spawning a new terminal (a new id never collides, but restart reuses the id).
-    pub fn fresh(id: &str) -> Self {
-        let path = crate::paths::scrollback_file(id);
-        let _ = std::fs::remove_file(&path);
-        Self::at(path)
+    /// Preserves the previous session before preparing an empty active scrollback.
+    pub fn fresh(id: &str) -> std::io::Result<Self> {
+        Self::fresh_at(crate::paths::scrollback_file(id), &crate::paths::scrollback_archives_dir(), chrono::Utc::now().timestamp_millis())
+    }
+
+    /// The previous `.bin` is **moved** into the archive folder (a rename on
+    /// the same volume, no bytes copied), and only when the rename is refused
+    /// is it copied and synced the old way. Then only the newest
+    /// `ARCHIVES_PER_TERMINAL` archives of this terminal are kept.
+    fn fresh_at(path: PathBuf, archives: &Path, at: i64) -> std::io::Result<Self> {
+        let len = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata.len(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Self::at(path)),
+            Err(error) => return Err(error),
+        };
+        if len == 0 {
+            std::fs::remove_file(&path)?;
+            return Ok(Self::at(path));
+        }
+        std::fs::create_dir_all(archives)?;
+        let stem = path.file_stem().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Scrollback file has no identity"))?.to_string_lossy().into_owned();
+        // The name is claimed with `create_new` before the move: a rename
+        // replaces whatever is there, and an archive must never be.
+        let mut sequence = 0_u64;
+        let saved_path = loop {
+            let candidate = archives.join(format!("{stem}--{at}--{sequence}.bin"));
+            match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+                Ok(_) => break candidate,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => sequence += 1,
+                Err(error) => return Err(error),
+            }
+        };
+        if std::fs::rename(&path, &saved_path).is_err() {
+            if let Err(error) = copy_into_archive(&path, &saved_path) {
+                let _ = std::fs::remove_file(&saved_path);
+                return Err(error);
+            }
+            std::fs::remove_file(&path)?;
+        }
+        prune_archives(archives, &stem);
+        Ok(Self::at(path))
     }
 
     /// An empty scrollback at an explicit path. The path comes in as a
@@ -377,8 +412,16 @@ impl Scrollback {
     }
 
     /// Removes the `.bin` from disk — used when the terminal is deleted for good.
+    /// Its archived sessions stay for the global history; the startup
+    /// housekeeping deletes them once they are a month old
+    /// (`history::prune_orphans_in`).
     pub fn delete_file(id: &str) {
-        let _ = std::fs::remove_file(crate::paths::scrollback_file(id));
+        Self::forget_at(&crate::paths::scrollback_file(id));
+    }
+
+    /// `delete_file` at an explicit path.
+    fn forget_at(live: &Path) {
+        let _ = std::fs::remove_file(live);
     }
 
     /// Reads the tail of the `.bin` without needing a live `Scrollback`. This is
@@ -402,6 +445,39 @@ impl Drop for Scrollback {
     /// (The last flush of a terminal already waits for it; this is the net.)
     fn drop(&mut self) {
         let _ = self.settle();
+    }
+}
+
+/// How many archived sessions of one terminal are kept (`Scrollback::fresh`).
+pub const ARCHIVES_PER_TERMINAL: usize = 5;
+
+/// The fallback of the move in `fresh_at`: the previous output copied into a
+/// `.tmp` (invisible to the history and the backup), synced, then renamed over
+/// the name `fresh_at` claimed.
+fn copy_into_archive(active: &Path, saved: &Path) -> std::io::Result<()> {
+    let temporary = saved.with_extension("tmp");
+    let result = (|| {
+        let mut source = File::open(active)?;
+        let mut copy = OpenOptions::new().write(true).create_new(true).open(&temporary)?;
+        std::io::copy(&mut source, &mut copy)?;
+        copy.sync_all()?;
+        drop(copy);
+        std::fs::rename(&temporary, saved)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+/// Deletes the archives of `terminal` past the newest `ARCHIVES_PER_TERMINAL`.
+/// Housekeeping: an archive that will not go is left for the next start.
+fn prune_archives(archives: &Path, terminal: &str) {
+    let Ok(records) = super::history::list_in(archives, terminal) else { return };
+    for record in records.into_iter().skip(ARCHIVES_PER_TERMINAL) {
+        if let Err(error) = super::history::delete_in(archives, terminal, &record.name) {
+            tracing::warn!(%error, name = %record.name, "archived session could not be pruned");
+        }
     }
 }
 
@@ -433,7 +509,7 @@ pub(super) fn into_text(bytes: Vec<u8>) -> String {
 
 /// Reads the last `max` bytes of `path`, cutting at the start of a UTF-8
 /// character. Returns `(bytes, total_file_size)`.
-fn read_tail(path: &PathBuf, max: usize) -> std::io::Result<(Vec<u8>, u64)> {
+pub(super) fn read_tail(path: &PathBuf, max: usize) -> std::io::Result<(Vec<u8>, u64)> {
     let mut f = File::open(path)?;
     let len = f.metadata()?.len();
     let start = len.saturating_sub(max as u64);
@@ -454,6 +530,134 @@ fn read_tail(path: &PathBuf, max: usize) -> std::io::Result<(Vec<u8>, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Starting a new session must preserve the previous output before replacing its active file.
+    #[test]
+    fn starting_fresh_preserves_the_previous_output_in_a_separate_session_archive() {
+        let root = std::env::temp_dir().join(format!("yard-scrollback-session-{}", std::process::id()));
+        let active = root.join("scrollback").join("previous-output.bin");
+        let archives = root.join("scrollback-archives");
+        std::fs::create_dir_all(active.parent().unwrap()).unwrap();
+        let previous = "Previous session: ação\r\n\x1b[32mverified\x1b[0m\r\n".as_bytes();
+        std::fs::write(&active, previous).unwrap();
+        let mut fresh = Scrollback::fresh_at(active.clone(), &archives, 1000).unwrap();
+        assert_eq!(fresh.snapshot(), "");
+        fresh.push(b"New session output\r\n");
+        fresh.flush_and_close().unwrap();
+        assert_eq!(std::fs::read(&active).unwrap(), b"New session output\r\n");
+        let saved = std::fs::read_dir(&archives).unwrap().map(|entry| entry.unwrap().path()).collect::<Vec<_>>();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(std::fs::read(&saved[0]).unwrap(), previous);
+        assert!(root.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refusing_the_archive_directory_keeps_the_previous_output_untouched() {
+        let root = std::env::temp_dir().join(format!("yard-scrollback-refused-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let active = root.join("terminal.bin");
+        let archives = root.join("archive-blocked-by-file");
+        std::fs::write(&active, b"Previous session output").unwrap();
+        std::fs::write(&archives, b"Unrelated existing file").unwrap();
+        assert!(Scrollback::fresh_at(active.clone(), &archives, 1000).is_err());
+        assert_eq!(std::fs::read(active).unwrap(), b"Previous session output");
+        assert_eq!(std::fs::read(archives).unwrap(), b"Unrelated existing file");
+        assert!(root.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn sessions_started_at_the_same_instant_keep_distinct_previous_outputs() {
+        let root = std::env::temp_dir().join(format!("yard-scrollback-same-instant-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let active = root.join("terminal.bin");
+        let archives = root.join("archives");
+        for text in ["First session", "Second session"] {
+            std::fs::write(&active, text.as_bytes()).unwrap();
+            Scrollback::fresh_at(active.clone(), &archives, 1000).unwrap();
+        }
+        let mut contents = std::fs::read_dir(archives).unwrap().map(|entry| std::fs::read(entry.unwrap().path()).unwrap()).collect::<Vec<_>>();
+        contents.sort();
+        assert_eq!(contents, [b"First session".to_vec(), b"Second session".to_vec()]);
+        assert!(root.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The regression this locks down: every non-resume start of a terminal
+    /// added an archive of its previous output and nothing removed any.
+    #[test]
+    fn starting_fresh_keeps_only_the_newest_five_archives_of_that_terminal() {
+        let root = std::env::temp_dir().join(format!("yard-scrollback-cap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let archives = root.join("archives");
+        std::fs::create_dir_all(&archives).unwrap();
+        for at in [100, 200, 300, 400, 500] {
+            std::fs::write(archives.join(format!("terminal--{at}--0.bin")), b"older session").unwrap();
+        }
+        std::fs::write(archives.join("other--50--0.bin"), b"another terminal").unwrap();
+        let active = root.join("terminal.bin");
+        std::fs::write(&active, b"latest session").unwrap();
+        Scrollback::fresh_at(active, &archives, 1000).unwrap();
+        let mut names = std::fs::read_dir(&archives).unwrap().map(|entry| entry.unwrap().file_name().into_string().unwrap()).collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, [
+            "other--50--0.bin",
+            "terminal--1000--0.bin",
+            "terminal--200--0.bin",
+            "terminal--300--0.bin",
+            "terminal--400--0.bin",
+            "terminal--500--0.bin",
+        ]);
+        assert!(root.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Closing a terminal for good deletes its live output only. The global
+    /// "Histórico de saída" lists the archived sessions of removed cards
+    /// (docs/specs/02-architecture.md); deleting them on close, as a cost
+    /// fix briefly did, took that history away on every close. Archives of
+    /// removed terminals are bounded by age at startup instead.
+    #[test]
+    fn forgetting_a_terminal_deletes_its_live_output_and_keeps_its_archived_sessions() {
+        let root = std::env::temp_dir().join(format!("yard-scrollback-forget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let archives = root.join("archives");
+        std::fs::create_dir_all(&archives).unwrap();
+        let live = root.join("terminal.bin");
+        std::fs::write(&live, b"current session").unwrap();
+        for name in ["terminal--1000--0.bin", "terminal--2000--0.bin"] {
+            std::fs::write(archives.join(name), b"older session").unwrap();
+        }
+        Scrollback::forget_at(&live);
+        assert!(!live.exists());
+        assert_eq!(std::fs::read_dir(&archives).unwrap().count(), 2, "the archived sessions stay");
+        assert!(root.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A file another program holds without delete sharing (an antivirus scan)
+    /// refuses the move; the previous output is then copied, as it always was.
+    #[test]
+    #[cfg(windows)]
+    fn a_refused_move_still_archives_a_copy_of_the_previous_output() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = std::env::temp_dir().join(format!("yard-scrollback-held-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let archives = root.join("archives");
+        let active = root.join("terminal.bin");
+        std::fs::write(&active, b"held session").unwrap();
+        const FILE_SHARE_READ: u32 = 1;
+        let holder = OpenOptions::new().read(true).share_mode(FILE_SHARE_READ).open(&active).unwrap();
+        assert!(Scrollback::fresh_at(active.clone(), &archives, 1000).is_err(), "the held file cannot be removed");
+        drop(holder);
+        assert_eq!(std::fs::read(archives.join("terminal--1000--0.bin")).unwrap(), b"held session");
+        assert!(!archives.join("terminal--1000--0.tmp").exists());
+        assert_eq!(std::fs::read(&active).unwrap(), b"held session");
+        assert!(root.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn ring_respects_cap_and_utf8_boundary() {

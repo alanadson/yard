@@ -632,7 +632,7 @@ pub fn write_codex(text: &str, servers: &[McpServer]) -> anyhow::Result<String> 
 // files
 // ---------------------------------------------------------------------------
 
-fn read_servers(cli: &str, path: &Path, scope: Scope, root: Option<&str>) -> anyhow::Result<Vec<McpServer>> {
+pub(crate) fn read_servers(cli: &str, path: &Path, scope: Scope, root: Option<&str>) -> anyhow::Result<Vec<McpServer>> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),

@@ -82,31 +82,45 @@ export const usePower = create<PowerState>((set, get) => ({
 }));
 
 /**
- * Starts the reconciler: recomputes the desired state on a clock (and on
- * every store change, which covers `setMode` and `load`) and tells the
- * backend only on transitions. The cleanup releases the block — HMR re-runs
- * the App effect, and a stale `true` left on the backend's dedicated thread
- * would outlive every store on this side.
+ * Starts the reconciler: recomputes the desired state on a clock in `agents`
+ * mode (and on every store change, which covers `setMode` and `load`) and
+ * tells the backend only on transitions. The cleanup releases the block:
+ * HMR re-runs the App effect, and a stale `true` left on the backend's
+ * dedicated thread would outlive every store on this side.
  */
 export function startKeepAwake(): () => void {
-  const push = (on: boolean) => {
+  /** The screen half of what the backend holds right now. */
+  let display = false;
+  const push = (on: boolean, lit: boolean) => {
+    display = lit;
     usePower.setState({ engaged: on });
-    runBackground(() => ipc.setKeepAwake(on), {
+    runBackground(() => ipc.setKeepAwake(on, lit), {
       error: (error) =>
         console.warn("[yard] não consegui aplicar o modo energético", error),
     });
   };
+  // The clock only matters while the answer depends on the agents: "off"
+  // and "always" are settled by the mode alone, and a 5 s re-read of every
+  // terminal for them was work with no possible outcome.
+  let timer: ReturnType<typeof setInterval> | null = null;
   const reconcile = () => {
     const s = usePower.getState();
+    if (s.mode === "agents" && timer === null) timer = setInterval(reconcile, TICK_MS);
+    if (s.mode !== "agents" && timer !== null) {
+      clearInterval(timer);
+      timer = null;
+    }
     const want = s.mode === "always" || (s.mode === "agents" && agentWorking());
-    if (want !== s.engaged) push(want);
+    // "agents" keeps the PC from suspending and lets the screen sleep.
+    const lit = want && s.mode === "always";
+    if (want !== s.engaged || lit !== display) push(want, lit);
   };
   reconcile();
-  const timer = setInterval(reconcile, TICK_MS);
   const unsub = usePower.subscribe(reconcile);
   return () => {
-    clearInterval(timer);
+    if (timer !== null) clearInterval(timer);
+    timer = null;
     unsub();
-    if (usePower.getState().engaged) push(false);
+    if (usePower.getState().engaged) push(false, false);
   };
 }
