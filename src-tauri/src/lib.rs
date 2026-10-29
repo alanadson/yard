@@ -508,7 +508,7 @@ fn save_workspace(
 #[specta::specta]
 fn load_workspace(state: State<'_, Arc<AppState>>) -> Result<WorkspaceSnapshot, String> {
     let conn = state.db.lock();
-    persistence::workspace::load(&conn).map_err(|e| e.to_string())
+    persistence::workspace::load_or_open_error(&conn, state.db_open_error.as_deref())
 }
 
 #[tauri::command]
@@ -2127,12 +2127,12 @@ pub(crate) fn command_contract() -> tauri_specta::Builder<tauri::Wry> {
 pub fn run() {
     let guard = logging::init();
 
-    let db = match persistence::db::open() {
-        Ok(c) => c,
+    let (db, db_open_error) = match persistence::db::open() {
+        Ok(c) => (c, None),
         Err(e) => {
             tracing::error!(error = %e, "nao consegui abrir o banco");
             // With no usable disk the app still runs: in-memory SQLite.
-            rusqlite::Connection::open_in_memory().expect("sqlite em memoria")
+            (rusqlite::Connection::open_in_memory().expect("sqlite em memoria"), Some(e.to_string()))
         }
     };
 
@@ -2186,7 +2186,7 @@ pub fn run() {
         // here, not over the IPC: `<video>` asks for chunks as it plays
         // (media.rs). It has to be registered before the window exists.
         .register_asynchronous_uri_scheme_protocol(media::SCHEME, media::serve)
-        .manage(Arc::new(AppState::new(db)))
+        .manage(Arc::new(AppState { db_open_error, ..AppState::new(db) }))
         // Where every terminal's events go (`desktop::pty::event_sink`).
         .manage(Arc::new(pty::pages::Pages::default()))
         .manage(LogGuard(guard))

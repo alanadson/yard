@@ -35,6 +35,9 @@ pub struct AppState {
     pub procs: Mutex<ProcSnapshot>,
     /// SQLite. `Connection` is Send but not Sync — the Mutex takes care of it.
     pub db: Mutex<Connection>,
+    /// Why the disk database was refused at boot, when `db` is the in-memory
+    /// stand-in. `load_workspace` reports it instead of a missing table.
+    pub db_open_error: Option<String>,
     /// Result of agent CLI detection (expensive: runs `--version`), shared
     /// by every caller, including the ones that arrive while it runs.
     pub agents_cache: SharedDetection<Vec<AgentInfo>>,
@@ -63,6 +66,7 @@ impl AppState {
             statuses: Mutex::new(HashMap::new()),
             procs: Mutex::new(ProcSnapshot::default()),
             db: Mutex::new(db),
+            db_open_error: None,
             agents_cache: SharedDetection::new(),
             browsers_cache: Mutex::new(None),
             file_watchers: Mutex::new(HashMap::new()),

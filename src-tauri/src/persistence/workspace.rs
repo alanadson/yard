@@ -548,6 +548,19 @@ pub fn load(conn: &Connection) -> anyhow::Result<WorkspaceSnapshot> {
     Ok(snap)
 }
 
+/// `load` as the UI asks for it. When the disk database could not be opened,
+/// the app runs on an empty in-memory stand-in, and reading it would only say
+/// "no such table": the reason the disk database was refused is the answer.
+pub fn load_or_open_error(
+    conn: &Connection,
+    open_error: Option<&str>,
+) -> Result<WorkspaceSnapshot, String> {
+    match open_error {
+        Some(reason) => Err(reason.to_string()),
+        None => load(conn).map_err(|e| e.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,6 +575,21 @@ mod tests {
         )
         .unwrap();
         conn
+    }
+
+    /// The regression that motivated the fix: an installed build older than the
+    /// database refused to open it, the app booted on an empty in-memory
+    /// stand-in, and the boot screen showed "no such table: projects" with a
+    /// hint about a second instance. The real reason was only in the log.
+    #[test]
+    fn a_database_that_failed_to_open_reports_why_instead_of_a_missing_table() {
+        let stand_in = Connection::open_in_memory().unwrap();
+        let refused = "workspace schema 10 requires a newer Yard version (supported: 9)";
+
+        let error = load_or_open_error(&stand_in, Some(refused)).unwrap_err();
+
+        assert!(error.contains(refused), "{error}");
+        assert!(!error.contains("no such table"), "{error}");
     }
 
     fn snap(rev: i64, project_name: &str) -> WorkspaceSnapshot {

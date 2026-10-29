@@ -1,5 +1,6 @@
 import { lazy, useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { bootFailureCause } from "./lib/bootFailure";
 import { ask } from "./lib/confirmation";
 import {
   AlertTriangle,
@@ -764,7 +765,9 @@ export default function App() {
             </p>
             <pre className="boot-fail-detail">{loadError}</pre>
             <p className="boot-fail-hint">
-              {t("Causa comum: outra instância do Yard já está aberta com o mesmo diretório de dados. Feche-a e tente de novo.")}
+              {bootFailureCause(loadError) === "olderBuild"
+                ? t("Este banco foi atualizado por uma versão mais nova do Yard. Atualize o Yard instalado (ou abra a versão mais nova) para ver os seus projetos; os dados não foram alterados.")
+                : t("Causa comum: outra instância do Yard já está aberta com o mesmo diretório de dados. Feche-a e tente de novo.")}
             </p>
             <div className="boot-fail-actions">
               <button

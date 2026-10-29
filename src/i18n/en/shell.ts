@@ -105,6 +105,7 @@ export default {
   "carregando workspace…": "loading workspace…",
   "Causa comum: outra instância do Yard já está aberta com o mesmo diretório de dados. Feche-a e tente de novo.": "Common cause: another Yard instance is already open on the same data directory. Close it and try again.",
   "Clique no elemento dentro da página (Esc cancela)": "Click the element inside the page (Esc cancels)",
+  "Este banco foi atualizado por uma versão mais nova do Yard. Atualize o Yard instalado (ou abra a versão mais nova) para ver os seus projetos; os dados não foram alterados.": "This database was upgraded by a newer Yard version. Update the installed Yard (or open the newer version) to see your projects; your data was not changed.",
   "Colar no terminal": "Paste into the terminal",
   "Comece pela pasta de um projeto": "Start with a project's folder",
   "Começar do zero": "Start from scratch",
