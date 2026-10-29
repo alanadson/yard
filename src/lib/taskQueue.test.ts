@@ -1,14 +1,26 @@
 /** A native task enqueue must preserve queue edits made while its acknowledgement is in flight. */
 import { afterEach, expect, it, vi } from "vitest";
-const native = vi.hoisted(() => ({ taskEnqueue: vi.fn(), taskGet: vi.fn(), taskRetryDelivery: vi.fn(), taskTransition: vi.fn() }));
+const native = vi.hoisted(() => ({ taskEnqueue: vi.fn(), taskGet: vi.fn(), taskRetryDelivery: vi.fn(), taskTransition: vi.fn(), taskRequestReview: vi.fn() }));
 vi.mock("./ipc", () => ({ ipc: native }));
-import { cancelTaskPrompt, clearTaskPrompts, queueTask, retryTaskPrompt } from "./taskQueue";
+import { cancelTaskPrompt, clearTaskPrompts, queueTask, retryTaskPrompt, queueTaskReview } from "./taskQueue";
 import { KV_QUEUE, useQueue } from "../stores/queueStore";
 import { setPrefsTransport } from "./prefs";
 import type { TaskQueueResult } from "./work";
 
 let restore: (() => void) | undefined;
 afterEach(() => { restore?.(); restore = undefined; vi.useRealTimers(); useQueue.setState({ items: [] }); });
+
+it("adds an acknowledged review without dropping independently queued work", async () => {
+  const saved: Record<string, string> = {};
+  restore = setPrefsTransport({ readPrefs: async () => saved, writePref: async (key, value) => { saved[key] = value; } });
+  const other = { id: "other", terminalId: "other-agent", text: "Other work", source: "user" as const, at: 1000 };
+  const review = { id: "review-queue", terminalId: "reviewer", taskId: "review", text: "Review evidence", source: "user" as const, at: 2000 };
+  useQueue.setState({ items: [other] });
+  native.taskRequestReview.mockResolvedValue({ task: { id: "review" }, items: [other, review] });
+  await queueTaskReview({ taskId: "original", revision: 4, reviewId: "review", terminalId: "reviewer", queueId: "review-queue", title: "Review" });
+  expect(useQueue.getState().items).toEqual([other, review]);
+  expect(JSON.parse(saved[KV_QUEUE])).toEqual([other, review]);
+});
 
 it("preserves a second native task while synchronizing the acknowledged task enqueue", async () => {
   useQueue.setState({ items: [] });

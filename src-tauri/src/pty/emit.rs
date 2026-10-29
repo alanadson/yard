@@ -5,11 +5,6 @@
 //! the engine truly testable: tests plug in an in-memory collector and
 //! check order, exit reason, and content, without spinning up a GUI runtime.
 
-use std::sync::Arc;
-
-use tauri::{AppHandle, Manager, Runtime};
-
-use super::pages::Pages;
 use crate::events;
 
 pub trait PtyEvents: Send + Sync + 'static {
@@ -19,14 +14,6 @@ pub trait PtyEvents: Send + Sync + 'static {
     fn exit(&self, payload: events::ExitPayload);
     fn activity(&self, payload: events::ActivityPayload);
     fn idle(&self, payload: events::IdlePayload);
-}
-
-/// Delivery to the pages over their IPC channels (`pages.rs`), what the real
-/// app uses. One `Pages` for the whole app, managed by Tauri, so every
-/// terminal's events reach a page through the same links, in the order the
-/// engine produced them.
-pub fn tauri_sink<R: Runtime>(app: &AppHandle<R>) -> Arc<dyn PtyEvents> {
-    app.state::<Arc<Pages>>().inner().clone()
 }
 
 /// Discards everything. Useful on paths where there is no window (tests, tools).
@@ -44,6 +31,7 @@ impl PtyEvents for NullEvents {
 #[cfg(test)]
 pub mod collect {
     use super::*;
+    use std::sync::Arc;
     use parking_lot::Mutex;
 
     /// In-memory collector for assertions in the tests.

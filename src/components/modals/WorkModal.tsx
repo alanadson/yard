@@ -14,7 +14,8 @@ import { baseName } from "../../lib/terminals";
 import { queueTask } from "../../lib/taskQueue";
 import { flowsOf, flowAgents } from "../../lib/flow";
 import { startFlow } from "../../lib/flowRun";
-import { taskResourceAction } from "../../lib/workResources";
+import { taskResourceAction, taskWorkingRoot, type DeliveryArtifactAction } from "../../lib/workResources";
+import { DeliveryArtifacts, IndependentReviews } from "./IndependentReviews";
 import { useCheckpoints } from "../../stores/checkpointsStore";
 import { useEditor } from "../../stores/editorStore";
 import { locale } from "../../lib/i18n";
@@ -29,6 +30,7 @@ const EVENT_LABELS: Record<string, string> = {
   interrupted: "Execução interrompida", resumed: "Tarefa reenviada para a fila",
   linked: "Referência vinculada",
   checkpoint_failed: "Checkpoint indisponível",
+  review_requested: "Revisão independente solicitada",
 };
 
 export function WorkModal() {
@@ -46,6 +48,7 @@ export function WorkModal() {
   const groups = useProjects((state) => state.groups);
   const terminalNames = useMemo(() => Object.fromEntries(terminals.map((terminal) => [terminal.id, baseName(terminal)])), [terminals]);
   const selected = tasks.find((task) => task.id === selectedId);
+  const artifactRoot = selected ? taskWorkingRoot(selected, terminals, projects) : null;
   const chats = useChats((state) => state.byTerminal);
   const conversations = selected ? relatedTaskChats(chats, selected.id) : [];
   const queueAction = selected ? workQueueAction(selected, terminals.filter((terminal) => terminal.kind === "agent").map((terminal) => terminal.id)) : null;
@@ -155,6 +158,16 @@ export function WorkModal() {
     if (action.kind === "pull_request") await ipc.openExternal(action.url);
   };
 
+  const openArtifact = async (action: DeliveryArtifactAction) => {
+    if (!selected) return;
+    if (action.kind === "url") await ipc.openExternal(action.url);
+    else {
+      useEditor.getState().setRoot(selected.links.projectId, action.root);
+      await useEditor.getState().openFile(action.path);
+      close();
+    }
+  };
+
   const toolbar = <div className="work-toolbar-area"><div className="work-toolbar">
       <span>{t("{n} tarefa(s)", { n: total })}</span>
       <button className="btn btn--sm" aria-pressed={filter === "all"} disabled={busy || loading} onClick={() => void perform(() => useWork.getState().setFilter("all"))}>{t("Todas")}</button>
@@ -201,7 +214,9 @@ export function WorkModal() {
           <label>{t("Agente executor")}<select value={targetId} onChange={(event) => { setTargetId(event.target.value); setPipelineId(""); }}><option value="">{t("Escolha um agente")}</option>{terminals.filter((terminal) => terminal.kind === "agent").map((terminal) => <option key={terminal.id} value={terminal.id}>{baseName(terminal)}</option>)}</select></label>
           {pipelines.length > 0 && <label>{t("Executar com fluxo")}<select value={pipelineId} onChange={(event) => setPipelineId(event.target.value)}><option value="">{t("Execução direta")}</option>{pipelines.map((flow) => <option key={flow.id} value={flow.id}>{flow.name}</option>)}</select></label>}
           <button className="btn btn--primary" disabled={busy || !targetId} onClick={() => void sendTask()}>{t(workExecutionLabel(queueAction.type, pipelines.some((flow) => flow.id === pipelineId)))}</button></div>}
-        {selected.delivery && <section><h4>{t("Entrega registrada")}</h4><p className="work-pre">{selected.delivery.summary}</p><p className="hint">{t("Resultados e referências reportados na entrega.")}</p>{selected.delivery.checks.map((check, index) => <p key={index} className={check.passed ? "hint" : "hint hint--error"}>{check.name}: {t(validationResultLabel(check.passed))}<br />{check.evidence}</p>)}{selected.delivery.artifacts.map((artifact) => <p className="hint work-pre" key={artifact}>{artifact}</p>)}</section>}
+        {selected.delivery && <section><h4>{t("Entrega registrada")}</h4><p className="work-pre">{selected.delivery.summary}</p><p className="hint">{t("Resultados e referências reportados na entrega.")}</p>{selected.delivery.checks.map((check, index) => <p key={index} className={check.passed ? "hint" : "hint hint--error"}>{check.name}: {t(validationResultLabel(check.passed))}<br />{check.evidence}</p>)}<DeliveryArtifacts artifacts={selected.delivery.artifacts} root={artifactRoot} onOpen={(action) => perform(() => openArtifact(action))} /></section>}
+        {selected.delivery && <IndependentReviews key={selected.id} task={selected} latestRevision={deliveryHistory[deliveryHistory.length - 1]?.revision ?? 0}
+          root={artifactRoot} busy={busy} onPerform={perform} onOpenArtifact={(action) => perform(() => openArtifact(action))} />}
         <div className="work-toolbar">
           {selected.status === "in_review" && <button className="btn btn--primary" disabled={busy} onClick={() => void approve()}>{t("Aprovar entrega")}</button>}
           {selected.status === "in_review" && <button className="btn" disabled={busy} onClick={() => void perform(() => ipc.taskTransition(selected.id, selected.revision, "running"))}>{t("Reabrir para ajustes")}</button>}

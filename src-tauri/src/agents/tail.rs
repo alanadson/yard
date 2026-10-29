@@ -42,7 +42,7 @@ const DETAIL_CAP: usize = 120;
 /// the thread — raising the flag does, on the next poll.
 pub type TailStop = Arc<AtomicBool>;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TodoItem {
     pub content: String,
@@ -51,7 +51,7 @@ pub struct TodoItem {
 
 /// One event of the feed. A fat struct with optional fields instead of an
 /// enum: the UI switches on `kind` and TypeScript mirrors this shape 1:1.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedEvent {
     /// `prompt` | `say` | `think` | `tool` | `result` | `usage` | `notify`
@@ -107,7 +107,7 @@ pub struct FeedEvent {
     pub cost_usd: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionFeed {
     pub tail_id: String,

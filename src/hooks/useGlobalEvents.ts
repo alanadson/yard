@@ -14,7 +14,6 @@ import { isFrontOnScreen } from "../lib/frontTab";
 import { t } from "../lib/i18n";
 import { ipc, on } from "../lib/ipc";
 import { createNativeHookReceiver, applyInferredIdle } from "../lib/nativeHooks";
-import { refreshNativeQueue } from "../lib/queueDelivery";
 import { shouldNotify } from "../lib/notifyAgent";
 import { usageProviderOf } from "../lib/usageNudge";
 import { useChanges } from "../stores/changesStore";
@@ -75,8 +74,6 @@ export function useGlobalEvents() {
       if (subscriptions.disposed) return;
 
       const nativeHooks = createNativeHookReceiver();
-      await subscriptions.add(on.queueChanged(() => { void refreshNativeQueue(); }));
-      if (subscriptions.disposed) return;
       const nativeHookLink = on.nativeHook((report) => { nativeHooks.accept(report); });
       subscriptions.add(nativeHookLink);
       try {

@@ -22,7 +22,7 @@ const MENU_QUIT: &str = "tray-quit";
 /// frontend runs its normal exit flow (save the workspace, ask about live
 /// agents, destroy) — the one `onCloseRequested` runs, but skipping the
 /// close-to-tray branch, because "Sair" means quit.
-pub const TOPIC_QUIT: &str = "tray://quit";
+pub use crate::events::TRAY_QUIT as TOPIC_QUIT;
 
 /// The tooltip: the two numbers that matter while nobody is looking.
 pub fn tooltip(blocked: u32, running: u32) -> String {
@@ -144,6 +144,7 @@ fn request_quit(app: &AppHandle) {
 /// The tooltip follows the agents: the frontend pushes the counts when they
 /// change (`hooks/useTray.ts`).
 #[tauri::command]
+#[specta::specta]
 pub fn tray_set_status(app: AppHandle, blocked: u32, running: u32) -> Result<(), String> {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         return Err("icone da bandeja nao existe".into());
@@ -154,6 +155,7 @@ pub fn tray_set_status(app: AppHandle, blocked: u32, running: u32) -> Result<(),
 
 /// The summon hotkey's effect. Returns what it did, for the UI log.
 #[tauri::command]
+#[specta::specta]
 pub fn window_summon(app: AppHandle) -> &'static str {
     let Some(w) = app.get_webview_window("main") else {
         return Summon::Show.as_str();

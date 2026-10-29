@@ -10,7 +10,7 @@
  * come in through `PtyPort`, so the whole contract is tested with plain
  * functions.
  */
-import type { ActivityPayload, ExitPayload, IdlePayload, OutputChunk } from "./ipc";
+import type { ActivityPayload, ExitPayload, IdlePayload, OutputChunk } from "../contracts/types";
 
 /** What one subscription listens to, spelled as `Topic` in `pages.rs` reads it. */
 export type PtyTopic =

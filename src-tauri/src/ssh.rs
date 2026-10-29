@@ -17,7 +17,7 @@ use std::path::Path;
 use serde::Serialize;
 
 /// What the settings screen needs to draw the choice.
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SshStatus {
     /// An `ssh` launcher exists on this machine.

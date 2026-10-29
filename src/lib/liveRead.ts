@@ -3,8 +3,8 @@
  *
  * The backend announces each change with an event. The mirror is read once
  * at start (a reloaded page must see the present before any event arrives),
- * on each announcement, when the window comes back on screen (events the page
- * could not act on are caught up in one read), and on a slow safety tick that
+ * on each visible announcement, when the window comes back on screen (events
+ * the page could not act on are caught up in one read), and on a safety tick that
  * only runs while the window is shown: a minimized Yard asks nothing.
  *
  * Every dependency (the events, the window state, the timer) comes in as a
@@ -39,6 +39,11 @@ export function startLiveRead(options: LiveReadOptions): () => void {
   let again = false;
 
   const run = (): void => {
+    if (stopped || !options.visibility.get()) return;
+    read();
+  };
+
+  const read = (): void => {
     if (stopped) return;
     if (reading) {
       again = true;
@@ -72,7 +77,7 @@ export function startLiveRead(options: LiveReadOptions): () => void {
     if (shown) run();
   });
 
-  run();
+  read();
   return () => {
     stopped = true;
     stopTick();

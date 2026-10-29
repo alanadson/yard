@@ -79,7 +79,7 @@ fn file_for(name: &str) -> Result<PathBuf, String> {
     Ok(scores_dir().join(format!("{clean}.json")))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ScoreMeta {
     pub name: String,

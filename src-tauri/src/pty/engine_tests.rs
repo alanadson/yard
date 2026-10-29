@@ -136,6 +136,68 @@ fn wait_until(timeout: Duration, label: &str, mut cond: impl FnMut() -> bool) {
     panic!("timed out waiting for: {label}");
 }
 
+/// A CLI must not inherit another account's home or API key on launch or restart.
+#[test]
+fn codex_processes_and_restarts_use_the_pinned_account_home() {
+    let fixture = Fixture::new();
+    let root = crate::paths::app_dir();
+    {
+        let db = fixture.state.db.lock();
+        db.execute_batch("CREATE TABLE terminals(id TEXT PRIMARY KEY, agent_id TEXT);").unwrap();
+        crate::accounts::migrate(&db).unwrap();
+        crate::accounts::create_in(&db, &root, "engine-codex", "codex", "Work").unwrap();
+    }
+    let bin = root.join("account-cli-fixture");
+    std::fs::create_dir_all(&bin).unwrap();
+    let program = bin.join("codex.ps1");
+    std::fs::write(&program, "if (($args -join ' ') -eq 'login status') { if (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'verified')) { exit 0 }; exit 1 }; [IO.File]::WriteAllText((Join-Path $env:CODEX_HOME 'launched'), ($env:CODEX_HOME + '|' + $env:OPENAI_API_KEY)); while ($null -ne [Console]::ReadLine()) {}\n").unwrap();
+    let directory = root.join("accounts").join("engine-codex").join(".codex");
+    std::fs::write(directory.join("verified"), "fixture").unwrap();
+    {
+        let db = fixture.state.db.lock();
+        crate::accounts::check_in_with(&db, &root, "engine-codex", |request| crate::accounts::probe(&program.to_string_lossy(), request, Duration::from_secs(10))).unwrap();
+        crate::accounts::select_account(&db, "codex", Some("engine-codex")).unwrap();
+    }
+    pty::spawn(fixture.sink(), &fixture.state, SpawnOptions { id: "managed-codex".into(), program: program.to_string_lossy().into_owned(), args: vec![], cwd: bin.to_string_lossy().into_owned(), rows: 24, cols: 80, kind: "agent".into(), title: "Account fixture".into(), env: vec![("OPENAI_API_KEY".into(), "must-be-removed".into()), ("CODEX_HOME".into(), bin.to_string_lossy().into_owned())], keep_scrollback: false }).unwrap();
+    fixture.auto_respond_dsr("managed-codex");
+    wait_until(Duration::from_secs(15), "managed Codex launch", || directory.join("launched").exists());
+    assert_eq!(std::fs::read_to_string(directory.join("launched")).unwrap(), format!("{}|", directory.display()));
+    crate::accounts::select_account(&fixture.state.db.lock(), "codex", None).unwrap();
+    std::fs::remove_file(directory.join("launched")).unwrap();
+    pty::restart(fixture.sink(), &fixture.state, "managed-codex").unwrap();
+    fixture.auto_respond_dsr("managed-codex");
+    wait_until(Duration::from_secs(15), "managed Codex restart", || directory.join("launched").exists());
+    assert_eq!(std::fs::read_to_string(directory.join("launched")).unwrap(), format!("{}|", directory.display()));
+    pty::kill(&fixture.state, "managed-codex").unwrap();
+}
+
+/// OAuth callbacks belong with private account data, outside workspace output exports.
+#[test]
+fn managed_login_output_stays_outside_exported_workspace_scrollback() {
+    let fixture = Fixture::new();
+    let root = crate::paths::app_dir();
+    {
+        let db = fixture.state.db.lock();
+        db.execute_batch("CREATE TABLE terminals(id TEXT PRIMARY KEY, agent_id TEXT)").unwrap();
+        crate::accounts::migrate(&db).unwrap();
+        crate::accounts::create_in(&db, &root, "engine-login", "codex", "Login").unwrap();
+        crate::accounts::assign_terminal(&db, "managed-login", "codex", Some("engine-login")).unwrap();
+    }
+    let bin = root.join("login-cli-fixture");
+    std::fs::create_dir_all(&bin).unwrap();
+    let program = bin.join("codex.ps1");
+    std::fs::write(&program, "Write-Output 'OWNED_OAUTH_CALLBACK_FIXTURE'; while ($null -ne [Console]::ReadLine()) {}\n").unwrap();
+    pty::spawn(fixture.sink(), &fixture.state, SpawnOptions { id: "managed-login".into(), program: program.to_string_lossy().into_owned(), args: vec!["login".into()], cwd: bin.to_string_lossy().into_owned(), rows: 24, cols: 80, kind: "shell".into(), title: "Login".into(), env: vec![], keep_scrollback: false }).unwrap();
+    fixture.auto_respond_dsr("managed-login");
+    wait_until(Duration::from_secs(15), "login output", || fixture.events.output.lock().contains("OWNED_OAUTH_CALLBACK_FIXTURE"));
+    let handle = fixture.state.ptys.lock().get("managed-login").cloned().unwrap();
+    let scrollback = handle.lock().scrollback.clone();
+    scrollback.lock().flush().unwrap();
+    pty::kill(&fixture.state, "managed-login").unwrap();
+    assert!(!crate::paths::scrollback_file("managed-login").exists());
+    assert!(scrollback.lock().path().starts_with(root.join("accounts")));
+}
+
 /// Flow reservations must never deliver their input to a different process generation.
 #[test]
 fn a_flow_delivery_for_an_earlier_process_cannot_write_into_its_replacement() {
@@ -1229,10 +1291,10 @@ fn a_missing_path_falls_back_to_the_canonical_spelling() {
 
 /// A page that keeps every message it was sent, in order.
 #[derive(Clone, Default)]
-struct KeptPage(Arc<parking_lot::Mutex<Vec<tauri::ipc::InvokeResponseBody>>>);
+struct KeptPage(Arc<parking_lot::Mutex<Vec<super::pages::PageMessage>>>);
 
 impl super::pages::PageLink for KeptPage {
-    fn send(&self, body: tauri::ipc::InvokeResponseBody) {
+    fn send(&self, body: super::pages::PageMessage) {
         self.0.lock().push(body);
     }
 }
@@ -1268,7 +1330,7 @@ impl PtyEvents for Tee {
 /// knowing nothing of the dead run is still on its way.
 #[test]
 fn a_live_terminal_reaches_a_watching_page_byte_for_byte_and_its_exit_after_it() {
-    use tauri::ipc::InvokeResponseBody;
+    use super::pages::PageMessage;
 
     let f = Fixture::new();
     let pages = Arc::new(super::pages::Pages::default());
@@ -1304,7 +1366,7 @@ fn a_live_terminal_reaches_a_watching_page_byte_for_byte_and_its_exit_after_it()
     let (mut raw, mut last_output, mut exit_at) = (0, None, None);
     for (n, body) in page.0.lock().iter().enumerate() {
         match body {
-            InvokeResponseBody::Json(json) => {
+            PageMessage::Json(json) => {
                 let message: serde_json::Value = serde_json::from_str(json).unwrap();
                 if let Some(output) = message.get("output") {
                     assert_eq!(output["id"], "t-page");
@@ -1316,7 +1378,7 @@ fn a_live_terminal_reaches_a_watching_page_byte_for_byte_and_its_exit_after_it()
                     exit_at = Some(n);
                 }
             }
-            InvokeResponseBody::Raw(bytes) => {
+            PageMessage::Raw(bytes) => {
                 let (rest, len) = bytes.split_at(bytes.len() - 4);
                 let len = u32::from_le_bytes(len.try_into().unwrap()) as usize;
                 let (data, trailer) = rest.split_at(rest.len() - len);

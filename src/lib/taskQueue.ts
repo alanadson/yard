@@ -3,13 +3,20 @@ import { ipc } from "./ipc";
 import { writeQueue } from "./prefs";
 import { mergeQueueAcknowledgement } from "./queuePatch";
 import { useQueue } from "../stores/queueStore";
-import type { TaskQueueResult, WorkTask } from "./work";
+import type { ReviewRequest, TaskQueueResult, WorkTask } from "./work";
 import type { QueueItem } from "./queue";
 
 export async function queueTask(id: string, revision: number, terminalId: string, queueId: string): Promise<WorkTask> {
   const before = useQueue.getState().items;
   const result = await ipc.taskEnqueue(id, revision, terminalId, queueId);
   await applyQueueAcknowledgement(id, before, result);
+  return result.task;
+}
+
+export async function queueTaskReview(input: ReviewRequest): Promise<WorkTask> {
+  const before = useQueue.getState().items;
+  const result = await ipc.taskRequestReview(input);
+  await applyQueueAcknowledgement(result.task.id, before, result);
   return result.task;
 }
 

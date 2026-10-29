@@ -20,6 +20,8 @@
 //! `src/main.rs` are the same file, and a filter that disagreed with the file
 //! system would be a filter that silently hides files.
 
+use regex::{Regex, RegexBuilder};
+
 /// A parsed list of patterns. An empty set means "no opinion", which the
 /// caller reads as *everything* for an include and *nothing* for an exclude.
 #[derive(Debug, Default, Clone)]
@@ -29,8 +31,8 @@ pub struct GlobSet {
 
 #[derive(Debug, Clone)]
 struct Glob {
-    /// Lowercased pattern.
-    pattern: String,
+    /// Compiled once per query. Oversized patterns match nothing.
+    pattern: Option<Regex>,
     /// Matched against the file name alone rather than the whole path.
     name_only: bool,
 }
@@ -49,7 +51,7 @@ impl GlobSet {
             let pattern = trimmed.replace('\\', "/").to_lowercase();
             let name_only = !pattern.contains('/');
             patterns.push(Glob {
-                pattern,
+                pattern: compile_glob(&pattern),
                 name_only,
             });
         }
@@ -63,82 +65,49 @@ impl GlobSet {
     /// Does any pattern take this path? `rel` is relative to the root, with `/`.
     pub fn matches(&self, rel: &str) -> bool {
         let lowered = rel.replace('\\', "/").to_lowercase();
-        let name = lowered.rsplit('/').next().unwrap_or(&lowered).to_owned();
+        let name = lowered.rsplit('/').next().unwrap_or(&lowered);
         self.patterns.iter().any(|glob| {
-            let subject = if glob.name_only { &name } else { &lowered };
-            matches_glob(&glob.pattern, subject)
+            let subject = if glob.name_only { name } else { &lowered };
+            glob.pattern
+                .as_ref()
+                .is_some_and(|pattern| pattern.is_match(subject))
         })
     }
 }
 
-/// The matcher itself, on bytes so the recursion is over indices and not over
-/// cloned strings. Both sides are already lowercase ASCII-folded by the caller.
-fn matches_glob(pattern: &str, subject: &str) -> bool {
-    glob_here(pattern.as_bytes(), subject.as_bytes())
-}
-
-fn glob_here(pattern: &[u8], subject: &[u8]) -> bool {
-    // `**` is the only construct allowed to cross a `/`, so it is peeled off
-    // first: everything after it may start at any position of the subject.
-    if pattern.starts_with(b"**") {
-        let rest = strip_double_star(pattern);
-        if rest.is_empty() {
-            return true;
-        }
-        for at in 0..=subject.len() {
-            if glob_here(rest, &subject[at..]) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    match pattern.first() {
-        None => subject.is_empty(),
-        Some(b'*') => {
-            // One segment only: stop at the next `/`.
-            let rest = &pattern[1..];
-            let mut at = 0;
-            loop {
-                if glob_here(rest, &subject[at..]) {
-                    return true;
+/// Compile the small glob language to the existing regex engine, avoiding
+/// recursive backtracking for every file in a project. `?` consumes a Unicode
+/// character, and every non-glob character stays literal.
+fn compile_glob(pattern: &str) -> Option<Regex> {
+    let mut expression = String::from("\\A");
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '*' if chars.peek() == Some(&'*') => {
+                while chars.peek() == Some(&'*') {
+                    chars.next();
                 }
-                if at >= subject.len() || subject[at] == b'/' {
-                    return false;
+                // Preserve the zero-folder case of `src/**/app.ts`.
+                if chars.peek() == Some(&'/') {
+                    chars.next();
                 }
-                at += 1;
+                expression.push_str(".*");
             }
-        }
-        Some(b'?') => {
-            if subject.is_empty() || subject[0] == b'/' {
-                return false;
-            }
-            glob_here(&pattern[1..], &subject[1..])
-        }
-        Some(c) => {
-            if subject.first() != Some(c) {
-                return false;
-            }
-            glob_here(&pattern[1..], &subject[1..])
+            '*' => expression.push_str("[^/]*"),
+            '?' => expression.push_str("[^/]"),
+            literal => expression.push_str(&regex::escape(&literal.to_string())),
         }
     }
-}
-
-/// Everything after a `**` and the `/` that usually follows it, so that
-/// `src/**/x` also matches `src/x`, the reading everyone expects.
-fn strip_double_star(pattern: &[u8]) -> &[u8] {
-    let mut rest = &pattern[2..];
-    while rest.first() == Some(&b'*') {
-        rest = &rest[1..];
-    }
-    if rest.first() == Some(&b'/') {
-        rest = &rest[1..];
-    }
-    rest
+    expression.push_str("\\z");
+    RegexBuilder::new(&expression)
+        .dot_matches_new_line(true)
+        .build()
+        .ok()
 }
 
 #[cfg(test)]
 mod tests {
+    // File filters must stay responsive and preserve path boundaries and literal names.
     use super::*;
 
     fn takes(list: &str, path: &str) -> bool {
@@ -186,6 +155,37 @@ mod tests {
         assert!(takes("a?c.ts", "abc.ts"));
         assert!(!takes("a?c.ts", "ac.ts"));
         assert!(!takes("src/a?c.ts", "src/a/c.ts"));
+    }
+
+    /// Byte recursion split accented letters and emoji, hiding valid files from search.
+    #[test]
+    fn a_question_mark_matches_one_unicode_character() {
+        assert!(takes("caf?.ts", "café.ts"));
+        assert!(takes("?.ts", "🦀.ts"));
+        assert!(!takes("?.ts", "ab.ts"));
+    }
+
+    #[test]
+    fn a_long_repeated_name_does_not_match_a_missing_wildcard_suffix() {
+        let filter = GlobSet::parse("*a*a*a*a*a*a*b.ts");
+        assert!(!filter.matches(&format!("{}c.ts", "a".repeat(200))));
+    }
+
+    #[test]
+    fn regex_metacharacters_in_file_names_stay_literal() {
+        for name in [
+            "[draft].ts",
+            "app(1).ts",
+            "a+b.ts",
+            "cost$.ts",
+            "a^b.ts",
+            "{draft}.ts",
+        ] {
+            let filter = GlobSet::parse(name);
+            assert!(filter.matches(name));
+            assert!(!filter.matches("other.ts"));
+        }
+        assert!(!takes("app.ts", "appXts"));
     }
 
     #[test]

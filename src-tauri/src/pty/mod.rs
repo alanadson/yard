@@ -94,7 +94,7 @@ impl Drop for SpawnReservation<'_> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SpawnOptions {
     pub id: String,
@@ -120,7 +120,7 @@ fn default_kind() -> String {
     "shell".to_string()
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PtyMeta {
     pub program: String,
@@ -159,7 +159,7 @@ impl PtyHandle {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PtySnapshot {
     pub id: String,
@@ -178,7 +178,7 @@ pub struct PtySnapshot {
 /// Response of `attach_pty`. Richer than the blueprint's `Option<String>`
 /// because the UI needs to distinguish three cases: alive, dead-with-history,
 /// and never-existed.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AttachResult {
     pub alive: bool,
@@ -205,7 +205,7 @@ pub struct AttachResult {
 /// running comes back dead with auto-start, and each one used to read up to
 /// 4 MB from disk, turn every ESC into `\u001b` and ship it over IPC for a
 /// view that discards it before painting anything.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AttachWants {
     /// A dead terminal's history is discarded: the view spawns a new process
@@ -244,14 +244,14 @@ pub fn history_cut(alive: bool, alt_screen: bool, wants: AttachWants) -> History
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PtyProbe {
     pub alive: bool,
     pub total_bytes: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PtyDelta {
     pub alive: bool,
@@ -259,7 +259,7 @@ pub struct PtyDelta {
     pub total_bytes: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ExitInfo {
     pub code: Option<i32>,
@@ -301,9 +301,12 @@ pub fn spawn(
     opts: SpawnOptions,
 ) -> Result<PtySnapshot, String> {
     let _reservation = SpawnReservation::claim(state, &opts.id)?;
+    let account = crate::accounts::prepare_launch(&state.db.lock(), &crate::paths::app_dir(), &opts.id, &opts.program, &opts.args)?;
 
     // Archive failures abort before launching a child or replacing its previous output.
-    let scrollback = Arc::new(Mutex::new(if opts.keep_scrollback {
+    let scrollback = Arc::new(Mutex::new(if let Some(login) = account.as_ref().filter(|account| account.is_login) {
+        Scrollback::open_at(login.directory.join(format!("login-{}.bin", crate::paths::sanitize_id(&opts.id))))
+    } else if opts.keep_scrollback {
         Scrollback::open(&opts.id)
     } else {
         Scrollback::fresh(&opts.id).map_err(|error| format!("Could not preserve previous terminal output: {error}"))?
@@ -412,6 +415,10 @@ pub fn spawn(
     }
     for (k, v) in &opts.env {
         cmd.env(k, v);
+    }
+    if let Some(account) = &account {
+        for key in account.removed_environment() { cmd.env_remove(key); }
+        cmd.env(account.environment_key(), &account.directory);
     }
     cmd.env("YARD_PTY_ID", &opts.id);
     cmd.env("YARD_TOKEN", credential.token());
@@ -1054,6 +1061,7 @@ pub fn restart(
         }
     };
 
+    crate::accounts::prepare_launch(&state.db.lock(), &crate::paths::app_dir(), id, &meta.program, &meta.args)?;
     terminate(state, id, INTENT_RESTARTED)?;
 
     // Wait for the watcher to clear the registry before reusing the id.
@@ -1162,7 +1170,7 @@ fn find_default_shell() -> String {
 }
 
 /// Shells offered in the "New terminal" modal.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ShellOption {
     pub id: String,

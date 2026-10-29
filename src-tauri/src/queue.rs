@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchResult {
     pub status: String,

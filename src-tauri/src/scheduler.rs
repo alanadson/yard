@@ -2,7 +2,7 @@
 use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct HookEvent {
     pub kind: &'static str,
@@ -177,7 +177,7 @@ pub fn run_once(state: &crate::state::AppState, now: i64, budget: usize) -> Resu
     Ok(outcomes)
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct HookReport {
     pub terminal_id: String,
@@ -388,18 +388,16 @@ impl Drop for ScheduledJob {
     fn drop(&mut self) { self.state.scheduler.unschedule(&self.id); }
 }
 
-pub fn start(app: tauri::AppHandle) {
-    use tauri::Manager;
+pub fn start(state: std::sync::Arc<crate::state::AppState>, runtime: crate::runtime::AutomationRuntime) {
     let spawned = std::thread::Builder::new().name("native-scheduler".into()).spawn(move || {
-        let state = app.state::<std::sync::Arc<crate::state::AppState>>().inner().clone();
         let mut routines = crate::routines::RoutineClock::default();
         let mut wait = std::time::Duration::from_millis(BUSY_CADENCE_MS as u64);
         loop {
             WAKEUP.wait(wait);
-            wait = tick(&app, &state, &mut routines, crate::pty::reader::now_ms());
+            wait = tick(&runtime, &state, &mut routines, crate::pty::reader::now_ms());
             // The scheduler's own writes are announced but do not ring its
             // doorbell: it already decided when to look again.
-            crate::events::publish_kv_changes(&app);
+            runtime.publish_changes();
         }
     });
     if let Err(error) = spawned {
@@ -409,9 +407,9 @@ pub fn start(app: tauri::AppHandle) {
 
 /// One pass of the native scheduler: flows, routines, then queue heads.
 /// Returns how long to wait before the next pass (`next_wait`).
-fn tick(app: &tauri::AppHandle, state: &std::sync::Arc<crate::state::AppState>, routines: &mut crate::routines::RoutineClock, now: i64) -> std::time::Duration {
+fn tick(runtime: &crate::runtime::AutomationRuntime, state: &std::sync::Arc<crate::state::AppState>, routines: &mut crate::routines::RoutineClock, now: i64) -> std::time::Duration {
     let paused = paused(state);
-    let flows_active = crate::flows::schedule(app, state, paused, now);
+    let flows_active = crate::flows::schedule(runtime, state, paused, now);
     if paused {
         return next_wait(now, flows_active, None);
     }
@@ -438,13 +436,13 @@ fn tick(app: &tauri::AppHandle, state: &std::sync::Arc<crate::state::AppState>, 
     };
     let queued = items.iter().any(|item| item.get("delivery").is_none());
     if queued {
-        dispatch_heads(app, state, &items, now);
+        dispatch_heads(runtime, state, &items, now);
     }
     next_wait(now, flows_active || queued || routine_waiting, routines.next_due())
 }
 
 /// Hands each admitted queue head to its terminal's lane.
-fn dispatch_heads(app: &tauri::AppHandle, state: &std::sync::Arc<crate::state::AppState>, items: &[Value], now: i64) {
+fn dispatch_heads(runtime: &crate::runtime::AutomationRuntime, state: &std::sync::Arc<crate::state::AppState>, items: &[Value], now: i64) {
     let resources = match execution_resources(state, now) {
         Ok(resources) => { state.scheduler.warn("resources", None, ""); resources }
         Err(error) => { state.scheduler.warn("resources", Some(&error), "native scheduler could not read active work"); return; }
@@ -456,10 +454,8 @@ fn dispatch_heads(app: &tauri::AppHandle, state: &std::sync::Arc<crate::state::A
         if !state.scheduler.schedule(&id) { continue; }
         let terminal = items.iter().find(|item| item["id"].as_str() == Some(&id)).unwrap()["terminalId"].as_str().unwrap().to_string();
         let job = ScheduledJob { state: state.clone(), id: id.clone() };
-        let handle = app.clone();
-        crate::lanes::lanes().submit(&format!("pty:{terminal}"), move || {
+        runtime.submit(&format!("pty:{terminal}"), move || {
             deliver_head(&job, &terminal);
-            crate::events::publish_kv_changes(&handle);
         });
     }
 }

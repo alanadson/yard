@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { runNativeAppCheck } from "./native-work.mjs";
 
 async function exerciseScheduler(page, directory, assertAlive, timeoutMs) {
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForFunction(() => !!window.__TAURI_INTERNALS__);
   const invoke = (command, args = {}) => page.evaluate(({ command, args }) => window.__TAURI_INTERNALS__.invoke(command, args), { command, args });
   const root = join(directory, "checkpoint-repository");
@@ -85,7 +86,7 @@ while (!(Test-Path -LiteralPath ${quote(finish)})) {
   const workspace = await invoke("load_workspace");
   assert((await invoke("save_workspace", { snapshot: { rev: workspace.rev,
     projects: [{ id: "native-automation-project", name: "Native automation", path: directory, createdAt: 1000 }],
-    groups: [{ id: "native-automation-group", projectId: "native-automation-project", name: "Native automation", layoutJson: JSON.stringify({ canvas: { routines: [{ id: "native-once", terminalId: "owned-hook-agent", text: "Native routine without renderer", everyMin: 1, enabled: true, once: true, createdAt: 1000 }] } }) }],
+    groups: [{ id: "native-automation-group", projectId: "native-automation-project", name: "Native automation", layoutJson: JSON.stringify({ canvas: { routines: [{ id: "native-once", terminalId: "owned-hook-agent", text: "Native routine without renderer", everyMin: 5, enabled: true, once: true, createdAt: 1000 }] } }) }],
     terminals: [{ id: "owned-hook-agent", groupId: "native-automation-group", kind: "agent", program: "powershell.exe", args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script], cwd: root, title: "Owned hook agent", createdAt: 1000 }],
   } })).accepted);
   await invoke("queue_patch", { before: [], after: [{ id: "without-renderer", terminalId: "owned-hook-agent", text: "Native scheduler request", at: 1000, source: "user" }] });

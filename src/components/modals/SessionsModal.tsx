@@ -146,6 +146,7 @@ export function SessionsModal({ projectPath }: { projectPath: string }) {
         agentId: s.agent,
         resume: args,
       });
+      if (s.agent === "codex" || s.agent === "claude") await ipc.accountAssign(id, s.agent, s.accountId ?? null);
       useProjects.getState().updateTerminal(id, { alive: true });
       closeModal();
     } catch (e) {

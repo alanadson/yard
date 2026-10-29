@@ -62,6 +62,7 @@ import { InlineRename } from "../ContextMenu/InlineRename";
 import { closeDocTab, docTabMenu } from "../../lib/editorActions";
 import { paneMenu } from "../../lib/paneMenu";
 import { useT } from "../../hooks/useT";
+import { TerminalAccountBadge } from "../Accounts";
 import { captureTextTarget, textMenuEntries } from "../../lib/textMenu";
 import { terminalActionEntries } from "../../lib/terminalMenu";
 import { beginTabDrag, moveTabBy } from "../../lib/tabDrag";
@@ -664,6 +665,7 @@ export function TerminalPane({
                     ) : (
                       <span className="pane-tab-label">{label}</span>
                     )}
+                    <TerminalAccountBadge id={term.id} />
                     {roles[term.id] && (
                       <span className="pane-tab-role">{roles[term.id].name}</span>
                     )}

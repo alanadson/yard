@@ -28,7 +28,7 @@ const LOG_PREFIX: &str = "yard.log.";
 
 /// What the UI shows after the zip is written — and the list it can show
 /// the user, which is the point: the contents are the privacy contract.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SupportSummary {
     pub path: String,
@@ -39,7 +39,7 @@ pub struct SupportSummary {
 }
 
 /// `about.json`: which build, which machine. No user name, no project path.
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 struct About {
     version: String,
@@ -55,6 +55,7 @@ struct About {
 /// detection may run `--version` on every CLI, so the command wraps it in
 /// `spawn_blocking`.
 #[tauri::command]
+#[specta::specta]
 pub async fn support_bundle(app: AppHandle, dest: String) -> Result<SupportSummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
         // The cache `detect_agents` fills is the same list the "Nova aba"

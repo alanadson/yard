@@ -40,7 +40,7 @@ const MIN_H: u32 = 560;
 /// force-flushes, so nothing is lost by being lazy here.
 const WRITE_EVERY: Duration = Duration::from_millis(600);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 struct Geometry {
     x: i32,
     y: i32,

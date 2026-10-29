@@ -22,3 +22,6 @@
 .work-history section + section { border-top: 1px solid var(--border); margin-top: 18px; }
 @media (max-width: 760px) { .work-layout { grid-template-columns: 1fr; } .work-list { max-height: 140px; overflow: auto; } }
 .work-chats .btn { display: block; margin-bottom: 6px; white-space: normal; text-align: left; }
+.work-artifacts { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.work-artifacts .btn { max-width: 100%; white-space: normal; text-align: left; overflow-wrap: anywhere; }
+.work-review-record { border: 1px solid var(--border); border-radius: var(--r-md); padding: 12px; margin: 10px 0; }

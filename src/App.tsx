@@ -39,6 +39,7 @@ import { useTriggers } from "./hooks/useTriggers";
 import { useQueueRunner } from "./hooks/useQueueRunner";
 import { useBudgetWatch } from "./hooks/useBudgetWatch";
 import { useQuotaPause } from "./hooks/useQuotaPause";
+import { useAccountsSync } from "./hooks/useAccountsSync";
 import { useAutomation } from "./stores/automationStore";
 import { useQueue } from "./stores/queueStore";
 import { setLocalBridge } from "./lib/remoteBridge";
@@ -286,6 +287,7 @@ export default function App() {
   useQueueRunner();
   useBudgetWatch();
   useQuotaPause();
+  useAccountsSync();
   useLspLifecycle();
 
   // Chosen fonts → CSS variables on <html>. One scalar per subscription, like

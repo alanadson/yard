@@ -20,6 +20,11 @@ const DEBOUNCE: Duration = Duration::from_millis(800);
 /// comes back.
 const CATCH_UP: Duration = Duration::from_secs(1);
 
+fn watch_roots(mut system: Vec<std::path::PathBuf>, app_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    system.push(app_dir.join("accounts"));
+    system.into_iter().filter(|root| root.is_dir()).collect()
+}
+
 /// Session changes seen while the main window was off screen: held, and
 /// announced once when it is back (`tick`).
 #[derive(Default)]
@@ -45,11 +50,14 @@ pub fn start<R: Runtime>(app: AppHandle<R>) {
     std::thread::spawn(move || {
         let shown = app.state::<Arc<crate::state::AppState>>().window_shown.clone();
         let held = Arc::new(HeldChanges::default());
-        let roots: Vec<_> = ["claude", "codex", "opencode"]
+        let app_dir = crate::paths::app_dir();
+        let _ = std::fs::create_dir_all(app_dir.join("accounts"));
+        let system: Vec<_> = ["claude", "codex", "opencode"]
             .iter()
             .filter_map(|kind| crate::agents::resolver::sessions_root(kind))
             .filter(|p| p.exists())
             .collect();
+        let roots = watch_roots(system, &app_dir);
 
         if roots.is_empty() {
             tracing::info!("nenhum diretorio de sessao de agente encontrado; watcher parado");
@@ -100,6 +108,15 @@ mod tests {
     // turn of every agent announced a change each 800 ms. One held change is
     // enough to refresh the page when the window comes back.
     use super::*;
+
+    #[test]
+    fn managed_account_directories_are_watched_before_any_provider_has_sessions() {
+        let root = std::env::temp_dir().join(format!("yard-account-watch-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("accounts")).unwrap();
+        let roots = watch_roots(Vec::new(), &root);
+        assert_eq!(roots, [root.join("accounts")]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn changes_while_hidden_are_announced_once_when_the_window_comes_back() {

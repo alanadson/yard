@@ -31,7 +31,7 @@ use crate::git::run_git;
 /// What the panel's header is made of: where we are, how far from the remote,
 /// and whether the repository is in the middle of something (a merge, a
 /// rebase) that changes what every button means.
-#[derive(Clone, Serialize, Default, Debug)]
+#[derive(Clone, Serialize, Default, Debug, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ScmInfo {
     pub is_repo: bool,
@@ -60,7 +60,7 @@ pub struct ScmInfo {
     pub has_head: bool,
 }
 
-#[derive(Clone, Serialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Debug, PartialEq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteInfo {
     pub name: String,
@@ -695,7 +695,7 @@ pub(crate) fn parse_remotes(text: &str) -> Vec<RemoteInfo> {
 
 /// Everything the commit button can carry. Each flag is a separate decision
 /// the UI makes explicit — none of them is ever inferred from the state.
-#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", default)]
 pub struct CommitOpts {
     /// Rewrite the last commit instead of adding one.
@@ -710,7 +710,7 @@ pub struct CommitOpts {
     pub allow_empty: bool,
 }
 
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Debug, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitResult {
     pub hash: String,
@@ -792,7 +792,7 @@ const DEFAULT_LOG_LIMIT: u32 = 100;
 /// Cap on the diff text of a commit's file, same reasoning as `git.rs`.
 const MAX_DIFF_BYTES: usize = 1024 * 1024;
 
-#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", default)]
 pub struct LogQuery {
     /// `0` = the module's own page size. The panel pages by asking for more.
@@ -808,7 +808,7 @@ pub struct LogQuery {
     pub search: Option<String>,
 }
 
-#[derive(Clone, Serialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Debug, PartialEq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitInfo {
     pub hash: String,
@@ -824,7 +824,7 @@ pub struct CommitInfo {
     pub body: String,
 }
 
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Debug, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitDetail {
     pub commit: CommitInfo,
@@ -1063,7 +1063,7 @@ pub fn commit_file_diff(
 // branches
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Serialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Debug, PartialEq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BranchInfo {
     /// `main`, `feature/x`, `origin/main` — short form, the one people type.
@@ -1234,7 +1234,7 @@ fn check_revision(rev: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Debug, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MergeResult {
     /// It stopped on a collision. Not an error: it is a state, and the panel
@@ -1384,7 +1384,7 @@ pub fn continue_state(cwd: &Path) -> Result<(), String> {
 // stash
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Serialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Debug, PartialEq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct StashEntry {
     /// Position in the stack — `stash@{0}` is the most recent.
@@ -1551,7 +1551,7 @@ pub fn push_delete(cwd: &Path, remote: &str, branch: &str) -> Result<(), String>
 // tags
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Serialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Debug, PartialEq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TagInfo {
     pub name: String,

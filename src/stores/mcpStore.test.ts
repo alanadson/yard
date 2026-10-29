@@ -63,10 +63,17 @@ beforeEach(() => {
   mcpList.mockImplementation(async () => ({ rows: [], errors: [] }));
   mcpSave.mockImplementation(async () => {});
   mcpDelete.mockImplementation(async () => {});
-  useMcp.setState({ health: {}, rows: [], fileErrors: [], loading: false, error: null, root: null });
+  useMcp.setState({ accounts: {}, health: {}, rows: [], fileErrors: [], loading: false, error: null, root: null });
 });
 
 describe("mcpStore", () => {
+  it("writes to the account whose configuration was opened even after the default changes", async () => {
+    mcpList.mockResolvedValueOnce({ rows: [row("claude", "c7")], errors: [], accounts: { claude: "work" } });
+    await useMcp.getState().load(null);
+    mcpList.mockResolvedValueOnce({ rows: [], errors: [], accounts: { claude: "personal" } });
+    expect(await useMcp.getState().save("claude", "user", server)).toBe(true);
+    expect(mcpSave).toHaveBeenCalledWith("claude", "user", null, server, "work");
+  });
   it("starts only one connection probe while that server is already pending", async () => {
     let finish!: (result: { serverName: string; serverVersion: string; protocolVersion: string; tools: number }) => void;
     mcpProbe.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));

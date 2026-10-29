@@ -37,7 +37,7 @@ const SNIFF_BYTES: usize = 8 * 1024;
 /// 50 thousand files freezes the tree and helps nobody).
 const MAX_ENTRIES: usize = 4000;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DirEntryInfo {
     pub name: String,
@@ -50,7 +50,7 @@ pub struct DirEntryInfo {
     pub symlink: bool,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DirListing {
     pub path: String,
@@ -59,7 +59,7 @@ pub struct DirListing {
     pub dropped: usize,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TextFile {
     pub path: String,
@@ -566,7 +566,7 @@ fn known_binary(path: &Path) -> bool {
 
 /// What the editor saw on disk the last time it read (or wrote) the file.
 /// Both halves matter — see `write_text`.
-#[derive(Clone, Copy, serde::Deserialize)]
+#[derive(Clone, Copy, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Seen {
     pub modified_at: i64,
@@ -575,7 +575,7 @@ pub struct Seen {
 
 /// State of the file after a write — what the open document adopts so the
 /// **next** save compares against the right thing.
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WriteResult {
     pub modified_at: i64,
@@ -778,7 +778,7 @@ const MAX_WALK_DEPTH: usize = 32;
 /// What the search box was asked for. Two of these have been here since the
 /// beginning (case, whole word); the other three are new and each one is a
 /// filter the walk applies before it reads a byte.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SearchOptions {
     pub case_sensitive: bool,
@@ -855,7 +855,7 @@ fn compile(query: &str, opts: &SearchOptions) -> Result<Regex, String> {
 /// search it is for.
 const REGEX_SIZE_LIMIT: usize = 1 << 20;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchHit {
     /// Relative to the root, with `/`.
@@ -866,7 +866,7 @@ pub struct SearchHit {
     pub text: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchOutcome {
     pub hits: Vec<SearchHit>,
@@ -876,7 +876,7 @@ pub struct SearchOutcome {
     pub truncated: bool,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FileIndex {
     /// Every file under the root (skip list applied), relative, with `/`.
@@ -1147,7 +1147,7 @@ pub fn search_text_cancellable(
 }
 
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ReplaceOutcome {
     pub files_changed: usize,

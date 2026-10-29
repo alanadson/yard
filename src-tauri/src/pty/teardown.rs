@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum ExitReason {
     /// The process exited on its own (user typed `exit`, agent finished).
@@ -35,7 +35,7 @@ impl ExitReason {
 }
 
 /// Observable state of a terminal, from the backend's point of view.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum PtyStatus {
     Running,

@@ -22,6 +22,7 @@
  */
 import { useEffect, useId, useRef, useState } from "react";
 import { Bot } from "lucide-react";
+import { AccountsSettings } from "../../Accounts";
 
 import { Card, GroupTitle, NumberRow, Row, SwitchRow } from "../rows";
 import { BrandIcon } from "../../BrandIcon";
@@ -106,6 +107,7 @@ function AgentPanel({
 
   return (
     <>
+      {(row.id === "codex" || row.id === "claude") && <AccountsSettings provider={row.id} local={row.config.where === "windows"} />}
       <GroupTitle>{t("Diagnóstico e integrações")}</GroupTitle>
       <Card>
         <Row label={t("Executável local")} desc={<code className="set-agent-path">{detected?.bin ?? t("Não encontrado")}</code>}>

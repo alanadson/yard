@@ -47,7 +47,7 @@ const CACHE_MAX_FILES: usize = 4096;
 
 /// One row of the panel: the usage of one agent, in one project, with one
 /// model, on one local day.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageRow {
     /// Local calendar day, `YYYY-MM-DD`.
@@ -151,19 +151,26 @@ fn cache() -> &'static Mutex<BoundedCache<PathBuf, CachedFile>> {
 /// The panel's command: the last `days` local days (1 = today only), over
 /// the real session roots, off the async runtime.
 #[tauri::command]
-pub async fn usage_history(days: u32) -> Vec<UsageRow> {
-    tauri::async_runtime::spawn_blocking(move || history(days))
+#[specta::specta]
+pub async fn usage_history(app: tauri::AppHandle, days: u32) -> Vec<UsageRow> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app.state::<Arc<crate::state::AppState>>();
+        let accounts = crate::accounts::snapshot(&state.db.lock()).and_then(|metadata| crate::accounts::session_roots(&crate::paths::app_dir(), &metadata.accounts)).unwrap_or_default();
+        history(days, &accounts)
+    })
         .await
         .unwrap_or_default()
 }
 
-fn history(days: u32) -> Vec<UsageRow> {
+fn history(days: u32, accounts: &[crate::accounts::SessionRoot]) -> Vec<UsageRow> {
     let mut roots: Vec<(&str, PathBuf)> = Vec::new();
     for agent in ["claude", "codex"] {
         if let Some(root) = crate::agents::resolver::sessions_root(agent) {
             roots.push((agent, root));
         }
     }
+    roots.extend(accounts.iter().map(|(agent, _, directory)| (agent.as_str(), directory.clone())));
     let borrowed: Vec<(&str, &Path)> = roots.iter().map(|(a, p)| (*a, p.as_path())).collect();
     history_in(&borrowed, days, Local::now())
 }

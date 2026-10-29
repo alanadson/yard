@@ -26,6 +26,9 @@ let lastManual = -Infinity;
 
 interface UsageState {
   providers: ProviderUsage[];
+  accounts: NonNullable<UsageSnapshot["accounts"]>;
+  selectedAccounts: Record<string, string | null> | null;
+  selectAccounts: (selected: Record<string, string | null>) => void;
   /** Epoch ms of the last snapshot received (0 = none yet). */
   fetchedAt: number;
   apply: (snap: UsageSnapshot) => void;
@@ -38,11 +41,22 @@ interface UsageState {
   refreshNow: (now?: number) => void;
 }
 
-export const useUsage = create<UsageState>((set) => ({
+function selectedReadings(accounts: NonNullable<UsageSnapshot["accounts"]>, selected: Record<string, string | null>) {
+  return accounts.filter((entry) => entry.accountId === (selected[entry.usage.id] ?? null)).map((entry) => entry.usage);
+}
+
+export const useUsage = create<UsageState>((set, get) => ({
   providers: [],
+  accounts: [],
+  selectedAccounts: null,
+  selectAccounts: (selectedAccounts) => set({ selectedAccounts: { ...selectedAccounts }, providers: selectedReadings(get().accounts, selectedAccounts) }),
   fetchedAt: 0,
 
-  apply: (snap) => set({ providers: snap.providers, fetchedAt: snap.fetchedAt }),
+  apply: (snap) => {
+    const selected = get().selectedAccounts;
+    set({ providers: selected && snap.accounts ? selectedReadings(snap.accounts, selected) : snap.providers,
+      accounts: snap.accounts ?? [], fetchedAt: snap.fetchedAt });
+  },
 
   nudge: (provider, now = Date.now(), shown = isWindowShown()) => {
     if (!gate.take(provider, now, shown)) return;

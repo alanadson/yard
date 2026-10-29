@@ -339,7 +339,7 @@ fn write_inventory_entry(zip: &mut ZipWriter<File>, source: &mut impl Read, path
     Ok(serde_json::json!({ "path": path, "size": size, "sha256": format!("{:x}", hash.finalize()) }))
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, specta::Type)]
 struct BackupInventory {
     format: String,
     version: u32,
@@ -348,7 +348,7 @@ struct BackupInventory {
     source_root: Option<String>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, specta::Type)]
 struct BackupInventoryFile {
     path: String,
     size: u64,
@@ -731,7 +731,7 @@ fn covered_folders(staging: &Path) -> Option<Vec<String>> {
     manifest.get("folders")?.as_array()?.iter().map(|folder| folder.as_str().map(str::to_string)).collect()
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, specta::Type)]
 struct RestoreJournal {
     replacements: Vec<String>,
     existed: Vec<String>,
@@ -893,6 +893,34 @@ mod tests {
         make_backup(&path, &std::fs::read(database).unwrap(), b"history");
         assert!(import_in(&app, &path).is_err());
         assert!(!staging_in(&app).exists());
+        std::fs::remove_dir_all(app).unwrap();
+    }
+
+    /// Private provider files and callback output must never enter a workspace archive.
+    #[test]
+    fn account_credentials_and_login_output_are_excluded_from_workspace_backups() {
+        let app = temp_dir("account-privacy");
+        let db = live_db(&app, "42");
+        {
+            let connection = db.lock();
+            super::super::db::migrate(&connection).unwrap();
+            let account = crate::accounts::create_in(&connection, &app, "work", "codex", "Work").unwrap();
+            let runtime = crate::accounts::runtime_dir(&app, &account).unwrap();
+            std::fs::write(runtime.join("auth.json"), "OWNED_PRIVATE_CREDENTIAL_FIXTURE").unwrap();
+            std::fs::write(runtime.join("login-terminal.bin"), "OWNED_PRIVATE_CALLBACK_FIXTURE").unwrap();
+        }
+        let dest = app.join("backup.zip");
+        export_in(&app, &db, &dest).unwrap();
+        let mut archive = ZipArchive::new(File::open(dest).unwrap()).unwrap();
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).unwrap();
+            assert!(!entry.name().starts_with("accounts/"));
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut bytes).unwrap();
+            assert!(!bytes.windows(b"OWNED_PRIVATE_".len()).any(|window| window == b"OWNED_PRIVATE_"));
+        }
+        drop(archive);
+        drop(db);
         std::fs::remove_dir_all(app).unwrap();
     }
 

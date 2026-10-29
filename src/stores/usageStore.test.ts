@@ -11,7 +11,28 @@ vi.mock("../lib/ipc", () => ({ ipc: { usageRefresh: api.refresh } }));
 
 import { useUsage } from "./usageStore";
 
-beforeEach(() => api.refresh.mockClear());
+beforeEach(() => {
+  api.refresh.mockClear();
+  useUsage.setState({ providers: [], accounts: [], selectedAccounts: null, fetchedAt: 0 });
+});
+
+it("keeps account readings separate from the selected provider gauge", () => {
+  const usage = { id: "codex", name: "Codex", plan: null, account: "work@example.test", windows: [], status: "ok" as const, error: null, updatedAt: 1000 };
+  useUsage.getState().apply({ providers: [], fetchedAt: 1000, accounts: [{ accountId: "work", usage }] });
+  expect(useUsage.getState().providers).toEqual([]);
+  expect(useUsage.getState().accounts).toEqual([{ accountId: "work", usage }]);
+});
+
+it("switches gauges immediately and ignores a late snapshot for the previous default", () => {
+  const work = { id: "codex", name: "Codex", plan: null, account: "work", windows: [], status: "ok" as const, error: null, updatedAt: 1000 };
+  const personal = { ...work, account: "personal" };
+  const snapshot = { providers: [work], fetchedAt: 1000, accounts: [{ accountId: "work", usage: work }, { accountId: "personal", usage: personal }] };
+  useUsage.getState().apply(snapshot);
+  useUsage.getState().selectAccounts({ codex: "personal" });
+  expect(useUsage.getState().providers).toEqual([personal]);
+  useUsage.getState().apply(snapshot);
+  expect(useUsage.getState().providers).toEqual([personal]);
+});
 
 describe("useUsage.nudge", () => {
   it("asks the backend for the provider that went idle, once per minute", () => {

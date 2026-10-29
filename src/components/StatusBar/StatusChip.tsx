@@ -36,6 +36,8 @@ import { useUI } from "../../stores/uiStore";
 import { useUsage, worstWindow } from "../../stores/usageStore";
 import { useNow } from "../../hooks/useNow";
 import { useT } from "../../hooks/useT";
+import { AccountPicker } from "../Accounts";
+import { useAccounts } from "../../stores/accountsStore";
 import { buildUsageStrip, popAnchor, type PopAnchor } from "./usageStrip";
 
 /** Same steps as the memory HUD: blue → yellow (warning) → red. */
@@ -155,7 +157,7 @@ function ProviderBlock({ p }: { p: ProviderUsage }) {
         tone: "dim",
       };
     }
-    return { text: p.error ?? t("Indisponível"), tone: p.status === "missing" ? "dim" : "bad" };
+    return { text: p.error ? t(p.error) : t("Indisponível"), tone: p.status === "missing" ? "dim" : "bad" };
   })();
 
   return (
@@ -196,6 +198,8 @@ function UpdatedAgo({ at }: { at: number }) {
 export function StatusChip() {
   const t = useT();
   const providers = useUsage((s) => s.providers);
+  const accountUsage = useUsage((s) => s.accounts);
+  const accounts = useAccounts((s) => s.accounts);
   const fetchedAt = useUsage((s) => s.fetchedAt);
   const refreshNow = useUsage((s) => s.refreshNow);
   const mode = usePower((s) => s.mode);
@@ -329,7 +333,7 @@ export function StatusChip() {
         createPortal(
           <div
             ref={popRef}
-            className="usage-pop"
+            className="usage-pop usage-pop--accounts"
             role="dialog"
             aria-label={t("Uso dos agentes e Energético")}
             style={{ bottom: pos.bottom, right: pos.right }}
@@ -347,12 +351,17 @@ export function StatusChip() {
                 <RefreshCw size={12} />
               </button>
             </div>
-            {providers.length === 0 ? (
+            <AccountPicker provider="codex" />
+            <AccountPicker provider="claude" />
+            {accountUsage.length === 0 ? (
               <p className="usage-note">
                 {t("Nenhuma CLI com medidor de uso detectada ainda.")}
               </p>
             ) : (
-              providers.map((p) => <ProviderBlock p={p} key={p.id} />)
+              accountUsage.map((entry) => <section key={`${entry.usage.id}:${entry.accountId ?? "system"}`}>
+                <strong className="usage-pop-title">{entry.accountId === null ? t("Padrão do sistema") : accounts.find((account) => account.id === entry.accountId)?.label ?? t("Conta indisponível")}</strong>
+                <ProviderBlock p={entry.usage} />
+              </section>)
             )}
             <div
               className="energy-sect"

@@ -19,15 +19,20 @@
  * One selector per component instance (create it in a `useMemo`): it
  * remembers one previous answer, and two components sharing it would keep
  * swapping each other's.
+ * Inputs must be immutable snapshots: repeated reads of the same snapshot
+ * reuse the projection without rebuilding arrays or comparing their items.
  */
 export function stableSelect<S, T>(
   select: (state: S) => T,
   same: (prev: T, next: T) => boolean,
 ): (state: S) => T {
   let kept = false;
+  let previousState: S;
   let last: T;
   return (state) => {
+    if (kept && Object.is(previousState, state)) return last;
     const next = select(state);
+    previousState = state;
     if (kept && same(last, next)) return last;
     kept = true;
     last = next;

@@ -22,6 +22,20 @@ interface State {
 const byGroup = (group: string) => (s: State) => s.rows.filter((r) => r.group === group);
 
 describe("stableSelect: the previous answer survives an equivalent one", () => {
+  // React reads an unchanged snapshot repeatedly, which used to rescan every row each time.
+  it("projects an unchanged immutable snapshot only once", () => {
+    const state: State = { rows: [{ id: "a", group: "g1" }] };
+    const projected: State[] = [];
+    const select = stableSelect((snapshot: State) => {
+      projected.push(snapshot);
+      return snapshot.rows.map((row) => row.id);
+    }, sameItems);
+    const first = select(state);
+    for (let i = 0; i < 100; i++) expect(select(state)).toBe(first);
+    expect(projected).toHaveLength(1);
+    expect(projected[0]).toBe(state);
+  });
+
   it("returns the same array while the rows it picks are the same objects", () => {
     const a = { id: "a", group: "g1" };
     const b = { id: "b", group: "g2" };

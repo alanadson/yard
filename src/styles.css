@@ -1317,6 +1317,8 @@ kbd {
   margin-bottom: 2px;
 }
 
+.usage-pop--accounts { max-height: min(80vh, 720px); overflow-y: auto; }
+
 .usage-pop-title {
   flex: 1;
   font-size: var(--fs-xs);

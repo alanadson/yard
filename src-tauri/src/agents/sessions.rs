@@ -64,10 +64,11 @@ fn remember_session(path: PathBuf, session: &AgentSession) {
     );
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSession {
     pub agent: String,
+    pub account_id: Option<String>,
     /// What goes into the resume command (`claude --resume <this>`).
     pub external_id: String,
     pub project_path: String,
@@ -77,7 +78,7 @@ pub struct AgentSession {
     pub file: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionUsage {
     pub input_tokens: u64,
@@ -129,6 +130,20 @@ pub fn list(agent: &str, project_path: &str) -> Vec<AgentSession> {
     out
 }
 
+pub fn list_from_roots(agent: &str, project_path: &str, roots: &[(Option<String>, PathBuf)]) -> Vec<AgentSession> {
+    let mut out = Vec::new();
+    for (account_id, root) in roots {
+        let sessions = match agent {
+            "codex" => list_codex_in(project_path, root),
+            "claude" => list_claude_in(project_path, root),
+            _ => Vec::new(),
+        };
+        out.extend(sessions.into_iter().map(|mut session| { session.account_id = account_id.clone(); session }));
+    }
+    out.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
+    out
+}
+
 // ---------------------------------------------------------------------------
 // Claude Code
 // ---------------------------------------------------------------------------
@@ -137,9 +152,13 @@ fn list_claude(project_path: &str) -> Vec<AgentSession> {
     let Some(root) = super::resolver::sessions_root("claude") else {
         return Vec::new();
     };
+    list_claude_in(project_path, &root)
+}
+
+fn list_claude_in(project_path: &str, root: &Path) -> Vec<AgentSession> {
 
     let dirs: Vec<PathBuf> = if project_path.is_empty() {
-        read_dirs(&root)
+        read_dirs(root)
     } else {
         let slug = crate::paths::claude_project_slug(Path::new(project_path));
         let d = root.join(&slug);
@@ -148,7 +167,7 @@ fn list_claude(project_path: &str) -> Vec<AgentSession> {
         } else {
             // Claude Code normalizes the path before the slug; if the user
             // registered the project with another spelling, search case-insensitively.
-            read_dirs(&root)
+            read_dirs(root)
                 .into_iter()
                 .filter(|p| {
                     p.file_name()
@@ -186,6 +205,7 @@ fn list_claude(project_path: &str) -> Vec<AgentSession> {
             let (title, cwd) = claude_head_info(&head);
             let session = AgentSession {
                 agent: "claude".into(),
+                account_id: None,
                 external_id,
                 project_path: cwd.unwrap_or_default(),
                 title,
@@ -268,8 +288,12 @@ fn list_codex(project_path: &str) -> Vec<AgentSession> {
     let Some(root) = super::resolver::sessions_root("codex") else {
         return Vec::new();
     };
+    list_codex_in(project_path, &root)
+}
+
+fn list_codex_in(project_path: &str, root: &Path) -> Vec<AgentSession> {
     let mut files = Vec::new();
-    collect_jsonl_recursive(&root, &mut files, 0);
+    collect_jsonl_recursive(root, &mut files, 0);
 
     let mut out = Vec::new();
     for path in files {
@@ -308,6 +332,7 @@ fn list_codex(project_path: &str) -> Vec<AgentSession> {
 
         let session = AgentSession {
             agent: "codex".into(),
+            account_id: None,
             external_id,
             project_path: session_cwd,
             title,
@@ -435,6 +460,7 @@ fn list_opencode(project_path: &str) -> Vec<AgentSession> {
         }
         let session = AgentSession {
             agent: "opencode".into(),
+            account_id: None,
             external_id,
             project_path: cwd,
             title: v
@@ -684,7 +710,7 @@ const PRICES: &[(&str, f64, f64, f64)] = &[
 /// Five-minute writes use 1.25x input; cache-read multipliers belong to each model.
 const CACHE_WRITE_MULT: f64 = 1.25;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelPriceReference {
     pub model: String,
@@ -698,7 +724,7 @@ pub struct ModelPriceReference {
     pub source: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PricingReference {
     pub version: String,
@@ -857,6 +883,22 @@ fn path_matches(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A resumed transcript must retain the account that owns its session file.
+    #[test]
+    fn managed_codex_sessions_keep_their_account_identity_in_history() {
+        let root = std::env::temp_dir().join(format!("yard-account-history-{}", std::process::id()));
+        let managed = root.join("managed");
+        std::fs::create_dir_all(&managed).unwrap();
+        let file = managed.join("rollout-account-session.jsonl");
+        std::fs::write(&file, "{\"type\":\"session_meta\",\"payload\":{\"id\":\"account-session\",\"cwd\":\"C:/repo\"}}\n").unwrap();
+        let sessions = list_from_roots("codex", "C:/repo", &[(None, root.join("system")), (Some("work".into()), managed)]);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].external_id, "account-session");
+        assert_eq!(sessions[0].account_id.as_deref(), Some("work"));
+        assert_eq!(sessions[0].file, file.to_string_lossy());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     /// A negotiated rate must price each token category without changing the recorded usage.
     #[test]

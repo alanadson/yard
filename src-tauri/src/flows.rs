@@ -48,7 +48,7 @@ pub fn snapshot(connection: &Connection) -> Result<Vec<Value>, String> {
         .collect()
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct StartInput {
     pub group_id: String,
@@ -547,7 +547,7 @@ pub fn runs_to_drive(runs: &[Value], paused: bool, budget: usize) -> Vec<&Value>
 /// and `automationMaxAgents` leaves a slot (`scheduler::flow_budget`).
 /// Returns whether any run is still active, which keeps the scheduler's
 /// two-second cadence.
-pub fn schedule(app: &tauri::AppHandle, state: &std::sync::Arc<crate::state::AppState>, paused: bool, now: i64) -> bool {
+pub fn schedule(runtime: &crate::runtime::AutomationRuntime, state: &std::sync::Arc<crate::state::AppState>, paused: bool, now: i64) -> bool {
     let runs = match snapshot(&state.db.lock()) {
         Ok(runs) => { state.scheduler.warn("flows", None, ""); runs }
         Err(error) => {
@@ -573,12 +573,10 @@ pub fn schedule(app: &tauri::AppHandle, state: &std::sync::Arc<crate::state::App
             continue;
         }
         let state = state.clone();
-        let app = app.clone();
-        crate::lanes::lanes().submit(&format!("pty:{terminal}"), move || {
+        runtime.submit(&format!("pty:{terminal}"), move || {
             let result = drive(&state, &group, &flow, &terminal);
             state.scheduler.unschedule(&job_id);
             state.scheduler.warn(&job_id, result.as_ref().err().map(String::as_str), "native flow requires reconciliation");
-            crate::events::publish_kv_changes(&app);
         });
     }
     runs.iter().any(|run| run["finishedAt"].is_null())

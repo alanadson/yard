@@ -1,6 +1,24 @@
 /** Review navigation must preserve task scope and refuse unusable references. */
 import { expect, it } from "vitest";
-import { taskResourceAction } from "./workResources";
+import { taskResourceAction, deliveryArtifactAction, taskWorkingRoot } from "./workResources";
+
+it("keeps artifact navigation in the task worktree instead of the active project", () => {
+  const task = { links: { projectId: "project", terminalIds: ["author"], executorTerminalId: "author", resources: [{ kind: "checkpoint" as const, id: "snapshot", root: "C:/worktree", label: "Before work" }] } };
+  expect(taskWorkingRoot(task, [{ id: "author", cwd: "C:/other" }], [{ id: "project", path: "C:/project" }])).toBe("C:/worktree");
+});
+
+it("opens delivered files in their recorded folder and refuses paths outside it", () => {
+  expect(deliveryArtifactAction("reports/proof.md", "C:/worktree")).toEqual({ kind: "file", root: "C:/worktree", path: "reports/proof.md" });
+  expect(deliveryArtifactAction("C:\\worktree\\reports\\proof.md", "C:/worktree")).toEqual({ kind: "file", root: "C:/worktree", path: "reports/proof.md" });
+  expect(deliveryArtifactAction("../secret.txt", "C:/worktree")).toBeNull();
+  expect(deliveryArtifactAction("C:/other/proof.md", "C:/worktree")).toBeNull();
+});
+
+it("opens artifact web links without accepting executable schemes or embedded credentials", () => {
+  expect(deliveryArtifactAction("https://example.com/report", null)).toEqual({ kind: "url", url: "https://example.com/report" });
+  expect(deliveryArtifactAction("javascript:alert(1)", "C:/repo")).toBeNull();
+  expect(deliveryArtifactAction("https://user:secret@example.com/report", "C:/repo")).toBeNull();
+});
 
 it("opens a checkpoint in its recorded directory instead of the active project", () => {
   expect(taskResourceAction({ kind: "checkpoint", id: "1000-1", root: "C:/worktree", label: "Before work" }, []))

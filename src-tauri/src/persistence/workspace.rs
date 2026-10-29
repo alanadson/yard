@@ -14,7 +14,7 @@ use super::db;
 
 const REV_KEY: &str = "workspace_rev";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
     pub id: String,
@@ -31,7 +31,7 @@ pub struct Project {
     pub created_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Group {
     pub id: String,
@@ -54,7 +54,7 @@ fn empty_json() -> String {
     "{}".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Terminal {
     pub id: String,
@@ -106,7 +106,7 @@ fn shell_kind() -> String {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSnapshot {
     #[serde(default)]
@@ -119,7 +119,7 @@ pub struct WorkspaceSnapshot {
     pub terminals: Vec<Terminal>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveResult {
     pub rev: i64,

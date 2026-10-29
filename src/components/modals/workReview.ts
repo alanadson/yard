@@ -1,5 +1,23 @@
 import type { DeliveryRecord, TaskEvent, WorkTask } from "../../lib/work";
 
+export function reviewCandidates<T extends { id: string; kind: string }>(task: Pick<WorkTask, "status" | "links">, terminals: readonly T[]): T[] {
+  const authors = new Set([...task.links.terminalIds, task.links.executorTerminalId]);
+  return terminals.filter((terminal) => terminal.kind === "agent" && !authors.has(terminal.id));
+}
+
+// i18n-scan: result labels are translated by the renderer.
+export function independentReviewLabel(review: { deliveryRevision: number; task: Pick<WorkTask, "status" | "criteria" | "delivery"> }, latestRevision: number): string {
+  if (review.deliveryRevision !== latestRevision) return "Entrega anterior";
+  if (review.task.status !== "in_review" && review.task.status !== "completed") return TASK_STATUS_LABELS[review.task.status] ?? "Estado desconhecido";
+  const { delivery, criteria } = review.task;
+  if (delivery) {
+    if (delivery.checks.some((check) => !check.passed)) return "Precisa de ajustes";
+    if (!delivery.checks.length || delivery.checks.some((check) => !check.evidence.trim()) || !criteria.length || criteria.some((criterion) => !criterion.evidence.length)) return "Parecer inconclusivo";
+    return "Parecer favorável";
+  }
+  return TASK_STATUS_LABELS[review.task.status] ?? "Estado desconhecido";
+}
+
 // i18n-scan: status labels are translated by the renderer.
 export const TASK_STATUS_LABELS: Record<string, string> = {
   draft: "Rascunho", queued: "Na fila", running: "Em execução", in_review: "Aguardando revisão",
@@ -46,7 +64,7 @@ export function taskTimelineText(event: Pick<TaskEvent, "kind" | "detail">, name
       if (resource.label && resource.id) return `${resource.label}: ${resource.id}`;
     } catch { return translate("Referência indisponível"); }
   }
-  if (["queued", "started", "resumed"].includes(event.kind)) return names[event.detail] ?? event.detail;
+  if (["queued", "started", "resumed", "review_requested"].includes(event.kind)) return names[event.detail] ?? event.detail;
   if (event.kind === "status_changed" && TASK_STATUS_LABELS[event.detail]) return translate(TASK_STATUS_LABELS[event.detail]);
   const detail = taskTimelineDetail(event);
   return detail.translated ? translate(detail.text) : detail.text;

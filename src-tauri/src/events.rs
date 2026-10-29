@@ -1,13 +1,29 @@
 //! Event contract between Rust and the UI. This file is the **only** source of
-//! truth on the Rust side; the TypeScript mirror is `src/lib/ipc.ts`.
+//! truth for topic names; desktop bindings are generated from these constants.
 //!
-//! Rule: no module writes a topic name by hand — use the helpers.
+//! Rule: no module writes a topic name by hand; use these constants.
 //!
 //! A terminal's own events (output, exit, activity heartbeat, idle) are not on
 //! the bus: they travel on one ordered IPC channel per page (`pty/pages.rs`),
 //! with the payloads below.
 
 use serde::Serialize;
+
+pub const ACCOUNTS_CHANGED: &str = "accounts://changed";
+pub const BRIDGE_REQUEST: &str = "bridge://request";
+pub const PORTAL_NAV: &str = "portal://nav";
+pub const PORTAL_POPUP: &str = "portal://popup";
+pub const PORTAL_ESCAPE: &str = "portal://escape";
+pub const PORTAL_MENU: &str = "portal://menu";
+pub const LSP_MESSAGE: &str = "lsp://message";
+pub const LSP_EXIT: &str = "lsp://exit";
+pub const TRAY_QUIT: &str = "tray://quit";
+pub const USAGE_UPDATE: &str = "usage://update";
+
+/// The host delivers serialized events; domain code never needs a window handle.
+pub trait EventSink: Send + Sync {
+    fn emit(&self, topic: &str, payload: serde_json::Value) -> Result<(), String>;
+}
 
 /// Watcher saw a new/updated session of some agent.
 pub const AGENTS_CHANGED: &str = "agents://changed";
@@ -100,18 +116,17 @@ pub fn take_kv_changes() -> KvChanges {
 
 /// Takes this thread's noted changes and emits their events. Returns them, so
 /// the caller can decide whether the scheduler should look again.
-pub fn publish_kv_changes<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> KvChanges {
+pub fn publish_kv_changes(sink: &(impl EventSink + ?Sized)) -> KvChanges {
     let changes = take_kv_changes();
-    emit_kv_changes(app, changes);
+    emit_kv_changes(sink, changes);
     changes
 }
 
 /// Emits the events of changes taken elsewhere (work that ran on another
 /// thread, like the blocking pool).
-pub fn emit_kv_changes<R: tauri::Runtime>(app: &tauri::AppHandle<R>, changes: KvChanges) {
-    use tauri::Emitter;
+pub fn emit_kv_changes(sink: &(impl EventSink + ?Sized), changes: KvChanges) {
     for topic in changes.topics() {
-        if let Err(error) = app.emit(topic, ()) {
+        if let Err(error) = sink.emit(topic, serde_json::Value::Null) {
             tracing::warn!(%error, topic, "automation change could not be delivered to the page");
         }
     }
@@ -131,13 +146,13 @@ pub const RESOURCES_TICK: &str = "resources://tick";
 /// on every change and only then. Payload: `WindowShown`.
 pub const WINDOW_SHOWN: &str = "window://shown";
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 pub struct WindowShown {
     pub shown: bool,
 }
 
 /// Root process exited.
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ExitPayload {
     pub id: String,
@@ -147,7 +162,7 @@ pub struct ExitPayload {
 }
 
 /// Activity heartbeat: feeds the "agent finished" detector.
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityPayload {
     pub id: String,
@@ -158,7 +173,7 @@ pub struct ActivityPayload {
 }
 
 /// A PTY marked as `agent` went idle after working.
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct IdlePayload {
     pub id: String,
@@ -166,7 +181,7 @@ pub struct IdlePayload {
     pub idle_ms: u64,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FileEvent {
     /// Relative to the project root, with `/` (same as git).
@@ -177,7 +192,7 @@ pub struct FileEvent {
     pub at: i64,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FilesActivity {
     pub project_id: String,
@@ -187,7 +202,7 @@ pub struct FilesActivity {
     pub dropped: u32,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PtyResource {
     pub id: String,
@@ -196,7 +211,7 @@ pub struct PtyResource {
     pub cpu: f32,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesTick {
     pub total_rss_mb: f32,
@@ -208,6 +223,32 @@ pub struct ResourcesTick {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Automation observers must work without a desktop window or Tauri runtime.
+    #[test]
+    fn a_headless_host_receives_each_committed_change_once() {
+        #[derive(Default)]
+        struct Host(std::sync::Mutex<Vec<(String, serde_json::Value)>>);
+
+        impl EventSink for Host {
+            fn emit(&self, topic: &str, payload: serde_json::Value) -> Result<(), String> {
+                self.0.lock().unwrap().push((topic.into(), payload));
+                Ok(())
+            }
+        }
+
+        let host = Host::default();
+        let _ = take_kv_changes();
+        note_kv_write("routine.run.test");
+        note_kv_write("queue.items");
+        note_kv_write("queue.items");
+        assert!(publish_kv_changes(&host).wakes_scheduler());
+        assert!(publish_kv_changes(&host).is_empty());
+        assert_eq!(*host.0.lock().unwrap(), vec![
+            (QUEUE_CHANGED.into(), serde_json::Value::Null),
+            (ROUTINE_CHANGED.into(), serde_json::Value::Null),
+        ]);
+    }
 
     /// The page listens for this exact name and shape (`src/lib/windowShown.ts`
     /// reads `payload.shown`). A rename on either side leaves the page

@@ -97,7 +97,7 @@ fn run_command(mut command: Command, timeout: Duration) -> Result<Vec<u8>, Strin
     Ok(stdout)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum DeviceAction {
     Screenshot,
@@ -231,7 +231,7 @@ pub fn action_args(serial: &str, action: &DeviceAction) -> Result<Vec<String>, S
     Ok(vec!["-s".into(), serial.into(), "shell".into(), command])
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AndroidDevice {
     pub serial: String,

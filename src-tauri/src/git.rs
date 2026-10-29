@@ -79,7 +79,7 @@ pub(crate) fn repository_status(cwd: &Path, untracked: bool) -> Result<Arc<Vec<u
     }).clone()
 }
 
-#[derive(Clone, Serialize, Default, Debug)]
+#[derive(Clone, Serialize, Default, Debug, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangedFile {
     pub path: String,
@@ -109,7 +109,7 @@ pub struct ChangedFile {
     pub binary: bool,
 }
 
-#[derive(Clone, Serialize, Default)]
+#[derive(Clone, Serialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangesSummary {
     pub is_repo: bool,
@@ -123,7 +123,7 @@ pub struct ChangesSummary {
     pub uncounted: u32,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FileDiff {
     pub path: String,
@@ -617,7 +617,7 @@ fn count_lines(full: &Path) -> Option<(u32, bool)> {
 /// - `isolated`: a real git worktree, with its own branch;
 /// - `plain`: project without git (or `--no-git`) — the floor shares the
 ///   ground's cwd and the response must tell the caller so.
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeProvision {
     pub path: String,
@@ -630,7 +630,7 @@ pub struct WorktreeProvision {
     pub base_oid: Option<String>,
 }
 
-#[derive(Clone, Serialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Debug, PartialEq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeEntry {
     pub path: String,
@@ -638,7 +638,7 @@ pub struct WorktreeEntry {
     pub bare: bool,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct HookResult {
     pub code: i32,
@@ -759,7 +759,7 @@ fn ensure_yard_ignored(project: &Path) -> std::io::Result<()> {
 /// that get created. They used to be derived twice, once in each language,
 /// and a slug already taken made the plan promise one path and the disk get
 /// another.
-#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProvisionInput {
     #[serde(default)]
@@ -1346,7 +1346,7 @@ pub fn worktree_dirty(path: &Path) -> Result<bool, String> {
 // ---------------------------------------------------------------------------
 
 /// One file in a land preview: what the floor would bring onto the ground.
-#[derive(Clone, Serialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Debug, PartialEq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LandFile {
     pub path: String,
@@ -1360,7 +1360,7 @@ pub struct LandFile {
 /// Dry-run of `git merge <floor>` onto the ground: the diffstat, whether
 /// it would conflict, and the two dirty flags that make landing unsafe.
 /// Nothing on disk moves.
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Debug, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LandPreview {
     pub ground_branch: String,
@@ -1377,7 +1377,7 @@ pub struct LandPreview {
 
 /// Outcome of a real merge on the ground. On conflict the merge is aborted
 /// so the ground is left as it was — the preview is what the user acts on.
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Debug, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LandResult {
     pub ok: bool,
@@ -1707,7 +1707,7 @@ pub fn worktree_land(
 /// Removes the worktree (no `--force`: dirty fails, on purpose) and,
 /// optionally, the branch that went with it.
 /// What a removal left standing.
-#[derive(Clone, Serialize, Debug, Default)]
+#[derive(Clone, Serialize, Debug, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeRemoval {
     /// Why the branch was kept, when it was. `None` means nothing was kept.
@@ -2012,7 +2012,7 @@ pub(crate) fn parse_numstat(bytes: &[u8]) -> HashMap<String, (Option<u32>, Optio
 /// changed to keep it free. Anything typed by hand comes back verbatim, even
 /// when it is taken: silently renaming what somebody wrote creates a branch
 /// nobody asked for, and they find out three commits later.
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PreflightItem {
     pub id: String,
@@ -2035,7 +2035,7 @@ pub struct PreflightItem {
 /// (`lib/provision/plan.ts`) decide whether that is fatal, a warning or the
 /// whole point. The split is what lets one backend answer serve the dialog,
 /// the palette and the CLI without any of them re-deriving git's opinion.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PreflightItemResult {
     pub id: String,
@@ -2056,7 +2056,7 @@ pub struct PreflightItemResult {
     pub dirty: Option<bool>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Preflight {
     pub is_repo: bool,

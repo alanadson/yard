@@ -430,7 +430,7 @@ async fn dispatch_request(app: AppHandle, req: serde_json::Value, wait_ms: u64) 
     pending().lock().insert(id, tx);
 
     if let Err(e) = app.emit(
-        "bridge://request",
+        crate::events::BRIDGE_REQUEST,
         serde_json::json!({ "id": id, "request": req }),
     ) {
         pending().lock().remove(&id);
@@ -1000,7 +1000,7 @@ fn install_agent_docs() -> std::io::Result<()> {
 
 /// `install_agent_docs` under `home`, which the tests point at a temporary
 /// folder instead of the user's.
-fn install_agent_docs_in(home: &std::path::Path) -> std::io::Result<()> {
+pub(crate) fn install_agent_docs_in(home: &std::path::Path) -> std::io::Result<()> {
     let dir = home.join(".claude").join("skills").join("yard");
     std::fs::create_dir_all(&dir)?;
     write_if_changed(

@@ -39,10 +39,17 @@ use std::collections::HashMap;
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use tauri::ipc::InvokeResponseBody;
 
 use super::emit::PtyEvents;
 use crate::events;
+
+/// Encoded wire data, independent of the desktop transport.
+#[derive(Debug, PartialEq)]
+pub enum PageMessage {
+    Json(String),
+    Raw(Vec<u8>),
+}
+
 
 /// From this many bytes of text on, a chunk goes as raw bytes; under it, as
 /// JSON. Tauri's own cut (`MAX_RAW_DIRECT_EXECUTE_THRESHOLD` in
@@ -53,19 +60,12 @@ pub const RAW_FROM: usize = 1024;
 /// Where a page's messages go. The real one is the page's `Channel`; the tests
 /// plug in one that keeps what it was sent.
 pub trait PageLink: Send + Sync + 'static {
-    fn send(&self, body: InvokeResponseBody);
-}
-
-impl PageLink for tauri::ipc::Channel<InvokeResponseBody> {
-    fn send(&self, body: InvokeResponseBody) {
-        // Fails only once the webview is gone, and then nobody is listening.
-        let _ = tauri::ipc::Channel::send(self, body);
-    }
+    fn send(&self, body: PageMessage);
 }
 
 /// What one subscription listens to, as the page names it:
 /// `{ "kind": "output", "id": "t1" }`, `{ "kind": "idle" }`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, specta::Type)]
 #[serde(tag = "kind", content = "id", rename_all = "camelCase")]
 pub enum Topic {
     Output(String),
@@ -113,7 +113,7 @@ impl Link {
 
 /// What a message says. Externally tagged, so each payload keeps the exact
 /// shape the event bus gave it (`"exit": { "id", "code", "reason" }`).
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 enum Message<'a> {
     Output { id: &'a str, data: &'a str },
@@ -123,7 +123,7 @@ enum Message<'a> {
 }
 
 /// A JSON message: the subscriptions it is for, next to what it says.
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 struct Envelope<'a> {
     to: &'a [u64],
     #[serde(flatten)]
@@ -131,7 +131,7 @@ struct Envelope<'a> {
 }
 
 /// The trailer of a raw chunk: who it is for and whose output it is.
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 struct Trailer<'a> {
     to: &'a [u64],
     id: &'a str,
@@ -193,7 +193,7 @@ impl Pages {
             // Cannot fail for these types; if it ever did, sending nothing
             // keeps the channel's order intact.
             if let Ok(json) = serde_json::to_string(&Envelope { to: &to, message }) {
-                link.to.send(InvokeResponseBody::Json(json));
+                link.to.send(PageMessage::Json(json));
             }
         }
     }
@@ -207,17 +207,17 @@ impl Pages {
 /// trailer's length as a little-endian `u32`: the trailer goes after the text
 /// so the text never moves, and the buffer the pump filled is the one that is
 /// sent (appending a few bytes nearly always fits in the room it already has).
-fn output_body(id: &str, data: String, to: &[u64]) -> Option<InvokeResponseBody> {
+fn output_body(id: &str, data: String, to: &[u64]) -> Option<PageMessage> {
     if data.len() < RAW_FROM {
         let message = Message::Output { id, data: &data };
         let json = serde_json::to_string(&Envelope { to, message: &message }).ok()?;
-        return Some(InvokeResponseBody::Json(json));
+        return Some(PageMessage::Json(json));
     }
     let trailer = serde_json::to_string(&Trailer { to, id }).ok()?;
     let mut bytes = data.into_bytes();
     bytes.extend_from_slice(trailer.as_bytes());
     bytes.extend_from_slice(&(trailer.len() as u32).to_le_bytes());
-    Some(InvokeResponseBody::Raw(bytes))
+    Some(PageMessage::Raw(bytes))
 }
 
 impl PtyEvents for Pages {
@@ -270,12 +270,39 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
 
+    /// Hosts consume terminal frames through a portable port, including exit ordering.
+    #[test]
+    fn a_host_without_tauri_receives_output_before_the_final_exit() {
+        #[derive(Clone, Default)]
+        struct Host(Arc<Mutex<Vec<PageMessage>>>);
+        impl PageLink for Host {
+            fn send(&self, body: PageMessage) {
+                self.0.lock().push(body);
+            }
+        }
+        let pages = Pages::default();
+        let host = Host::default();
+        let link = pages.open("headless", "document", Box::new(host.clone()));
+        pages.subscribe(link, 1, Topic::Output("agent".into())).unwrap();
+        pages.subscribe(link, 2, Topic::Exit("agent".into())).unwrap();
+        assert!(pages.output("agent", "ready\r\n".into()));
+        pages.exit(events::ExitPayload { id: "agent".into(), code: Some(0), reason: "normal".into() });
+        let messages: Vec<serde_json::Value> = host.0.lock().iter().map(|body| match body {
+            PageMessage::Json(text) => serde_json::from_str(text).unwrap(),
+            PageMessage::Raw(_) => panic!("short output and exit use JSON"),
+        }).collect();
+        assert_eq!(messages, vec![
+            json!({"to":[1], "output":{"id":"agent", "data":"ready\r\n"}}),
+            json!({"to":[2], "exit":{"id":"agent", "code":0, "reason":"normal"}}),
+        ]);
+    }
+
     /// A page that keeps everything it was sent.
     #[derive(Clone, Default)]
-    struct Page(Arc<Mutex<Vec<InvokeResponseBody>>>);
+    struct Page(Arc<Mutex<Vec<PageMessage>>>);
 
     impl PageLink for Page {
-        fn send(&self, body: InvokeResponseBody) {
+        fn send(&self, body: PageMessage) {
             self.0.lock().push(body);
         }
     }
@@ -294,10 +321,10 @@ mod tests {
                 .lock()
                 .iter()
                 .map(|body| match body {
-                    InvokeResponseBody::Json(text) => {
+                    PageMessage::Json(text) => {
                         Got::Json(serde_json::from_str(text).expect("a JSON message"))
                     }
-                    InvokeResponseBody::Raw(bytes) => {
+                    PageMessage::Raw(bytes) => {
                         let (rest, len) = bytes.split_at(bytes.len() - 4);
                         let len = u32::from_le_bytes(len.try_into().unwrap()) as usize;
                         let (text, meta) = rest.split_at(rest.len() - len);

@@ -18,6 +18,7 @@
 import { useEffect } from "react";
 
 import { t } from "../lib/i18n";
+import { on } from "../lib/ipc";
 import { startWindowLiveRead } from "./useLiveRead";
 import { deliverQueueItem, refreshNativeQueue } from "../lib/queueDelivery";
 import { nativeQueueScheduling } from "../lib/prefs";
@@ -35,13 +36,12 @@ const TICK_MS = 2_000;
 export function useQueueRunner() {
   useEffect(() => {
     // The backend schedules and delivers: the page only mirrors the queue.
-    // `queue://changed` already refreshes it (`useGlobalEvents`); what is
-    // left here is the read at boot, the catch-up when the window comes back
-    // and a slow safety tick while it is shown (`lib/liveRead.ts`), instead
-    // of a `queue_read` every 2 s for the life of the app.
+    // One reader owns the announcements, boot, visibility catch-up and safety
+    // tick. Event bursts share a read and a hidden window waits until shown.
     if (nativeQueueScheduling()) {
       return startWindowLiveRead({
         read: refreshNativeQueue,
+        events: [on.queueChanged],
         onError: (error) => uiLog.warn(`queue: native read failed: ${error}`),
       });
     }

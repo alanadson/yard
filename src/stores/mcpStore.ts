@@ -16,6 +16,7 @@ import { t } from "../lib/i18n";
 export type McpProbeState = { state: "pending" } | { state: "healthy"; result: McpHealth } | { state: "failed"; error: string };
 
 interface McpState {
+  accounts: Record<string, string | null>;
   health: Record<string, McpProbeState>;
   probe: (row: McpRow) => Promise<void>;
   rows: McpRow[];
@@ -35,11 +36,16 @@ interface McpState {
 
 let request = 0;
 
+function accountArgs(accounts: Record<string, string | null>, cli: string): [] | [string] {
+  return cli in accounts ? [accounts[cli] ?? ""] : [];
+}
+
 function reason(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
 export const useMcp = create<McpState>((set, get) => ({
+  accounts: {},
   health: {},
   probe: async (row) => {
     const version = request;
@@ -48,7 +54,7 @@ export const useMcp = create<McpState>((set, get) => ({
     if (get().health[key]?.state === "pending") return;
     set({ health: { ...get().health, [key]: { state: "pending" } } });
     try {
-      const result = await ipc.mcpProbe(row.cli, row.scope, root, row.name);
+      const result = await ipc.mcpProbe(row.cli, row.scope, root, row.name, ...accountArgs(get().accounts, row.cli));
       if (version !== request || root !== get().root) return;
       set({ health: { ...get().health, [key]: { state: "healthy", result } } });
     } catch (error) {
@@ -69,7 +75,7 @@ export const useMcp = create<McpState>((set, get) => ({
     try {
       const listing = await ipc.mcpList(root);
       if (mine !== request) return;
-      set({ rows: listing.rows, fileErrors: listing.errors, loading: false, error: null });
+      set({ rows: listing.rows, fileErrors: listing.errors, accounts: listing.accounts ?? {}, loading: false, error: null });
     } catch (e) {
       if (mine !== request) return;
       set({ loading: false, error: reason(e) });
@@ -83,7 +89,7 @@ export const useMcp = create<McpState>((set, get) => ({
       return false;
     }
     try {
-      await ipc.mcpSave(cli, scope, root, server);
+      await ipc.mcpSave(cli, scope, root, server, ...accountArgs(get().accounts, cli));
     } catch (e) {
       if (scope === "user" || get().root === root) set({ error: reason(e) });
       return false;
@@ -99,7 +105,7 @@ export const useMcp = create<McpState>((set, get) => ({
       return false;
     }
     try {
-      await ipc.mcpDelete(cli, scope, root, name);
+      await ipc.mcpDelete(cli, scope, root, name, ...accountArgs(get().accounts, cli));
     } catch (e) {
       if (scope === "user" || get().root === root) set({ error: reason(e) });
       return false;
@@ -108,5 +114,5 @@ export const useMcp = create<McpState>((set, get) => ({
     return true;
   },
 
-  secrets: (cli, scope, name, sourceRoot = get().root) => ipc.mcpEnvValues(cli, scope, sourceRoot, name),
+  secrets: (cli, scope, name, sourceRoot = get().root) => ipc.mcpEnvValues(cli, scope, sourceRoot, name, ...accountArgs(get().accounts, cli)),
 }));

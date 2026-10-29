@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 /// Schema version. Every new migration increments this and gets a block in
 /// `migrate`. Never rewrite a migration that has already shipped.
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 pub fn open() -> anyhow::Result<Connection> {
     crate::paths::ensure_dirs()?;
@@ -247,6 +247,12 @@ pub(super) fn migrate(conn: &Connection) -> anyhow::Result<()> {
     if current < 9 {
         conn.pragma_update(None, "user_version", 9)?;
         tracing::info!("migration applied: schema v9 work tasks");
+    }
+
+    if current < 10 {
+        crate::accounts::migrate(conn)?;
+        conn.pragma_update(None, "user_version", 10)?;
+        tracing::info!("migration applied: schema v10 agent accounts");
     }
 
     Ok(())
@@ -523,6 +529,24 @@ fn has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<
 
 #[cfg(test)]
 mod tests {
+    /// Account selection must never move a pre-upgrade terminal to a different login.
+    #[test]
+    fn an_upgraded_workspace_pins_existing_codex_terminals_to_the_system_account() {
+        let connection = Connection::open_in_memory().unwrap();
+        migrate(&connection).unwrap();
+        connection.execute_batch("INSERT INTO projects(id, name, path, created_at) VALUES ('project', 'Project', 'C:/repo', 0);
+            INSERT INTO groups(id, project_id, name) VALUES ('group', 'project', 'Group');
+            INSERT INTO terminals(id, group_id, kind, agent_id, program, cwd)
+            VALUES ('existing-codex', 'group', 'agent', 'codex', 'codex.cmd', 'C:/repo');
+            PRAGMA user_version = 9;").unwrap();
+        migrate(&connection).unwrap();
+        let account: Option<String> = connection.query_row(
+            "SELECT account_id FROM terminal_account_bindings WHERE terminal_id = 'existing-codex'",
+            [], |row| row.get(0),
+        ).expect("the existing terminal has an account binding");
+        assert_eq!(account, None);
+    }
+
     #[test]
     fn a_newer_schema_is_refused_without_changing_its_tables_or_version() {
         let connection = Connection::open_in_memory().unwrap();

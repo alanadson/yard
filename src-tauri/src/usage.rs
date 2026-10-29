@@ -43,13 +43,13 @@ const ERROR_BACKOFF: Duration = Duration::from_secs(120);
 const STALE_KEEP: Duration = Duration::from_secs(24 * 60 * 60);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(12);
 
-pub const TOPIC_UPDATE: &str = "usage://update";
+pub use crate::events::USAGE_UPDATE as TOPIC_UPDATE;
 
 // ---------------------------------------------------------------------------
 // types exposed to the frontend (mirrored in lib/ipc.ts)
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Serialize, PartialEq)]
+#[derive(Clone, Serialize, PartialEq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageWindow {
     /// "session" (5 h), "weekly", "fable" (per-model weekly) or "monthly".
@@ -60,7 +60,7 @@ pub struct UsageWindow {
     pub resets_at: Option<i64>,
 }
 
-#[derive(Clone, Serialize, PartialEq)]
+#[derive(Clone, Serialize, PartialEq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderUsage {
     /// "claude" | "codex" | "grok".
@@ -79,11 +79,43 @@ pub struct ProviderUsage {
     pub updated_at: i64,
 }
 
-#[derive(Clone, Serialize, PartialEq)]
+#[derive(Clone, Serialize, PartialEq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageSnapshot {
     pub providers: Vec<ProviderUsage>,
+    pub accounts: Vec<AccountUsage>,
     pub fetched_at: i64,
+}
+
+#[derive(Clone, Serialize, PartialEq, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountUsage {
+    pub account_id: Option<String>,
+    pub usage: ProviderUsage,
+}
+
+#[derive(Clone, PartialEq)]
+struct UsageTarget {
+    provider: &'static str,
+    account_id: Option<String>,
+    directory: Option<PathBuf>,
+}
+
+struct AccountPoll { target: UsageTarget, poll: ProviderPoll }
+
+fn reconcile_accounts(polls: &mut Vec<AccountPoll>, targets: &[UsageTarget]) {
+    polls.retain(|entry| targets.contains(&entry.target));
+    for target in targets {
+        if !polls.iter().any(|entry| entry.target == *target) {
+            polls.push(AccountPoll { target: target.clone(), poll: ProviderPoll::new(target.provider) });
+        }
+    }
+}
+
+fn account_snapshot(polls: &[AccountPoll], selected: &std::collections::BTreeMap<String, Option<String>>) -> UsageSnapshot {
+    let accounts: Vec<_> = polls.iter().filter_map(|entry| entry.poll.current.clone().map(|usage| AccountUsage { account_id: entry.target.account_id.clone(), usage })).collect();
+    let providers = accounts.iter().filter(|entry| entry.account_id.as_ref() == selected.get(&entry.usage.id).and_then(|id| id.as_ref())).map(|entry| entry.usage.clone()).collect();
+    UsageSnapshot { providers, accounts, fetched_at: epoch_ms_now() }
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +132,7 @@ const PROVIDERS: [&str; 3] = ["claude", "codex", "grok"];
 pub fn snapshot() -> UsageSnapshot {
     SNAPSHOT.lock().unwrap().clone().unwrap_or(UsageSnapshot {
         providers: Vec::new(),
+        accounts: Vec::new(),
         fetched_at: 0,
     })
 }
@@ -154,26 +187,34 @@ pub fn start(app: AppHandle) {
                     return;
                 }
             };
-            let mut providers = [
-                ProviderPoll::new("claude"),
-                ProviderPoll::new("codex"),
-                ProviderPoll::new("grok"),
-            ];
+            let mut providers = Vec::new();
             // The first cycle fetches everything right away.
             let mut forced: Vec<&'static str> = PROVIDERS.to_vec();
             loop {
                 let shown = window_on_screen(&app);
                 if cycle_runs(!forced.is_empty(), shown) {
+                    use tauri::Manager;
+                    let state = app.state::<std::sync::Arc<crate::state::AppState>>();
+                    let metadata = crate::accounts::snapshot(&state.db.lock());
+                    let Ok(metadata) = metadata else { return; };
+                    let mut targets: Vec<_> = PROVIDERS.iter().map(|provider| UsageTarget { provider, account_id: None, directory: None }).collect();
+                    for account in &metadata.accounts {
+                        let Some(provider) = PROVIDERS.iter().copied().find(|provider| *provider == account.provider) else { continue; };
+                        if let Ok(directory) = crate::accounts::runtime_dir(&crate::paths::app_dir(), account) {
+                            targets.push(UsageTarget { provider, account_id: Some(account.id.clone()), directory: Some(directory) });
+                        }
+                    }
+                    reconcile_accounts(&mut providers, &targets);
                     let now = Instant::now();
                     let mut changed = false;
                     for p in providers.iter_mut() {
-                        if !selected(p, now, &forced, shown) {
+                        if !selected(&p.poll, now, &forced, shown) {
                             continue;
                         }
-                        changed |= p.fetch(&agent);
+                        changed |= p.poll.fetch_at(&agent, p.target.directory.as_deref());
                     }
                     if changed || !forced.is_empty() {
-                        publish(&app, &providers);
+                        publish(&app, &providers, &metadata.selected);
                     }
                 }
                 forced = match rx.recv_timeout(POLL_INTERVAL) {
@@ -211,11 +252,8 @@ fn window_on_screen(app: &AppHandle) -> bool {
         .load(std::sync::atomic::Ordering::Acquire)
 }
 
-fn publish(app: &AppHandle, providers: &[ProviderPoll]) {
-    let snap = UsageSnapshot {
-        providers: providers.iter().filter_map(|p| p.current.clone()).collect(),
-        fetched_at: epoch_ms_now(),
-    };
+fn publish(app: &AppHandle, providers: &[AccountPoll], selected: &std::collections::BTreeMap<String, Option<String>>) {
+    let snap = account_snapshot(providers, selected);
     *SNAPSHOT.lock().unwrap() = Some(snap.clone());
     if let Err(e) = app.emit(TOPIC_UPDATE, &snap) {
         tracing::warn!(error = %e, "falha ao emitir usage://update");
@@ -259,14 +297,19 @@ impl ProviderPoll {
     }
 
     /// Fetches and applies the stale-data policy. Returns whether the snapshot changed.
-    fn fetch(&mut self, agent: &crate::http::Client) -> bool {
+    fn fetch_at(&mut self, agent: &crate::http::Client, directory: Option<&std::path::Path>) -> bool {
         let now = Instant::now();
         self.last_attempt = Some(now);
         let outcome = match self.id {
-            "claude" => fetch_claude(agent),
-            "codex" => fetch_codex(agent),
+            "claude" => fetch_claude(agent, directory),
+            "codex" => fetch_codex(agent, directory),
             _ => fetch_grok(agent),
         };
+        let outcome = outcome.map_err(|error| {
+            if directory.is_some() && matches!(error.kind, FetchErrorKind::Missing) {
+                FetchError::other("Limites indisponíveis para esta conta. Verifique o login no CLI.")
+            } else { error }
+        });
         let fresh = match outcome {
             Ok(usage) => {
                 self.failed = false;
@@ -443,9 +486,10 @@ fn claude_config_dir() -> PathBuf {
         .unwrap_or_else(|| crate::paths::home_dir().unwrap_or_default().join(".claude"))
 }
 
-fn fetch_claude(agent: &crate::http::Client) -> Result<ProviderUsage, FetchError> {
+fn fetch_claude(agent: &crate::http::Client, directory: Option<&std::path::Path>) -> Result<ProviderUsage, FetchError> {
+    let directory = directory.map(PathBuf::from).unwrap_or_else(claude_config_dir);
     let creds =
-        read_json_file(&claude_config_dir().join(".credentials.json")).map_err(|e| {
+        read_json_file(&directory.join(".credentials.json")).map_err(|e| {
             match e.kind {
                 FetchErrorKind::Missing => {
                     FetchError::missing("Não conectado — rode `claude` e faça login")
@@ -565,10 +609,10 @@ fn fetch_claude(agent: &crate::http::Client) -> Result<ProviderUsage, FetchError
 // Codex
 // ---------------------------------------------------------------------------
 
-fn fetch_codex(agent: &crate::http::Client) -> Result<ProviderUsage, FetchError> {
-    let home = std::env::var_os("CODEX_HOME")
+fn fetch_codex(agent: &crate::http::Client, directory: Option<&std::path::Path>) -> Result<ProviderUsage, FetchError> {
+    let home = directory.map(PathBuf::from).or_else(|| std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| crate::paths::home_dir().unwrap_or_default().join(".codex"));
+    ).unwrap_or_else(|| crate::paths::home_dir().unwrap_or_default().join(".codex"));
     let auth = read_json_file(&home.join("auth.json")).map_err(|e| match e.kind {
         FetchErrorKind::Missing => FetchError::missing("Não conectado — rode `codex` e faça login"),
         _ => e,
@@ -750,6 +794,50 @@ fn fetch_grok(agent: &crate::http::Client) -> Result<ProviderUsage, FetchError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unreadable_managed_credentials_report_unavailable_limits_without_assuming_system_login() {
+        let root = std::env::temp_dir().join(format!("yard-account-usage-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let client = http_client().unwrap();
+        for provider in ["codex", "claude"] {
+            let mut poll = ProviderPoll::new(provider);
+            poll.fetch_at(&client, Some(&root));
+            let current = poll.current.unwrap();
+            assert_eq!(current.status, "error");
+            assert_eq!(current.error.as_deref(), Some("Limites indisponíveis para esta conta. Verifique o login no CLI."));
+            assert!(current.windows.is_empty());
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Switching defaults must not relabel another account's cached quota or backoff.
+    #[test]
+    fn account_usage_and_backoff_remain_separate_when_the_default_changes() {
+        let mut polls = Vec::new();
+        let targets = vec![
+            UsageTarget { provider: "codex", account_id: Some("work".into()), directory: Some(PathBuf::from("C:/work")) },
+            UsageTarget { provider: "codex", account_id: Some("personal".into()), directory: Some(PathBuf::from("C:/personal")) },
+        ];
+        reconcile_accounts(&mut polls, &targets);
+        let mut work = ProviderPoll::new("codex").degraded(FetchError::missing("fixture"));
+        work.account = Some("work@example.test".into());
+        polls[0].poll.current = Some(work);
+        polls[0].poll.failed = true;
+        let now = Instant::now();
+        polls[0].poll.next_allowed = now + RATE_LIMITED_BACKOFF;
+        let mut selected_accounts = std::collections::BTreeMap::new();
+        selected_accounts.insert("codex".to_string(), Some("personal".to_string()));
+        reconcile_accounts(&mut polls, &targets);
+        let snapshot = account_snapshot(&polls, &selected_accounts);
+        assert!(snapshot.providers.is_empty(), "the new account has no reading yet");
+        assert_eq!(snapshot.accounts[0].account_id.as_deref(), Some("work"));
+        assert_eq!(snapshot.accounts[0].usage.account.as_deref(), Some("work@example.test"));
+        assert!(!polls[0].poll.due(now, true));
+        assert!(polls[1].poll.due(now + FORCED_MIN_GAP, true));
+        selected_accounts.insert("codex".into(), Some("work".into()));
+        assert_eq!(account_snapshot(&polls, &selected_accounts).providers[0].account.as_deref(), Some("work@example.test"));
+    }
 
     /// Pinned when the client moved from ureq to reqwest: the backoff policy
     /// depends on these three classes, and the user reads their messages.

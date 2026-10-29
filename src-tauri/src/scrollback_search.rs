@@ -28,7 +28,7 @@ use serde::Serialize;
 /// sentence, short enough that a minified line is not a payload.
 pub const SNIPPET: usize = 240;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
 pub struct Hit {
     /// 1-based, counted over the whole `.bin` (which is capped at 8 MB and
     /// compacted to its 4 MB tail — so it is the true line of what exists).
@@ -42,7 +42,7 @@ pub struct Hit {
     pub clipped: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalHits {
     pub terminal_id: String,
@@ -74,7 +74,7 @@ pub fn hits_in(plain: &str, needle: &str, max: usize) -> Vec<Hit> {
         out.push(Hit {
             line: index as u32 + 1,
             col: col as u32,
-            text,
+            text: text.to_owned(),
             clipped,
         });
         if out.len() >= max {
@@ -86,20 +86,38 @@ pub fn hits_in(plain: &str, needle: &str, max: usize) -> Vec<Hit> {
 
 /// Cuts `SNIPPET` characters out of `line` around the match, keeping the whole
 /// match inside whenever it fits.
-fn window(line: &str, at: usize, len: usize) -> (String, usize, bool) {
-    let chars: Vec<char> = line.chars().collect();
-    if chars.len() <= SNIPPET {
-        return (line.to_string(), at, false);
+fn window(line: &str, at: usize, _len: usize) -> (&str, usize, bool) {
+    let ascii = line.is_ascii();
+    let count = if ascii {
+        line.len()
+    } else {
+        line.chars().count()
+    };
+    if count <= SNIPPET {
+        return (line, at, false);
     }
     // A third of the window before the match: the eye reads the context on
     // the left, and the match itself is what was asked for.
     let lead = SNIPPET / 3;
     let start = at.saturating_sub(lead);
-    let end = (start + SNIPPET).min(chars.len());
+    let end = (start + SNIPPET).min(count);
     let start = end.saturating_sub(SNIPPET);
-    let text: String = chars[start..end].iter().collect();
-    let _ = len;
-    (text, at - start, true)
+    // ASCII columns already are byte offsets. Other text is scanned for the
+    // two boundaries without materializing every character of a huge line.
+    let (byte_start, byte_end) = if ascii {
+        (start, end)
+    } else {
+        let byte_start = line
+            .char_indices()
+            .nth(start)
+            .map_or(line.len(), |(byte, _)| byte);
+        let byte_end = line[byte_start..]
+            .char_indices()
+            .nth(end - start)
+            .map_or(line.len(), |(byte, _)| byte_start + byte);
+        (byte_start, byte_end)
+    };
+    (&line[byte_start..byte_end], at - start, true)
 }
 
 /// Searches raw PTY bytes: escapes off, then line by line.
@@ -205,6 +223,32 @@ mod tests {
     fn one_line_gives_one_hit_even_when_it_says_it_twice() {
         let hits = hits_in("erro aqui e erro ali\n", "erro", 10);
         assert_eq!(hits.len(), 1, "a hit is a line, not an occurrence");
+    }
+
+    /// A minified line used to allocate a Vec<char> for the entire line just to return 240 characters.
+    #[test]
+    fn a_long_line_window_borrows_only_the_matching_snippet() {
+        let prefix = "a".repeat(2 * 1024 * 1024);
+        let line = format!("{prefix}needle{}", "b".repeat(500));
+        let (text, col, clipped): (&str, usize, bool) = window(&line, prefix.len(), 6);
+        assert_eq!(text.len(), SNIPPET);
+        assert_eq!(&text[col..col + 6], "needle");
+        assert!(clipped);
+        assert!(std::ptr::eq(
+            text.as_ptr(),
+            line[prefix.len() - SNIPPET / 3..].as_ptr()
+        ));
+    }
+
+    #[test]
+    fn a_borrowed_window_keeps_unicode_boundaries_near_the_end_of_a_line() {
+        let prefix = "é".repeat(300);
+        let line = format!("{prefix}needle🦀");
+        let (text, col, clipped) = window(&line, 300, 6);
+        assert_eq!(text.chars().count(), SNIPPET);
+        assert_eq!(text.chars().skip(col).take(6).collect::<String>(), "needle");
+        assert!(text.ends_with('🦀'));
+        assert!(clipped);
     }
 
     /// The regression this locks down: a webpack build prints its bundle on a

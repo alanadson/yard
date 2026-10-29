@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::io::{Read, Write};
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ArchivedOutput {
     pub terminal_id: String,
@@ -12,7 +12,7 @@ pub struct ArchivedOutput {
     pub bytes: u64,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ArchivedPreview {
     pub text: String,

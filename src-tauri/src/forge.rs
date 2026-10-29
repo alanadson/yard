@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 const PR_FIELDS: &str =
     "number,title,url,state,isDraft,mergeable,reviewDecision,statusCheckRollup";
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequest {
     pub number: u64,
@@ -48,14 +48,14 @@ pub struct PullRequest {
     pub checks: Checks,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, specta::Type)]
 pub struct Checks {
     pub passed: u32,
     pub failed: u32,
     pub pending: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewNote {
     /// Path relative to the repository root, git style.
@@ -132,7 +132,7 @@ pub fn pr_comments_args(number: u64) -> Vec<String> {
 // parsing
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, specta::Type)]
 struct RawCheck {
     #[serde(default)]
     status: String,
@@ -143,7 +143,7 @@ struct RawCheck {
     state: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, specta::Type)]
 struct RawPr {
     #[serde(default)]
     number: u64,
@@ -199,13 +199,13 @@ pub fn parse_pr(json: &str) -> Result<PullRequest, String> {
     })
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, specta::Type)]
 struct RawUser {
     #[serde(default)]
     login: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, specta::Type)]
 struct RawComment {
     #[serde(default)]
     path: String,
@@ -280,7 +280,7 @@ fn failure(out: &Output) -> String {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ForgeStatus {
     /// Empty when `gh` is not on the machine.

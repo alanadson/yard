@@ -44,7 +44,7 @@ fn yes() -> bool {
 }
 
 /// A server as the manager sees it, whatever CLI it came from.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServer {
     pub name: String,
@@ -67,7 +67,7 @@ pub struct McpServer {
 
 /// One row of the listing. No secret values: only the names of the env
 /// variables and headers the server carries.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct McpRow {
     pub cli: String,
@@ -88,15 +88,16 @@ pub struct McpRow {
 
 /// The listing plus the files that could not be read — one broken file must
 /// not hide every other CLI's servers.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct McpListing {
+    pub accounts: BTreeMap<String, Option<String>>,
     pub rows: Vec<McpRow>,
     pub errors: Vec<String>,
 }
 
 /// The values the listing leaves out, for the edit form only.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct McpSecrets {
     pub env: BTreeMap<String, String>,
@@ -691,12 +692,17 @@ fn row_of(cli: &str, scope: Scope, path: &Path, s: &McpServer) -> McpRow {
 /// Every server of every supported CLI: the user file when the CLI is
 /// installed or the file exists, the local/project files when a root is given.
 pub fn list_in(home: &Path, root: Option<&Path>, installed: &[String]) -> McpListing {
+    list_at(&|_| Ok(home.to_path_buf()), root, installed)
+}
+
+fn list_at(home_for: &dyn Fn(&str) -> Result<PathBuf, String>, root: Option<&Path>, installed: &[String]) -> McpListing {
     let mut out = McpListing::default();
     let root_str = root.map(|r| r.to_string_lossy().into_owned());
     for cli in SUPPORTED {
+        let home = match home_for(cli) { Ok(home) => home, Err(error) => { out.errors.push(error); continue; } };
         let is_installed = installed.iter().any(|i| i == cli);
         for scope in [Scope::User, Scope::Local, Scope::Project] {
-            let Some(path) = config_path(cli, scope, home, root) else { continue };
+            let Some(path) = config_path(cli, scope, &home, root) else { continue };
             if scope != Scope::User && root.is_none() {
                 continue;
             }
@@ -760,6 +766,12 @@ fn home() -> Result<PathBuf, String> {
     crate::paths::home_dir().ok_or_else(|| "não achei a pasta do usuário".to_string())
 }
 
+pub(crate) fn account_home(app: &AppHandle, cli: &str, account_id: Option<&str>) -> Result<PathBuf, String> {
+    let state = app.state::<Arc<AppState>>();
+    let result = crate::accounts::config_home(&state.db.lock(), &crate::paths::app_dir(), &home()?, cli, account_id);
+    result
+}
+
 fn scope_of(s: &str) -> Result<Scope, String> {
     Scope::parse(s).ok_or_else(|| format!("escopo desconhecido: {s}"))
 }
@@ -773,25 +785,33 @@ fn installed_ids(app: &AppHandle) -> Vec<String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn mcp_list(app: AppHandle, project_root: Option<String>) -> Result<McpListing, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let home = home()?;
         let installed = installed_ids(&app);
-        Ok(list_in(&home, project_root.as_deref().map(Path::new), &installed))
+        let state = app.state::<Arc<AppState>>();
+        let mut accounts = crate::accounts::snapshot(&state.db.lock())?.selected;
+        for cli in ["codex", "claude"] { accounts.entry(cli.into()).or_insert(None); }
+        let mut listing = list_at(&|cli| account_home(&app, cli, Some(accounts.get(cli).and_then(|id| id.as_deref()).unwrap_or(""))), project_root.as_deref().map(Path::new), &installed);
+        listing.accounts = accounts;
+        Ok(listing)
     })
     .await
     .map_err(|e| format!("listagem MCP interrompida: {e}"))?
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn mcp_save(
+    app: AppHandle,
+    account_id: Option<String>,
     cli: String,
     scope: String,
     project_root: Option<String>,
     server: McpServer,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let home = home()?;
+        let home = account_home(&app, &cli, account_id.as_deref())?;
         save_in(&home, &cli, scope_of(&scope)?, project_root.as_deref().map(Path::new), server)
             .map_err(|e| e.to_string())
     })
@@ -800,14 +820,17 @@ pub async fn mcp_save(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn mcp_delete(
+    app: AppHandle,
+    account_id: Option<String>,
     cli: String,
     scope: String,
     project_root: Option<String>,
     name: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let home = home()?;
+        let home = account_home(&app, &cli, account_id.as_deref())?;
         delete_in(&home, &cli, scope_of(&scope)?, project_root.as_deref().map(Path::new), &name)
             .map_err(|e| e.to_string())
     })
@@ -816,14 +839,17 @@ pub async fn mcp_delete(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn mcp_env_values(
+    app: AppHandle,
+    account_id: Option<String>,
     cli: String,
     scope: String,
     project_root: Option<String>,
     name: String,
 ) -> Result<McpSecrets, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let home = home()?;
+        let home = account_home(&app, &cli, account_id.as_deref())?;
         secrets_in(&home, &cli, scope_of(&scope)?, project_root.as_deref().map(Path::new), &name)
             .map_err(|e| e.to_string())
     })
@@ -842,6 +868,30 @@ pub async fn mcp_env_values(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // MCP edits must reach the home used by the selected account without copying credentials.
+    #[test]
+    fn account_mcp_edits_reach_the_selected_codex_and_claude_homes() {
+        let root = temp("account-mcp");
+        let system = root.join("system");
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch("CREATE TABLE terminals(id TEXT PRIMARY KEY, agent_id TEXT)").unwrap();
+        crate::accounts::migrate(&connection).unwrap();
+        for provider in ["codex", "claude"] {
+            let account = crate::accounts::create_in(&connection, &root, provider, provider, "Work").unwrap();
+            crate::accounts::check_in_with(&connection, &root, provider, |_| Ok(true)).unwrap();
+            crate::accounts::select_account(&connection, provider, Some(provider)).unwrap();
+            let home = crate::accounts::config_home(&connection, &root, &system, provider, None).unwrap();
+            save_in(&home, provider, Scope::User, None, stdio("account-server", "node", &["server.js"])).unwrap();
+            let runtime = crate::accounts::runtime_dir(&root, &account).unwrap();
+            let expected = runtime.join(if provider == "codex" { "config.toml" } else { ".claude.json" });
+            assert!(expected.is_file());
+            assert_eq!(read_servers(provider, &expected, Scope::User, None).unwrap()[0].name, "account-server");
+            assert_eq!(crate::accounts::config_home(&connection, &root, &system, provider, Some("")).unwrap(), system);
+        }
+        assert!(!system.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn stdio(name: &str, cmd: &str, args: &[&str]) -> McpServer {
         McpServer {

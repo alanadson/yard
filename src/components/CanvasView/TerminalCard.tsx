@@ -94,6 +94,7 @@ import {
   type ResizeDir,
 } from "../../lib/canvas";
 import { useT } from "../../hooks/useT";
+import { TerminalAccountBadge } from "../Accounts";
 import { failureMessage } from "../../lib/loading";
 import { hudKind, hudLabel } from "./hud";
 
@@ -660,6 +661,7 @@ function TerminalCardImpl({
             {label}
           </span>
         )}
+        <TerminalAccountBadge id={term.id} />
         {rect.pinned && (
           <span
             className="cv-card-pin"

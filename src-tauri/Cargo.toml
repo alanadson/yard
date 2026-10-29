@@ -34,6 +34,10 @@ tauri-plugin-process = "2"
 tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Derive the frontend wire contract from Rust commands and Serde payloads.
+specta = { version = "=2.0.0-rc.26", features = ["derive", "function", "serde_json"] }
+specta-typescript = "=0.0.13"
+tauri-specta = { version = "=2.0.0-rc.26", features = ["typescript"] }
 portable-pty = "0.9"
 rusqlite = { version = "0.32", features = ["bundled"] }
 which = "7"

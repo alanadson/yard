@@ -14,7 +14,7 @@ import { startLiveRead, type Visibility } from "./liveRead";
 function harness(initialShown = true) {
   let shown = initialShown;
   const shownListeners = new Set<(shown: boolean) => void>();
-  const eventListeners = new Set<() => void>();
+  const eventListeners = new Set<(payload?: unknown) => void>();
   const ticks = new Set<() => void>();
   let reads = 0;
   let pending: (() => void) | null = null;
@@ -52,8 +52,8 @@ function harness(initialShown = true) {
         eventListeners.delete(cb);
       });
     },
-    emit() {
-      for (const cb of [...eventListeners]) cb();
+    emit(payload?: unknown) {
+      for (const cb of [...eventListeners]) cb(payload);
     },
     get listening() {
       return eventListeners.size;
@@ -129,6 +129,21 @@ describe("startLiveRead", () => {
     expect(h.reads).toBe(2);
   });
 
+  // A native event burst used to keep reading UI mirrors while Yard was in the tray.
+  it("defers hidden announcements and catches up once when the window returns", async () => {
+    const h = harness();
+    const stop = startLiveRead({ read: h.read, events: [h.event], visibility: h.visibility, every: h.every, fallbackMs: 30_000 });
+    await settle();
+    h.setShown(false);
+    for (let i = 0; i < 100; i++) h.emit({ revision: i });
+    await settle();
+    expect(h.reads).toBe(1);
+    h.setShown(true);
+    await settle();
+    expect(h.reads).toBe(2);
+    stop();
+  });
+
   it("catches up with one read when the window comes back, and none when it goes away", async () => {
     const h = harness(false);
     startLiveRead({ read: h.read, events: [h.event], visibility: h.visibility, every: h.every, fallbackMs: 30_000 });
@@ -140,6 +155,23 @@ describe("startLiveRead", () => {
     h.setShown(false);
     await settle();
     expect(h.reads).toBe(2);
+  });
+
+  // A read already in progress must not drain queued UI work after minimization.
+  it("holds a queued reread if the window hides before the current read finishes", async () => {
+    const h = harness();
+    h.holdReads();
+    const stop = startLiveRead({ read: h.read, events: [h.event], visibility: h.visibility, every: h.every, fallbackMs: 30_000 });
+    h.emit();
+    h.setShown(false);
+    h.finish();
+    await settle();
+    expect(h.reads).toBe(1);
+    h.setShown(true);
+    expect(h.reads).toBe(2);
+    h.finish();
+    await settle();
+    stop();
   });
 
   it("after stop, no event, tick or return of the window reads again, and the listeners are gone", async () => {

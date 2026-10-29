@@ -1,0 +1,7 @@
+.account-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.account-actions input { width: 170px; min-width: 100px; }
+.account-picker { min-width: 160px; max-width: 260px; }
+.account-picker small { display: block; color: var(--red); margin-top: 4px; }
+.account-picker .account-picker-provider { color: var(--text-dim); margin: 0 0 4px; }
+.terminal-account { font-size: 9px; opacity: .65; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.accounts-settings .set-row { flex-wrap: wrap; gap: 8px; }

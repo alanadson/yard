@@ -25,9 +25,10 @@ pub fn probe_in(home: &Path, cli: &str, scope: crate::mcp::Scope, root: Option<&
 }
 
 #[tauri::command]
-pub async fn mcp_probe(cli: String, scope: String, project_root: Option<String>, name: String) -> Result<McpHealth, String> {
+#[specta::specta]
+pub async fn mcp_probe(app: tauri::AppHandle, cli: String, scope: String, project_root: Option<String>, name: String, account_id: Option<String>) -> Result<McpHealth, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::paths::home_dir().ok_or("MCP_HOME_UNAVAILABLE")?;
+        let home = crate::mcp::account_home(&app, &cli, account_id.as_deref())?;
         let scope = crate::mcp::Scope::parse(&scope).ok_or("MCP_SCOPE_UNSUPPORTED")?;
         probe_in(&home, &cli, scope, project_root.as_deref().map(Path::new), &name, Duration::from_secs(10))
     }).await.map_err(|_| "MCP_PROBE_INTERRUPTED".to_string())?
@@ -35,7 +36,7 @@ pub async fn mcp_probe(cli: String, scope: String, project_root: Option<String>,
 
 const MESSAGE_LIMIT: usize = 64 * 1024;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct McpHealth {
     pub server_name: String,

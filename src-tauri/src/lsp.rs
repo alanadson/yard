@@ -30,18 +30,18 @@ use crate::pty::job::JobHandle;
 
 /// One decoded message from a server, addressed by the client id the
 /// frontend chose when it started the server.
-pub const TOPIC_MESSAGE: &str = "lsp://message";
+pub use crate::events::LSP_MESSAGE as TOPIC_MESSAGE;
 /// The server's process ended (on its own or through `stop`).
-pub const TOPIC_EXIT: &str = "lsp://exit";
+pub use crate::events::LSP_EXIT as TOPIC_EXIT;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LspMessage {
     pub id: String,
     pub message: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LspExit {
     pub id: String,
@@ -425,7 +425,7 @@ pub fn stop_all() {
 
 /// A server the editor knows how to use, with how to find it and how to get
 /// it when it is missing.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LspServerInfo {
     /// LSP language ids this server takes (`typescript`, `rust`, …).
@@ -570,6 +570,7 @@ fn emit_sink(app: AppHandle, id: String) -> Sink {
 // `didChange` for version 5 written before the one for version 4).
 
 #[tauri::command]
+#[specta::specta]
 pub fn lsp_start(
     app: AppHandle,
     id: String,
@@ -582,16 +583,19 @@ pub fn lsp_start(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn lsp_send(id: String, message: String) -> Result<(), String> {
     global().send(&id, &message)
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn lsp_stop(id: String) -> Result<(), String> {
     global().stop(&id)
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn lsp_detect(refresh: bool) -> Result<Vec<LspServerInfo>, String> {
     tauri::async_runtime::spawn_blocking(move || detect(refresh))
         .await

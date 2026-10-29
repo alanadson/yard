@@ -169,6 +169,7 @@ const DB_COMMANDS: &[&str] = &[
     "flow_dismiss",
     "flow_start", "flow_snapshot", "flow_cancel", "flow_resume",
     "task_enqueue", "task_claim",
+    "task_reviews", "task_request_review",
     "queue_patch",
     "queue_read",
     "routine_snapshot",
@@ -456,7 +457,7 @@ mod tests {
         let source = include_str!("lib.rs");
         let mut found = Vec::new();
         for chunk in source.split("#[tauri::command]").skip(1) {
-            let Some(rest) = chunk.trim_start().strip_prefix("fn ") else {
+            let Some(rest) = command_signature(chunk).strip_prefix("fn ") else {
                 continue;
             };
             let name = rest.split('(').next().unwrap_or_default().trim();
@@ -679,14 +680,19 @@ mod tests {
         assert_ne!(lane.as_deref(), Some(DB));
     }
 
-    /// Every `#[tauri::command]` in `source`: its name and whether it is
-    /// `async`.
+    /// Skip the metadata attribute when checking command thread placement.
+    fn command_signature(chunk: &str) -> &str {
+        let rest = chunk.trim_start();
+        rest.strip_prefix("#[specta::specta]").unwrap_or(rest).trim_start()
+    }
+
+    /// Every command name and whether it runs asynchronously.
     fn commands_in(source: &str) -> Vec<(String, bool)> {
         source
             .split("#[tauri::command]")
             .skip(1)
             .filter_map(|chunk| {
-                let rest = chunk.trim_start();
+                let rest = command_signature(chunk);
                 let rest = rest.strip_prefix("pub ").unwrap_or(rest);
                 let (is_async, rest) = match rest.strip_prefix("async ") {
                     Some(rest) => (true, rest),

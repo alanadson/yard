@@ -59,7 +59,7 @@ impl Scrollback {
     }
 
     /// `open` at an explicit path (see `at` for why tests want one).
-    fn open_at(path: PathBuf) -> Self {
+    pub(crate) fn open_at(path: PathBuf) -> Self {
         let (ring, file_len) = match read_tail(&path, RING_CAP) {
             Ok((bytes, len)) => (VecDeque::from(bytes), len),
             Err(_) => (VecDeque::new(), 0),

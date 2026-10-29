@@ -174,7 +174,7 @@ fn host_of(id: &str) -> Option<isize> {
 // IPC types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PortalOpen {
     pub id: String,
@@ -197,7 +197,7 @@ pub struct PortalOpen {
 
 /// Where a portal's surface goes, in the screen coordinates of the main
 /// window's webview (CSS pixels).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PortalPlace {
     pub x: f64,
@@ -222,13 +222,13 @@ pub struct PortalPlace {
     pub zoom: Option<f64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, specta::Type)]
 pub struct PortalBoundsUpdate {
     pub id: String,
     pub place: PortalPlace,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, specta::Type)]
 pub struct PortalRect {
     pub x: f64,
     pub y: f64,
@@ -273,7 +273,7 @@ fn live_place(live: &PortalLive, visible: bool) -> PortalPlace {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PortalInfo {
     pub id: String,
@@ -283,30 +283,30 @@ pub struct PortalInfo {
     pub visible: bool,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-struct PortalNav {
+pub struct PortalNav {
     id: String,
     url: String,
     title: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-struct PortalPopup {
+pub struct PortalPopup {
     parent_id: String,
     url: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-struct PortalId {
+pub struct PortalId {
     id: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-struct PortalMenu {
+pub struct PortalMenu {
     id: String,
     x: f64,
     y: f64,
@@ -943,7 +943,7 @@ fn spawn_webview(
         move |dest| {
             let s = dest.as_str();
             if s.contains("yard.invalid/__escape") {
-                let _ = handle.emit("portal://escape", PortalId { id: id.clone() });
+                let _ = handle.emit(crate::events::PORTAL_ESCAPE, PortalId { id: id.clone() });
                 return false;
             }
             if s.contains("yard.invalid/__menu") {
@@ -957,7 +957,7 @@ fn spawn_webview(
                     }
                 }
                 let _ = handle.emit(
-                    "portal://menu",
+                    crate::events::PORTAL_MENU,
                     PortalMenu {
                         id: id.clone(),
                         x,
@@ -992,7 +992,7 @@ fn spawn_webview(
             let _ = wv.set_zoom(zoom);
         }
         let _ = handle_nav.emit(
-            "portal://nav",
+            crate::events::PORTAL_NAV,
             PortalNav {
                 id: id_nav.clone(),
                 url: url.clone(),
@@ -1008,7 +1008,7 @@ fn spawn_webview(
                 p.title = title.clone();
             }
             let _ = handle2.emit(
-                "portal://nav",
+                crate::events::PORTAL_NAV,
                 PortalNav {
                     id: id2.clone(),
                     url: url2.clone(),
@@ -1020,7 +1020,7 @@ fn spawn_webview(
 
     builder = builder.on_new_window(move |dest, _feat| {
         let _ = handle_pop.emit(
-            "portal://popup",
+            crate::events::PORTAL_POPUP,
             PortalPopup {
                 parent_id: id_pop.clone(),
                 url: dest.to_string(),

@@ -5,6 +5,9 @@
 
 ## 1. Overview
 
+Local Codex and Claude account identity, process isolation and the schema v10
+contract are specified in [Local agent accounts](./09-agent-accounts.md).
+
 ```
 ┌─────────────────────────────  WebView2 (React/TS)  ─────────────────────────────┐
 │  TitleBar · Sidebar (projects/groups) · WorkspaceGrid (splits) · Modals         │
@@ -26,6 +29,36 @@
        │ ConPTY           │ Job Objects       │ git CLI          │ %APPDATA%
    pwsh/cmd/agent     (tree kill)         (worktree add…)    app.db + scrollback/
 ```
+
+### 1.1 Core ports and desktop adapters
+
+Tauri and Rust remain the application host and backend. Automation uses
+`runtime::AutomationRuntime`, whose `JobQueue` and `events::EventSink` ports
+accept ordered work and serialized events without a window handle.
+`desktop/scheduler.rs` connects these ports to the existing worker lanes,
+`AppState` and Tauri event emitter. `scheduler.rs` and `flows.rs` keep their
+existing scheduling, persistence and admission rules.
+
+The PTY engine sends `pty::pages::PageMessage` through `PageLink`.
+`desktop/pty.rs` implements the Tauri channel conversion and obtains the
+managed page registry. JSON envelopes, binary frames, acknowledgements and
+exit ordering keep the same wire representation. Core tests can supply a
+headless host without constructing a Tauri application.
+
+```mermaid
+flowchart LR
+  UI[React and stores] --> Facade[lib/ipc.ts compatibility facade]
+  Facade --> Client[desktop/client.ts]
+  Client --> Bindings[Generated Rust command bindings]
+  Bindings --> Host[Tauri command handlers and desktop adapters]
+  Host --> Core[Automation and PTY core]
+  Core --> Ports[JobQueue, EventSink, PageLink]
+  Ports --> Host
+```
+
+These are module boundaries inside the existing application, not a new
+daemon or a separate Rust workspace. Other native integrations, including
+portal windows and the CLI bridge, retain their existing modules.
 
 ## 2. Rust modules (`src-tauri/src/`)
 
@@ -51,6 +84,8 @@
 | `resources.rs`                       | `sysinfo`: RAM/CPU per PTY tree, spawn gate, group suspension                                    |
 | `paths.rs`                           | Central resolution of `%APPDATA%\Yard\…` (never scatter paths around)                            |
 | `events.rs`                          | Topic names and typed payloads (a single place defines the contract)                             |
+| `globs.rs`                           | Project-search filters compiled once per query; `*` stays within one segment, `**` crosses folders, and `?` consumes one Unicode character |
+| `scrollback_search.rs`               | Bounded terminal-history hits; snippet windows borrow the original line before copying only the returned text |
 | `lanes.rs`                           | Ordered lanes: the blocking sync commands leave the UI thread and keep their arrival order (see §4) |
 
 ## 3. Frontend (`src/`)
@@ -84,7 +119,7 @@ src/
 │   └── modals/              # NewTerminalModal, ScoresModal, RoutinesModal…
 ├── hooks/                   # useGlobalEvents, useKeybindings, useRoutines…
 └── lib/
-    ├── ipc.ts               # typed invoke/listen wrappers (the §4 contract in TS)
+    ├── ipc.ts               # compatibility exports for desktop/client.ts and contracts/types.ts
     ├── ptyStream.ts         # the page's half of the PTY channel (§4): decode, address, dispatch
     └── bridge.ts            # the brains of the agent↔app bridge (see §4.1)
 ```
@@ -121,8 +156,31 @@ empty lines, lines equal to their key and the same key translated two ways.
 
 ## 4. IPC contract (commands + events)
 
-A single file of truth on each side (`events.rs` ↔ `lib/ipc.ts`). The core's
-minimum set:
+The Rust command registry in `lib.rs` supplies both Tauri's handler and
+Specta's exported signatures. `desktop/contracts.rs` exports the event
+payload map and the topic names defined in `events.rs`. Generated bindings
+are versioned in `src/desktop/bindings.ts`; do not edit that file manually.
+
+`src/desktop/client.ts` owns command calls, event subscriptions and channel
+creation. `src/lib/ipc.ts` re-exports this API for existing callers.
+`src/contracts/types.ts` holds generated type aliases and frontend models;
+`refinements.ts` checks the narrower states and finite numbers those models
+require. These contract modules import generated definitions as types only,
+so they do not load the desktop runtime.
+
+After changing a Rust command or payload, run `npm run contracts:generate`,
+then `npm run typecheck` and the tests. `npm run contracts:check` compares
+the checked-in file with a fresh export. This check also runs in the normal
+Rust suite and therefore in CI. Error results still reject promises, and
+existing JSON numbers retain their representation.
+
+Persisted documents still represented by `serde_json::Value`, including
+flow runs, queue entries, routine executions and bridge requests, retain
+their explicit legacy frontend schemas at `legacyJson` call sites. Their
+internal fields are not verified by Specta. Migrating those documents to
+Rust DTOs is a separate schema change, not an implicit part of this refactor.
+
+The core's minimum set:
 
 **Commands (`invoke`)**
 
@@ -222,9 +280,13 @@ The four automation topics come from one place: `kv_set`/`kv_delete` skip
 writes that would not change the stored value and note the ones that did, and
 whoever ran the work (the IPC command wrapper, the scheduler tick or lane job,
 the bridge flow CLI) emits the matching topics. The page reads the snapshot
-once at boot, again on each topic and when the window comes back on screen,
-and keeps a 30 s safety read only while the window is shown
-(`src/lib/liveRead.ts`).
+once at boot, again on each topic while visible and when the window comes back
+on screen, and keeps a 30 s safety read only while the window is shown
+(`src/lib/liveRead.ts`). Hidden announcements are covered by one catch-up read
+on return. An in-progress read can finish, but its queued reread waits for a
+visible window. The queue has one reader for events and the safety tick, so
+overlapping announcements are coalesced. Native scheduling and delivery continue
+while the renderer is hidden.
 
 **Golden rule:** the UI **never** assumes that creating/destroying a component
 creates/destroys a process. Mounted an `XTermView` → call `attach_pty`; if

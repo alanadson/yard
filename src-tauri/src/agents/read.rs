@@ -49,6 +49,7 @@ pub fn read_events_capped(file: &Path, cap: u64) -> Result<Vec<FeedEvent>, Strin
 
 /// The whole session as events. Disk-bound, so it runs on the blocking pool.
 #[tauri::command]
+#[specta::specta]
 pub async fn session_events(file: String) -> Result<Vec<FeedEvent>, String> {
     tauri::async_runtime::spawn_blocking(move || read_events(Path::new(&file)))
         .await

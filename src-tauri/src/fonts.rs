@@ -18,7 +18,7 @@ use std::sync::OnceLock;
 
 use serde::Serialize;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type)]
 pub struct FontFamilyInfo {
     pub family: String,
     /// From the `post` table — the terminal/editor pickers only offer these.

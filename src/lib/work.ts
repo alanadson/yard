@@ -36,3 +36,5 @@ export interface TaskPage { tasks: WorkTask[]; next: TaskCursor | null; total: n
 export interface TaskEvent { id: number; taskId: string; kind: string; at: number; detail: string }
 export interface DeliveryRecord { taskId: string; revision: number; at: number; delivery: Delivery; criteria: Criterion[]; recovered: boolean }
 export interface TaskQueueResult { task: WorkTask; items: import("./queue").QueueItem[] }
+export interface TaskReview { deliveryRevision: number; task: WorkTask }
+export interface ReviewRequest { taskId: string; revision: number; reviewId: string; terminalId: string; queueId: string; title: string }

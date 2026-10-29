@@ -27,7 +27,7 @@ use crate::state::AppState;
 /// manual export saved into the same folder is invisible to the pruning.
 pub const AUTO_PREFIX: &str = "yard-auto-";
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AutoBackupReport {
     /// The zip just written.
@@ -120,6 +120,7 @@ fn run_in(
 /// copy of `app.db` only (see `backup::export_in`), so no write lands between
 /// the two, and none waits for the zip.
 #[tauri::command]
+#[specta::specta]
 pub async fn backup_auto_run(
     app: AppHandle,
     dir: Option<String>,

@@ -20,6 +20,15 @@ record the design, the contracts and the reasoning behind the decisions.
 
 ## Guides
 
+- [Independent delivery reviews](./specs/10-independent-reviews.md): queued
+  second opinions, versioned evidence, human approval and artifact navigation.
+
+- [Local agent accounts](./specs/09-agent-accounts.md): Codex and Claude profiles,
+  pinned terminal identity, authentication, limits, MCP and backup privacy.
+
+- [Performance audit, 2026-10-28](./performance-audit-2026-10-28.md): reviewed
+  hot paths, measured changes, regression evidence and verification limits.
+
 - [Code checkpoints](./specs/08-code-checkpoints.md): task snapshots, file comparison, restoration and recovery.
 
 - [Canvas capabilities and interaction contracts](./specs/07-canvas-capabilities.md): docking, cable routing, composer references, binders and Android device portals.

@@ -98,7 +98,7 @@ fn safe_file(root: &Path, name: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Checkpoint {
     pub id: String,
@@ -540,8 +540,9 @@ fn load_archive(store: &Path, id: &str) -> Result<Files, String> {
     Ok(files)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
+#[serde(rename = "CheckpointChangedFile")]
 pub struct ChangedFile {
     pub path: String,
     pub status: String,
@@ -549,7 +550,7 @@ pub struct ChangedFile {
     pub after_bytes: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Preview {
     pub files: Vec<ChangedFile>,
@@ -557,7 +558,7 @@ pub struct Preview {
     pub blocked_reason: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 pub struct Comparison {
     pub before: Option<String>,
     pub after: Option<String>,

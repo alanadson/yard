@@ -3,6 +3,17 @@ use std::process::Command;
 
 fn main() {
     tauri_build::build();
+    // Contract exporters and library tests also link native dialog commands.
+    // Unlike the desktop binary, they do not inherit Tauri's resource manifest.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        // A sidecar manifest covers library tests. The exporter embeds it because
+        // Cargo copies that executable to its unversioned examples path.
+        println!("cargo:rustc-link-arg=/MANIFEST");
+        println!("cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'");
+        println!("cargo:rustc-link-arg-examples=/MANIFEST:EMBED");
+    }
     build_yard_cli();
 }
 

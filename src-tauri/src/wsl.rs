@@ -19,7 +19,7 @@ use std::os::windows::process::CommandExt;
 use std::process::Command;
 
 /// What the settings screen needs to draw the choice.
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WslStatus {
     /// `wsl.exe` answered and there is at least one distro to run in.

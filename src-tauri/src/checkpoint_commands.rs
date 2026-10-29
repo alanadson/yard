@@ -21,6 +21,7 @@ async fn run<T: Send + 'static>(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn checkpoint_create(
     state: tauri::State<'_, std::sync::Arc<crate::state::AppState>>,
     root: String,
@@ -50,16 +51,19 @@ pub async fn checkpoint_create(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn checkpoint_list(root: String) -> Result<Vec<Checkpoint>, String> {
     run(move |store| checkpoints::list(&store, &PathBuf::from(root))).await
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn checkpoint_preview(root: String, id: String) -> Result<Preview, String> {
     run(move |store| checkpoints::preview(&store, &PathBuf::from(root), &id)).await
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn checkpoint_compare(
     root: String,
     id: String,
@@ -69,6 +73,7 @@ pub async fn checkpoint_compare(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn checkpoint_restore(
     root: String,
     id: String,
@@ -87,6 +92,7 @@ pub async fn checkpoint_restore(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn checkpoint_delete(root: String, id: String) -> Result<(), String> {
     run(move |store| checkpoints::delete(&store, &PathBuf::from(root), &id)).await
 }

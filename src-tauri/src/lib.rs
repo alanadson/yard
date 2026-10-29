@@ -6,12 +6,15 @@
 // Public so integration tests in `tests/` can exercise the engine without
 // going through the UI.
 pub mod agents;
+pub mod accounts;
 pub mod devices;
+pub mod desktop;
 pub mod bridge;
 pub mod browsers;
 pub mod clipboard;
 pub mod encoding;
 pub mod events;
+pub mod runtime;
 pub mod explorer;
 pub mod files;
 pub mod fonts;
@@ -84,11 +87,12 @@ struct LogGuard(#[allow(dead_code)] Option<tracing_appender::non_blocking::Worke
 /// Blocking on purpose (the RAM gate waits up to 45 s), so it goes to the
 /// blocking pool instead of holding a runtime worker.
 #[tauri::command]
+#[specta::specta]
 async fn spawn_pty(app: AppHandle, opts: SpawnOptions) -> Result<PtySnapshot, String> {
     let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app2.state::<Arc<AppState>>();
-        pty::spawn(pty::emit::tauri_sink(&app2), &state, opts)
+        pty::spawn(desktop::pty::event_sink(&app2), &state, opts)
     })
     .await
     .map_err(|e| format!("spawn interrompido: {e}"))?
@@ -99,6 +103,7 @@ async fn spawn_pty(app: AppHandle, opts: SpawnOptions) -> Result<PtySnapshot, St
 /// terminal's writes queue behind it. The promise still settles when the bytes
 /// are in the ConPTY. An explicit prompt submission completes inside this call.
 #[tauri::command]
+#[specta::specta]
 fn write_pty(state: State<'_, Arc<AppState>>, id: String, data: String, submit_prompt: Option<bool>) -> Result<(), String> {
     match submit_prompt {
         Some(submit) => pty::inject(&state, &id, &data, submit),
@@ -107,6 +112,7 @@ fn write_pty(state: State<'_, Arc<AppState>>, id: String, data: String, submit_p
 }
 
 #[tauri::command]
+#[specta::specta]
 fn resize_pty(
     state: State<'_, Arc<AppState>>,
     id: String,
@@ -125,6 +131,7 @@ fn resize_pty(
 /// discards is not read at all, and a live alternate screen sends only the
 /// tail it scans. Left out, the whole history comes back, as it always did.
 #[tauri::command]
+#[specta::specta]
 async fn attach_pty(
     app: AppHandle,
     id: String,
@@ -142,6 +149,7 @@ async fn attach_pty(
 /// Blocking (there is a pause between the two sizes), so it goes to the
 /// blocking pool.
 #[tauri::command]
+#[specta::specta]
 async fn repaint_pty(app: AppHandle, id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<Arc<AppState>>();
@@ -152,6 +160,7 @@ async fn repaint_pty(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 fn pty_probe(state: State<'_, Arc<AppState>>, id: String) -> PtyProbe {
     pty::probe(&state, &id)
 }
@@ -159,11 +168,13 @@ fn pty_probe(state: State<'_, Arc<AppState>>, id: String) -> PtyProbe {
 /// The heartbeat the pump would send now (`pty::activity`), for a listener
 /// that registered after the last one went out.
 #[tauri::command]
+#[specta::specta]
 fn pty_activity(state: State<'_, Arc<AppState>>, id: String) -> Option<events::ActivityPayload> {
     pty::activity(&state, &id)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn pty_read_since(
     state: State<'_, Arc<AppState>>,
     id: String,
@@ -174,11 +185,13 @@ fn pty_read_since(
 }
 
 #[tauri::command]
+#[specta::specta]
 fn pty_exists(state: State<'_, Arc<AppState>>, id: String) -> bool {
     pty::exists(&state, &id)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn list_ptys(state: State<'_, Arc<AppState>>) -> Vec<PtySnapshot> {
     pty::list(&state)
 }
@@ -188,17 +201,20 @@ fn list_ptys(state: State<'_, Arc<AppState>>) -> Vec<PtySnapshot> {
 // the kill refreshes the whole process table and waits on `taskkill`.
 
 #[tauri::command]
+#[specta::specta]
 fn kill_pty(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
     pty::kill(&state, &id)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn suspend_pty(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
     pty::suspend(&state, &id)
 }
 
 /// Suspends several at once — the RAM valve from §5.6.
 #[tauri::command]
+#[specta::specta]
 fn suspend_group(state: State<'_, Arc<AppState>>, ids: Vec<String>) -> Vec<String> {
     let mut failures = Vec::new();
     for id in ids {
@@ -211,11 +227,12 @@ fn suspend_group(state: State<'_, Arc<AppState>>, ids: Vec<String>) -> Vec<Strin
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn restart_pty(app: AppHandle, id: String) -> Result<PtySnapshot, String> {
     let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app2.state::<Arc<AppState>>();
-        pty::restart(pty::emit::tauri_sink(&app2), &state, &id)
+        pty::restart(desktop::pty::event_sink(&app2), &state, &id)
     })
     .await
     .map_err(|e| format!("restart interrompido: {e}"))?
@@ -224,12 +241,14 @@ async fn restart_pty(app: AppHandle, id: String) -> Result<PtySnapshot, String> 
 /// On the terminal's own lane (`lanes.rs`): it can wait on the scrollback
 /// lock behind a 4 MB rewrite, and then deletes a file.
 #[tauri::command]
+#[specta::specta]
 fn clear_pty(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
     pty::clear_scrollback(&state, &id)
 }
 
 /// The UI reports when a panel leaves/enters the screen (§5.3).
 #[tauri::command]
+#[specta::specta]
 fn set_pty_visible(state: State<'_, Arc<AppState>>, id: String, visible: bool) {
     pty::set_visible(&state, &id, visible);
 }
@@ -237,6 +256,7 @@ fn set_pty_visible(state: State<'_, Arc<AppState>>, id: String, visible: bool) {
 /// The page took `chunks` chunks of `id`'s output off its channel: the pump
 /// may send that many again (`pty::reader::INFLIGHT_CAP`).
 #[tauri::command]
+#[specta::specta]
 fn ack_pty_output(state: State<'_, Arc<AppState>>, id: String, chunks: u32) {
     pty::ack_output(&state, &id, chunks);
 }
@@ -247,17 +267,19 @@ fn ack_pty_output(state: State<'_, Arc<AppState>>, id: String, chunks: u32) {
 /// page's) from a module reloaded in place (the same token). Returns the
 /// link's number, which the other two take.
 #[tauri::command]
+#[specta::specta]
 fn pty_events_open(
     webview: tauri::Webview,
     pages: State<'_, Arc<pty::pages::Pages>>,
     page: String,
-    channel: tauri::ipc::Channel,
+    channel: tauri::ipc::Channel<pty::pages::PageMessage>,
 ) -> u64 {
     pages.open(webview.label(), &page, Box::new(channel))
 }
 
 /// Subscription `sub` (numbered by the page) on `link` listens to `topic`.
 #[tauri::command]
+#[specta::specta]
 fn pty_events_subscribe(
     pages: State<'_, Arc<pty::pages::Pages>>,
     link: u64,
@@ -269,6 +291,7 @@ fn pty_events_subscribe(
 
 /// Subscription `sub` on `link` stops listening.
 #[tauri::command]
+#[specta::specta]
 fn pty_events_unsubscribe(
     pages: State<'_, Arc<pty::pages::Pages>>,
     link: u64,
@@ -280,6 +303,7 @@ fn pty_events_unsubscribe(
 /// Can refresh the whole process table, or wait behind the resources thread
 /// doing it, so it goes to the blocking pool. A read with nothing to order.
 #[tauri::command]
+#[specta::specta]
 async fn get_pty_tree_info(app: AppHandle, id: String) -> Result<events::PtyResource, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<Arc<AppState>>();
@@ -294,6 +318,7 @@ async fn get_pty_tree_info(app: AppHandle, id: String) -> Result<events::PtyReso
 /// them, and the startup housekeeping ages them out after 30 days. On the
 /// terminal's own lane (`lanes.rs`), like its writes.
 #[tauri::command]
+#[specta::specta]
 fn forget_pty(state: State<'_, Arc<AppState>>, id: String) {
     state.statuses.lock().remove(&id);
     pty::scrollback::Scrollback::delete_file(&id);
@@ -303,6 +328,7 @@ fn forget_pty(state: State<'_, Arc<AppState>>, id: String) {
 /// the escapes. Up to 8 MB of disk in and out, so it goes to the blocking pool
 /// like `repaint_pty`.
 #[tauri::command]
+#[specta::specta]
 async fn pty_export(app: AppHandle, id: String, dest: String, plain: bool) -> Result<u64, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<Arc<AppState>>();
@@ -313,6 +339,7 @@ async fn pty_export(app: AppHandle, id: String, dest: String, plain: bool) -> Re
 }
 
 #[tauri::command]
+#[specta::specta]
 fn pty_archives(id: Option<String>) -> Result<Vec<pty::history::ArchivedOutput>, String> {
     let directory = paths::scrollback_archives_dir();
     match id {
@@ -322,16 +349,19 @@ fn pty_archives(id: Option<String>) -> Result<Vec<pty::history::ArchivedOutput>,
 }
 
 #[tauri::command]
+#[specta::specta]
 fn pty_archive_preview(id: String, name: String, max_bytes: usize) -> Result<pty::history::ArchivedPreview, String> {
     pty::history::preview_in(&paths::scrollback_archives_dir(), &paths::sanitize_id(&id), &name, max_bytes).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn pty_archive_export(id: String, name: String, dest: String, plain: bool) -> Result<u64, String> {
     pty::history::export_in(&paths::scrollback_archives_dir(), &paths::sanitize_id(&id), &name, std::path::Path::new(&dest), plain).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn pty_archive_delete(id: String, name: String) -> Result<bool, String> {
     pty::history::delete_in(&paths::scrollback_archives_dir(), &paths::sanitize_id(&id), &name).map_err(|error| error.to_string())
 }
@@ -341,6 +371,7 @@ fn pty_archive_delete(id: String, name: String) -> Result<bool, String> {
 /// answers the same as an open one. Up to 8 MB per terminal off the disk, so
 /// it goes to the blocking pool.
 #[tauri::command]
+#[specta::specta]
 async fn search_scrollback(
     app: AppHandle,
     ids: Vec<String>,
@@ -369,6 +400,7 @@ async fn search_scrollback(
 /// Posts one notification to the address the user configured
 /// (`webhook.rs`). Blocking pool: it is a network round trip.
 #[tauri::command]
+#[specta::specta]
 async fn webhook_post(url: String, body: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || webhook::post(&url, &body))
         .await
@@ -379,6 +411,7 @@ async fn webhook_post(url: String, body: String) -> Result<(), String> {
 /// to carry across (`bridge.rs`, `src/lib/remoteBridge.ts`). `port` is null
 /// while the listener has not come up (or could not).
 #[tauri::command]
+#[specta::specta]
 fn bridge_remote() -> serde_json::Value {
     serde_json::json!({
         "port": bridge::tcp_port(),
@@ -389,6 +422,7 @@ fn bridge_remote() -> serde_json::Value {
 /// Where the settings file Claude Code is launched with lives (`bridge.rs`),
 /// so the frontend can put it on the command line (`lib/agentDefaults.ts`).
 #[tauri::command]
+#[specta::specta]
 fn bridge_hooks_file() -> String {
     bridge::claude_hooks_file().to_string_lossy().into_owned()
 }
@@ -397,6 +431,7 @@ fn bridge_hooks_file() -> String {
 /// goes to the blocking pool: a dead network share on PATH used to freeze the
 /// window while `which` waited on it.
 #[tauri::command]
+#[specta::specta]
 async fn default_shell() -> String {
     tauri::async_runtime::spawn_blocking(pty::default_shell)
         .await
@@ -405,6 +440,7 @@ async fn default_shell() -> String {
 
 /// Same as `default_shell`: PATH lookups, cached, on the blocking pool.
 #[tauri::command]
+#[specta::specta]
 async fn list_shells() -> Vec<ShellOption> {
     tauri::async_runtime::spawn_blocking(pty::list_shells)
         .await
@@ -417,6 +453,7 @@ async fn list_shells() -> Vec<ShellOption> {
 /// the WSL service is cold this call takes seconds, and it must not stall a
 /// runtime worker while the settings screen is opening.
 #[tauri::command]
+#[specta::specta]
 async fn wsl_status() -> wsl::WslStatus {
     tauri::async_runtime::spawn_blocking(wsl::status)
         .await
@@ -427,6 +464,7 @@ async fn wsl_status() -> wsl::WslStatus {
 /// which aliases `~/.ssh/config` already names. A PATH lookup plus one file
 /// read — cheap, but it keeps the same shape as `wsl_status` on purpose.
 #[tauri::command]
+#[specta::specta]
 async fn ssh_status() -> ssh::SshStatus {
     tauri::async_runtime::spawn_blocking(ssh::status)
         .await
@@ -436,6 +474,7 @@ async fn ssh_status() -> ssh::SshStatus {
 /// First call reads every installed font file (the scan is cached after), so
 /// it goes to the blocking pool instead of stalling a runtime worker.
 #[tauri::command]
+#[specta::specta]
 async fn list_fonts() -> Vec<fonts::FontFamilyInfo> {
     tauri::async_runtime::spawn_blocking(fonts::list)
         .await
@@ -453,6 +492,7 @@ async fn list_fonts() -> Vec<fonts::FontFamilyInfo> {
 // `lanes.rs` reads this file and fails otherwise).
 
 #[tauri::command]
+#[specta::specta]
 fn save_workspace(
     state: State<'_, Arc<AppState>>,
     snapshot: WorkspaceSnapshot,
@@ -465,110 +505,144 @@ fn save_workspace(
 }
 
 #[tauri::command]
+#[specta::specta]
 fn load_workspace(state: State<'_, Arc<AppState>>) -> Result<WorkspaceSnapshot, String> {
     let conn = state.db.lock();
     persistence::workspace::load(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn task_create(state: State<'_, Arc<AppState>>, input: work::NewTask) -> Result<work::Task, work::TaskError> {
     work::create(&mut state.db.lock(), input, chrono::Utc::now().timestamp_millis())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn task_list(state: State<'_, Arc<AppState>>, cursor: Option<work::TaskCursor>, limit: usize, attention: Option<bool>) -> Result<work::TaskPage, work::TaskError> {
     if attention.unwrap_or(false) { work::list_attention(&state.db.lock(), cursor.as_ref(), limit) }
     else { work::list(&state.db.lock(), cursor.as_ref(), limit) }
 }
 
 #[tauri::command]
+#[specta::specta]
 fn task_get(state: State<'_, Arc<AppState>>, id: String) -> Result<work::Task, work::TaskError> {
     work::get(&state.db.lock(), &id)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn task_link(state: State<'_, Arc<AppState>>, id: String, revision: i64, resource: work::TaskResource) -> Result<work::Task, work::TaskError> {
     work::link(&mut state.db.lock(), &id, revision, resource, chrono::Utc::now().timestamp_millis())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn checkpoint_notices(state: State<'_, Arc<AppState>>) -> Result<Vec<serde_json::Value>, work::TaskError> {
     work::checkpoint_notices(&state.db.lock())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn checkpoint_acknowledge_notices(state: State<'_, Arc<AppState>>, notices: Vec<serde_json::Value>) -> Result<(), work::TaskError> {
     work::acknowledge_checkpoint_notices(&state.db.lock(), &notices)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn checkpoint_notice_history(state: State<'_, Arc<AppState>>) -> Result<Vec<serde_json::Value>, work::TaskError> {
     work::checkpoint_notice_history(&state.db.lock())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn task_events(state: State<'_, Arc<AppState>>, id: String) -> Result<Vec<work::TaskEvent>, work::TaskError> {
     work::events(&state.db.lock(), &id)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn task_deliveries(state: State<'_, Arc<AppState>>, id: String) -> Result<Vec<work::DeliveryRecord>, work::TaskError> {
     work::deliveries(&state.db.lock(), &id)
 }
 
 #[tauri::command]
+#[specta::specta]
+fn task_reviews(state: State<'_, Arc<AppState>>, id: String) -> Result<Vec<work::TaskReview>, work::TaskError> {
+    work::reviews(&state.db.lock(), &id)
+}
+
+#[tauri::command]
+#[specta::specta]
+fn task_request_review(state: State<'_, Arc<AppState>>, input: work::ReviewRequest) -> Result<work::TaskQueueResult, work::TaskError> {
+    work::request_review(&mut state.db.lock(), &input, chrono::Utc::now().timestamp_millis())
+}
+
+#[tauri::command]
+#[specta::specta]
 fn task_retry_delivery(state: State<'_, Arc<AppState>>, id: String, revision: i64, terminal_id: String, previous_queue_id: String, queue_id: String) -> Result<work::TaskQueueResult, work::TaskError> {
     work::retry_delivery(&mut state.db.lock(), &id, revision, &terminal_id, &previous_queue_id, &queue_id, chrono::Utc::now().timestamp_millis())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn task_transition(state: State<'_, Arc<AppState>>, id: String, revision: i64, status: String) -> Result<work::Task, work::TaskError> {
     work::transition(&mut state.db.lock(), &id, revision, &status, chrono::Utc::now().timestamp_millis())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn task_submit(state: State<'_, Arc<AppState>>, id: String, revision: i64, submission: work::Submission) -> Result<work::Task, work::TaskError> {
     work::submit(&mut state.db.lock(), &id, revision, submission, chrono::Utc::now().timestamp_millis())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn task_approve(state: State<'_, Arc<AppState>>, id: String, revision: i64, note: String) -> Result<work::Task, work::TaskError> {
     work::approve(&mut state.db.lock(), &id, revision, &note, chrono::Utc::now().timestamp_millis())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn task_enqueue(state: State<'_, Arc<AppState>>, id: String, revision: i64, terminal_id: String, queue_id: String) -> Result<work::TaskQueueResult, work::TaskError> {
     work::enqueue(&mut state.db.lock(), &id, revision, &terminal_id, &queue_id, chrono::Utc::now().timestamp_millis())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn task_claim(state: State<'_, Arc<AppState>>, id: String, queue_id: String, terminal_id: String) -> Result<work::Task, work::TaskError> {
     work::claim(&mut state.db.lock(), &id, &queue_id, &terminal_id, chrono::Utc::now().timestamp_millis())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn queue_patch(state: State<'_, Arc<AppState>>, before: Vec<serde_json::Value>, after: Vec<serde_json::Value>) -> Result<Vec<serde_json::Value>, String> {
     queue::apply(&mut state.db.lock(), &before, &after)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn queue_dispatch(state: State<'_, Arc<AppState>>, id: String, terminal_id: String, attempted_at: i64) -> Result<queue::DispatchResult, String> {
     queue::dispatch_owned(&state, &id, &terminal_id, attempted_at)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn queue_read(state: State<'_, Arc<AppState>>) -> Result<Vec<serde_json::Value>, String> {
     let active = state.native_queue_dispatches.lock();
     queue::reconcile_native(&mut state.db.lock(), &active)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn native_hook_snapshot(state: State<'_, Arc<AppState>>) -> Vec<scheduler::HookReport> { state.scheduler.snapshot() }
 
 #[tauri::command]
+#[specta::specta]
 fn routine_snapshot(state: State<'_, Arc<AppState>>) -> Result<Vec<serde_json::Value>, String> { routines::snapshot(&state.db.lock()) }
 
 #[tauri::command]
+#[specta::specta]
 fn flow_start(state: State<'_, Arc<AppState>>, input: flows::StartInput) -> Result<serde_json::Value, String> {
     if !pty::probe(&state, &input.terminal_id).alive { return Err("FLOW_EXECUTOR_NOT_RUNNING".into()); }
     let run = flows::start_input(&mut state.db.lock(), &input, chrono::Utc::now().timestamp_millis())?;
@@ -580,36 +654,43 @@ fn flow_start(state: State<'_, Arc<AppState>>, input: flows::StartInput) -> Resu
 }
 
 #[tauri::command]
+#[specta::specta]
 fn flow_snapshot(state: State<'_, Arc<AppState>>) -> Result<Vec<serde_json::Value>, String> {
     Ok(flows::snapshot(&state.db.lock())?.into_iter().filter(|run| run["hidden"] != true).collect())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn flow_dismiss(state: State<'_, Arc<AppState>>, group_id: String, flow_id: String, attempt: u64) -> Result<(), String> {
     flows::dismiss(&mut state.db.lock(), &group_id, &flow_id, attempt)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn flow_cancel(state: State<'_, Arc<AppState>>, group_id: String, flow_id: String, attempt: u64) -> Result<serde_json::Value, String> {
     flows::cancel(&mut state.db.lock(), &group_id, &flow_id, attempt, chrono::Utc::now().timestamp_millis())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn flow_resume(state: State<'_, Arc<AppState>>, group_id: String, flow_id: String, attempt: u64, confirmed: bool) -> Result<serde_json::Value, String> {
     flows::resume(&mut state.db.lock(), &group_id, &flow_id, attempt, confirmed, chrono::Utc::now().timestamp_millis())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn queue_retry(state: State<'_, Arc<AppState>>, id: String, new_id: String, attempted_at: i64) -> Result<Vec<serde_json::Value>, String> {
     queue::retry_reviewed(&mut state.db.lock(), &id, &new_id, attempted_at)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn queue_remove(state: State<'_, Arc<AppState>>, id: String, attempted_at: Option<i64>) -> Result<Vec<serde_json::Value>, String> {
     queue::remove_reviewed(&mut state.db.lock(), &id, attempted_at)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn read_prefs(state: State<'_, Arc<AppState>>) -> Result<HashMap<String, String>, String> {
     let conn = state.db.lock();
     persistence::db::kv_page(&conn)
@@ -618,24 +699,28 @@ fn read_prefs(state: State<'_, Arc<AppState>>) -> Result<HashMap<String, String>
 }
 
 #[tauri::command]
+#[specta::specta]
 fn write_pref(state: State<'_, Arc<AppState>>, key: String, value: String) -> Result<(), String> {
     let conn = state.db.lock();
     persistence::db::kv_set(&conn, &key, &value).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn write_prefs(state: State<'_, Arc<AppState>>, entries: Vec<(String, String)>) -> Result<(), String> {
     let conn = state.db.lock();
     persistence::db::kv_set_many(&conn, &entries).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn delete_pref(state: State<'_, Arc<AppState>>, key: String) -> Result<(), String> {
     let conn = state.db.lock();
     persistence::db::kv_delete(&conn, &key).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn export_backup(app: AppHandle, dest: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         // `export` locks the database itself, for the checkpoint and the copy
@@ -654,6 +739,7 @@ async fn export_backup(app: AppHandle, dest: String) -> Result<String, String> {
 /// Prepares a backup for the next boot. It does **not** replace the live
 /// database — see `persistence::backup::import`.
 #[tauri::command]
+#[specta::specta]
 async fn import_backup(src: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         persistence::backup::import(std::path::Path::new(&src)).map_err(|e| e.to_string())
@@ -665,12 +751,14 @@ async fn import_backup(src: String) -> Result<(), String> {
 /// Is a restored backup waiting for the next boot? The UI keeps the warning
 /// on screen while this is true, including after a reload of the webview.
 #[tauri::command]
+#[specta::specta]
 fn backup_pending() -> bool {
     persistence::backup::has_pending()
 }
 
 /// Discards the staged backup; the next boot keeps the current workspace.
 #[tauri::command]
+#[specta::specta]
 fn cancel_backup() -> Result<(), String> {
     persistence::backup::cancel_pending().map_err(|e| e.to_string())
 }
@@ -680,12 +768,14 @@ fn cancel_backup() -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
+#[specta::specta]
 fn notes_load(state: State<'_, Arc<AppState>>) -> Result<persistence::notes::NotesData, String> {
     let conn = state.db.lock();
     persistence::notes::load(&conn).map_err(|e| format!("não consegui carregar as anotações: {e}"))
 }
 
 #[tauri::command]
+#[specta::specta]
 fn note_save(
     state: State<'_, Arc<AppState>>,
     note: persistence::notes::Note,
@@ -696,6 +786,7 @@ fn note_save(
 }
 
 #[tauri::command]
+#[specta::specta]
 fn note_delete(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
     let conn = state.db.lock();
     persistence::notes::delete_note(&conn, &id)
@@ -703,6 +794,7 @@ fn note_delete(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String
 }
 
 #[tauri::command]
+#[specta::specta]
 fn notebook_save(
     state: State<'_, Arc<AppState>>,
     notebook: persistence::notes::Notebook,
@@ -713,6 +805,7 @@ fn notebook_save(
 }
 
 #[tauri::command]
+#[specta::specta]
 fn notebook_delete(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
     let conn = state.db.lock();
     persistence::notes::delete_notebook(&conn, &id)
@@ -720,6 +813,7 @@ fn notebook_delete(state: State<'_, Arc<AppState>>, id: String) -> Result<(), St
 }
 
 #[tauri::command]
+#[specta::specta]
 fn note_tag_save(
     state: State<'_, Arc<AppState>>,
     tag: persistence::notes::NoteTag,
@@ -730,6 +824,7 @@ fn note_tag_save(
 }
 
 #[tauri::command]
+#[specta::specta]
 fn note_tag_delete(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
     let conn = state.db.lock();
     persistence::notes::delete_tag(&conn, &id)
@@ -739,6 +834,7 @@ fn note_tag_delete(state: State<'_, Arc<AppState>>, id: String) -> Result<(), St
 /// Writes a note's markdown to a path the user picked in the save dialog.
 /// Disk I/O, so it goes to the blocking pool like the other file commands.
 #[tauri::command]
+#[specta::specta]
 async fn note_export(dest: String, text: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         std::fs::write(&dest, text).map_err(|e| format!("não consegui exportar a nota: {e}"))
@@ -752,6 +848,7 @@ async fn note_export(dest: String, text: String) -> Result<(), String> {
 /// `display` also keeps the screen on; a caller that does not send it keeps
 /// the behaviour it had before the flag existed (display held).
 #[tauri::command]
+#[specta::specta]
 fn set_keep_awake(on: bool, display: Option<bool>) {
     power::set_keep_awake(on, display.unwrap_or(true));
 }
@@ -759,6 +856,7 @@ fn set_keep_awake(on: bool, display: Option<bool>) {
 /// Closes and reopens the app. The only way to adopt a restored backup
 /// without asking the user to do it by hand.
 #[tauri::command]
+#[specta::specta]
 fn restart_app(app: AppHandle) {
     // A save that arrived before this used to run before it, on the same UI
     // thread. On its lane now, it still has to reach the disk before the
@@ -775,6 +873,7 @@ fn restart_app(app: AppHandle) {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
+#[specta::specta]
 async fn score_save(name: String, json: String, overwrite: bool) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || scores::save(&name, &json, overwrite))
         .await
@@ -782,6 +881,7 @@ async fn score_save(name: String, json: String, overwrite: bool) -> Result<Strin
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn score_list() -> Result<Vec<scores::ScoreMeta>, String> {
     tauri::async_runtime::spawn_blocking(scores::list)
         .await
@@ -789,6 +889,7 @@ async fn score_list() -> Result<Vec<scores::ScoreMeta>, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn score_read(name: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || scores::read(&name))
         .await
@@ -796,6 +897,7 @@ async fn score_read(name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn score_delete(name: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || scores::delete(&name))
         .await
@@ -810,6 +912,7 @@ async fn score_delete(name: String) -> Result<(), String> {
 /// Callers that arrive while a detection runs wait for it instead of starting
 /// their own (`agents::resolver::SharedDetection`).
 #[tauri::command]
+#[specta::specta]
 async fn detect_agents(app: AppHandle, refresh: bool) -> Vec<AgentInfo> {
     let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -823,13 +926,25 @@ async fn detect_agents(app: AppHandle, refresh: bool) -> Vec<AgentInfo> {
 }
 
 #[tauri::command]
-async fn list_agent_sessions(agent: String, project_path: String) -> Vec<AgentSession> {
-    tauri::async_runtime::spawn_blocking(move || agents::sessions::list(&agent, &project_path))
+#[specta::specta]
+async fn list_agent_sessions(app: AppHandle, agent: String, project_path: String) -> Vec<AgentSession> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if agent != "codex" && agent != "claude" { return agents::sessions::list(&agent, &project_path); }
+        let mut roots: Vec<_> = agents::resolver::sessions_root(&agent).map(|root| (None, root)).into_iter().collect();
+        let state = app.state::<Arc<AppState>>();
+        if let Ok(metadata) = accounts::snapshot(&state.db.lock()) {
+            for (provider, account_id, directory) in accounts::session_roots(&paths::app_dir(), &metadata.accounts).unwrap_or_default() {
+                if provider == agent { roots.push((Some(account_id), directory)); }
+            }
+        }
+        agents::sessions::list_from_roots(&agent, &project_path, &roots)
+    })
         .await
         .unwrap_or_default()
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn get_session_usage(file: String) -> SessionUsage {
     tauri::async_runtime::spawn_blocking(move || agents::sessions::usage(&file))
         .await
@@ -837,21 +952,25 @@ async fn get_session_usage(file: String) -> SessionUsage {
 }
 
 #[tauri::command]
+#[specta::specta]
 fn agent_resume_args(agent: String, session_id: String) -> Option<Vec<String>> {
     agents::resolver::resume_args(&agent, &session_id)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn pricing_reference() -> agents::sessions::PricingReference {
     agents::sessions::pricing_reference()
 }
 
 #[tauri::command]
+#[specta::specta]
 fn pricing_settings(state: State<'_, Arc<AppState>>) -> Result<agents::pricing::PricingSettings, String> {
     agents::pricing::load(&state.db.lock())
 }
 
 #[tauri::command]
+#[specta::specta]
 fn pricing_settings_save(state: State<'_, Arc<AppState>>, revision: u64, rates: Vec<agents::pricing::CustomRate>) -> Result<agents::pricing::PricingSettings, String> {
     let mut connection = state.db.lock();
     let settings = agents::pricing::save(&mut connection, revision, rates)?;
@@ -862,6 +981,7 @@ fn pricing_settings_save(state: State<'_, Arc<AppState>>, revision: u64, rates: 
 /// Starts the live tail on a `.jsonl` session. Calling again with the same
 /// `tail_id` switches the followed file (the previous tail is shut down).
 #[tauri::command]
+#[specta::specta]
 fn session_tail_start(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -875,6 +995,7 @@ fn session_tail_start(
 }
 
 #[tauri::command]
+#[specta::specta]
 fn session_tail_stop(state: State<'_, Arc<AppState>>, tail_id: String) {
     if let Some(stop) = state.session_tails.lock().remove(&tail_id) {
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -890,6 +1011,7 @@ fn session_tail_stop(state: State<'_, Arc<AppState>>, tail_id: String) {
 /// On the project's own lane (`lanes.rs`), with `unwatch_project`: setting a
 /// watcher up over a big tree takes a while, and the two keep their order.
 #[tauri::command]
+#[specta::specta]
 fn watch_project(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -910,11 +1032,13 @@ fn watch_project(
 }
 
 #[tauri::command]
+#[specta::specta]
 fn unwatch_project(state: State<'_, Arc<AppState>>, project_id: String) {
     state.file_watchers.lock().remove(&project_id);
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn git_changes(cwd: String) -> Result<git::ChangesSummary, String> {
     tauri::async_runtime::spawn_blocking(move || git::changes(std::path::Path::new(&cwd)))
         .await
@@ -922,6 +1046,7 @@ async fn git_changes(cwd: String) -> Result<git::ChangesSummary, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn git_file_diff(
     cwd: String,
     path: String,
@@ -950,6 +1075,7 @@ async fn git_file_diff(
 // the fence against escaping the root lives in the module (`explorer::resolve`).
 
 #[tauri::command]
+#[specta::specta]
 async fn fs_list_dir(root: String, path: String) -> Result<explorer::DirListing, String> {
     tauri::async_runtime::spawn_blocking(move || {
         explorer::list_dir(std::path::Path::new(&root), &path)
@@ -959,6 +1085,7 @@ async fn fs_list_dir(root: String, path: String) -> Result<explorer::DirListing,
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn fs_read_text(
     root: String,
     path: String,
@@ -973,6 +1100,7 @@ async fn fs_read_text(
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn fs_write_text(
     root: String,
     path: String,
@@ -1001,6 +1129,7 @@ async fn fs_write_text(
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn fs_create_entry(root: String, path: String, dir: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         explorer::create_entry(std::path::Path::new(&root), &path, dir)
@@ -1010,6 +1139,7 @@ async fn fs_create_entry(root: String, path: String, dir: bool) -> Result<(), St
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn fs_rename_entry(root: String, path: String, new_path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         explorer::rename_entry(std::path::Path::new(&root), &path, &new_path)
@@ -1019,6 +1149,7 @@ async fn fs_rename_entry(root: String, path: String, new_path: String) -> Result
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn fs_delete_entry(root: String, path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         explorer::delete_entry(std::path::Path::new(&root), &path)
@@ -1028,6 +1159,7 @@ async fn fs_delete_entry(root: String, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn fs_search_text(
     state: State<'_, Arc<AppState>>,
     root: String,
@@ -1070,6 +1202,7 @@ async fn fs_search_text(
 /// can reason about afterwards. It is bounded instead, by the same skip list
 /// and filters the search uses, and by a ceiling on the files it will rewrite.
 #[tauri::command]
+#[specta::specta]
 async fn fs_replace_text(
     root: String,
     query: String,
@@ -1089,6 +1222,7 @@ async fn fs_replace_text(
 }
 
 #[tauri::command]
+#[specta::specta]
 fn fs_cancel_search(root: String, state: tauri::State<'_, Arc<AppState>>) {
     if let Some(stop) = state.search_stops.lock().remove(&root) {
         stop.store(true, Ordering::Relaxed);
@@ -1096,6 +1230,7 @@ fn fs_cancel_search(root: String, state: tauri::State<'_, Arc<AppState>>) {
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn fs_index_files(root: String) -> Result<explorer::FileIndex, String> {
     tauri::async_runtime::spawn_blocking(move || explorer::index_files(std::path::Path::new(&root)))
         .await
@@ -1104,6 +1239,7 @@ async fn fs_index_files(root: String) -> Result<explorer::FileIndex, String> {
 
 // The editor's git gutter: what the open file looked like at HEAD.
 #[tauri::command]
+#[specta::specta]
 async fn git_head_text(root: String, path: String) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || git::head_text(std::path::Path::new(&root), &path))
         .await
@@ -1115,6 +1251,7 @@ async fn git_head_text(root: String, path: String) -> Result<Option<String>, Str
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
+#[specta::specta]
 async fn worktree_provision(
     project_path: String,
     input: git::ProvisionInput,
@@ -1127,6 +1264,7 @@ async fn worktree_provision(
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn worktree_preflight(
     project_path: String,
     items: Vec<git::PreflightItem>,
@@ -1139,6 +1277,7 @@ async fn worktree_preflight(
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn branch_delete_if_unchanged(
     project_path: String,
     branch: String,
@@ -1152,6 +1291,7 @@ async fn branch_delete_if_unchanged(
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn worktree_list(project_path: String) -> Result<Vec<git::WorktreeEntry>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         git::worktree_list(std::path::Path::new(&project_path))
@@ -1161,6 +1301,7 @@ async fn worktree_list(project_path: String) -> Result<Vec<git::WorktreeEntry>, 
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn worktree_dirty(path: String) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || git::worktree_dirty(std::path::Path::new(&path)))
         .await
@@ -1168,6 +1309,7 @@ async fn worktree_dirty(path: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn worktree_remove(
     project_path: String,
     path: String,
@@ -1185,6 +1327,7 @@ async fn worktree_remove(
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn worktree_preview(
     project_path: String,
     floor_branch: String,
@@ -1202,6 +1345,7 @@ async fn worktree_preview(
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn worktree_land(
     project_path: String,
     floor_branch: String,
@@ -1234,6 +1378,7 @@ macro_rules! scm_commands {
     ($( $name:ident ( $( $arg:ident : $ty:ty ),* $(,)? ) -> $ret:ty = $body:expr; )+) => {
         $(
             #[tauri::command]
+            #[specta::specta]
             async fn $name(cwd: String, $( $arg : $ty ),*) -> Result<$ret, String> {
                 tauri::async_runtime::spawn_blocking(move || {
                     let cwd = std::path::Path::new(&cwd);
@@ -1376,6 +1521,7 @@ scm_commands! {
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn floor_run_hook(
     cwd: String,
     command: String,
@@ -1393,6 +1539,7 @@ async fn floor_run_hook(
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
+#[specta::specta]
 async fn list_browsers(app: AppHandle, refresh: bool) -> Vec<BrowserInfo> {
     let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -1404,6 +1551,7 @@ async fn list_browsers(app: AppHandle, refresh: bool) -> Vec<BrowserInfo> {
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn portal_open(
     app: AppHandle,
     opts: portal::PortalOpen,
@@ -1412,21 +1560,25 @@ async fn portal_open(
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn device_list() -> Result<Vec<devices::AndroidDevice>, String> {
     tauri::async_runtime::spawn_blocking(devices::list).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn device_action(serial: String, action: devices::DeviceAction) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || devices::execute(&serial, &action)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
+#[specta::specta]
 fn portal_set_bounds(app: AppHandle, id: String, place: portal::PortalPlace) -> Result<(), String> {
     portal::place(&app, &id, place)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn portal_set_bounds_many(
     app: AppHandle,
     updates: Vec<portal::PortalBoundsUpdate>,
@@ -1435,6 +1587,7 @@ fn portal_set_bounds_many(
 }
 
 #[tauri::command]
+#[specta::specta]
 fn portal_navigate(app: AppHandle, id: String, url: String) -> Result<(), String> {
     portal::navigate(&app, &id, &url)
 }
@@ -1443,6 +1596,7 @@ fn portal_navigate(app: AppHandle, id: String, url: String) -> Result<(), String
 /// and a sync command waiting for it holds the very thread that would deliver
 /// it — the whole app freezing until the timeout expires.
 #[tauri::command]
+#[specta::specta]
 async fn portal_eval(app: AppHandle, id: String, js: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || portal::eval_js(&app, &id, &js))
         .await
@@ -1452,6 +1606,7 @@ async fn portal_eval(app: AppHandle, id: String, js: String) -> Result<String, S
 /// Fingerprint of what a URL is serving right now — the portal's auto-reload
 /// compares two of these.
 #[tauri::command]
+#[specta::specta]
 async fn portal_probe(url: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || portal::probe(&url))
         .await
@@ -1459,47 +1614,56 @@ async fn portal_probe(url: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 fn portal_close(app: AppHandle, id: String) -> Result<(), String> {
     portal::close(&app, &id)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn portal_hide_except(app: AppHandle, keep: Vec<String>) {
     portal::hide_except(&app, &keep);
 }
 
 /// Closes engines with no card left anywhere in the workspace. See `portal::retain`.
 #[tauri::command]
+#[specta::specta]
 fn portal_retain(app: AppHandle, keep: Vec<String>) -> usize {
     portal::retain(&app, &keep)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn portal_info(id: String) -> Result<portal::PortalInfo, String> {
     portal::info(&id)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn portal_reload(app: AppHandle, id: String) -> Result<(), String> {
     portal::reload(&app, &id)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn portal_back(app: AppHandle, id: String) -> Result<(), String> {
     portal::go_back(&app, &id)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn portal_forward(app: AppHandle, id: String) -> Result<(), String> {
     portal::go_forward(&app, &id)
 }
 
 #[tauri::command]
+#[specta::specta]
 fn portal_set_muted(app: AppHandle, id: String, muted: bool) -> Result<(), String> {
     portal::set_muted(&app, &id, muted)
 }
 
 #[tauri::command]
+#[specta::specta]
 async fn portal_set_ua(app: AppHandle, id: String, ua: Option<String>) -> Result<(), String> {
     portal::set_ua(app, id, ua).await
 }
@@ -1509,12 +1673,14 @@ async fn portal_set_ua(app: AppHandle, id: String, ua: Option<String>) -> Result
 // browser's CDP port.
 
 #[tauri::command]
+#[specta::specta]
 fn portal_screenshot(app: AppHandle, id: String) -> Result<String, String> {
     portal::screenshot(&app, &id)
 }
 
 /// A PNG crop of one element inside a portal — Modo Design's screenshot.
 #[tauri::command]
+#[specta::specta]
 fn portal_grab_shot(
     app: AppHandle,
     id: String,
@@ -1527,7 +1693,7 @@ fn portal_grab_shot(
 // System
 // ---------------------------------------------------------------------------
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 struct AppPaths {
     app_dir: String,
@@ -1537,6 +1703,7 @@ struct AppPaths {
 }
 
 #[tauri::command]
+#[specta::specta]
 fn app_paths() -> AppPaths {
     AppPaths {
         app_dir: paths::app_dir().to_string_lossy().into_owned(),
@@ -1550,6 +1717,7 @@ fn app_paths() -> AppPaths {
 /// spawn, so it goes to the blocking pool: a path on a dead network share
 /// stalls the stat for as long as the share takes to time out.
 #[tauri::command]
+#[specta::specta]
 async fn reveal_path(path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || reveal_path_now(&path))
         .await
@@ -1594,6 +1762,7 @@ fn reveal_path_now(path: &str) -> Result<(), String> {
 ///
 /// A stat and a process spawn: the blocking pool, like `reveal_path`.
 #[tauri::command]
+#[specta::specta]
 async fn open_external(path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || open_external_now(&path))
         .await
@@ -1625,6 +1794,7 @@ fn open_external_now(path: &str) -> Result<(), String> {
 /// share waits for the share to time out, so it goes to the blocking pool
 /// (the boot loop asks for all of them at once).
 #[tauri::command]
+#[specta::specta]
 async fn is_directory(path: String) -> bool {
     tauri::async_runtime::spawn_blocking(move || std::path::Path::new(&path).is_dir())
         .await
@@ -1638,6 +1808,7 @@ async fn is_directory(path: String) -> bool {
 /// Runs in `spawn_blocking` because it writes to disk and cleans the folder —
 /// a few MB and a `read_dir` have no business on the IPC thread.
 #[tauri::command]
+#[specta::specta]
 async fn clipboard_save_image(data: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || clipboard::save_image(&data))
         .await
@@ -1646,18 +1817,21 @@ async fn clipboard_save_image(data: String) -> Result<String, String> {
 
 /// Frontend reply to a request from the `yard` CLI (see bridge.rs).
 #[tauri::command]
+#[specta::specta]
 fn bridge_respond(id: u64, body: serde_json::Value) -> bool {
     bridge::respond(id, body)
 }
 
 /// Latest snapshot of the agent usage limits (may be empty at boot).
 #[tauri::command]
+#[specta::specta]
 fn usage_snapshot() -> usage::UsageSnapshot {
     usage::snapshot()
 }
 
 /// Asks for an immediate collection cycle; the result arrives via `usage://update`.
 #[tauri::command]
+#[specta::specta]
 fn usage_refresh(provider: Option<String>) {
     usage::request_refresh(provider.as_deref());
 }
@@ -1668,6 +1842,7 @@ fn usage_refresh(provider: Option<String>) {
 /// stays white and nothing is left behind. With this, a frontend error becomes
 /// a line in `yard.log` like any other.
 #[tauri::command]
+#[specta::specta]
 fn ui_log(level: String, message: String) {
     let message = logging::bounded_message(&message);
     match level.as_str() {
@@ -1704,6 +1879,248 @@ fn start_housekeeping(app: AppHandle) {
     if let Err(error) = spawned {
         tracing::warn!(%error, "startup housekeeping could not start");
     }
+}
+
+// One command list supplies the runtime handler and the exported wire metadata.
+macro_rules! registered_commands {
+    ($collect:ident) => {
+        $collect![
+            accounts::accounts_snapshot,
+            accounts::account_create,
+            accounts::account_select,
+            accounts::account_assign,
+            accounts::account_verify,
+            accounts::account_remove,
+            spawn_pty,
+            write_pty,
+            resize_pty,
+            attach_pty,
+            repaint_pty,
+            pty_probe,
+            pty_activity,
+            pty_read_since,
+            pty_archives,
+            pty_archive_preview,
+            pty_archive_export,
+            pty_archive_delete,
+            pty_exists,
+            list_ptys,
+            kill_pty,
+            suspend_pty,
+            suspend_group,
+            restart_pty,
+            clear_pty,
+            set_pty_visible,
+            pty_events_open,
+            pty_events_subscribe,
+            pty_events_unsubscribe,
+            ack_pty_output,
+            get_pty_tree_info,
+            forget_pty,
+            default_shell,
+            list_shells,
+            wsl_status,
+            list_fonts,
+            save_workspace,
+            load_workspace,
+            task_create,
+            task_list,
+            task_get,
+            task_link,
+            checkpoint_notices,
+            checkpoint_acknowledge_notices,
+            checkpoint_notice_history,
+            task_events,
+            task_deliveries,
+            task_reviews,
+            task_request_review,
+            task_retry_delivery,
+            task_transition,
+            task_submit,
+            task_approve,
+            task_enqueue,
+            task_claim,
+            queue_patch,
+            queue_dispatch,
+            queue_read,
+            native_hook_snapshot,
+            routine_snapshot,
+            flow_start,
+            flow_snapshot,
+            flow_cancel,
+            flow_resume,
+            flow_dismiss,
+            queue_retry,
+            queue_remove,
+            read_prefs,
+            write_pref,
+            write_prefs,
+            delete_pref,
+            export_backup,
+            import_backup,
+            backup_pending,
+            cancel_backup,
+            restart_app,
+            set_keep_awake,
+            notes_load,
+            note_save,
+            note_delete,
+            notebook_save,
+            notebook_delete,
+            note_tag_save,
+            note_tag_delete,
+            note_export,
+            score_save,
+            score_list,
+            score_read,
+            score_delete,
+            detect_agents,
+            list_agent_sessions,
+            get_session_usage,
+            pricing_reference,
+            pricing_settings,
+            pricing_settings_save,
+            agent_resume_args,
+            session_tail_start,
+            session_tail_stop,
+            watch_project,
+            unwatch_project,
+            git_changes,
+            git_file_diff,
+            git_head_text,
+            fs_list_dir,
+            fs_read_text,
+            fs_write_text,
+            fs_create_entry,
+            fs_rename_entry,
+            fs_delete_entry,
+            fs_search_text,
+            fs_replace_text,
+            fs_cancel_search,
+            fs_index_files,
+            scm_info,
+            scm_init,
+            scm_stage,
+            scm_stage_all,
+            scm_unstage,
+            scm_unstage_all,
+            scm_discard,
+            scm_discard_all,
+            scm_commit,
+            scm_last_message,
+            scm_log,
+            scm_commit_detail,
+            scm_commit_file_diff,
+            scm_branches,
+            scm_checkout,
+            scm_branch_create,
+            scm_branch_delete,
+            scm_branch_rename,
+            scm_merge,
+            scm_rebase,
+            scm_revert,
+            scm_reset,
+            scm_resolve_conflict,
+            scm_abort,
+            scm_continue,
+            scm_stash_list,
+            scm_stash_push,
+            scm_stash_apply,
+            scm_stash_drop,
+            scm_stash_show,
+            scm_fetch,
+            scm_pull,
+            scm_push,
+            scm_push_delete,
+            scm_tags,
+            scm_tag_create,
+            scm_tag_delete,
+            scm_apply_patch,
+            forge_status,
+            forge_pr,
+            forge_pr_create,
+            forge_pr_comments,
+            scm_diff,
+            worktree_provision,
+            worktree_preflight,
+            branch_delete_if_unchanged,
+            worktree_list,
+            worktree_dirty,
+            worktree_remove,
+            worktree_preview,
+            worktree_land,
+            floor_run_hook,
+            list_browsers,
+            portal_open,
+            device_list,
+            device_action,
+            portal_set_bounds,
+            portal_set_bounds_many,
+            portal_navigate,
+            portal_eval,
+            portal_probe,
+            portal_close,
+            portal_hide_except,
+            portal_retain,
+            portal_info,
+            portal_reload,
+            portal_back,
+            portal_forward,
+            portal_set_muted,
+            portal_set_ua,
+            portal_screenshot,
+            portal_grab_shot,
+            app_paths,
+            reveal_path,
+            open_external,
+            is_directory,
+            clipboard_save_image,
+            bridge_respond,
+            usage_snapshot,
+            usage_refresh,
+            ui_log,
+            pty_export,
+            search_scrollback,
+            bridge_remote,
+            bridge_hooks_file,
+            webhook_post,
+            tray::tray_set_status,
+            tray::window_summon,
+            support::support_bundle,
+            persistence::autobackup::backup_auto_run,
+            costs::usage_history,
+            agents::read::session_events,
+            mcp::mcp_list,
+            mcp_health::mcp_probe,
+            mcp::mcp_save,
+            mcp::mcp_delete,
+            mcp::mcp_env_values,
+            ssh_status,
+            lsp::lsp_start,
+            lsp::lsp_send,
+            lsp::lsp_stop,
+            lsp::lsp_detect,
+            checkpoint_commands::checkpoint_create,
+            checkpoint_commands::checkpoint_list,
+            checkpoint_commands::checkpoint_preview,
+            checkpoint_commands::checkpoint_compare,
+            checkpoint_commands::checkpoint_restore,
+            checkpoint_commands::checkpoint_delete,
+        ]
+    };
+}
+
+pub(crate) fn command_contract() -> tauri_specta::Builder<tauri::Wry> {
+    use tauri_specta::collect_commands;
+    tauri_specta::Builder::new()
+        .commands(registered_commands!(collect_commands))
+        .typ::<desktop::contracts::EventPayloads>()
+        .typ::<events::IdlePayload>()
+        .typ::<events::ExitPayload>()
+        .constant("topics", desktop::contracts::topics())
+        // Preserve the existing JSON number representation and rejected promises.
+        .dangerously_cast_bigints_to_number()
+        .error_handling(tauri_specta::ErrorHandlingMode::Throw)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1744,221 +2161,8 @@ pub fn run() {
     // Every command the UI can call. `lanes::dispatch` sends the blocking ones
     // that must keep their arrival order to a lane (`lanes.rs`) and runs the
     // rest in place, exactly as this table would on its own.
-    let table = lanes::commands::<tauri::Wry, _>(tauri::generate_handler![
-        spawn_pty,
-        write_pty,
-        resize_pty,
-        attach_pty,
-        repaint_pty,
-        pty_probe,
-        pty_activity,
-        pty_read_since,
-        pty_archives,
-        pty_archive_preview,
-        pty_archive_export,
-        pty_archive_delete,
-        pty_exists,
-        list_ptys,
-        kill_pty,
-        suspend_pty,
-        suspend_group,
-        restart_pty,
-        clear_pty,
-        set_pty_visible,
-        pty_events_open,
-        pty_events_subscribe,
-        pty_events_unsubscribe,
-        ack_pty_output,
-        get_pty_tree_info,
-        forget_pty,
-        default_shell,
-        list_shells,
-        wsl_status,
-        list_fonts,
-        save_workspace,
-        load_workspace,
-        task_create,
-        task_list,
-        task_get,
-        task_link,
-        checkpoint_notices,
-        checkpoint_acknowledge_notices,
-        checkpoint_notice_history,
-        task_events,
-        task_deliveries,
-        task_retry_delivery,
-        task_transition,
-        task_submit,
-        task_approve,
-        task_enqueue,
-        task_claim,
-        queue_patch,
-        queue_dispatch,
-        queue_read,
-        native_hook_snapshot,
-        routine_snapshot,
-        flow_start,
-        flow_snapshot,
-        flow_cancel,
-        flow_resume,
-        flow_dismiss,
-        queue_retry,
-        queue_remove,
-        read_prefs,
-        write_pref,
-        write_prefs,
-        delete_pref,
-        export_backup,
-        import_backup,
-        backup_pending,
-        cancel_backup,
-        restart_app,
-        set_keep_awake,
-        notes_load,
-        note_save,
-        note_delete,
-        notebook_save,
-        notebook_delete,
-        note_tag_save,
-        note_tag_delete,
-        note_export,
-        score_save,
-        score_list,
-        score_read,
-        score_delete,
-        detect_agents,
-        list_agent_sessions,
-        get_session_usage,
-        pricing_reference,
-        pricing_settings,
-        pricing_settings_save,
-        agent_resume_args,
-        session_tail_start,
-        session_tail_stop,
-        watch_project,
-        unwatch_project,
-        git_changes,
-        git_file_diff,
-        git_head_text,
-        fs_list_dir,
-        fs_read_text,
-        fs_write_text,
-        fs_create_entry,
-        fs_rename_entry,
-        fs_delete_entry,
-        fs_search_text,
-        fs_replace_text,
-        fs_cancel_search,
-        fs_index_files,
-        scm_info,
-        scm_init,
-        scm_stage,
-        scm_stage_all,
-        scm_unstage,
-        scm_unstage_all,
-        scm_discard,
-        scm_discard_all,
-        scm_commit,
-        scm_last_message,
-        scm_log,
-        scm_commit_detail,
-        scm_commit_file_diff,
-        scm_branches,
-        scm_checkout,
-        scm_branch_create,
-        scm_branch_delete,
-        scm_branch_rename,
-        scm_merge,
-        scm_rebase,
-        scm_revert,
-        scm_reset,
-        scm_resolve_conflict,
-        scm_abort,
-        scm_continue,
-        scm_stash_list,
-        scm_stash_push,
-        scm_stash_apply,
-        scm_stash_drop,
-        scm_stash_show,
-        scm_fetch,
-        scm_pull,
-        scm_push,
-        scm_push_delete,
-        scm_tags,
-        scm_tag_create,
-        scm_tag_delete,
-        scm_apply_patch,
-        forge_status,
-        forge_pr,
-        forge_pr_create,
-        forge_pr_comments,
-        scm_diff,
-        worktree_provision,
-        worktree_preflight,
-        branch_delete_if_unchanged,
-        worktree_list,
-        worktree_dirty,
-        worktree_remove,
-        worktree_preview,
-        worktree_land,
-        floor_run_hook,
-        list_browsers,
-        portal_open,
-        device_list,
-        device_action,
-        portal_set_bounds,
-        portal_set_bounds_many,
-        portal_navigate,
-        portal_eval,
-        portal_probe,
-        portal_close,
-        portal_hide_except,
-        portal_retain,
-        portal_info,
-        portal_reload,
-        portal_back,
-        portal_forward,
-        portal_set_muted,
-        portal_set_ua,
-        portal_screenshot,
-        portal_grab_shot,
-        app_paths,
-        reveal_path,
-        open_external,
-        is_directory,
-        clipboard_save_image,
-        bridge_respond,
-        usage_snapshot,
-        usage_refresh,
-        ui_log,
-        pty_export,
-        search_scrollback,
-        bridge_remote,
-        bridge_hooks_file,
-        webhook_post,
-        tray::tray_set_status,
-        tray::window_summon,
-        support::support_bundle,
-        persistence::autobackup::backup_auto_run,
-        costs::usage_history,
-        agents::read::session_events,
-        mcp::mcp_list,
-        mcp_health::mcp_probe,
-        mcp::mcp_save,
-        mcp::mcp_delete,
-        mcp::mcp_env_values,
-        ssh_status,
-        lsp::lsp_start,
-        lsp::lsp_send,
-        lsp::lsp_stop,
-        lsp::lsp_detect,
-        checkpoint_commands::checkpoint_create,
-        checkpoint_commands::checkpoint_list,
-        checkpoint_commands::checkpoint_preview,
-        checkpoint_commands::checkpoint_compare,
-        checkpoint_commands::checkpoint_restore,
-        checkpoint_commands::checkpoint_delete,
-    ]);
+    use tauri::generate_handler;
+    let table = lanes::commands::<tauri::Wry, _>(registered_commands!(generate_handler));
     // A sync command runs to its end inside the table, on the thread that
     // called it (its lane): whatever it changed in the queue, flows, routines
     // or checkpoint notices is announced right after (`events::KvChanges`),
@@ -1983,7 +2187,7 @@ pub fn run() {
         // (media.rs). It has to be registered before the window exists.
         .register_asynchronous_uri_scheme_protocol(media::SCHEME, media::serve)
         .manage(Arc::new(AppState::new(db)))
-        // Where every terminal's events go (`pty::emit::tauri_sink`).
+        // Where every terminal's events go (`desktop::pty::event_sink`).
         .manage(Arc::new(pty::pages::Pages::default()))
         .manage(LogGuard(guard))
         .setup(|app| {
@@ -2029,7 +2233,7 @@ pub fn run() {
             // What the recoveries above marked for review, announced like
             // any other change (a page that is already up refetches it).
             events::publish_kv_changes(&handle);
-            scheduler::start(handle.clone());
+            desktop::scheduler::start(&handle);
             // Signed updates from GitHub Releases (updater.rs holds the config
             // lock). Desktop only, as the plugin's own docs register it.
             #[cfg(desktop)]
