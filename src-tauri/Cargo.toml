@@ -64,7 +64,7 @@ tracing-appender = "0.2"
 # pulls zip 4 on Windows), so the crate is built once. `deflate-flate2` uses
 # the flate2 backend already in the graph (miniz_oxide, via png): zip's own
 # `deflate` feature would add zopfli and zlib-rs for nothing this app writes.
-zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 anyhow = "1"
 parking_lot = "0.12"
 # Agent<->app bridge: named-pipe server (bridge.rs). Tauri already brings
