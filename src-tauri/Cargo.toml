@@ -85,7 +85,7 @@ ttf-parser = "0.25"
 # behind the literal mode too, one matcher means the search and the replace
 # cannot disagree about what matched.
 regex = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 # Portal screenshots (portal.rs): the files exist to be opened by agents, and
 # PNG is what agent APIs accept — the old BMPs could not be attached at all.
 # 0.17 on purpose: it is the version tauri-codegen's `ico` already builds on
